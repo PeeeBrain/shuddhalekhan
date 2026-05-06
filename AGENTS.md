@@ -15,6 +15,8 @@
 
 Use `bun` exclusively. `pnpm` is only a fallback if `koffi` causes resolution issues.
 
+**Never run build commands (`bun run build`, `bun run build:agent`, etc.) unless explicitly asked.** Build outputs are ephemeral and should not be committed. Delete any build artifacts created inadvertently before proceeding.
+
 ## Build architecture
 - **electron-vite** with three targets defined in `electron.vite.config.ts`:
   - `main` — entry `src/main/index.ts`, output CJS (`out/main/index.cjs`)
