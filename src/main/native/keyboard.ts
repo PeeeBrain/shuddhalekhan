@@ -1,4 +1,5 @@
 import koffi from 'koffi';
+import type { RecordingIntent } from '../../types/ipc';
 
 const user32 = koffi.load('user32.dll');
 const kernel32 = koffi.load('kernel32.dll');
@@ -40,18 +41,21 @@ interface ModifierState {
   win: boolean;
   alt: boolean;
   recording: boolean;
+  intent: RecordingIntent | null;
 }
 
 class KeyboardHook {
   private hookHandle: number = 0;
   private callback: KoffiRegisteredCallback | null = null;
-  private state: ModifierState = { ctrl: false, win: false, alt: false, recording: false };
-  private onStartRecording: (() => void) | null = null;
+  private state: ModifierState = { ctrl: false, win: false, alt: false, recording: false, intent: null };
+  private onStartRecording: ((intent: RecordingIntent) => void) | null = null;
   private onStopRecording: (() => void) | null = null;
+  private isAgentModeEnabled: (() => boolean) = () => false;
 
-  start(onStart: () => void, onStop: () => void): void {
+  start(onStart: (intent: RecordingIntent) => void, onStop: () => void, isAgentModeEnabled: () => boolean = () => false): void {
     this.onStartRecording = onStart;
     this.onStopRecording = onStop;
+    this.isAgentModeEnabled = isAgentModeEnabled;
 
     const proc = (nCode: number, wParam: bigint, lParam: unknown): bigint => {
       if (nCode >= 0) {
@@ -104,9 +108,11 @@ class KeyboardHook {
         let shouldStop = false;
         if (isCtrl && !this.state.ctrl) shouldStop = true;
         if (isWin && !this.state.win) shouldStop = true;
+        if (this.state.intent === 'agent' && isAlt && !this.state.alt) shouldStop = true;
 
         if (shouldStop) {
           this.state.recording = false;
+          this.state.intent = null;
           this.state.ctrl = false;
           this.state.win = false;
           this.state.alt = false;
@@ -119,7 +125,16 @@ class KeyboardHook {
     // Start condition: Ctrl + Win (no Alt)
     if (isDown && this.state.ctrl && this.state.win && !this.state.alt) {
       this.state.recording = true;
-      this.onStartRecording?.();
+      this.state.intent = 'dictation';
+      this.onStartRecording?.('dictation');
+      return;
+    }
+
+    // Start condition: Alt + Win (no Ctrl), gated by opt-in config.
+    if (isDown && this.state.alt && this.state.win && !this.state.ctrl && this.isAgentModeEnabled()) {
+      this.state.recording = true;
+      this.state.intent = 'agent';
+      this.onStartRecording?.('agent');
     }
   }
 }

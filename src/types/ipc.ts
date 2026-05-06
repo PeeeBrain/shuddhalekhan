@@ -4,6 +4,8 @@ export type AudioDevice = {
   kind: 'audioinput';
 };
 
+export type RecordingIntent = 'dictation' | 'agent';
+
 export interface RendererToMainSendChannels {
   'audio-window-ready': () => void;
   'audio-data-ready': (audioData: ArrayBuffer) => void;
@@ -19,6 +21,7 @@ export interface RendererToMainInvokeChannels {
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
   'config:set': (key: keyof AppConfig, value: unknown) => void;
+  'settings:open': () => void;
   'clipboard:inject-text': (text: string) => void;
   'app:get-info': () => Promise<AppInfo>;
   'updater:get-status': () => Promise<UpdateStatus>;
@@ -30,6 +33,7 @@ export interface MainToRendererChannels {
   'audio:start-recording': () => void;
   'audio:stop-recording': () => void;
   'audio:select-device': (deviceId: string) => void;
+  'recording:mode-changed': (intent: RecordingIntent) => void;
   'recording:started': () => void;
   'recording:stopped': () => void;
   'audio:level-changed': (level: number) => void;
@@ -41,6 +45,14 @@ export interface AppConfig {
   whisperUrl: string;
   selectedDeviceId: string | null;
   removeFillerWords: boolean;
+  agent: {
+    enabled: boolean;
+    provider: {
+      baseUrl: string;
+      model: string;
+      apiKeyEnvVar: string;
+    };
+  };
 }
 
 export interface AppInfo {

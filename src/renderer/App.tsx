@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { startRecording, stopRecording, enumerateDevices, setSelectedDeviceId } from './audio-capture';
 import { RecordingPopup } from './RecordingPopup';
-import type { AppInfo, UpdateStatus } from '../types/ipc';
+import { SettingsWindow } from './SettingsWindow';
+import type { AppInfo, RecordingIntent, UpdateStatus } from '../types/ipc';
 import './App.css';
 
 async function sendAudioDevices(): Promise<void> {
@@ -160,12 +161,18 @@ function formatCheckedAt(value: string): string {
 function App() {
   const hash = window.location.hash.replace(/^#\/?/, '');
 
-  if (hash === 'recording') {
-    return <RecordingPopup />;
+  if (hash.startsWith('recording')) {
+    const params = new URLSearchParams(hash.split('?')[1] ?? '');
+    const mode = params.get('mode') === 'agent' ? 'agent' : 'dictation';
+    return <RecordingPopup initialMode={mode as RecordingIntent} />;
   }
 
   if (hash === 'audio') {
     return <AudioWindow />;
+  }
+
+  if (hash === 'settings') {
+    return <SettingsWindow />;
   }
 
   return <MainWindow />;

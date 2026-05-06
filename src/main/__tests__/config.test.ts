@@ -50,6 +50,14 @@ describe('config store', () => {
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,
+      agent: {
+        enabled: false,
+        provider: {
+          baseUrl: '',
+          model: '',
+          apiKeyEnvVar: '',
+        },
+      },
     });
   });
 
@@ -64,6 +72,14 @@ describe('config store', () => {
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: 'usb-mic',
       removeFillerWords: false,
+      agent: {
+        enabled: false,
+        provider: {
+          baseUrl: '',
+          model: '',
+          apiKeyEnvVar: '',
+        },
+      },
     });
   });
 
@@ -81,6 +97,14 @@ describe('config store', () => {
       whisperUrl: 'http://legacy.test/inference',
       selectedDeviceId: 'legacy-mic',
       removeFillerWords: false,
+      agent: {
+        enabled: false,
+        provider: {
+          baseUrl: '',
+          model: '',
+          apiKeyEnvVar: '',
+        },
+      },
     });
     expect(readFileSync).toHaveBeenCalledWith(normalize('/home/tester/.speech-2-text/config.json'), 'utf-8');
     expect(unlinkSync).toHaveBeenCalledWith(normalize('/home/tester/.speech-2-text/config.json'));
@@ -96,6 +120,14 @@ describe('config store', () => {
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,
+      agent: {
+        enabled: false,
+        provider: {
+          baseUrl: '',
+          model: '',
+          apiKeyEnvVar: '',
+        },
+      },
     });
     expect(unlinkSync).not.toHaveBeenCalled();
   });

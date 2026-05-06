@@ -30,6 +30,14 @@ const getConfig = vi.fn(() => ({
   whisperUrl: 'http://localhost:8080/inference',
   selectedDeviceId: null,
   removeFillerWords: true,
+  agent: {
+    enabled: false,
+    provider: {
+      baseUrl: '',
+      model: '',
+      apiKeyEnvVar: '',
+    },
+  },
 }));
 const simulatePaste = vi.fn();
 const checkForUpdates = vi.fn();
@@ -41,6 +49,7 @@ const getUpdateStatus = vi.fn(() => ({
 }));
 const updateAudioDevices = vi.fn();
 const updateUpdaterStatus = vi.fn();
+const openSettingsWindow = vi.fn();
 const keyboardStart = vi.fn();
 const keyboardStop = vi.fn();
 
@@ -51,6 +60,7 @@ mock.module('../native/keyboard', () => ({
 mock.module('../native/clipboard', () => ({ simulatePaste }));
 mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destroyAudioWindow }));
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
+mock.module('../settings-window', () => ({ openSettingsWindow }));
 mock.module('../tray', () => ({ createTray: vi.fn(), updateAudioDevices, updateUpdaterStatus }));
 mock.module('../config', () => ({ getConfig, setConfig }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
@@ -105,6 +115,7 @@ describe('main process IPC orchestration', () => {
     getUpdateStatus.mockClear();
     updateAudioDevices.mockClear();
     updateUpdaterStatus.mockClear();
+    openSettingsWindow.mockClear();
     keyboardStart.mockClear();
     keyboardStop.mockClear();
     await import(`../index?test=${Date.now()}-${Math.random()}`);
@@ -120,6 +131,7 @@ describe('main process IPC orchestration', () => {
       'clipboard:inject-text',
       'config:get',
       'config:set',
+      'settings:open',
       'updater:check',
       'updater:get-status',
     ]);
@@ -176,6 +188,22 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('original');
   });
 
+  it('routes agent recordings to the placeholder without injecting text', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void];
+    onStart('agent');
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await listenerPromise;
+
+    expect(showRecordingPill).toHaveBeenCalledWith('agent');
+    expect(electronMock.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Agent Mode',
+      detail: 'transcribed text',
+    }));
+    expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
   it('skips empty WAV payloads', async () => {
     await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(44).buffer);
 
@@ -192,6 +220,7 @@ describe('main process IPC orchestration', () => {
     });
     expect(ipcHandlers.get('updater:get-status')?.({})).toEqual(getUpdateStatus());
     ipcHandlers.get('config:set')?.({}, 'whisperUrl', 'http://new');
+    ipcHandlers.get('settings:open')?.({});
     ipcHandlers.get('audio:select-device')?.({}, 'mic-1');
     ipcHandlers.get('updater:check')?.({});
     ipcListeners.get('audio-devices')?.({}, [{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
@@ -199,6 +228,7 @@ describe('main process IPC orchestration', () => {
     ipcListeners.get('audio-duration-changed')?.({}, 12);
 
     expect(setConfig).toHaveBeenCalledWith('whisperUrl', 'http://new');
+    expect(openSettingsWindow).toHaveBeenCalled();
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
     expect(send).toHaveBeenCalledWith('audio:select-device', 'mic-1');
     expect(checkForUpdates).toHaveBeenCalled();

@@ -18,6 +18,14 @@ const config = {
   whisperUrl: 'http://localhost:8080/inference',
   selectedDeviceId: null as string | null,
   removeFillerWords: true,
+  agent: {
+    enabled: false,
+    provider: {
+      baseUrl: '',
+      model: '',
+      apiKeyEnvVar: '',
+    },
+  },
 };
 const setConfig = vi.fn((key: keyof typeof config, value: never) => {
   config[key] = value;
@@ -68,7 +76,7 @@ describe('tray', () => {
   it('creates a tray with tooltip, icon, and context menu', async () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-1`);
 
-    createTray(vi.fn(), vi.fn());
+    createTray(vi.fn());
 
     expect(createFromPath).toHaveBeenCalledWith(normalize('/app/icons/tray-icon.ico'));
     expect(resize).toHaveBeenCalledWith({ width: 16, height: 16 });
@@ -81,7 +89,7 @@ describe('tray', () => {
     existsSync.mockReturnValue(false);
     const { createTray } = await import(`../tray?test=${Date.now()}-2`);
 
-    createTray(vi.fn(), vi.fn());
+    createTray(vi.fn());
 
     expect(createFromDataURL).toHaveBeenCalledWith(expect.stringContaining('data:image/svg+xml'));
   });
@@ -94,7 +102,7 @@ describe('tray', () => {
     });
     const { createTray } = await import(`../tray?test=${Date.now()}-packaged`);
 
-    createTray(vi.fn(), vi.fn());
+    createTray(vi.fn());
 
     expect(createFromPath).toHaveBeenCalledWith(normalize('/resources/icons/tray-icon.ico'));
   });
@@ -102,7 +110,7 @@ describe('tray', () => {
   it('filters audio inputs and sends device selections to the audio window', async () => {
     audioWindow = { isDestroyed: () => false, webContents: { send } };
     const { createTray, updateAudioDevices } = await import(`../tray?test=${Date.now()}-3`);
-    createTray(vi.fn(), vi.fn());
+    createTray(vi.fn());
 
     updateAudioDevices([
       { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
@@ -119,28 +127,35 @@ describe('tray', () => {
     expect(send).toHaveBeenCalledWith('audio:select-device', 'speaker');
   });
 
-  it('handles clean transcription, update check, and exit menu actions', async () => {
-    const cleanHandler = vi.fn();
-    const updateHandler = vi.fn();
+  it('keeps settings-owned actions out of the tray and handles exit', async () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-4`);
 
-    createTray(cleanHandler, updateHandler);
+    createTray(vi.fn());
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    menu[5].click({ checked: false });
-    menu[7].click();
+    expect(menu.some((item: { label?: string }) => item.label === 'Clean Transcription')).toBe(false);
+    expect(menu.some((item: { label?: string }) => item.label === 'Check for Updates')).toBe(false);
     menu[8].click();
 
-    expect(setConfig).toHaveBeenCalledWith('removeFillerWords', false);
-    expect(cleanHandler).toHaveBeenCalledWith(false);
-    expect(updateHandler).toHaveBeenCalled();
     expect(quit).toHaveBeenCalled();
+  });
+
+  it('opens settings from the tray and shows agent status', async () => {
+    const settingsHandler = vi.fn();
+    const { createTray } = await import(`../tray?test=${Date.now()}-settings`);
+
+    createTray(settingsHandler);
+    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
+
+    expect(menu[5].label).toBe('Agent Mode: Disabled');
+    menu[6].click();
+    expect(settingsHandler).toHaveBeenCalled();
   });
 
   it('shows update status in the tray menu', async () => {
     const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-5`);
 
-    createTray(vi.fn(), vi.fn());
+    createTray(vi.fn());
     updateUpdaterStatus({
       state: 'latest',
       currentVersion: '3.1.0',

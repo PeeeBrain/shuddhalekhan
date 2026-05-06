@@ -4,16 +4,18 @@ import { keyboardHook } from './native/keyboard';
 import { simulatePaste } from './native/clipboard';
 import { createAudioWindow, getAudioWindow, destroyAudioWindow } from './audio-window';
 import { showRecordingPill, hideRecordingPill, getRecordingPillWindow } from './recording-pill';
+import { openSettingsWindow } from './settings-window';
 import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
 import { getConfig, setConfig } from './config';
 import { transcribe } from './whisper';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
-import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
+import type { AppConfig, AudioDevice, RecordingIntent, UpdateStatus } from '../types/ipc';
 
 let mainWindow: BrowserWindow | null = null;
 let isRecording = false;
 let isAudioWindowReady = false;
 let pendingStartRecording = false;
+let activeRecordingIntent: RecordingIntent | null = null;
 
 function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
@@ -45,9 +47,10 @@ function createMainWindow(): BrowserWindow {
   return mainWindow;
 }
 
-function startRecording(): void {
+function startRecording(intent: RecordingIntent = 'dictation'): void {
   if (isRecording) return;
   isRecording = true;
+  activeRecordingIntent = intent;
 
   const audioWin = createAudioWindow();
   if (isAudioWindowReady && !audioWin.webContents.isLoading()) {
@@ -57,7 +60,7 @@ function startRecording(): void {
     console.log('Queued recording start until audio window is ready');
   }
 
-  showRecordingPill();
+  showRecordingPill(intent);
 }
 
 async function stopRecording(): Promise<void> {
@@ -73,6 +76,9 @@ async function stopRecording(): Promise<void> {
 }
 
 async function handleTranscription(audioData: Uint8Array): Promise<void> {
+  const intent = activeRecordingIntent ?? 'dictation';
+  activeRecordingIntent = null;
+
   if (audioData.byteLength <= 44) {
     console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
     return;
@@ -81,6 +87,11 @@ async function handleTranscription(audioData: Uint8Array): Promise<void> {
   try {
     const text = await transcribe(audioData);
     if (!text) return;
+
+    if (intent === 'agent') {
+      handleAgentTranscriptPlaceholder(text);
+      return;
+    }
 
     // Clipboard sandwich
     const originalClipboard = clipboard.readText();
@@ -101,6 +112,18 @@ async function handleTranscription(audioData: Uint8Array): Promise<void> {
   }
 }
 
+function handleAgentTranscriptPlaceholder(text: string): void {
+  console.log(`Agent Mode transcript ready: ${text}`);
+  dialog.showMessageBox({
+    type: 'info',
+    title: 'Agent Mode',
+    message: 'Agent Mode transcript ready',
+    detail: text,
+  }).catch((err) => {
+    console.error('Failed to show Agent Mode placeholder:', err);
+  });
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -114,7 +137,7 @@ function publishUpdateStatus(status: UpdateStatus): void {
 
 // IPC handlers
 ipcMain.handle('audio:start-recording', () => {
-  startRecording();
+  startRecording('dictation');
 });
 
 ipcMain.handle('audio:stop-recording', async () => {
@@ -144,6 +167,10 @@ ipcMain.handle('config:get', () => {
 
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   setConfig(key, value);
+});
+
+ipcMain.handle('settings:open', () => {
+  openSettingsWindow();
 });
 
 ipcMain.handle('clipboard:inject-text', (_event, text: string) => {
@@ -230,18 +257,14 @@ app.whenReady().then(() => {
   });
 
   keyboardHook.start(
-    () => startRecording(),
-    () => stopRecording()
+    (intent) => startRecording(intent),
+    () => stopRecording(),
+    () => getConfig().agent.enabled
   );
 
-  createTray(
-    (enabled) => {
-      console.log('Clean transcription:', enabled);
-    },
-    () => {
-      void checkForUpdates();
-    }
-  );
+  createTray(() => {
+    openSettingsWindow();
+  });
 
   setupUpdater(publishUpdateStatus);
   publishUpdateStatus(getUpdateStatus());

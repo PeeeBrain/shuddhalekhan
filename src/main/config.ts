@@ -14,6 +14,14 @@ const store = new Store<StoreConfig>({
     whisperUrl: 'http://localhost:8080/inference',
     selectedDeviceId: null,
     removeFillerWords: true,
+    agent: {
+      enabled: false,
+      provider: {
+        baseUrl: '',
+        model: '',
+        apiKeyEnvVar: '',
+      },
+    },
   },
 });
 
@@ -49,10 +57,20 @@ function maybeMigrateLegacyConfig(): void {
 maybeMigrateLegacyConfig();
 
 export function getConfig(): AppConfig {
+  const agent = store.get('agent');
+
   return {
     whisperUrl: store.get('whisperUrl'),
     selectedDeviceId: store.get('selectedDeviceId'),
     removeFillerWords: store.get('removeFillerWords'),
+    agent: {
+      enabled: agent?.enabled ?? false,
+      provider: {
+        baseUrl: agent?.provider?.baseUrl ?? '',
+        model: agent?.provider?.model ?? '',
+        apiKeyEnvVar: agent?.provider?.apiKeyEnvVar ?? '',
+      },
+    },
   };
 }
 

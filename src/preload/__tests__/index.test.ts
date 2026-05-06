@@ -21,7 +21,19 @@ describe('preload API', () => {
   });
 
   it('forwards invoke and send calls to ipcRenderer', async () => {
-    electronMock.ipcRenderer.invoke.mockResolvedValue({ whisperUrl: 'x', selectedDeviceId: null, removeFillerWords: true });
+    electronMock.ipcRenderer.invoke.mockResolvedValue({
+      whisperUrl: 'x',
+      selectedDeviceId: null,
+      removeFillerWords: true,
+      agent: {
+        enabled: false,
+        provider: {
+          baseUrl: '',
+          model: '',
+          apiKeyEnvVar: '',
+        },
+      },
+    });
     await import(`../index?test=${Date.now()}-2`);
     const api = electronMock.contextBridge.exposeInMainWorld.mock.calls[0]?.[1];
 
@@ -29,6 +41,14 @@ describe('preload API', () => {
       whisperUrl: 'x',
       selectedDeviceId: null,
       removeFillerWords: true,
+      agent: {
+        enabled: false,
+        provider: {
+          baseUrl: '',
+          model: '',
+          apiKeyEnvVar: '',
+        },
+      },
     });
     api.send('audio-duration-changed', 4);
 

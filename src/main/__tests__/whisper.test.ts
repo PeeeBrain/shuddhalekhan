@@ -8,6 +8,14 @@ const config: AppConfig = {
   whisperUrl: 'http://whisper.test/inference',
   selectedDeviceId: null,
   removeFillerWords: true,
+  agent: {
+    enabled: false,
+    provider: {
+      baseUrl: '',
+      model: '',
+      apiKeyEnvVar: '',
+    },
+  },
 };
 
 describe('cleanFillerWords', () => {

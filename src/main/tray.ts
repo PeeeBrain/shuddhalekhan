@@ -6,8 +6,7 @@ import { getAudioWindow } from './audio-window';
 import type { AudioDevice, UpdateStatus } from '../types/ipc';
 
 let tray: Tray | null = null;
-let cleanTranscriptionHandler: ((enabled: boolean) => void) | null = null;
-let checkUpdatesHandler: (() => void) | null = null;
+let openSettingsHandler: (() => void) | null = null;
 let audioDevices: AudioDevice[] = [];
 let updateStatus: UpdateStatus = {
   state: 'idle',
@@ -16,12 +15,8 @@ let updateStatus: UpdateStatus = {
   checkedAt: null,
 };
 
-export function createTray(
-  onToggleCleanTranscription: (enabled: boolean) => void,
-  onCheckUpdates: () => void
-): Tray {
-  cleanTranscriptionHandler = onToggleCleanTranscription;
-  checkUpdatesHandler = onCheckUpdates;
+export function createTray(onOpenSettings: () => void): Tray {
+  openSettingsHandler = onOpenSettings;
 
   const icon = loadTrayIcon();
   
@@ -60,20 +55,14 @@ export function updateTrayMenu(): void {
     },
     { type: 'separator' },
     {
-      label: 'Clean Transcription',
-      type: 'checkbox',
-      checked: config.removeFillerWords,
-      click: (menuItem) => {
-        setConfig('removeFillerWords', menuItem.checked);
-        cleanTranscriptionHandler?.(menuItem.checked);
-      },
+      label: `Agent Mode: ${config.agent.enabled ? 'Enabled' : 'Disabled'}`,
+      enabled: false,
+    },
+    {
+      label: 'Settings...',
+      click: () => openSettingsHandler?.(),
     },
     { type: 'separator' },
-    {
-      label: updateStatus.state === 'checking' ? 'Checking for Updates...' : 'Check for Updates',
-      enabled: updateStatus.state !== 'checking',
-      click: () => checkUpdatesHandler?.(),
-    },
     {
       label: 'Exit',
       accelerator: 'CommandOrControl+Q',
