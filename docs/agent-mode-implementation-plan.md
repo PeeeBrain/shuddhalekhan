@@ -135,7 +135,7 @@ Revive Agent Mode as an opt-in, voice-first, stateless command executor. `Ctrl +
 - Agent responses are not injected into the focused app by default.
 - Live status should be minimal, such as checking tools, reading, drafting, waiting for approval.
 
-## Phase 11: SQLite Audit Store
+## Phase 11: SQLite Audit Store — Done
 
 - Sidecar owns `agent-audit.sqlite`.
 - Electron main does not write to or depend on the DB.
@@ -151,7 +151,7 @@ Revive Agent Mode as an opt-in, voice-first, stateless command executor. `Ctrl +
   - cancellation and max-step events.
 - Do not log secrets, auth codes, access tokens, refresh tokens, API keys, or Authorization headers.
 
-## Phase 12: MCP Registry and Hot Reload
+## Phase 12: MCP Registry and Hot Reload — Done
 
 - Electron owns MCP registry persistence and settings UI.
 - Sidecar receives sanitized runtime snapshots.

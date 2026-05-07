@@ -1,9 +1,6 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, stepCountIs, type JSONValue, type Tool } from 'ai';
-import { createMCPClient } from '@ai-sdk/mcp';
-import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
-import type { MCPClient } from '@ai-sdk/mcp';
-import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../types/ipc';
+import type { AppConfig } from '../types/ipc';
 import { logSidecar } from './protocol';
 
 export interface AgentRuntimeCallbacks {
@@ -12,6 +9,7 @@ export interface AgentRuntimeCallbacks {
   onFailed(error: string): void;
   onCancelled(): void;
   requestToolApproval(request: ToolApprovalRequest): Promise<ToolApprovalDecision>;
+  onAudit?(eventType: string, payload?: Record<string, unknown>): void;
 }
 
 export interface ToolApprovalRequest {
@@ -136,117 +134,21 @@ function stringifyForMessage(value: unknown): string {
   }
 }
 
-function createStdioTransport(server: McpServerConfig) {
-  if (server.transport.type !== 'stdio') return null;
-  const env: Record<string, string> = {};
-  for (const name of server.transport.envVarNames) {
-    const value = process.env[name];
-    if (value !== undefined) {
-      env[name] = value;
-    }
-  }
-  return new Experimental_StdioMCPTransport({
-    command: server.transport.command,
-    args: server.transport.args,
-    env,
-  });
-}
-
-function createHttpTransport(server: McpServerConfig) {
-  if (server.transport.type !== 'http') return null;
-  return {
-    type: 'http' as const,
-    url: server.transport.url,
-  };
-}
-
-async function connectMcpClients(
-  config: AppConfig,
-  requestToolApproval: AgentRuntimeCallbacks['requestToolApproval']
-): Promise<{ clients: MCPClient[]; tools: Record<string, Tool> }> {
-  const clients: MCPClient[] = [];
-  const allTools: Record<string, Tool> = {};
-
-  for (const server of config.agent.mcpServers) {
-    if (!server.enabled) continue;
-
-    try {
-      let client: MCPClient;
-      if (server.transport.type === 'stdio') {
-        const transport = createStdioTransport(server);
-        if (!transport) continue;
-        client = await createMCPClient({ transport });
-      } else if (server.transport.type === 'http') {
-        const transport = createHttpTransport(server);
-        if (!transport) continue;
-        client = await createMCPClient({ transport });
-      } else {
-        continue;
-      }
-
-      const rawTools = await client.tools();
-      clients.push(client);
-
-      for (const [originalName, toolDef] of Object.entries(rawTools)) {
-        const policyKey = `${server.id}:${originalName}` as const;
-        const policy = server.toolPolicies[policyKey] ?? 'alwaysAsk';
-        if (policy === 'disabled') continue;
-        const modelName = `${server.id}__${originalName}`;
-        allTools[modelName] = wrapToolWithPolicy(server.id, originalName, modelName, toolDef, policy, requestToolApproval);
-      }
-
-      logSidecar(`MCP server connected: ${server.id} (${server.displayName})`);
-    } catch (err) {
-      logSidecar(`MCP server failed: ${server.id}`, err);
-    }
-  }
-
-  return { clients, tools: allTools };
-}
-
-function wrapToolWithPolicy(
-  serverId: string,
-  toolName: string,
-  modelToolName: string,
-  toolDef: Tool,
-  policy: Exclude<AgentToolApprovalPolicy, 'disabled'>,
-  requestToolApproval: AgentRuntimeCallbacks['requestToolApproval']
-): Tool {
-  return {
-    ...toolDef,
-    execute: async (args, options) => {
-      if (policy === 'alwaysAsk') {
-        const approval = await requestToolApproval({
-          serverId,
-          toolName,
-          modelToolName,
-          arguments: args,
-        });
-
-        if (!approval.approved) {
-          return approval.message;
-        }
-      }
-
-      if (!toolDef.execute) {
-        throw new Error(`MCP tool ${serverId}:${toolName} is missing an execute handler.`);
-      }
-
-      return toolDef.execute(args, options);
-    },
-  };
-}
-
 export async function runAgent(
   _agentRunId: string,
   transcript: string,
   config: AppConfig,
+  tools: Record<string, Tool>,
   signal: AbortSignal,
   callbacks: AgentRuntimeCallbacks
 ): Promise<void> {
-  let clients: MCPClient[] = [];
-
   try {
+    callbacks.onAudit?.('run_started', {
+      transcript,
+      modelVisibleMessages: [{ role: 'user', content: transcript }],
+      toolNames: Object.keys(tools),
+    });
+
     const provider = config.agent.provider;
     if (!provider.baseUrl || !provider.model || !provider.apiKeyEnvVar) {
       callbacks.onFailed('Agent provider configuration is incomplete. Check base URL, model, and API key environment variable in Settings.');
@@ -267,8 +169,6 @@ export async function runAgent(
     }
 
     callbacks.onStatus('Connecting to tools...');
-    const mcp = await connectMcpClients(config, callbacks.requestToolApproval);
-    clients = mcp.clients;
 
     const model = createOpenAICompatible({
       name: 'shuddhalekhan',
@@ -284,13 +184,14 @@ export async function runAgent(
       model,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: transcript }],
-      tools: mcp.tools,
+      tools,
       providerOptions: getDefaultProviderOptions(provider.baseUrl),
       stopWhen: stepCountIs(5),
       abortSignal: signal,
       onStepFinish: ({ toolCalls }) => {
         if (toolCalls.length > 0) {
           const names = toolCalls.map((t) => String(t.toolName)).join(', ');
+          callbacks.onAudit?.('tool_requests', { toolCalls });
           callbacks.onStatus(`Using tools: ${names}`);
         } else {
           callbacks.onStatus('Thinking...');
@@ -304,6 +205,9 @@ export async function runAgent(
     for (const step of result.steps) {
       for (const tc of step.toolCalls) {
         toolSummary.push(`Used ${String(tc.toolName)}`);
+      }
+      if (step.toolResults.length > 0) {
+        callbacks.onAudit?.('tool_results', { toolResults: step.toolResults });
       }
     }
 
@@ -332,17 +236,20 @@ export async function runAgent(
       });
       finalResponse = fallback.text;
       toolSummary.push('Max step guardrail reached');
+      callbacks.onAudit?.('max_step_guardrail', { stepCount: result.steps.length });
     }
 
+    callbacks.onAudit?.('run_completed', { response: finalResponse, toolSummary });
     callbacks.onCompleted(finalResponse, toolSummary);
   } catch (err) {
     if (signal.aborted) {
+      callbacks.onAudit?.('run_cancelled');
       callbacks.onCancelled();
       return;
     }
     logSidecar('Agent runtime error', err);
-    callbacks.onFailed(formatProviderError(err));
-  } finally {
-    await Promise.all(clients.map((c) => c.close().catch(() => undefined)));
+    const error = formatProviderError(err);
+    callbacks.onAudit?.('run_failed', { error });
+    callbacks.onFailed(error);
   }
 }

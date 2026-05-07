@@ -58,7 +58,7 @@ describe('runAgent', () => {
     const callbacks = makeCallbacks();
     const config = { ...baseConfig, agent: { ...baseConfig.agent, provider: { ...baseConfig.agent.provider, baseUrl: '' } } };
 
-    await runAgent('run-1', 'hello', config as never, new AbortController().signal, callbacks);
+    await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
       'Agent provider configuration is incomplete. Check base URL, model, and API key environment variable in Settings.'
@@ -68,7 +68,7 @@ describe('runAgent', () => {
   it('fails when API key environment variable is missing', async () => {
     const callbacks = makeCallbacks();
 
-    await runAgent('run-1', 'hello', baseConfig as never, new AbortController().signal, callbacks);
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
       'API key environment variable "OPENROUTER_API_KEY" is not set.'
@@ -88,7 +88,7 @@ describe('runAgent', () => {
       },
     };
 
-    await runAgent('run-1', 'hello', config as never, new AbortController().signal, callbacks);
+    await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
       'Settings contains an API key value, but Shuddhalekhan expects an environment variable name. Set OPENROUTER_API_KEY in your shell, restart bun run dev, and put OPENROUTER_API_KEY in Settings.'
@@ -106,7 +106,7 @@ describe('runAgent', () => {
 
     const callbacks = makeCallbacks();
 
-    await runAgent('run-1', 'hello', baseConfig as never, new AbortController().signal, callbacks);
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Done', []);
     expect(stepCountIsMock).toHaveBeenCalledWith(5);
@@ -135,7 +135,7 @@ describe('runAgent', () => {
 
     const callbacks = makeCallbacks();
 
-    await runAgent('run-1', 'hello', baseConfig as never, new AbortController().signal, callbacks);
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onStatus).toHaveBeenCalledWith('Using tools: weather');
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Weather is sunny', ['Used weather']);
@@ -175,7 +175,7 @@ describe('runAgent', () => {
 
     const callbacks = makeCallbacks();
 
-    await runAgent('run-1', 'hello', baseConfig as never, new AbortController().signal, callbacks);
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onStatus).toHaveBeenCalledWith('Step limit reached. Summarizing...');
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Step limit fallback', expect.arrayContaining(['Max step guardrail reached']));
@@ -194,154 +194,11 @@ describe('runAgent', () => {
     const controller = new AbortController();
     controller.abort();
 
-    await runAgent('run-1', 'hello', baseConfig as never, controller.signal, callbacks);
+    await runAgent('run-1', 'hello', baseConfig as never, {}, controller.signal, callbacks);
 
     expect(callbacks.onCancelled).toHaveBeenCalled();
   });
 
-  it('filters disabled tools and namespaces enabled ones', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-
-    const mockTool = { type: 'function', description: 'test tool', parameters: {}, execute: mock() };
-    createMCPClientMock.mockImplementation(async () => ({
-      tools: async () => ({ search: mockTool, delete: mockTool }),
-      close: closeMock,
-    }));
-
-    generateTextMock.mockImplementation(async () => ({
-      text: 'ok',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        mcpServers: [
-          {
-            id: 'srv1',
-            displayName: 'Test Server',
-            enabled: true,
-            transport: { type: 'http', url: 'http://localhost:3000/mcp' },
-            discoveredTools: [],
-            toolPolicies: { 'srv1:delete': 'disabled' },
-          },
-        ],
-      },
-    };
-
-    const callbacks = makeCallbacks();
-
-    await runAgent('run-1', 'hello', config as never, new AbortController().signal, callbacks);
-
-    expect(createMCPClientMock).toHaveBeenCalled();
-    const toolsArg = generateTextMock.mock.calls[0]?.[0].tools;
-    expect(toolsArg).toHaveProperty('srv1__search');
-    expect(toolsArg).not.toHaveProperty('srv1__delete');
-    expect(toolsArg).not.toHaveProperty('search');
-  });
-
-  it('requests approval before executing alwaysAsk tools', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-
-    const execute = mock(async () => 'result');
-    const mockTool = { description: 'test tool', inputSchema: {}, execute };
-    createMCPClientMock.mockImplementation(async () => ({
-      tools: async () => ({ search: mockTool }),
-      close: closeMock,
-    }));
-
-    generateTextMock.mockImplementation(async (options: { tools: Record<string, typeof mockTool> }) => {
-      const output = await options.tools.srv1__search.execute({ q: 'mail' }, {});
-      return {
-        text: String(output),
-        steps: [{ toolCalls: [{ toolName: 'srv1__search' }], toolResults: [{ toolName: 'srv1__search', result: output }] }],
-        toolCalls: [{ toolName: 'srv1__search' }],
-        toolResults: [{ toolName: 'srv1__search', result: output }],
-      };
-    });
-
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        mcpServers: [
-          {
-            id: 'srv1',
-            displayName: 'Test Server',
-            enabled: true,
-            transport: { type: 'http', url: 'http://localhost:3000/mcp' },
-            discoveredTools: [],
-            toolPolicies: {},
-          },
-        ],
-      },
-    };
-
-    const callbacks = makeCallbacks();
-
-    await runAgent('run-1', 'hello', config as never, new AbortController().signal, callbacks);
-
-    expect(callbacks.requestToolApproval).toHaveBeenCalledWith({
-      serverId: 'srv1',
-      toolName: 'search',
-      modelToolName: 'srv1__search',
-      arguments: { q: 'mail' },
-    });
-    expect(execute).toHaveBeenCalledWith({ q: 'mail' }, {});
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('result', ['Used srv1__search']);
-  });
-
-  it('returns denial feedback instead of executing denied tools', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-
-    const execute = mock(async () => 'result');
-    const mockTool = { description: 'test tool', inputSchema: {}, execute };
-    createMCPClientMock.mockImplementation(async () => ({
-      tools: async () => ({ send: mockTool }),
-      close: closeMock,
-    }));
-
-    generateTextMock.mockImplementation(async (options: { tools: Record<string, typeof mockTool> }) => {
-      const output = await options.tools.srv1__send.execute({ to: 'a@example.com' }, {});
-      return {
-        text: String(output),
-        steps: [{ toolCalls: [{ toolName: 'srv1__send' }], toolResults: [{ toolName: 'srv1__send', result: output }] }],
-        toolCalls: [{ toolName: 'srv1__send' }],
-        toolResults: [{ toolName: 'srv1__send', result: output }],
-      };
-    });
-
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        mcpServers: [
-          {
-            id: 'srv1',
-            displayName: 'Test Server',
-            enabled: true,
-            transport: { type: 'http', url: 'http://localhost:3000/mcp' },
-            discoveredTools: [],
-            toolPolicies: {},
-          },
-        ],
-      },
-    };
-
-    const callbacks = makeCallbacks();
-    callbacks.requestToolApproval.mockImplementation(async () => ({
-      approved: false,
-      message: 'Rejected: user said no.',
-    }));
-
-    await runAgent('run-1', 'hello', config as never, new AbortController().signal, callbacks);
-
-    expect(execute).not.toHaveBeenCalled();
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Rejected: user said no.', ['Used srv1__send']);
-  });
 });
 
 function makeCallbacks(): AgentRuntimeCallbacks & { [K in keyof AgentRuntimeCallbacks]: ReturnType<typeof mock> } {

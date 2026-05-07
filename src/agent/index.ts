@@ -5,12 +5,17 @@ import { runAgent } from './runtime';
 import type { AppConfig } from '../types/ipc';
 import type { ApprovalDecisionMessage } from './protocol';
 import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
+import { AgentAuditStore } from './audit';
+import { McpRegistry } from './mcp-registry';
 
 let config: AppConfig | null = null;
 let activeAgentRunId: string | null = null;
 let activeAbortController: AbortController | null = null;
 let pendingApproval: PendingApproval | null = null;
 let approvalQueue: Promise<void> = Promise.resolve();
+let configUpdateQueue: Promise<void> = Promise.resolve();
+const auditStore = new AgentAuditStore();
+const mcpRegistry = new McpRegistry();
 
 const APPROVAL_TIMEOUT_MS = 30_000;
 const APPROVAL_TIMEOUT_MESSAGE = 'Rejected: tool approval window expired.';
@@ -57,6 +62,7 @@ function handleLine(line: string): void {
     case 'config:update':
       config = message.config;
       logSidecar('received config update');
+      configUpdateQueue = configUpdateQueue.then(() => mcpRegistry.updateConfig(message.config));
       break;
     case 'agent:start':
       handleAgentStart(message.agentRunId, message.transcript);
@@ -92,9 +98,13 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
   }
 
   try {
-    await runAgent(agentRunId, transcript, currentConfig, activeAbortController.signal, {
+    await configUpdateQueue;
+    const toolSnapshot = mcpRegistry.createRunSnapshot((request) => requestToolApproval(agentRunId, request));
+
+    await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, activeAbortController.signal, {
       onStatus: (status) => {
         if (activeAgentRunId !== agentRunId) return;
+        auditStore.record(agentRunId, 'status', { status });
         writeJsonLine({ type: 'agent:status', agentRunId, status });
       },
       onCompleted: (response, toolSummary) => {
@@ -105,6 +115,7 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
       },
       onFailed: (error) => {
         if (activeAgentRunId !== agentRunId) return;
+        auditStore.record(agentRunId, 'failed', { error });
         writeJsonLine({ type: 'agent:failed', agentRunId, error });
         activeAgentRunId = null;
         activeAbortController = null;
@@ -112,15 +123,19 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
       onCancelled: () => {
         if (activeAgentRunId !== agentRunId) return;
         rejectPendingApproval(agentRunId, 'Rejected: agent run was cancelled.');
+        auditStore.record(agentRunId, 'cancelled');
         writeJsonLine({ type: 'agent:cancelled', agentRunId });
         activeAgentRunId = null;
         activeAbortController = null;
       },
       requestToolApproval: (request) => requestToolApproval(agentRunId, request),
+      onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
     });
+    await toolSnapshot.close();
   } catch (err) {
     if (activeAgentRunId !== agentRunId) return;
     logSidecar('unhandled agent start error', err);
+    auditStore.record(agentRunId, 'failed', { error: err instanceof Error ? err.message : String(err) });
     writeJsonLine({
       type: 'agent:failed',
       agentRunId,
@@ -135,6 +150,7 @@ function handleAgentCancel(agentRunId: string): void {
   if (activeAgentRunId === agentRunId && activeAbortController) {
     activeAbortController.abort();
     rejectPendingApproval(agentRunId, 'Rejected: agent run was cancelled.');
+    auditStore.record(agentRunId, 'cancelled', { reason: 'requested' });
     activeAgentRunId = null;
     activeAbortController = null;
   }
@@ -167,6 +183,14 @@ async function requestToolApproval(agentRunId: string, request: ToolApprovalRequ
         pendingApproval = null;
       }
       releaseQueue();
+      auditStore.record(agentRunId, 'approval_decision', {
+        approvalId,
+        serverId: request.serverId,
+        toolName: request.toolName,
+        modelToolName: request.modelToolName,
+        approved: decision.approved,
+        message: decision.approved ? undefined : decision.message,
+      });
       resolve(decision);
     };
 
@@ -181,6 +205,15 @@ async function requestToolApproval(agentRunId: string, request: ToolApprovalRequ
       timeout,
       resolve: finish,
     };
+
+    auditStore.record(agentRunId, 'approval_requested', {
+      approvalId,
+      serverId: request.serverId,
+      toolName: request.toolName,
+      modelToolName: request.modelToolName,
+      arguments: request.arguments,
+      expiresAt,
+    });
 
     writeJsonLine({
       type: 'approval:requested',
