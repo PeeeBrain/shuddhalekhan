@@ -61,7 +61,7 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
-      'Agent provider configuration is incomplete. Check base URL, model, and API key environment variable in Settings.'
+      'Agent provider configuration is incomplete. Check base URL and model in Settings.'
     );
   });
 
@@ -110,6 +110,36 @@ describe('runAgent', () => {
 
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Done', []);
     expect(stepCountIsMock).toHaveBeenCalledWith(5);
+  });
+
+  it('does not require an API key for local providers', async () => {
+    generateTextMock.mockImplementation(async () => ({
+      text: 'Local done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    const callbacks = makeCallbacks();
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        provider: {
+          baseUrl: 'http://localhost:11434/v1',
+          model: 'gemma3:270m',
+          apiKeyEnvVar: '',
+        },
+      },
+    };
+
+    await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
+
+    expect(createOpenAICompatibleMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'shuddhalekhan-local-provider',
+      baseURL: 'http://localhost:11434/v1',
+    }));
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Local done', []);
   });
 
   it('emits status during tool calls', async () => {

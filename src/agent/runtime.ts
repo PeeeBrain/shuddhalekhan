@@ -34,6 +34,12 @@ function getApiKey(envVarName: string): string | undefined {
   return process.env[envVarName];
 }
 
+function requiresApiKey(baseUrl: string): boolean {
+  const parsed = new URL(baseUrl);
+  const hostname = parsed.hostname.toLowerCase();
+  return !['localhost', '127.0.0.1', '::1'].includes(hostname);
+}
+
 function looksLikeRawApiKey(value: string): boolean {
   return /^sk-[A-Za-z0-9_-]/.test(value.trim());
 }
@@ -150,22 +156,39 @@ export async function runAgent(
     });
 
     const provider = config.agent.provider;
-    if (!provider.baseUrl || !provider.model || !provider.apiKeyEnvVar) {
-      callbacks.onFailed('Agent provider configuration is incomplete. Check base URL, model, and API key environment variable in Settings.');
+    if (!provider.baseUrl || !provider.model) {
+      callbacks.onFailed('Agent provider configuration is incomplete. Check base URL and model in Settings.');
       return;
     }
 
-    const apiKey = getApiKey(provider.apiKeyEnvVar);
-    if (!apiKey) {
+    let apiKey = 'shuddhalekhan-local-provider';
+    if (requiresApiKey(provider.baseUrl)) {
+      if (!provider.apiKeyEnvVar) {
+        callbacks.onFailed('Agent provider configuration is incomplete. Remote providers require an API key environment variable in Settings.');
+        return;
+      }
+
+      apiKey = getApiKey(provider.apiKeyEnvVar) ?? '';
+      if (!apiKey) {
+        if (looksLikeRawApiKey(provider.apiKeyEnvVar)) {
+          callbacks.onFailed(
+            'Settings contains an API key value, but Shuddhalekhan expects an environment variable name. Set OPENROUTER_API_KEY in your shell, restart bun run dev, and put OPENROUTER_API_KEY in Settings.'
+          );
+          return;
+        }
+
+        callbacks.onFailed(`API key environment variable "${provider.apiKeyEnvVar}" is not set.`);
+        return;
+      }
+    } else if (provider.apiKeyEnvVar) {
       if (looksLikeRawApiKey(provider.apiKeyEnvVar)) {
         callbacks.onFailed(
-          'Settings contains an API key value, but Shuddhalekhan expects an environment variable name. Set OPENROUTER_API_KEY in your shell, restart bun run dev, and put OPENROUTER_API_KEY in Settings.'
+          'Settings contains an API key value, but Shuddhalekhan expects an environment variable name. Leave this field empty for local providers, or enter an environment variable name.'
         );
         return;
       }
 
-      callbacks.onFailed(`API key environment variable "${provider.apiKeyEnvVar}" is not set.`);
-      return;
+      apiKey = getApiKey(provider.apiKeyEnvVar) ?? apiKey;
     }
 
     callbacks.onStatus('Connecting to tools...');

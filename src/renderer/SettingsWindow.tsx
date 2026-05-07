@@ -165,9 +165,11 @@ export function SettingsWindow() {
             <TextRow
               label="API key env var name"
               value={config.agent.provider.apiKeyEnvVar}
-              placeholder="OPENROUTER_API_KEY"
+              placeholder={isLocalProviderUrl(config.agent.provider.baseUrl) ? 'Optional for local providers' : 'OPENROUTER_API_KEY'}
               warning={looksLikeRawApiKey(config.agent.provider.apiKeyEnvVar)
                 ? 'Enter the environment variable name here, not the API key value. Example: OPENROUTER_API_KEY.'
+                : isLocalProviderUrl(config.agent.provider.baseUrl)
+                  ? 'Local providers such as Ollama can leave this empty.'
                 : undefined}
               onChange={(apiKeyEnvVar) => updateAgent({
                 ...config.agent,
@@ -583,6 +585,15 @@ function TextRow({
 
 function looksLikeRawApiKey(value: string): boolean {
   return /^sk-[A-Za-z0-9_-]/.test(value.trim());
+}
+
+function isLocalProviderUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return ['localhost', '127.0.0.1', '::1'].includes(hostname);
+  } catch {
+    return false;
+  }
 }
 
 function makeServerId(prefix: string): string {
