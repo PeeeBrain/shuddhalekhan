@@ -28,6 +28,7 @@ export default tseslint.config(
       'dist/',
       'build/',
       '*.config.{ts,mjs}',
+      'src/renderer/components/ui/',
     ],
   }
 );

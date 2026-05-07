@@ -4,7 +4,9 @@ import { RecordingPopup } from './RecordingPopup';
 import { SettingsWindow } from './SettingsWindow';
 import { AgentToast } from './AgentToast';
 import type { AppInfo, RecordingIntent, UpdateStatus } from '../types/ipc';
-import './App.css';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 
 async function sendAudioDevices(): Promise<void> {
   const devices = await enumerateDevices();
@@ -99,35 +101,47 @@ function MainWindow() {
       });
   };
 
+  const statusVariant = getStatusVariant(updateStatus);
+
   return (
-    <main className="container">
-      <section className="status-panel" aria-label="Application status">
-        <div className="title-row">
+    <main className="flex min-h-screen flex-col justify-center bg-background p-6">
+      <section className="mx-auto w-full max-w-md space-y-5" aria-label="Application status">
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <h1>Shuddhalekhan</h1>
-            <p className="version">Version {appInfo?.version ?? '...'}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">Shuddhalekhan</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Version {appInfo?.version ?? '...'}</p>
           </div>
-          <span className="state-badge">{getStatusLabel(updateStatus)}</span>
+          <Badge variant={statusVariant.variant} className={statusVariant.className}>
+            {getStatusLabel(updateStatus)}
+          </Badge>
         </div>
 
-        <div className="update-box">
-          <p>{updateStatus?.message ?? 'Update status has not loaded yet.'}</p>
-          {updateStatus?.checkedAt ? (
-            <time dateTime={updateStatus.checkedAt}>Checked {formatCheckedAt(updateStatus.checkedAt)}</time>
-          ) : null}
-        </div>
+        <Card className="border-border/60">
+          <CardContent className="space-y-1.5 pt-6">
+            <p className="text-sm text-foreground">{updateStatus?.message ?? 'Update status has not loaded yet.'}</p>
+            {updateStatus?.checkedAt ? (
+              <time dateTime={updateStatus.checkedAt} className="block text-xs text-muted-foreground">
+                Checked {formatCheckedAt(updateStatus.checkedAt)}
+              </time>
+            ) : null}
+          </CardContent>
+        </Card>
 
-        <button
-          type="button"
+        <Button
           onClick={checkForUpdates}
           disabled={updateStatus?.state === 'checking'}
+          className="w-full"
         >
           {updateStatus?.state === 'checking' ? 'Checking...' : 'Check for Updates'}
-        </button>
+        </Button>
 
-        <div className="hint-grid">
-          <span>Hold Ctrl+Win</span>
-          <span>Release to transcribe</span>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex h-[34px] items-center justify-center rounded-lg border border-border/60 bg-muted/50 px-3 text-xs text-muted-foreground">
+            Hold Ctrl+Win
+          </div>
+          <div className="flex h-[34px] items-center justify-center rounded-lg border border-border/60 bg-muted/50 px-3 text-xs text-muted-foreground">
+            Release to transcribe
+          </div>
         </div>
       </section>
     </main>
@@ -149,6 +163,24 @@ function getStatusLabel(status: UpdateStatus | null): string {
       return 'Checking';
     case 'idle':
       return 'Ready';
+  }
+}
+
+function getStatusVariant(status: UpdateStatus | null): { variant: 'default' | 'secondary' | 'destructive' | 'outline'; className?: string } {
+  if (!status) return { variant: 'secondary' };
+  switch (status.state) {
+    case 'available':
+    case 'downloading':
+    case 'downloaded':
+      return { variant: 'default', className: 'bg-primary text-primary-foreground' };
+    case 'latest':
+      return { variant: 'secondary' };
+    case 'error':
+      return { variant: 'destructive' };
+    case 'checking':
+      return { variant: 'outline' };
+    case 'idle':
+      return { variant: 'secondary' };
   }
 }
 

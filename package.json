@@ -22,12 +22,19 @@
   "dependencies": {
     "@ai-sdk/mcp": "1.0.40",
     "@ai-sdk/openai-compatible": "2.0.46",
+    "@tailwindcss/vite": "^4.2.4",
     "ai": "6.0.175",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.3.0",
     "koffi": "^2.9.0",
+    "lucide-react": "^1.14.0",
+    "radix-ui": "^1.4.3",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
