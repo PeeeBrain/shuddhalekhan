@@ -12,6 +12,16 @@ export type McpServerStatusEvent = {
   message?: string;
 };
 
+export type McpToolsDiscoveredEvent = {
+  type: 'mcp:tools-discovered';
+  serverId: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema?: unknown;
+  }>;
+};
+
 export type AgentStatusEvent = {
   type: 'agent:status';
   agentRunId: string;
@@ -50,6 +60,7 @@ export type AgentCancelledEvent = {
 export type SidecarEvent =
   | SidecarReadyEvent
   | McpServerStatusEvent
+  | McpToolsDiscoveredEvent
   | AgentStatusEvent
   | ApprovalRequestedEvent
   | AgentCompletedEvent

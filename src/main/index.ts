@@ -4,14 +4,14 @@ import { keyboardHook } from './native/keyboard';
 import { simulatePaste } from './native/clipboard';
 import { createAudioWindow, getAudioWindow, destroyAudioWindow } from './audio-window';
 import { showRecordingPill, hideRecordingPill, getRecordingPillWindow } from './recording-pill';
-import { openSettingsWindow } from './settings-window';
+import { getSettingsWindow, openSettingsWindow } from './settings-window';
 import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
 import { showAgentToast, hideAgentToast } from './agent-toast-window';
 import { getConfig, setConfig } from './config';
 import { transcribe } from './whisper';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
-import type { AppConfig, AudioDevice, RecordingIntent, UpdateStatus } from '../types/ipc';
+import type { AppConfig, AudioDevice, McpDiscoveredTool, RecordingIntent, UpdateStatus } from '../types/ipc';
 
 let mainWindow: BrowserWindow | null = null;
 let isRecording = false;
@@ -25,6 +25,14 @@ const agentSidecar = new AgentSidecarManager((event) => {
       break;
     case 'mcp:server-status':
       console.log(`MCP server ${event.serverId}: ${event.status}`);
+      getSettingsWindow()?.webContents.send('mcp:server-status', {
+        serverId: event.serverId,
+        status: event.status,
+        message: event.message,
+      });
+      break;
+    case 'mcp:tools-discovered':
+      persistDiscoveredTools(event.serverId, event.tools);
       break;
     case 'agent:status':
       console.log(`Agent run ${event.agentRunId}: ${event.status}`);
@@ -62,6 +70,40 @@ const agentSidecar = new AgentSidecarManager((event) => {
       break;
   }
 });
+
+function persistDiscoveredTools(
+  serverId: string,
+  tools: Array<{ name: string; description: string; inputSchema?: unknown }>
+): void {
+  const config = getConfig();
+  const discoveredAt = new Date().toISOString();
+  const nextServers = config.agent.mcpServers.map((server) => {
+    if (server.id !== serverId) return server;
+
+    const discoveredTools: McpDiscoveredTool[] = tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      discoveredAt,
+    }));
+    const toolPolicies = { ...server.toolPolicies };
+    for (const tool of discoveredTools) {
+      const key = `${server.id}:${tool.name}` as const;
+      if (!toolPolicies[key]) toolPolicies[key] = 'alwaysAsk';
+    }
+
+    return {
+      ...server,
+      discoveredTools,
+      toolPolicies,
+    };
+  });
+
+  setConfig('agent', {
+    ...config.agent,
+    mcpServers: nextServers,
+  });
+}
 
 function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
@@ -217,9 +259,27 @@ ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[key
   const config = getConfig();
   if (!config.agent.enabled) {
     agentSidecar.stop();
-  } else if (agentSidecar.getActiveAgentRunId()) {
+  } else {
     agentSidecar.start(config);
   }
+});
+
+ipcMain.handle('mcp:test-server', (_event, serverId: string) => {
+  const config = getConfig();
+  const server = config.agent.mcpServers.find((item) => item.id === serverId);
+  if (!server) return;
+
+  agentSidecar.start({
+    ...config,
+    agent: {
+      ...config.agent,
+      enabled: true,
+      mcpServers: config.agent.mcpServers.map((item) => ({
+        ...item,
+        enabled: item.id === serverId ? true : item.enabled,
+      })),
+    },
+  });
 });
 
 ipcMain.handle('settings:open', () => {

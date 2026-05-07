@@ -72,6 +72,15 @@ export class McpRegistry {
       const client = await createMCPClient({ transport: createTransport(server) });
       const rawTools = (await client.tools()) as Record<string, Tool>;
       this.servers.set(server.id, { config: server, client, rawTools });
+      writeJsonLine({
+        type: 'mcp:tools-discovered',
+        serverId: server.id,
+        tools: Object.entries(rawTools).map(([name, tool]) => ({
+          name,
+          description: typeof tool.description === 'string' ? tool.description : '',
+          inputSchema: 'inputSchema' in tool ? tool.inputSchema : undefined,
+        })),
+      });
       writeJsonLine({ type: 'mcp:server-status', serverId: server.id, status: 'connected' });
       logSidecar(`MCP server connected: ${server.id} (${server.displayName})`);
     } catch (err) {

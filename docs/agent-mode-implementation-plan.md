@@ -162,7 +162,7 @@ Revive Agent Mode as an opt-in, voice-first, stateless command executor. `Ctrl +
   - tool policy changes apply without reconnecting.
 - Active runs use the immutable MCP/tool-policy snapshot they started with.
 
-## Phase 13: Official Gmail MCP
+## Phase 13: Official Gmail MCP — In Progress
 
 - Add Gmail preset for Google's first-party Gmail MCP endpoint:
   - `https://gmailmcp.googleapis.com/mcp/v1`

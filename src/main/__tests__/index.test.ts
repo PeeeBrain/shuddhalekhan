@@ -51,6 +51,10 @@ const getUpdateStatus = vi.fn(() => ({
 const updateAudioDevices = vi.fn();
 const updateUpdaterStatus = vi.fn();
 const openSettingsWindow = vi.fn();
+const getSettingsWindow = vi.fn(() => ({
+  webContents: { send },
+  isDestroyed: vi.fn(() => false),
+}));
 const keyboardStart = vi.fn();
 const keyboardStop = vi.fn();
 const agentStartRun = vi.fn(() => 'run-1');
@@ -68,7 +72,7 @@ mock.module('../native/keyboard', () => ({
 mock.module('../native/clipboard', () => ({ simulatePaste }));
 mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destroyAudioWindow }));
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
-mock.module('../settings-window', () => ({ openSettingsWindow }));
+mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow }));
 mock.module('../tray', () => ({ createTray: vi.fn(), updateAudioDevices, updateUpdaterStatus }));
 mock.module('../config', () => ({ getConfig, setConfig }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
@@ -134,6 +138,7 @@ describe('main process IPC orchestration', () => {
     updateAudioDevices.mockClear();
     updateUpdaterStatus.mockClear();
     openSettingsWindow.mockClear();
+    getSettingsWindow.mockClear();
     keyboardStart.mockClear();
     keyboardStop.mockClear();
     agentStartRun.mockClear();
@@ -171,6 +176,7 @@ describe('main process IPC orchestration', () => {
       'clipboard:inject-text',
       'config:get',
       'config:set',
+      'mcp:test-server',
       'settings:open',
       'updater:check',
       'updater:get-status',
@@ -272,6 +278,7 @@ describe('main process IPC orchestration', () => {
     });
     expect(ipcHandlers.get('updater:get-status')?.({})).toEqual(getUpdateStatus());
     ipcHandlers.get('config:set')?.({}, 'whisperUrl', 'http://new');
+    ipcHandlers.get('mcp:test-server')?.({}, 'missing-server');
     ipcHandlers.get('settings:open')?.({});
     ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-1', 'denied', 'no');
     ipcHandlers.get('audio:select-device')?.({}, 'mic-1');

@@ -68,6 +68,7 @@ export interface RendererToMainInvokeChannels {
     decision: 'approved' | 'denied',
     message?: string
   ) => void;
+  'mcp:test-server': (serverId: string) => void;
   'app:get-info': () => Promise<AppInfo>;
   'updater:get-status': () => Promise<UpdateStatus>;
   'updater:check': () => Promise<UpdateStatus>;
@@ -84,8 +85,15 @@ export interface MainToRendererChannels {
   'audio:level-changed': (level: number) => void;
   'audio:duration-changed': (seconds: number) => void;
   'agent-toast:update': (state: AgentToastState) => void;
+  'mcp:server-status': (status: McpServerRuntimeStatus) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
 }
+
+export type McpServerRuntimeStatus = {
+  serverId: string;
+  status: 'connected' | 'connecting' | 'disconnected' | 'failed';
+  message?: string;
+};
 
 export type AgentToastState =
   | {

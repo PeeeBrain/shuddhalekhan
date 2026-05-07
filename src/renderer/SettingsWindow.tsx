@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AppConfig, AppInfo, UpdateStatus } from '../types/ipc';
+import type {
+  AgentToolApprovalPolicy,
+  AppConfig,
+  AppInfo,
+  McpServerConfig,
+  McpServerRuntimeStatus,
+  UpdateStatus,
+} from '../types/ipc';
 
 type SettingsSection = 'general' | 'audio' | 'agent' | 'mcp' | 'about';
 
@@ -16,6 +23,7 @@ export function SettingsWindow() {
   const [config, setConfigState] = useState<AppConfig | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerRuntimeStatus>>({});
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
 
   useEffect(() => {
@@ -29,7 +37,18 @@ export function SettingsWindow() {
       console.error('Failed to load update status:', err);
     });
 
-    return window.electronAPI?.on('updater:status-changed', setUpdateStatus);
+    const offUpdater = window.electronAPI?.on('updater:status-changed', setUpdateStatus);
+    const offMcpStatus = window.electronAPI?.on('mcp:server-status', (status) => {
+      setMcpStatuses((current) => ({ ...current, [status.serverId]: status }));
+      window.electronAPI?.invoke('config:get').then(setConfigState).catch((err) => {
+        console.error('Failed to refresh MCP tools:', err);
+      });
+    });
+
+    return () => {
+      offUpdater?.();
+      offMcpStatus?.();
+    };
   }, []);
 
   const updateConfig = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
@@ -53,6 +72,8 @@ export function SettingsWindow() {
       </main>
     );
   }
+
+  const updateMcpServers = (mcpServers: McpServerConfig[]) => updateAgent({ ...config.agent, mcpServers });
 
   return (
     <main className="settings-shell">
@@ -157,11 +178,14 @@ export function SettingsWindow() {
         ) : null}
 
         {activeSection === 'mcp' ? (
-          <SettingsPanel>
-            <ReadOnlyRow label="Registry" value="Not implemented in Phase 3" />
-            <ReadOnlyRow label="Gmail preset" value="Planned for a later phase" />
-            <ReadOnlyRow label="Tool approvals" value="No tools are exposed yet" />
-          </SettingsPanel>
+          <McpSettings
+            servers={config.agent.mcpServers}
+            statuses={mcpStatuses}
+            onChange={updateMcpServers}
+            onTest={(serverId) => {
+              window.electronAPI?.invoke('mcp:test-server', serverId);
+            }}
+          />
         ) : null}
 
         {activeSection === 'about' ? (
@@ -184,6 +208,272 @@ export function SettingsWindow() {
         ) : null}
       </section>
     </main>
+  );
+}
+
+function McpSettings({
+  servers,
+  statuses,
+  onChange,
+  onTest,
+}: {
+  servers: McpServerConfig[];
+  statuses: Record<string, McpServerRuntimeStatus>;
+  onChange: (servers: McpServerConfig[]) => void;
+  onTest: (serverId: string) => void;
+}) {
+  const addCustomServer = () => {
+    onChange([
+      ...servers,
+      {
+        id: makeServerId('mcp'),
+        displayName: 'Local MCP Server',
+        enabled: false,
+        transport: {
+          type: 'stdio',
+          command: '',
+          args: [],
+          envVarNames: [],
+        },
+        discoveredTools: [],
+        toolPolicies: {},
+      },
+    ]);
+  };
+
+  const addGmailPreset = () => {
+    if (servers.some((server) => server.preset === 'gmail')) return;
+
+    onChange([
+      ...servers,
+      {
+        id: 'gmail-primary',
+        displayName: 'Gmail',
+        enabled: false,
+        preset: 'gmail',
+        transport: {
+          type: 'http',
+          url: 'https://gmailmcp.googleapis.com/mcp/v1',
+          oauth: {
+            enabled: true,
+            credentialSource: 'userProvided',
+            clientIdEnvVar: 'GOOGLE_CLIENT_ID',
+            clientSecretEnvVar: 'GOOGLE_CLIENT_SECRET',
+          },
+        },
+        discoveredTools: [],
+        toolPolicies: {},
+      },
+    ]);
+  };
+
+  const updateServer = (serverId: string, updater: (server: McpServerConfig) => McpServerConfig) => {
+    onChange(servers.map((server) => (server.id === serverId ? updater(server) : server)));
+  };
+
+  const removeServer = (serverId: string) => {
+    onChange(servers.filter((server) => server.id !== serverId));
+  };
+
+  return (
+    <div className="mcp-settings">
+      <div className="mcp-actions">
+        <button type="button" className="primary-action" onClick={addCustomServer}>
+          Add Server
+        </button>
+        <button type="button" className="secondary-action" disabled={servers.some((server) => server.preset === 'gmail')} onClick={addGmailPreset}>
+          Add Gmail Preset
+        </button>
+      </div>
+
+      {servers.length === 0 ? (
+        <div className="empty-mcp">No MCP servers configured.</div>
+      ) : (
+        <div className="mcp-list">
+          {servers.map((server) => (
+            <McpServerEditor
+              key={server.id}
+              server={server}
+              status={statuses[server.id]}
+              onChange={(updater) => updateServer(server.id, updater)}
+              onRemove={() => removeServer(server.id)}
+              onTest={() => onTest(server.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function McpServerEditor({
+  server,
+  status,
+  onChange,
+  onRemove,
+  onTest,
+}: {
+  server: McpServerConfig;
+  status?: McpServerRuntimeStatus;
+  onChange: (updater: (server: McpServerConfig) => McpServerConfig) => void;
+  onRemove: () => void;
+  onTest: () => void;
+}) {
+  const transport = server.transport;
+
+  return (
+    <section className="mcp-server">
+      <div className="mcp-server-head">
+        <label className="compact-field">
+          <span>Name</span>
+          <input value={server.displayName} onChange={(event) => onChange((current) => ({ ...current, displayName: event.target.value }))} />
+        </label>
+        <span className={`mcp-status ${status?.status ?? 'disconnected'}`}>{status?.status ?? 'not tested'}</span>
+      </div>
+
+      <label className="mcp-enable">
+        <input type="checkbox" checked={server.enabled} onChange={(event) => onChange((current) => ({ ...current, enabled: event.target.checked }))} />
+        <span>Enabled for Agent Mode</span>
+      </label>
+
+      <div className="mcp-grid">
+        <label className="compact-field">
+          <span>Transport</span>
+          <select
+            value={server.transport.type}
+            disabled={server.preset === 'gmail'}
+            onChange={(event) => {
+              const type = event.target.value;
+              onChange((current) => ({
+                ...current,
+                transport:
+                  type === 'http'
+                    ? { type: 'http', url: '' }
+                    : { type: 'stdio', command: '', args: [], envVarNames: [] },
+              }));
+            }}
+          >
+            <option value="stdio">stdio</option>
+            <option value="http">HTTP</option>
+          </select>
+        </label>
+
+        {transport.type === 'http' ? (
+          <label className="compact-field span-2">
+            <span>URL</span>
+            <input
+              value={transport.url}
+              disabled={server.preset === 'gmail'}
+              placeholder="http://localhost:3000/mcp"
+              onChange={(event) => onChange((current) => current.transport.type === 'http'
+                ? { ...current, transport: { ...current.transport, url: event.target.value } }
+                : current)}
+            />
+          </label>
+        ) : (
+          <>
+            <label className="compact-field">
+              <span>Command</span>
+              <input
+                value={transport.command}
+                placeholder="bun"
+                onChange={(event) => onChange((current) => current.transport.type === 'stdio'
+                  ? { ...current, transport: { ...current.transport, command: event.target.value } }
+                  : current)}
+              />
+            </label>
+            <label className="compact-field">
+              <span>Arguments</span>
+              <input
+                value={transport.args.join(' ')}
+                placeholder="run path/to/server.ts"
+                onChange={(event) => onChange((current) => current.transport.type === 'stdio'
+                  ? { ...current, transport: { ...current.transport, args: splitList(event.target.value) } }
+                  : current)}
+              />
+            </label>
+            <label className="compact-field span-2">
+              <span>Environment variable names</span>
+              <input
+                value={transport.envVarNames.join(', ')}
+                placeholder="GITHUB_TOKEN, GOOGLE_CLIENT_ID"
+                onChange={(event) => onChange((current) => current.transport.type === 'stdio'
+                  ? { ...current, transport: { ...current.transport, envVarNames: splitCommaList(event.target.value) } }
+                  : current)}
+              />
+            </label>
+          </>
+        )}
+      </div>
+
+      {transport.type === 'http' && transport.oauth?.enabled ? (
+        <div className="oauth-box">
+          <span>OAuth: user-provided Google client env vars</span>
+          <code>{transport.oauth.clientIdEnvVar || 'GOOGLE_CLIENT_ID'}</code>
+          <code>{transport.oauth.clientSecretEnvVar || 'GOOGLE_CLIENT_SECRET'}</code>
+        </div>
+      ) : null}
+
+      {status?.message ? <p className="mcp-error">{status.message}</p> : null}
+
+      <ToolPolicyEditor server={server} onChange={onChange} />
+
+      <div className="mcp-row-actions">
+        <button type="button" className="secondary-action" onClick={onTest}>
+          Test and Discover Tools
+        </button>
+        <button type="button" className="danger-action" onClick={onRemove}>
+          Remove
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ToolPolicyEditor({
+  server,
+  onChange,
+}: {
+  server: McpServerConfig;
+  onChange: (updater: (server: McpServerConfig) => McpServerConfig) => void;
+}) {
+  if (server.discoveredTools.length === 0) {
+    return <p className="tool-empty">No tools discovered yet.</p>;
+  }
+
+  return (
+    <div className="tool-policy-list">
+      {server.discoveredTools.map((tool) => {
+        const policyKey = `${server.id}:${tool.name}` as const;
+        const policy = server.toolPolicies[policyKey] ?? 'alwaysAsk';
+
+        return (
+          <div className="tool-policy" key={tool.name}>
+            <div>
+              <strong>{tool.name}</strong>
+              <small>{tool.description || 'No description provided.'}</small>
+            </div>
+            <select
+              value={policy}
+              onChange={(event) => {
+                const nextPolicy = event.target.value as AgentToolApprovalPolicy;
+                onChange((current) => ({
+                  ...current,
+                  toolPolicies: {
+                    ...current.toolPolicies,
+                    [policyKey]: nextPolicy,
+                  },
+                }));
+              }}
+            >
+              <option value="alwaysAsk">Always ask</option>
+              <option value="alwaysAllow">Always allow</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -241,6 +531,18 @@ function TextRow({
 
 function looksLikeRawApiKey(value: string): boolean {
   return /^sk-[A-Za-z0-9_-]/.test(value.trim());
+}
+
+function makeServerId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}`;
+}
+
+function splitCommaList(value: string): string[] {
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function splitList(value: string): string[] {
+  return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
 }
 
 function ReadOnlyRow({ label, value }: { label: string; value: string }) {
