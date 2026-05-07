@@ -44,7 +44,7 @@ interface ModifierState {
   intent: RecordingIntent | null;
 }
 
-class KeyboardHook {
+export class KeyboardHook {
   private hookHandle: number = 0;
   private callback: KoffiRegisteredCallback | null = null;
   private state: ModifierState = { ctrl: false, win: false, alt: false, recording: false, intent: null };
@@ -137,6 +137,17 @@ class KeyboardHook {
       this.onStartRecording?.('agent');
     }
   }
+
+  handleKeyForTest(vkCode: number, isDown: boolean): void {
+    this.handleKey(vkCode, isDown);
+  }
 }
 
 export const keyboardHook = new KeyboardHook();
+
+export const keyboardTestKeyCodes = {
+  leftControl: VK_LCONTROL,
+  leftWin: VK_LWIN,
+  leftAlt: VK_LMENU,
+  letterA: 0x41,
+};

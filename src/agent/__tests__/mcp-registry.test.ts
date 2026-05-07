@@ -143,6 +143,30 @@ describe('McpRegistry', () => {
 
     await registry.close();
   });
+
+  it('returns approval timeout feedback without executing the tool', async () => {
+    const execute = mock(async () => 'result');
+    const send = { description: 'send', inputSchema: {}, execute };
+    createMCPClientMock.mockImplementation(async () => ({
+      tools: async () => ({ send }),
+      close: closeMock,
+    }));
+
+    const registry = new McpRegistry();
+    await registry.updateConfig(baseConfig as never);
+
+    const approval = makeApproval(async () => ({
+      approved: false,
+      message: 'Rejected: tool approval window expired.',
+    }));
+    const snapshot = registry.createRunSnapshot(approval);
+    const result = await snapshot.tools.srv1__send.execute?.({ to: 'a@example.com' }, makeToolOptions());
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(result).toBe('Rejected: tool approval window expired.');
+
+    await registry.close();
+  });
 });
 
 function makeApproval(

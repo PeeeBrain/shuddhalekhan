@@ -178,7 +178,7 @@ Revive Agent Mode as an opt-in, voice-first, stateless command executor. `Ctrl +
   - sidecar stores tokens securely outside `electron-store` and audit DB.
 - Gmail MCP is optional. Agent Mode works without it.
 
-## Phase 14: Verification
+## Phase 14: Verification — Done
 
 - Add unit tests for:
   - recording intent routing.

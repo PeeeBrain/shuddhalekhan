@@ -265,6 +265,35 @@ describe('main process IPC orchestration', () => {
     expect(simulatePaste).not.toHaveBeenCalled();
   });
 
+  it('routes dictation recordings through clipboard injection and not the agent sidecar', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void];
+    onStart('dictation');
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    expect(simulatePaste).toHaveBeenCalled();
+    await listenerPromise;
+
+    expect(showRecordingPill).toHaveBeenCalledWith('dictation');
+    expect(agentStartRun).not.toHaveBeenCalled();
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('transcribed text');
+  });
+
+  it('shows a config toast instead of starting the sidecar when Agent Mode is disabled', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void];
+    onStart('agent');
+
+    await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer);
+
+    expect(agentStartRun).not.toHaveBeenCalled();
+    expect(showAgentToast).toHaveBeenCalledWith({
+      kind: 'config',
+      message: 'Agent Mode is disabled. Open Settings to enable it.',
+    });
+  });
+
   it('skips empty WAV payloads', async () => {
     await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(44).buffer);
 
