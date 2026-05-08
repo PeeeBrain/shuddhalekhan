@@ -99,7 +99,10 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
 
   try {
     await configUpdateQueue;
-    const toolSnapshot = mcpRegistry.createRunSnapshot((request) => requestToolApproval(agentRunId, request));
+    const toolSnapshot = mcpRegistry.createRunSnapshot(
+      (request) => requestToolApproval(agentRunId, request),
+      (eventType, payload) => auditStore.record(agentRunId, eventType, payload)
+    );
 
     await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, activeAbortController.signal, {
       onStatus: (status) => {

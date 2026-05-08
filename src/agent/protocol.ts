@@ -22,6 +22,12 @@ export type McpToolsDiscoveredEvent = {
   }>;
 };
 
+export type OAuthOpenUrlEvent = {
+  type: 'oauth:open-url';
+  serverId: string;
+  url: string;
+};
+
 export type AgentStatusEvent = {
   type: 'agent:status';
   agentRunId: string;
@@ -68,6 +74,7 @@ export type SidecarEvent =
   | SidecarReadyEvent
   | McpServerStatusEvent
   | McpToolsDiscoveredEvent
+  | OAuthOpenUrlEvent
   | AgentStatusEvent
   | AgentResponseDeltaEvent
   | ApprovalRequestedEvent

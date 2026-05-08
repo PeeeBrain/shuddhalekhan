@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, clipboard, dialog, session } from 'electron';
+import { app, BrowserWindow, ipcMain, clipboard, dialog, session, shell } from 'electron';
 import { join } from 'path';
 import { keyboardHook } from './native/keyboard';
 import { simulatePaste } from './native/clipboard';
@@ -33,6 +33,11 @@ const agentSidecar = new AgentSidecarManager((event) => {
       break;
     case 'mcp:tools-discovered':
       persistDiscoveredTools(event.serverId, event.tools);
+      break;
+    case 'oauth:open-url':
+      shell.openExternal(event.url).catch((err) => {
+        console.error(`Failed to open OAuth URL for ${event.serverId}:`, err);
+      });
       break;
     case 'agent:status':
       console.log(`Agent run ${event.agentRunId}: ${event.status}`);

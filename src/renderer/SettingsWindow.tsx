@@ -475,10 +475,42 @@ function McpServerForm({
       </div>
 
       {transport.type === 'http' && transport.oauth?.enabled ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 bg-muted/40 p-3 text-xs text-muted-foreground">
-          <span>OAuth: user-provided Google client env vars</span>
-          <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-primary">{transport.oauth.clientIdEnvVar || 'GOOGLE_CLIENT_ID'}</code>
-          <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-primary">{transport.oauth.clientSecretEnvVar || 'GOOGLE_CLIENT_SECRET'}</code>
+        <div className="space-y-3 rounded-md border border-border/60 bg-muted/40 p-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-muted-foreground">OAuth client ID env var</Label>
+              <Input
+                value={transport.oauth.clientIdEnvVar ?? ''}
+                placeholder="GOOGLE_CLIENT_ID"
+                onChange={(event) => onChange({
+                  ...server,
+                  transport: {
+                    ...transport,
+                    oauth: { ...transport.oauth!, clientIdEnvVar: event.target.value },
+                  },
+                })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-bold text-muted-foreground">OAuth client secret env var</Label>
+              <Input
+                value={transport.oauth.clientSecretEnvVar ?? ''}
+                placeholder="GOOGLE_CLIENT_SECRET"
+                onChange={(event) => onChange({
+                  ...server,
+                  transport: {
+                    ...transport,
+                    oauth: { ...transport.oauth!, clientSecretEnvVar: event.target.value },
+                  },
+                })}
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Scopes</span>
+            <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-primary">gmail.readonly</code>
+            <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-primary">gmail.compose</code>
+          </div>
         </div>
       ) : null}
     </div>
@@ -539,7 +571,7 @@ function ConfiguredMcpServer({
 
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button type="button" variant="secondary" size="sm" onClick={onTest}>
-            Test and Discover Tools
+            {server.preset === 'gmail' ? 'Connect and Discover Tools' : 'Test and Discover Tools'}
           </Button>
           <Button type="button" variant="secondary" size="sm" onClick={onEdit}>
             Edit
