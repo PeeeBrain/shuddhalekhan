@@ -9,6 +9,7 @@ export const electronMock = {
     getPath: mock(() => '/home/tester'),
     getAppPath: mock(() => '/app'),
     getVersion: mock(() => '4.0.0'),
+    requestSingleInstanceLock: mock(() => true),
     quit: mock(),
   },
   BrowserWindow: Object.assign(mock(), {
@@ -71,6 +72,8 @@ export function resetElectronMock(): void {
   electronMock.app.getAppPath.mockReturnValue('/app');
   electronMock.app.getVersion.mockReset();
   electronMock.app.getVersion.mockReturnValue('4.0.0');
+  electronMock.app.requestSingleInstanceLock.mockReset();
+  electronMock.app.requestSingleInstanceLock.mockReturnValue(true);
   electronMock.app.quit.mockReset();
   electronMock.BrowserWindow.mockReset();
   electronMock.BrowserWindow.getAllWindows.mockReset();
