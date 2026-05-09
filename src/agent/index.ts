@@ -104,41 +104,44 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
       (eventType, payload) => auditStore.record(agentRunId, eventType, payload)
     );
 
-    await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, activeAbortController.signal, {
-      onStatus: (status) => {
-        if (activeAgentRunId !== agentRunId) return;
-        auditStore.record(agentRunId, 'status', { status });
-        writeJsonLine({ type: 'agent:status', agentRunId, status });
-      },
-      onResponseDelta: (delta, response) => {
-        if (activeAgentRunId !== agentRunId) return;
-        writeJsonLine({ type: 'agent:response-delta', agentRunId, delta, response });
-      },
-      onCompleted: (response, toolSummary) => {
-        if (activeAgentRunId !== agentRunId) return;
-        writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary });
-        activeAgentRunId = null;
-        activeAbortController = null;
-      },
-      onFailed: (error) => {
-        if (activeAgentRunId !== agentRunId) return;
-        auditStore.record(agentRunId, 'failed', { error });
-        writeJsonLine({ type: 'agent:failed', agentRunId, error });
-        activeAgentRunId = null;
-        activeAbortController = null;
-      },
-      onCancelled: () => {
-        if (activeAgentRunId !== agentRunId) return;
-        rejectPendingApproval(agentRunId, 'Rejected: agent run was cancelled.');
-        auditStore.record(agentRunId, 'cancelled');
-        writeJsonLine({ type: 'agent:cancelled', agentRunId });
-        activeAgentRunId = null;
-        activeAbortController = null;
-      },
-      requestToolApproval: (request) => requestToolApproval(agentRunId, request),
-      onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
-    });
-    await toolSnapshot.close();
+    try {
+      await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, activeAbortController.signal, {
+        onStatus: (status) => {
+          if (activeAgentRunId !== agentRunId) return;
+          auditStore.record(agentRunId, 'status', { status });
+          writeJsonLine({ type: 'agent:status', agentRunId, status });
+        },
+        onResponseDelta: (delta, response) => {
+          if (activeAgentRunId !== agentRunId) return;
+          writeJsonLine({ type: 'agent:response-delta', agentRunId, delta, response });
+        },
+        onCompleted: (response, toolSummary) => {
+          if (activeAgentRunId !== agentRunId) return;
+          writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary });
+          activeAgentRunId = null;
+          activeAbortController = null;
+        },
+        onFailed: (error) => {
+          if (activeAgentRunId !== agentRunId) return;
+          auditStore.record(agentRunId, 'failed', { error });
+          writeJsonLine({ type: 'agent:failed', agentRunId, error });
+          activeAgentRunId = null;
+          activeAbortController = null;
+        },
+        onCancelled: () => {
+          if (activeAgentRunId !== agentRunId) return;
+          rejectPendingApproval(agentRunId, 'Rejected: agent run was cancelled.');
+          auditStore.record(agentRunId, 'cancelled');
+          writeJsonLine({ type: 'agent:cancelled', agentRunId });
+          activeAgentRunId = null;
+          activeAbortController = null;
+        },
+        requestToolApproval: (request) => requestToolApproval(agentRunId, request),
+        onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
+      });
+    } finally {
+      await toolSnapshot.close();
+    }
   } catch (err) {
     if (activeAgentRunId !== agentRunId) return;
     logSidecar('unhandled agent start error', err);
@@ -260,5 +263,24 @@ function rejectPendingApproval(agentRunId: string, message: string): void {
   if (!pendingApproval || pendingApproval.agentRunId !== agentRunId) return;
   pendingApproval.resolve({ approved: false, message });
 }
+
+async function shutdown(): Promise<void> {
+  activeAbortController?.abort();
+  if (activeAgentRunId) {
+    rejectPendingApproval(activeAgentRunId, 'Rejected: sidecar is shutting down.');
+  }
+  await mcpRegistry.close();
+  auditStore.close();
+}
+
+process.once('SIGINT', () => {
+  void shutdown().finally(() => process.exit(0));
+});
+process.once('SIGTERM', () => {
+  void shutdown().finally(() => process.exit(0));
+});
+process.once('exit', () => {
+  auditStore.close();
+});
 
 main();

@@ -340,8 +340,8 @@ describe('main process IPC orchestration', () => {
     appListeners.get('before-quit')?.();
     appListeners.get('quit')?.();
 
-    expect(keyboardStop).toHaveBeenCalledTimes(2);
-    expect(agentStop).toHaveBeenCalledTimes(2);
+    expect(keyboardStop).toHaveBeenCalledTimes(1);
+    expect(agentStop).toHaveBeenCalledTimes(1);
     expect(destroyAudioWindow).toHaveBeenCalled();
   });
 

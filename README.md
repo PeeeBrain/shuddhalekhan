@@ -1,20 +1,41 @@
 # Shuddhalekhan
 
-Windows tray-based speech-to-text dictation app built with Electron and React.
-Audio is recorded locally, sent to a Whisper-compatible HTTP endpoint, and injected at the active cursor.
+Speech-to-text dictation app with an optional voice-first Agent Mode.
 
-Hold `Ctrl+Win` to record. Release the chord to stop recording, transcribe the captured audio, and paste the transcript into the focused application.
+Audio is recorded locally, sent to a Whisper-compatible HTTP endpoint, and then routed by intent:
+
+- Hold `Ctrl+Win` for Dictation. Release the chord to transcribe and paste the transcript into the focused application.
+- Hold `Alt+Win` for Agent Mode. Release the chord to transcribe the command and send it to the local agent runtime.
+
+Agent Mode is opt-in from Settings. When disabled, the agent sidecar and MCP connections stay inactive.
+
+## Features
+
+- Global Windows hotkeys for Dictation and Agent Mode.
+- Tray-first operation with microphone selection, transcription cleanup toggle, update checks, Settings, and exit.
+- Local Whisper-compatible transcription endpoint support.
+- Clipboard-safe text injection for Dictation.
+- Settings window for audio, Whisper, Agent provider, MCP servers, Gmail preset setup, and per-tool approval policies.
+- Agent Mode powered by the Vercel AI SDK and OpenAI-compatible model providers.
+- MCP client support for stdio and HTTP MCP servers.
+- OAuth callback flow for HTTP MCP integrations such as Gmail.
+- Approval toasts for sensitive MCP tool calls, with per-tool policies: disabled, always ask, or always allow.
+- Local SQLite audit logging for agent runs, tool requests, approvals, results, and failures.
+- Electron auto-update support through GitHub Releases.
 
 ## Stack
 
 - Frontend: React + TypeScript + Vite
 - Desktop runtime: Electron
+- Agent runtime: Vercel AI SDK + MCP
+- Local data: electron-store + SQLite audit log
 - Native Windows integration: Koffi
 
 ## Project Layout
 
 - `src/renderer/` React UI (recording popup + hidden audio window)
 - `src/main/` Electron main process logic (hotkey, tray, Whisper, text injection)
+- `src/agent/` local agent sidecar, MCP registry, OAuth provider, audit logging, and runtime protocol
 - `src/preload/` IPC bridge
 - `icons/` application and tray icons
 
@@ -58,6 +79,8 @@ bun run dist
 
 The GitHub release workflow runs lint, typecheck, tests, build, and Electron Builder packaging on `windows-latest`.
 
+For contribution guidelines, feature workflow, PR checks, and release version bump steps, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Whisper Server Setup
 
 The application requires a Whisper-compatible HTTP endpoint to transcribe audio. By default it posts to:
@@ -66,13 +89,13 @@ The application requires a Whisper-compatible HTTP endpoint to transcribe audio.
 http://localhost:8080/inference
 ```
 
-The request is sent as `multipart/form-data` with a WAV `file`, `temperature=0.2`, and `response_format=json`. When transcription cleanup is enabled, a cleanup `prompt` field is also included.
+The request is sent as `multipart/form-data` with a WAV `file`, `temperature=0.2`, and `response_format=json`. When transcription cleanup is enabled, resultant transcriptions are much cleaner excluding filler words (umms and ahhs) and common transcription artifacts.
 
 ### Option 1: Local whisper.cpp with Docker (Recommended)
 
 **Requirements:**
 - Docker Desktop with GPU support
-- NVIDIA GPU with CUDA (RTX 4060 or higher recommended)
+- NVIDIA GPU with CUDA
 
 **One-time Setup:**
 
@@ -115,13 +138,60 @@ The app works with any compatible unauthenticated endpoint that accepts the same
 - LocalAI
 - Self-hosted whisper.cpp instances
 
+## Agent Mode Setup
+
+Agent Mode turns a spoken command into a one-off local agent run. It does not replace Dictation, does not inject agent responses into the focused app, and does not keep chat history between commands.
+
+Open Settings from the tray menu, then configure:
+
+1. Enable Agent Mode.
+2. Set an OpenAI-compatible provider base URL.
+3. Set the model name.
+4. Set the environment variable name that contains the provider API key.
+
+The API key value is not stored in Shuddhalekhan config. Only the environment variable name is saved.
+
+Examples of provider-style configuration:
+
+```text
+Base URL: https://openrouter.ai/api/v1
+Model: openai/gpt-5.4-mini
+API key env var: OPENROUTER_API_KEY
+```
+
+For local providers that do not require an API key, leave the API key environment variable empty if the provider supports that.
+
+### MCP Servers
+
+Agent Mode can run without MCP servers, but MCP servers are what let it use external tools.
+
+Settings supports:
+
+- stdio MCP servers with command, arguments, and inherited environment variable names.
+- HTTP MCP servers by URL.
+- OAuth-enabled HTTP MCP servers.
+- A Gmail preset for Google's Gmail MCP endpoint.
+- Per-tool approval policies after tool discovery.
+
+When Agent Mode is enabled, enabled MCP servers reconnect automatically on app startup and tools are discovered for the settings UI. Newly discovered tools default to `alwaysAsk`.
+
+### Tool Approvals
+
+Tool calls with `alwaysAsk` show an approval toast. You can approve, deny, or deny with a short message that is returned to the active agent run. Approval prompts expire after 30 seconds.
+
+Disabled tools are not exposed to the model. Always-allowed tools can run without prompting, so use that policy only for tools you trust.
+
+### Agent Audit Log
+
+Agent Mode writes a local SQLite audit database named `agent-audit.sqlite` under the Shuddhalekhan app data directory. The audit log is for local debugging and records agent run events, tool requests, approval decisions, tool results, errors, and final responses. Shuddhalekhan does not send audit data to a remote service.
+
 ## Notes
 
-- The app is Windows-only because global keyboard hooks and paste simulation call Windows APIs through `koffi`.
-- Recording is controlled by the global `Ctrl+Win` chord.
-- The tray menu supports microphone selection, transcription cleanup toggling, manual update checks, and exit.
-- Recording popup is bottom-center and pill-shaped.
-- Transcript injection is newline-safe (no Enter keypress is appended).
-- Tray icon uses `icons/tray-icon.ico`.
+- The app is **Windows-only** because global keyboard hooks and paste simulation call Windows APIs through `koffi`.
+- Dictation is controlled by the global `Ctrl+Win` chord.
+- Agent Mode is controlled by the global `Alt+Win` chord when enabled.
+- The tray menu supports microphone selection, transcription cleanup toggling, Settings, manual update checks, and exit.
+- Recording popup is bottom-center and pill-shaped, with a distinct Agent Mode visual state.
+- Agent responses and approvals appear as toast windows near the bottom-right of the primary display.
 - Active configuration is stored with `electron-store` under the `shuddhalekhan-config` store name.
 - Updates are packaged with Electron Builder and checked with `electron-updater`.

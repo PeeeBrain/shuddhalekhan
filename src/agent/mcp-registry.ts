@@ -82,8 +82,9 @@ export class McpRegistry {
   private async connect(server: McpServerConfig): Promise<void> {
     writeJsonLine({ type: 'mcp:server-status', serverId: server.id, status: 'connecting' });
 
+    let oauthProvider: SidecarOAuthProvider | undefined;
     try {
-      const oauthProvider = createOAuthProvider(server);
+      oauthProvider = createOAuthProvider(server);
       if (oauthProvider) {
         await oauthProvider.ensureAuthenticated();
       }
@@ -110,6 +111,7 @@ export class McpRegistry {
         message: err instanceof Error ? err.message : String(err),
       });
       logSidecar(`MCP server failed: ${server.id}`, err);
+      oauthProvider?.close();
     }
   }
 

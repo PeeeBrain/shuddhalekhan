@@ -1,6 +1,6 @@
 import { mkdirSync } from 'fs';
 import { dirname, join } from 'path';
-import { Database } from 'bun:sqlite';
+import Database from 'better-sqlite3';
 
 type AuditPayload = Record<string, unknown>;
 
@@ -8,7 +8,9 @@ const SECRET_KEY_PATTERN = /(authorization|access[_-]?token|refresh[_-]?token|ap
 const SECRET_VALUE_PATTERN = /\b(sk-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+)\b/g;
 
 export class AgentAuditStore {
-  private readonly db: Database;
+  private readonly db: Database.Database;
+  private readonly insertEvent: Database.Statement;
+  private isClosed = false;
 
   constructor(dbPath = getDefaultAuditDbPath()) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -24,18 +26,21 @@ export class AgentAuditStore {
       CREATE INDEX IF NOT EXISTS idx_agent_audit_events_run
         ON agent_audit_events(agent_run_id, created_at);
     `);
+    this.insertEvent = this.db.prepare(
+      'INSERT INTO agent_audit_events (agent_run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)'
+    );
   }
 
   record(agentRunId: string, eventType: string, payload: AuditPayload = {}): void {
+    if (this.isClosed) return;
+
     const sanitized = sanitizeAuditPayload(payload);
-    this.db
-      .query(
-        'INSERT INTO agent_audit_events (agent_run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)'
-      )
-      .run(agentRunId, eventType, JSON.stringify(sanitized), new Date().toISOString());
+    this.insertEvent.run(agentRunId, eventType, JSON.stringify(sanitized), new Date().toISOString());
   }
 
   close(): void {
+    if (this.isClosed) return;
+    this.isClosed = true;
     this.db.close();
   }
 }

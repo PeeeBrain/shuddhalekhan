@@ -13,7 +13,7 @@ export default defineConfig({
       fileName: () => 'index.js',
     },
     rollupOptions: {
-      external: [...builtinModules, ...builtinModules.map((moduleName) => `node:${moduleName}`)],
+      external: ['better-sqlite3', ...builtinModules, ...builtinModules.map((moduleName) => `node:${moduleName}`)],
     },
   },
 });

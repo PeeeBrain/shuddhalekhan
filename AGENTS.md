@@ -39,7 +39,7 @@ Use `bun` exclusively. `pnpm` is only a fallback if `koffi` causes resolution is
 ## Lint rules
 - `@typescript-eslint/no-unused-vars` is error-level with `argsIgnorePattern: '^_'`.
 - `@typescript-eslint/no-explicit-any` is off.
-- `out/`, `release/`, `node_modules/`,and `*.config.{ts,mjs}` are ignored.
+- `out/`, `release/`, `node_modules/`, and generated shadcn UI components are ignored.
 
 ## Tests
 - Bun tests live under `src/**/__tests__/`.

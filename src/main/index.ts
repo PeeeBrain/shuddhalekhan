@@ -18,6 +18,7 @@ let isRecording = false;
 let isAudioWindowReady = false;
 let pendingStartRecording = false;
 let activeRecordingIntent: RecordingIntent | null = null;
+let cachedAgentEnabled = getConfig().agent.enabled;
 const agentSidecar = new AgentSidecarManager((event) => {
   switch (event.type) {
     case 'sidecar:ready':
@@ -265,6 +266,7 @@ ipcMain.handle('config:get', () => {
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   setConfig(key, value);
   const config = getConfig();
+  cachedAgentEnabled = config.agent.enabled;
   if (!config.agent.enabled) {
     agentSidecar.stop();
   } else {
@@ -392,7 +394,7 @@ app.whenReady().then(() => {
   keyboardHook.start(
     (intent) => startRecording(intent),
     () => stopRecording(),
-    () => getConfig().agent.enabled
+    () => cachedAgentEnabled
   );
 
   createTray(() => {
@@ -400,6 +402,7 @@ app.whenReady().then(() => {
   });
 
   const startupConfig = getConfig();
+  cachedAgentEnabled = startupConfig.agent.enabled;
   if (startupConfig.agent.enabled) {
     agentSidecar.start(startupConfig);
   }
@@ -422,9 +425,4 @@ app.on('before-quit', () => {
   keyboardHook.stop();
   agentSidecar.stop();
   destroyAudioWindow();
-});
-
-app.on('quit', () => {
-  keyboardHook.stop();
-  agentSidecar.stop();
 });
