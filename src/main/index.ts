@@ -79,6 +79,7 @@ const agentSidecar = new AgentSidecarManager((event) => {
       break;
   }
 });
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 function persistDiscoveredTools(
   serverId: string,
@@ -376,53 +377,57 @@ ipcMain.on('agent-toast:content-size', (_event, height: number) => {
 });
 
 // App lifecycle
-app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media');
-  });
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.whenReady().then(() => {
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(permission === 'media');
+    });
 
-  createMainWindow();
-  const audioWin = createAudioWindow();
-  audioWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-    console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
-  });
-  audioWin.webContents.on('render-process-gone', (_event, details) => {
-    isAudioWindowReady = false;
-    console.error('Audio window renderer exited:', details.reason);
-  });
+    createMainWindow();
+    const audioWin = createAudioWindow();
+    audioWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+      console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
+    });
+    audioWin.webContents.on('render-process-gone', (_event, details) => {
+      isAudioWindowReady = false;
+      console.error('Audio window renderer exited:', details.reason);
+    });
 
-  keyboardHook.start(
-    (intent) => startRecording(intent),
-    () => stopRecording(),
-    () => cachedAgentEnabled
-  );
+    keyboardHook.start(
+      (intent) => startRecording(intent),
+      () => stopRecording(),
+      () => cachedAgentEnabled
+    );
 
-  createTray(() => {
-    openSettingsWindow();
-  });
+    createTray(() => {
+      openSettingsWindow();
+    });
 
-  const startupConfig = getConfig();
-  cachedAgentEnabled = startupConfig.agent.enabled;
-  if (startupConfig.agent.enabled) {
-    agentSidecar.start(startupConfig);
-  }
-
-  setupUpdater(publishUpdateStatus);
-  publishUpdateStatus(getUpdateStatus());
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
+    const startupConfig = getConfig();
+    cachedAgentEnabled = startupConfig.agent.enabled;
+    if (startupConfig.agent.enabled) {
+      agentSidecar.start(startupConfig);
     }
+
+    setupUpdater(publishUpdateStatus);
+    publishUpdateStatus(getUpdateStatus());
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow();
+      }
+    });
   });
-});
 
-app.on('window-all-closed', () => {
-  // Keep running in tray on Windows
-});
+  app.on('window-all-closed', () => {
+    // Keep running in tray on Windows
+  });
 
-app.on('before-quit', () => {
-  keyboardHook.stop();
-  agentSidecar.stop();
-  destroyAudioWindow();
-});
+  app.on('before-quit', () => {
+    keyboardHook.stop();
+    agentSidecar.stop();
+    destroyAudioWindow();
+  });
+}

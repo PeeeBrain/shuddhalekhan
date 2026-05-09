@@ -7,6 +7,11 @@ import type { AppConfig } from '../types/ipc';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 
 type SidecarEventHandler = (event: SidecarEvent) => void;
+type SidecarLaunch = {
+  command: string;
+  args: string[];
+  env?: NodeJS.ProcessEnv;
+};
 
 export class AgentSidecarManager {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -28,6 +33,7 @@ export class AgentSidecarManager {
     this.child = spawn(launch.command, launch.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      env: launch.env,
     });
 
     this.stdoutLines = createInterface({
@@ -137,11 +143,15 @@ export class AgentSidecarManager {
     this.onEvent(event);
   }
 
-  private getSidecarLaunch(): { command: string; args: string[] } {
+  private getSidecarLaunch(): SidecarLaunch {
     if (app.isPackaged) {
       return {
         command: process.execPath,
         args: [join(process.resourcesPath, 'app.asar', 'out', 'agent', 'index.js')],
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',
+        },
       };
     }
 

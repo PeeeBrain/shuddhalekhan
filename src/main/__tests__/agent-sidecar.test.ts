@@ -83,6 +83,37 @@ describe('AgentSidecarManager', () => {
     expect(events).toEqual([{ type: 'sidecar:ready', protocolVersion: 1 }]);
   });
 
+  it('runs the packaged sidecar under Electron node mode instead of launching another app instance', async () => {
+    electronMock.app.isPackaged = true;
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, 'resourcesPath', {
+      configurable: true,
+      value: 'C:\\Program Files\\Shuddhalekhan\\resources',
+    });
+
+    try {
+      const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-packaged`);
+      const manager = new AgentSidecarManager(() => undefined);
+
+      manager.start(config);
+
+      expect(spawn).toHaveBeenCalledWith(
+        process.execPath,
+        ['C:\\Program Files\\Shuddhalekhan\\resources\\app.asar\\out\\agent\\index.js'],
+        expect.objectContaining({
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+          env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }),
+        })
+      );
+    } finally {
+      Object.defineProperty(process, 'resourcesPath', {
+        configurable: true,
+        value: originalResourcesPath,
+      });
+    }
+  });
+
   it('ignores blank stdout lines from the sidecar', async () => {
     const events: unknown[] = [];
     const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-blank`);
