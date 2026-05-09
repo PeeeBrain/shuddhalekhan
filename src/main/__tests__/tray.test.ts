@@ -24,6 +24,7 @@ const config = {
       baseUrl: '',
       model: '',
       apiKeyEnvVar: '',
+      thinkingEnabled: true,
     },
   },
 };

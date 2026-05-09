@@ -40,6 +40,7 @@ const config: AppConfig = {
       baseUrl: 'https://openrouter.ai/api/v1',
       model: 'openai/gpt-4.1-mini',
       apiKeyEnvVar: 'OPENROUTER_API_KEY',
+      thinkingEnabled: true,
     },
     mcpServers: [],
   },

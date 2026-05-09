@@ -101,7 +101,13 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
     await configUpdateQueue;
     const toolSnapshot = mcpRegistry.createRunSnapshot(
       (request) => requestToolApproval(agentRunId, request),
-      (eventType, payload) => auditStore.record(agentRunId, eventType, payload)
+      (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
+      (tool) => {
+        if (activeAgentRunId !== agentRunId) return;
+        const status = `Using tool: ${tool.serverId}.${tool.toolName}`;
+        auditStore.record(agentRunId, 'status', { status });
+        writeJsonLine({ type: 'agent:status', agentRunId, status });
+      }
     );
 
     try {

@@ -14,6 +14,7 @@ const config: AppConfig = {
       baseUrl: '',
       model: '',
       apiKeyEnvVar: '',
+      thinkingEnabled: true,
     },
     mcpServers: [],
   },

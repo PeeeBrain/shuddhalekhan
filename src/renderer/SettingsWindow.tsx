@@ -188,6 +188,16 @@ export function SettingsWindow() {
                     provider: { ...config.agent.provider, model },
                   })}
                 />
+                <ToggleRow
+                  title="Thinking"
+                  description="Allows models that support thinking to spend extra reasoning before tool calls."
+                  checked={config.agent.provider.thinkingEnabled}
+                  tone="agent"
+                  onChange={(thinkingEnabled) => updateAgent({
+                    ...config.agent,
+                    provider: { ...config.agent.provider, thinkingEnabled },
+                  })}
+                />
                 <TextRow
                   label="API key env var name"
                   value={config.agent.provider.apiKeyEnvVar}

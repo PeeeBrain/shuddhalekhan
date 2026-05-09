@@ -56,6 +56,7 @@ describe('config store', () => {
           baseUrl: '',
           model: '',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
         mcpServers: [],
       },
@@ -79,6 +80,7 @@ describe('config store', () => {
           baseUrl: '',
           model: '',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
         mcpServers: [],
       },
@@ -105,6 +107,7 @@ describe('config store', () => {
           baseUrl: '',
           model: '',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
         mcpServers: [],
       },
@@ -129,6 +132,7 @@ describe('config store', () => {
           baseUrl: '',
           model: '',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
         mcpServers: [],
       },
@@ -146,6 +150,7 @@ describe('config store', () => {
         baseUrl: 'https://openrouter.ai/api/v1',
         model: 'openai/gpt-4.1-mini',
         apiKeyEnvVar: 'OPENROUTER_API_KEY',
+        thinkingEnabled: false,
       },
       mcpServers: [
         {
@@ -203,5 +208,23 @@ describe('config store', () => {
         },
       },
     ]);
+    expect(getConfig().agent.provider.thinkingEnabled).toBe(false);
+  });
+
+  it('defaults missing provider thinking toggle to enabled', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-thinking-default`);
+
+    setConfig('agent', {
+      enabled: true,
+      provider: {
+        baseUrl: 'http://localhost:1234/v1',
+        model: 'local-model',
+        apiKeyEnvVar: '',
+      },
+      mcpServers: [],
+    } as never);
+
+    expect(getConfig().agent.provider.thinkingEnabled).toBe(true);
   });
 });

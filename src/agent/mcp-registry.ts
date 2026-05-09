@@ -9,6 +9,7 @@ import { SidecarOAuthProvider } from './oauth-provider';
 
 type RequestToolApproval = AgentRuntimeCallbacks['requestToolApproval'];
 type AuditCallback = NonNullable<AgentRuntimeCallbacks['onAudit']>;
+type ToolStartedCallback = NonNullable<AgentRuntimeCallbacks['onToolStarted']>;
 
 type ManagedServer = {
   config: McpServerConfig;
@@ -45,7 +46,8 @@ export class McpRegistry {
 
   createRunSnapshot(
     requestToolApproval: RequestToolApproval,
-    onAudit?: AuditCallback
+    onAudit?: AuditCallback,
+    onToolStarted?: ToolStartedCallback
   ): { tools: Record<string, Tool>; close: () => Promise<void> } {
     const policies = new Map(this.toolPolicies);
     const tools: Record<string, Tool> = {};
@@ -64,7 +66,8 @@ export class McpRegistry {
           toolDef,
           policy,
           requestToolApproval,
-          onAudit
+          onAudit,
+          onToolStarted
         );
       }
     }
@@ -159,7 +162,8 @@ function wrapToolWithPolicy(
   toolDef: Tool,
   policy: Exclude<AgentToolApprovalPolicy, 'disabled'>,
   requestToolApproval: RequestToolApproval,
-  onAudit?: AuditCallback
+  onAudit?: AuditCallback,
+  onToolStarted?: ToolStartedCallback
 ): Tool {
   return {
     ...toolDef,
@@ -180,6 +184,7 @@ function wrapToolWithPolicy(
       }
 
       const startedAt = Date.now();
+      onToolStarted?.({ serverId, toolName, modelToolName });
       onAudit?.('mcp_tool_execute_started', {
         serverId,
         toolName,

@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'bun:test';
-import { sanitizeAuditPayload } from '../audit';
+import { existsSync, rmSync } from 'fs';
+import { join } from 'path';
+import { createRequire } from 'module';
+import { AgentAuditStore, sanitizeAuditPayload } from '../audit';
+
+const require = createRequire(import.meta.url);
+const { Database } = require('bun:sqlite') as {
+  Database: new (path: string, options?: { readonly?: boolean }) => {
+    query(sql: string): {
+      get(): unknown;
+      finalize(): void;
+    };
+    close(): void;
+  };
+};
 
 describe('sanitizeAuditPayload', () => {
   it('redacts secret-looking keys and bearer values', () => {
@@ -18,5 +32,42 @@ describe('sanitizeAuditPayload', () => {
         text: 'use [redacted] here',
       },
     });
+  });
+});
+
+describe('AgentAuditStore', () => {
+  const testDir = join(process.cwd(), '.tmp-agent-audit-test');
+  const dbPath = join(testDir, 'agent-audit.sqlite');
+
+  function cleanup(): void {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }
+
+  it('creates and writes the audit database under Bun runtime', () => {
+    cleanup();
+
+    try {
+      const store = new AgentAuditStore(dbPath);
+      store.record('run-1', 'status', { status: 'Thinking...' });
+      store.close();
+
+      const db = new Database(dbPath, { readonly: true });
+      const select = db.query('SELECT agent_run_id, event_type, payload_json FROM agent_audit_events');
+      const row = select.get() as {
+        agent_run_id: string;
+        event_type: string;
+        payload_json: string;
+      };
+      select.finalize();
+      db.close();
+
+      expect(row.agent_run_id).toBe('run-1');
+      expect(row.event_type).toBe('status');
+      expect(JSON.parse(row.payload_json)).toEqual({ status: 'Thinking...' });
+    } finally {
+      cleanup();
+    }
   });
 });

@@ -93,6 +93,35 @@ describe('agent toast sizing', () => {
     expect(send).toHaveBeenCalledTimes(3);
   });
 
+  it('does not show a streaming toast for blank streamed content', async () => {
+    const showInactive = mock();
+    const send = mock();
+
+    electronMock.BrowserWindow.mockImplementation(() => ({
+      setBounds: mock(),
+      showInactive,
+      hide: mock(),
+      isVisible: mock(() => false),
+      isDestroyed: mock(() => false),
+      setAlwaysOnTop: mock(),
+      loadURL: mock(),
+      loadFile: mock(),
+      on: mock(),
+      webContents: {
+        isLoading: mock(() => false),
+        send,
+        on: mock(),
+      },
+    }));
+
+    const { showAgentToast } = await import(`../agent-toast-window?test=${Date.now()}-blank-streaming`);
+
+    showAgentToast({ kind: 'streaming', agentRunId: 'run-1', response: '   \n' });
+
+    expect(showInactive).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('coalesces small streaming resize changes to avoid repaint flicker', async () => {
     const setBounds = mock();
     let visible = true;

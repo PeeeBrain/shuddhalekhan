@@ -26,6 +26,10 @@ export type ToastWorkArea = {
 };
 
 export function showAgentToast(state: AgentToastState): void {
+  if (state.kind === 'streaming' && !state.response.trim()) {
+    return;
+  }
+
   const win = createAgentToastWindow();
   const previousStateKind = activeStateKind;
   activeStateKind = state.kind;

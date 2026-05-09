@@ -28,6 +28,7 @@ const baseConfig = {
       baseUrl: 'https://openrouter.ai/api/v1',
       model: 'openai/gpt-4.1-mini',
       apiKeyEnvVar: 'OPENROUTER_API_KEY',
+      thinkingEnabled: true,
     },
     mcpServers: [
       {
@@ -164,6 +165,41 @@ describe('McpRegistry', () => {
 
     expect(execute).not.toHaveBeenCalled();
     expect(result).toBe('Rejected: tool approval window expired.');
+
+    await registry.close();
+  });
+
+  it('reports tool start before executing approved tools', async () => {
+    const execute = mock(async () => 'result');
+    const search = { description: 'search', inputSchema: {}, execute };
+    createMCPClientMock.mockImplementation(async () => ({
+      tools: async () => ({ search }),
+      close: closeMock,
+    }));
+
+    const registry = new McpRegistry();
+    await registry.updateConfig({
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        mcpServers: [
+          {
+            ...baseConfig.agent.mcpServers[0],
+            toolPolicies: { 'srv1:search': 'alwaysAllow' },
+          },
+        ],
+      },
+    } as never);
+
+    const onToolStarted = mock();
+    const snapshot = registry.createRunSnapshot(makeApproval(), undefined, onToolStarted);
+    await snapshot.tools.srv1__search.execute?.({ q: 'news' }, makeToolOptions());
+
+    expect(onToolStarted).toHaveBeenCalledWith({
+      serverId: 'srv1',
+      toolName: 'search',
+      modelToolName: 'srv1__search',
+    });
 
     await registry.close();
   });

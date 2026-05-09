@@ -31,6 +31,7 @@ describe('preload API', () => {
           baseUrl: '',
           model: '',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
       },
     });
@@ -47,6 +48,7 @@ describe('preload API', () => {
           baseUrl: '',
           model: '',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
       },
     });

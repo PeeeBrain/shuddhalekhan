@@ -50,6 +50,11 @@ const agentSidecar = new AgentSidecarManager((event) => {
     case 'approval:requested':
       console.log(`Agent run ${event.agentRunId} requested approval for ${event.serverId}:${event.toolName}`);
       showAgentToast({
+        kind: 'status',
+        agentRunId: event.agentRunId,
+        message: `Waiting for approval: ${event.serverId}.${event.toolName}`,
+      });
+      showAgentToast({
         kind: 'approval',
         agentRunId: event.agentRunId,
         approvalId: event.approvalId,

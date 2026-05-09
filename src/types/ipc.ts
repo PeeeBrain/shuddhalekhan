@@ -147,6 +147,7 @@ export interface AppConfig {
       baseUrl: string;
       model: string;
       apiKeyEnvVar: string;
+      thinkingEnabled: boolean;
     };
     mcpServers: McpServerConfig[];
   };

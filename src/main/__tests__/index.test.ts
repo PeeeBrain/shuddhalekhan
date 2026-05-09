@@ -36,6 +36,7 @@ const getConfig = vi.fn(() => ({
       baseUrl: '',
       model: '',
       apiKeyEnvVar: '',
+      thinkingEnabled: true,
     },
     mcpServers: [],
   },
@@ -65,6 +66,7 @@ const agentSendApprovalDecision = vi.fn();
 const showAgentToast = vi.fn();
 const hideAgentToast = vi.fn();
 const handleAgentToastContentSize = vi.fn();
+let agentEventHandler: ((event: any) => void) | null = null;
 
 installElectronMock();
 mock.module('../native/keyboard', () => ({
@@ -80,6 +82,9 @@ mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUp
 mock.module('../agent-toast-window', () => ({ showAgentToast, hideAgentToast, handleAgentToastContentSize }));
 mock.module('../agent-sidecar', () => ({
   AgentSidecarManager: class {
+    constructor(onEvent: (event: any) => void) {
+      agentEventHandler = onEvent;
+    }
     start = agentStart;
     startRun = agentStartRun;
     stop = agentStop;
@@ -99,6 +104,7 @@ describe('main process IPC orchestration', () => {
         baseUrl: '',
         model: '',
         apiKeyEnvVar: '',
+        thinkingEnabled: true,
       },
       mcpServers: [],
     },
@@ -165,6 +171,7 @@ describe('main process IPC orchestration', () => {
     showAgentToast.mockClear();
     hideAgentToast.mockClear();
     handleAgentToastContentSize.mockClear();
+    agentEventHandler = null;
     getConfig.mockReturnValue(baseConfig);
     await import(`../index?test=${Date.now()}-${Math.random()}`);
   });
@@ -250,6 +257,7 @@ describe('main process IPC orchestration', () => {
           baseUrl: 'https://openrouter.ai/api/v1',
           model: 'openai/gpt-4.1-mini',
           apiKeyEnvVar: 'OPENROUTER_API_KEY',
+          thinkingEnabled: true,
         },
         mcpServers: [],
       },
@@ -293,6 +301,35 @@ describe('main process IPC orchestration', () => {
     expect(showAgentToast).toHaveBeenCalledWith({
       kind: 'config',
       message: 'Agent Mode is disabled. Open Settings to enable it.',
+    });
+  });
+
+  it('shows explicit approval status and approval toast when a tool asks for HITL', async () => {
+    agentEventHandler?.({
+      type: 'approval:requested',
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'exa',
+      toolName: 'web_search_exa',
+      modelToolName: 'exa__web_search_exa',
+      arguments: { query: 'current events' },
+      expiresAt: '2026-05-09T16:35:24.399Z',
+    });
+
+    expect(showAgentToast).toHaveBeenNthCalledWith(1, {
+      kind: 'status',
+      agentRunId: 'run-1',
+      message: 'Waiting for approval: exa.web_search_exa',
+    });
+    expect(showAgentToast).toHaveBeenNthCalledWith(2, {
+      kind: 'approval',
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'exa',
+      toolName: 'web_search_exa',
+      modelToolName: 'exa__web_search_exa',
+      arguments: { query: 'current events' },
+      expiresAt: '2026-05-09T16:35:24.399Z',
     });
   });
 
@@ -355,6 +392,7 @@ describe('main process IPC orchestration', () => {
           baseUrl: 'http://localhost:11434/v1',
           model: 'local-model',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
         mcpServers: [
           {

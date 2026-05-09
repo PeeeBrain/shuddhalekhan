@@ -34,11 +34,12 @@ const baseConfig = {
   removeFillerWords: true,
   agent: {
     enabled: true,
-    provider: {
-      baseUrl: 'https://openrouter.ai/api/v1',
-      model: 'openai/gpt-4.1-mini',
-      apiKeyEnvVar: 'OPENROUTER_API_KEY',
-    },
+      provider: {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model: 'openai/gpt-4.1-mini',
+        apiKeyEnvVar: 'OPENROUTER_API_KEY',
+        thinkingEnabled: true,
+      },
     mcpServers: [],
   },
 };
@@ -112,6 +113,48 @@ describe('runAgent', () => {
     expect(stepCountIsMock).toHaveBeenCalledWith(5);
   });
 
+  it('uses a GPT-5-style structured system prompt with explicit agent controls', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [{ toolCalls: [], toolResults: [] }],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    const callbacks = makeCallbacks();
+
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    const systemPrompt = streamTextMock.mock.calls[0]?.[0].system;
+    expect(systemPrompt).toContain('<identity>');
+    expect(systemPrompt).toContain('<persistence>');
+    expect(systemPrompt).toContain('<context_gathering>');
+    expect(systemPrompt).toContain('<tool_preambles>');
+    expect(systemPrompt).toContain('<approval_handling>');
+    expect(systemPrompt).not.toContain('# Identity');
+  });
+
+  it('injects the current local datetime into each agent run prompt', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [{ toolCalls: [], toolResults: [] }],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    const callbacks = makeCallbacks();
+
+    await runAgent('run-1', 'what happened today?', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    const systemPrompt = streamTextMock.mock.calls[0]?.[0].system;
+    expect(systemPrompt).toContain('<runtime_context>');
+    expect(systemPrompt).toContain(`- Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+    expect(systemPrompt).toMatch(/- Current local datetime: .+/);
+    expect(systemPrompt).toMatch(/- Current UTC datetime: \d{4}-\d{2}-\d{2}T/);
+  });
+
   it('does not require an API key for local providers', async () => {
     streamTextMock.mockImplementation(() => makeStreamResult({
       text: 'Local done',
@@ -129,6 +172,7 @@ describe('runAgent', () => {
           baseUrl: 'http://localhost:11434/v1',
           model: 'gemma3:270m',
           apiKeyEnvVar: '',
+          thinkingEnabled: true,
         },
       },
     };
@@ -235,6 +279,107 @@ describe('runAgent', () => {
     expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(1, 'Hello', 'Hello');
     expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(2, ' world', 'Hello world');
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Hello world', []);
+  });
+
+  it('ignores blank streamed text deltas so the UI does not show an empty streaming toast', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation((options: { onChunk?: (args: TextChunkEvent) => void }) => {
+      options.onChunk?.({ chunk: { type: 'text-delta', text: '   ' } });
+      options.onChunk?.({ chunk: { type: 'text-delta', text: '\n' } });
+      options.onChunk?.({ chunk: { type: 'text-delta', text: 'Ready' } });
+      return makeStreamResult({
+        text: 'Ready',
+        steps: [],
+        toolCalls: [],
+        toolResults: [],
+      });
+    });
+
+    const callbacks = makeCallbacks();
+
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(callbacks.onResponseDelta).toHaveBeenCalledTimes(1);
+    expect(callbacks.onResponseDelta).toHaveBeenCalledWith('Ready', 'Ready');
+  });
+
+  it('passes enabled thinking through request body reasoning without unsupported reasoningEffort values', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    const callbacks = makeCallbacks();
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(streamTextMock.mock.calls[0]?.[0].providerOptions).toEqual({});
+
+    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
+    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
+      messages: [],
+      reasoning: { effort: 'on' },
+    });
+  });
+
+  it('omits request body reasoning when thinking is disabled', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    const callbacks = makeCallbacks();
+    await runAgent('run-1', 'hello', {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        provider: {
+          ...baseConfig.agent.provider,
+          thinkingEnabled: false,
+        },
+      },
+    } as never, {}, new AbortController().signal, callbacks);
+
+    expect(streamTextMock.mock.calls[0]?.[0].providerOptions).toEqual({});
+
+    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
+    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({ messages: [] });
+  });
+
+  it('passes thinking through request body reasoning for local providers', async () => {
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    const callbacks = makeCallbacks();
+    await runAgent('run-1', 'hello', {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        provider: {
+          baseUrl: 'http://localhost:1234/v1',
+          model: 'nvidia/nemotron-3-nano-4b',
+          apiKeyEnvVar: '',
+          thinkingEnabled: true,
+        },
+      },
+    } as never, {}, new AbortController().signal, callbacks);
+
+    expect(streamTextMock.mock.calls[0]?.[0].providerOptions).toEqual({});
+
+    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
+    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
+      messages: [],
+      reasoning: { effort: 'on' },
+    });
   });
 
   it('calls onCancelled when aborted', async () => {
