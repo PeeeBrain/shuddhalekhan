@@ -91,45 +91,42 @@ export function SettingsWindow() {
 
   return (
     <main className="flex h-screen bg-background text-foreground">
-      <aside className="flex w-[244px] flex-col border-r border-border bg-[#101214] p-[18px] pt-7" aria-label="Settings sections">
-        <div className="mb-8 flex items-center gap-3">
-          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#181b1e] shadow-[inset_0_0_0_1px_#30363c]"
-            style={{
-              background: 'linear-gradient(#f1c75b, #f1c75b) 50% 50% / 16px 3px no-repeat, linear-gradient(#fff, #fff) 50% 50% / 3px 16px no-repeat, #181b1e',
-            }}
-            aria-hidden="true"
-          />
+      <aside className="flex w-56 flex-col border-r border-border bg-background p-5 pt-6" aria-label="Settings sections">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary">
+            <span className="text-primary text-lg font-bold leading-none">S</span>
+          </div>
           <div>
-            <h1 className="text-[17px] font-semibold leading-[22px]">Shuddhalekhan</h1>
-            <p className="mt-0.5 text-xs text-muted-foreground">{appInfo?.version ? `v${appInfo.version}` : 'Settings'}</p>
+            <h1 className="text-base font-semibold leading-tight">Shuddhalekhan</h1>
+            <p className="text-xs text-muted-foreground">{appInfo?.version ? `v${appInfo.version}` : 'Settings'}</p>
           </div>
         </div>
 
-        <nav className="flex flex-col gap-1">
+        <nav className="flex flex-col gap-0.5">
           {sections.map((section) => (
-            <Button
+            <button
               key={section.id}
               type="button"
-              variant={activeSection === section.id ? 'secondary' : 'ghost'}
-              className="justify-start text-[13px] font-semibold text-muted-foreground hover:text-foreground"
+              className={`flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                activeSection === section.id
+                  ? 'bg-secondary text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+              }`}
               onClick={() => setActiveSection(section.id)}
             >
               {section.label}
-            </Button>
+            </button>
           ))}
         </nav>
       </aside>
 
-      <section className="min-w-0 flex-1 bg-[#181b1e]">
+      <section className="min-w-0 flex-1 bg-background">
         <ScrollArea className="h-full">
           <div className="px-10 py-8">
-            <header className="mb-6 flex items-start justify-between gap-6">
-              <div>
-                <p className="mb-1 text-xs font-bold uppercase tracking-normal text-muted-foreground">Configuration</p>
-                <h2 className="text-[27px] font-semibold leading-[34px] text-[#f7f8f9]">
-                  {sections.find((section) => section.id === activeSection)?.label}
-                </h2>
-              </div>
+            <header className="mb-8 flex items-start justify-between gap-6">
+              <h2 className="text-2xl font-semibold tracking-tight">
+                {sections.find((section) => section.id === activeSection)?.label}
+              </h2>
               <Badge variant="outline" className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
                 {saveState === 'saved' ? 'Saved' : 'Ready'}
               </Badge>
@@ -231,7 +228,7 @@ export function SettingsWindow() {
                 <ReadOnlyRow label="Version" value={appInfo?.version ?? 'Unknown'} />
                 <ReadOnlyRow label="Update status" value={statusText} />
                 <Button
-                  className="mt-4 w-fit min-w-[152px]"
+                  className="mt-4 w-fit min-w-36"
                   disabled={updateStatus?.state === 'checking'}
                   onClick={() => {
                     window.electronAPI?.invoke('updater:check').then(setUpdateStatus).catch((err) => {
@@ -311,7 +308,7 @@ function McpSettings({
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[0.9fr_1fr]">
-      <Card className="border-border/60">
+      <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -356,7 +353,7 @@ function McpSettings({
       <div className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-base font-bold text-[#f1f3f5]">Configured MCPs</h3>
+            <h3 className="text-base font-semibold">Configured MCPs</h3>
             <p className="mt-1 text-xs text-muted-foreground">
               {servers.length === 0 ? 'No MCP servers configured.' : `${servers.length} server${servers.length === 1 ? '' : 's'} configured.`}
             </p>
@@ -402,7 +399,7 @@ function McpServerForm({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label className="text-xs font-bold text-muted-foreground">Name</Label>
+        <Label className="text-xs font-semibold text-muted-foreground">Name</Label>
         <Input
           value={server.displayName}
           onChange={(event) => onChange({ ...server, displayName: event.target.value })}
@@ -415,12 +412,12 @@ function McpServerForm({
           checked={server.enabled}
           onCheckedChange={(checked) => onChange({ ...server, enabled: checked })}
         />
-        <Label htmlFor="mcp-enabled" className="text-sm text-[#cbd1d6]">Enabled for Agent Mode</Label>
+        <Label htmlFor="mcp-enabled" className="text-sm text-muted-foreground">Enabled for Agent Mode</Label>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label className="text-xs font-bold text-muted-foreground">Transport</Label>
+          <Label className="text-xs font-semibold text-muted-foreground">Transport</Label>
           <Select
             value={server.transport.type}
             disabled={server.preset === 'gmail'}
@@ -446,7 +443,7 @@ function McpServerForm({
 
         {transport.type === 'http' ? (
           <div className="col-span-full space-y-2">
-            <Label className="text-xs font-bold text-muted-foreground">URL</Label>
+            <Label className="text-xs font-semibold text-muted-foreground">URL</Label>
             <Input
               value={transport.url}
               disabled={server.preset === 'gmail'}
@@ -457,7 +454,7 @@ function McpServerForm({
         ) : (
           <>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground">Command</Label>
+              <Label className="text-xs font-semibold text-muted-foreground">Command</Label>
               <Input
                 value={transport.command}
                 placeholder="bun"
@@ -465,7 +462,7 @@ function McpServerForm({
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground">Arguments</Label>
+              <Label className="text-xs font-semibold text-muted-foreground">Arguments</Label>
               <Input
                 value={transport.args.join(' ')}
                 placeholder="run path/to/server.ts"
@@ -473,7 +470,7 @@ function McpServerForm({
               />
             </div>
             <div className="col-span-full space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground">Environment variable names</Label>
+              <Label className="text-xs font-semibold text-muted-foreground">Environment variable names</Label>
               <Input
                 value={transport.envVarNames.join(', ')}
                 placeholder="GITHUB_TOKEN, GOOGLE_CLIENT_ID"
@@ -485,10 +482,10 @@ function McpServerForm({
       </div>
 
       {transport.type === 'http' && transport.oauth?.enabled ? (
-        <div className="space-y-3 rounded-md border border-border/60 bg-muted/40 p-3">
+        <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground">OAuth client ID env var</Label>
+              <Label className="text-xs font-semibold text-muted-foreground">OAuth client ID env var</Label>
               <Input
                 value={transport.oauth.clientIdEnvVar ?? ''}
                 placeholder="GOOGLE_CLIENT_ID"
@@ -502,7 +499,7 @@ function McpServerForm({
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs font-bold text-muted-foreground">OAuth client secret env var</Label>
+              <Label className="text-xs font-semibold text-muted-foreground">OAuth client secret env var</Label>
               <Input
                 value={transport.oauth.clientSecretEnvVar ?? ''}
                 placeholder="GOOGLE_CLIENT_SECRET"
@@ -543,11 +540,11 @@ function ConfiguredMcpServer({
   onPolicyChange: (server: McpServerConfig) => void;
 }) {
   return (
-    <Card className="border-border/60">
+    <Card>
       <CardContent className="space-y-3 pt-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-[#f1f3f5] break-words">{server.displayName || 'Unnamed MCP Server'}</p>
+            <p className="text-sm font-semibold break-words">{server.displayName || 'Unnamed MCP Server'}</p>
             <p className="mt-0.5 text-xs text-muted-foreground break-words">{formatTransport(server)}</p>
           </div>
           <Badge
@@ -613,11 +610,11 @@ function ToolPolicyEditor({
         const policy = server.toolPolicies[policyKey] ?? 'alwaysAsk';
 
         return (
-          <div key={tool.name} className="grid grid-cols-1 items-start gap-3 border-t border-border/60 py-2.5 sm:grid-cols-[1fr_150px]">
+          <div key={tool.name} className="grid grid-cols-1 items-start gap-3 border-t border-border py-2.5 sm:grid-cols-[1fr_150px]">
             <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-[#f1f3f5] break-words">{tool.name}</p>
-              <div className="mt-1 max-h-[80px] overflow-y-auto rounded-md border border-border/40 bg-muted/30 px-2 py-1.5">
-                <p className="text-xs text-muted-foreground break-words leading-[17px]">{tool.description || 'No description provided.'}</p>
+              <p className="text-sm font-semibold break-words">{tool.name}</p>
+              <div className="mt-1 max-h-20 overflow-y-auto rounded-md border border-border/40 bg-muted/30 px-2 py-1.5">
+                <p className="text-xs text-muted-foreground break-words leading-relaxed">{tool.description || 'No description provided.'}</p>
               </div>
             </div>
             <div className="pt-1">
@@ -651,7 +648,7 @@ function ToolPolicyEditor({
 }
 
 function SettingsPanel({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-[720px] space-y-0 border-t border-border/60">{children}</div>;
+  return <div className="max-w-2xl space-y-0 border-t border-border">{children}</div>;
 }
 
 function ToggleRow({
@@ -668,18 +665,16 @@ function ToggleRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 items-center gap-2 border-b border-border/60 py-4 sm:grid-cols-[minmax(190px,0.75fr)_minmax(260px,1fr)] sm:gap-6">
-      <span className="text-sm text-[#cbd1d6]">
-        <strong className="block text-sm font-semibold text-[#f1f3f5]">{title}</strong>
-        <small className="mt-0.5 block text-xs text-muted-foreground">{description}</small>
-      </span>
-      <div className="flex justify-start sm:justify-end">
-        <Switch
-          checked={checked}
-          onCheckedChange={onChange}
-          className={tone === 'agent' && checked ? 'data-[state=checked]:bg-agent data-[state=checked]:border-agent/70' : ''}
-        />
+    <div className="flex flex-col gap-3 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="space-y-1">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
       </div>
+      <Switch
+        checked={checked}
+        onCheckedChange={onChange}
+        className={tone === 'agent' && checked ? 'data-[state=checked]:bg-agent data-[state=checked]:border-agent/70' : ''}
+      />
     </div>
   );
 }
@@ -698,32 +693,46 @@ function TextRow({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 items-center gap-2 border-b border-border/60 py-4 sm:grid-cols-[minmax(190px,0.75fr)_minmax(260px,1fr)] sm:gap-6">
-      <span className="text-sm text-[#cbd1d6]">{label}</span>
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <Input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
-        {warning ? <small className="text-xs text-destructive break-words">{warning}</small> : null}
-      </div>
+    <div className="space-y-2 border-b border-border py-5">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+      {warning ? <p className="text-xs text-destructive break-words">{warning}</p> : null}
     </div>
   );
 }
 
 function ReadOnlyRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-1 items-center gap-2 border-b border-border/60 py-4 sm:grid-cols-[minmax(190px,0.75fr)_minmax(260px,1fr)] sm:gap-6">
-      <span className="text-sm text-[#cbd1d6]">{label}</span>
-      <strong className="text-[13px] font-normal text-[#edf0f2] break-words">{value}</strong>
+    <div className="flex flex-col gap-1 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium break-words">{value}</span>
     </div>
   );
 }
 
+import { Windows as WindowsIcon } from '@/components/ui/svgs/windows';
+
 function KeyRow({ label, value }: { label: string; value: string }) {
+  const keys = value.split(' + ');
   return (
-    <div className="grid grid-cols-1 items-center gap-2 border-b border-border/60 py-4 sm:grid-cols-[minmax(190px,0.75fr)_minmax(260px,1fr)] sm:gap-6">
-      <span className="text-sm text-[#cbd1d6]">{label}</span>
-      <kbd className="w-fit rounded-md border border-border/60 bg-muted/50 px-2 py-1.5 font-mono text-[13px] text-[#edf0f2]">
-        {value}
-      </kbd>
+    <div className="flex flex-col gap-1 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-1">
+        {keys.map((key, i) => (
+          <span key={key} className="flex items-center gap-1">
+            <kbd className="inline-flex items-center justify-center rounded border border-border bg-gradient-to-b from-muted to-muted/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground shadow-sm">
+              {key === 'Win' ? (
+                <WindowsIcon className="size-3 text-primary" aria-hidden="true" />
+              ) : (
+                key
+              )}
+            </kbd>
+            {i < keys.length - 1 ? (
+              <span className="text-xs text-muted-foreground/60">+</span>
+            ) : null}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }

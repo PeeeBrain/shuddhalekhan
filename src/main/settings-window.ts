@@ -21,7 +21,7 @@ export function openSettingsWindow(): BrowserWindow {
     minHeight: 560,
     show: false,
     title: 'Shuddhalekhan Settings',
-    backgroundColor: '#101214',
+    backgroundColor: '#0d1117',
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,

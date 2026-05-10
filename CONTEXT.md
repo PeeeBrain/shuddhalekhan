@@ -54,6 +54,12 @@ Agent Mode is stateless by default. Each `Alt + Win` command is a one-off fire-a
 
 Agent Mode shows minimal live tool-status toasts while a run is active, such as checking Gmail, reading messages, drafting a reply, or waiting for approval. The final response toast includes the agent's final answer and a compact tool summary. Raw tool arguments, detailed results, and audit details are not shown in transient toasts unless needed for approval.
 
+### Toast Visual Direction
+- All toasts use a **minimal, native-feeling card** aesthetic: `bg-card`, `border-border`, subtle shadow, no CSS grid patterns, no gradient backgrounds
+- State is communicated via a **small left accent border** (color-coded: blue for agent thinking, amber for approval, red for failure, green for success)
+- Typography uses standard theme sizes; content is the star, not the container
+- **Approval toasts are slightly heightened**: warm amber left border and a subtle shadow lift to signal urgency, but nothing radical or theatrical
+
 An empty model response is not a successful user-facing final answer. If an agent run reaches completion with no final text, Shuddhalekhan treats it as a degraded completion: it shows a useful fallback based on observable tool activity when possible, otherwise shows a clear empty-response failure/degraded message, and records the condition in the audit trail.
 
 Agent Mode writes full local audit logs for agent runs, including transcripts, prompts, tool requests, tool arguments, approval decisions, tool results, errors, and final responses. The audit store is a small local SQLite database owned only by the agent sidecar so runs, tool calls, approvals, and results can be queried by ID during debugging. Electron main does not write to or depend on this database, and v4 does not expose it as a user-facing history feature. Runtime/process logs may still use the appropriate Shuddhalekhan application log directory on disk. Audit data is not sent to remote services by Shuddhalekhan.
@@ -129,6 +135,20 @@ Agent Mode v4 uses an OpenAI-compatible chat/model provider configuration for th
 Agent Mode configuration requires a real settings window rather than tray-only UI. The settings design should remain modern, restrained, and consistent with Shuddhalekhan's existing UI; it should avoid card-heavy dashboard patterns and use focused settings sections for audio, agent provider configuration, MCP server registry, Gmail preset/OAuth status, and per-tool approval policies.
 
 The app remains tray-first. The settings window opens only when the user chooses Settings from the tray menu, and it is not shown on app startup. Closing settings returns Shuddhalekhan to background/tray operation.
+
+## UI Architecture Decisions
+
+### Hidden Main Window Removal
+The `MainWindow` component and its `BrowserWindow` are removed. The app no longer creates a hidden background renderer. The tray menu and settings window are the only user-facing persistent surfaces.
+
+### Settings Window Design Direction
+Settings uses a **floating panel / sheet** style (Apple System Settings / Windows 11 Settings influence):
+- Sidebar and content share the same background color (`bg-background`)
+- A single subtle 1px separator divides the two panes
+- No hardcoded dark panes (`#101214`, `#181b1e` are eliminated in favor of theme tokens)
+- Navigation items are minimal text-only rows with hover/active states
+- Content area uses generous whitespace rather than dense grid rows
+- Layout convention: section headers with loose spacing for simple toggles/reads; stacked label-above-input for text fields (more legible and scales better at narrow widths)
 
 The tray menu shows Agent Mode status and a Settings entry point, but the authoritative Agent Mode enable/disable toggle and all MCP/provider configuration live in Settings.
 

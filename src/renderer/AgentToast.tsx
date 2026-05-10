@@ -60,31 +60,28 @@ export function AgentToast() {
 
   if (!state) return null;
 
+  const accentColor = getAccentColor(state.kind);
+
   if (state.kind === 'approval') {
     return (
-      <main ref={toastRef} className="relative flex h-screen w-screen flex-col overflow-hidden rounded-[10px] border border-white/10 bg-[#111416] p-4 text-[#f8fafb] shadow-[0_22px_70px_rgba(0,0,0,0.48)]"
-        style={{ background: 'linear-gradient(135deg, rgba(255,106,106,0.18), rgba(241,199,91,0.08)), #111416' }}>
-        <div className="pointer-events-none fixed inset-0"
-          style={{
-            background: 'linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)',
-            backgroundSize: '18px 18px',
-            maskImage: 'linear-gradient(135deg, black, transparent 68%)',
-          }} />
-
-        <div className="relative mb-2.5 flex items-center justify-between gap-3">
-          <Badge variant="outline" className="border-transparent bg-transparent px-0 text-[11px] font-extrabold uppercase tracking-normal text-[#ffb2a6]">
+      <main
+        ref={toastRef}
+        className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border border-l-4 border-l-warning bg-card p-4 text-card-foreground shadow-xl"
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-warning">
             Approval
           </Badge>
-          <span className="min-w-[36px] text-right text-[11px] font-extrabold uppercase tracking-normal text-[#f1d38a]">
+          <span className="min-w-9 text-right text-xs font-bold uppercase tracking-wide text-warning">
             {secondsLeft}s
           </span>
         </div>
 
-        <h1 className="relative mb-2 break-words text-base font-bold leading-[21px] text-white line-clamp-3">
+        <h1 className="mb-2 break-words text-base font-semibold leading-snug line-clamp-3">
           {state.serverId}:{state.toolName}
         </h1>
 
-        <p className="relative mb-2 block min-h-[42px] flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/35 p-2 text-[13px] leading-[18px] text-[#d9dee2]">
+        <p className="mb-2 block min-h-10 flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-2 text-sm leading-relaxed text-muted-foreground">
           {formatArguments(state.arguments)}
         </p>
 
@@ -93,15 +90,15 @@ export function AgentToast() {
           onChange={(event) => setMessage(event.target.value)}
           placeholder="Optional denial message"
           aria-label="Optional denial message"
-          className="relative h-9 min-h-0 flex-shrink-0 resize-none rounded-md border-white/15 bg-black/60 py-[7px] text-xs leading-4 text-[#f4f7f8] placeholder:text-muted-foreground focus-visible:border-[rgba(241,199,91,0.74)] focus-visible:ring-[rgba(241,199,91,0.13)]"
+          className="h-9 min-h-0 flex-shrink-0 resize-none rounded-md border-border bg-background text-xs leading-4 text-foreground placeholder:text-muted-foreground"
         />
 
-        <div className="relative mt-2 flex flex-shrink-0 justify-end gap-2">
+        <div className="mt-3 flex flex-shrink-0 justify-end gap-2">
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            className="h-[34px] w-24 bg-[#242a30] text-[#e8edf2] hover:bg-[#2a3138]"
+            className="h-8 w-24"
             onClick={() => decide(state, 'denied', message)}
           >
             Deny
@@ -109,7 +106,7 @@ export function AgentToast() {
           <Button
             type="button"
             size="sm"
-            className="h-[34px] w-24"
+            className="h-8 w-24"
             onClick={() => decide(state, 'approved')}
           >
             Approve
@@ -120,33 +117,26 @@ export function AgentToast() {
   }
 
   return (
-    <main ref={toastRef} className={`relative flex h-screen w-screen flex-col overflow-hidden rounded-[10px] border border-white/10 bg-[#111416] p-4 text-[#f8fafb] shadow-[0_22px_70px_rgba(0,0,0,0.48)] ${state.kind}`}
-      style={state.kind === 'failed' || state.kind === 'cancelled'
-        ? { background: 'linear-gradient(135deg, rgba(255,106,106,0.18), rgba(241,199,91,0.08)), #111416' }
-        : undefined}>
-      <div className="pointer-events-none fixed inset-0"
-        style={{
-          background: 'linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)',
-          backgroundSize: '18px 18px',
-          maskImage: 'linear-gradient(135deg, black, transparent 68%)',
-        }} />
-
-      <div className="relative mb-2.5 flex items-center justify-between gap-3">
-        <Badge variant="outline" className="border-transparent bg-transparent px-0 text-[11px] font-extrabold uppercase tracking-normal text-[#ffb2a6]">
+    <main
+      ref={toastRef}
+      className={`flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border border-l-2 bg-card p-4 text-card-foreground shadow-lg ${accentColor}`}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           {getTitle(state)}
         </Badge>
       </div>
 
-      <div ref={bodyRef} className="relative m-0 min-h-0 flex-1 overflow-auto break-words text-[13px] leading-[18px] text-[#d9dee2]">
+      <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto break-words text-sm leading-relaxed text-muted-foreground">
         {state.kind === 'streaming' || state.kind === 'completed'
           ? renderMarkdown(getBody(state))
           : <p className="m-0 whitespace-pre-wrap">{getBody(state)}</p>}
       </div>
 
       {state.kind === 'completed' && state.toolSummary.length > 0 ? (
-        <ul className="relative mt-3 flex flex-wrap gap-1.5 p-0">
+        <ul className="mt-3 flex flex-wrap gap-1.5 p-0">
           {state.toolSummary.slice(0, 3).map((item) => (
-            <li key={item} className="max-w-full rounded-full border border-white/10 bg-white/[0.06] px-[7px] py-[3px] text-[11px] leading-[15px] text-[#cad2da] break-words">
+            <li key={item} className="max-w-full rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground break-words">
               {item}
             </li>
           ))}
@@ -154,6 +144,23 @@ export function AgentToast() {
       ) : null}
     </main>
   );
+}
+
+function getAccentColor(kind: AgentToastState['kind']): string {
+  switch (kind) {
+    case 'status':
+    case 'streaming':
+      return 'border-l-primary';
+    case 'completed':
+      return 'border-l-success';
+    case 'failed':
+    case 'cancelled':
+      return 'border-l-destructive';
+    case 'config':
+      return 'border-l-muted-foreground';
+    default:
+      return 'border-l-border';
+  }
 }
 
 function decide(state: Extract<AgentToastState, { kind: 'approval' }>, decision: 'approved' | 'denied', message?: string): void {
@@ -229,7 +236,7 @@ function renderMarkdown(markdown: string): ReactNode {
       }
       if (index < lines.length) index++;
       nodes.push(
-        <pre key={nodes.length} className="my-2 max-w-full overflow-auto rounded-md border border-white/10 bg-black/35 p-2 text-[12px] leading-[17px] text-[#edf1f4]">
+        <pre key={nodes.length} className="my-2 max-w-full overflow-auto rounded-md border border-border bg-muted p-2 text-xs leading-relaxed">
           <code>{codeLines.join('\n')}</code>
         </pre>
       );
@@ -239,7 +246,7 @@ function renderMarkdown(markdown: string): ReactNode {
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
     if (heading) {
       nodes.push(
-        <p key={nodes.length} className="mb-1 mt-2 text-[13px] font-bold leading-[18px] text-white first:mt-0">
+        <p key={nodes.length} className="mb-1 mt-2 text-sm font-semibold first:mt-0">
           {renderInlineMarkdown(heading[2] ?? '')}
         </p>
       );
@@ -316,19 +323,19 @@ function renderInlineMarkdown(text: string): ReactNode[] {
     const token = match[0];
     if (token.startsWith('`')) {
       nodes.push(
-        <code key={nodes.length} className="rounded bg-white/10 px-1 py-[1px] text-[12px] text-[#f1d38a]">
+        <code key={nodes.length} className="rounded bg-muted px-1 py-px text-xs text-primary">
           {token.slice(1, -1)}
         </code>
       );
     } else if (token.startsWith('**')) {
-      nodes.push(<strong key={nodes.length} className="font-bold text-white">{token.slice(2, -2)}</strong>);
+      nodes.push(<strong key={nodes.length} className="font-semibold text-foreground">{token.slice(2, -2)}</strong>);
     } else if (token.startsWith('*')) {
       nodes.push(<em key={nodes.length} className="italic">{token.slice(1, -1)}</em>);
     } else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
       const href = link?.[2] ?? '#';
       nodes.push(
-        <a key={nodes.length} href={href} className="text-[#f1d38a] underline underline-offset-2">
+        <a key={nodes.length} href={href} className="text-primary underline underline-offset-2">
           {link?.[1] ?? token}
         </a>
       );

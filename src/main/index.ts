@@ -1,5 +1,4 @@
-import { app, BrowserWindow, ipcMain, clipboard, dialog, session, shell } from 'electron';
-import { join } from 'path';
+import { app, ipcMain, clipboard, dialog, session, shell } from 'electron';
 import { keyboardHook } from './native/keyboard';
 import { simulatePaste } from './native/clipboard';
 import { createAudioWindow, getAudioWindow, destroyAudioWindow } from './audio-window';
@@ -13,7 +12,6 @@ import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
 import type { AppConfig, AudioDevice, McpDiscoveredTool, RecordingIntent, UpdateStatus } from '../types/ipc';
 
-let mainWindow: BrowserWindow | null = null;
 let isRecording = false;
 let isAudioWindowReady = false;
 let pendingStartRecording = false;
@@ -120,36 +118,6 @@ function persistDiscoveredTools(
   });
 }
 
-function createMainWindow(): BrowserWindow {
-  mainWindow = new BrowserWindow({
-    width: 400,
-    height: 300,
-    show: false,
-    frame: false,
-    transparent: true,
-    skipTaskbar: true,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else if (!app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173/');
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
-  }
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-
-  return mainWindow;
-}
-
 function startRecording(intent: RecordingIntent = 'dictation'): void {
   if (isRecording) return;
   isRecording = true;
@@ -234,8 +202,9 @@ function delay(ms: number): Promise<void> {
 
 function publishUpdateStatus(status: UpdateStatus): void {
   updateUpdaterStatus(status);
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('updater:status-changed', status);
+  const settingsWin = getSettingsWindow();
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('updater:status-changed', status);
   }
 }
 
@@ -390,7 +359,6 @@ if (!gotSingleInstanceLock) {
       callback(permission === 'media');
     });
 
-    createMainWindow();
     const audioWin = createAudioWindow();
     audioWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
       console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
@@ -420,9 +388,7 @@ if (!gotSingleInstanceLock) {
     publishUpdateStatus(getUpdateStatus());
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createMainWindow();
-      }
+      // Keep running in tray; no main window to recreate
     });
   });
 

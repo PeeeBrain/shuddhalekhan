@@ -1,7 +1,7 @@
 {
   "name": "shuddhalekhan",
   "private": true,
-  "version": "4.0.2",
+  "version": "4.1.0",
   "description": "Shuddhalekhan — speech-to-text dictation app",
   "type": "module",
   "main": "./out/main/index.cjs",

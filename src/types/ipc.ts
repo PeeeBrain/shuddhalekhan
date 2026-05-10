@@ -73,7 +73,6 @@ export interface RendererToMainInvokeChannels {
   'app:get-info': () => Promise<AppInfo>;
   'updater:get-status': () => Promise<UpdateStatus>;
   'updater:check': () => Promise<UpdateStatus>;
-
 }
 
 export interface MainToRendererChannels {

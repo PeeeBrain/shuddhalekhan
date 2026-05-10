@@ -363,7 +363,6 @@ describe('main process IPC orchestration', () => {
     expect(agentStop).toHaveBeenCalled();
     expect(openSettingsWindow).toHaveBeenCalled();
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
-    expect(hideAgentToast).toHaveBeenCalled();
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
     expect(send).toHaveBeenCalledWith('audio:select-device', 'mic-1');
     expect(checkForUpdates).toHaveBeenCalled();

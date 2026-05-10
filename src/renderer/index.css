@@ -1,42 +1,43 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-background: hsl(210 11% 8%);
+  /* Arctic Steel — cool, calm, cohesive dark theme */
+  --color-background: hsl(215 16% 7%);
   --color-foreground: hsl(210 20% 96%);
 
-  --color-card: hsl(210 10% 11%);
+  --color-card: hsl(215 14% 10%);
   --color-card-foreground: hsl(210 20% 96%);
 
-  --color-popover: hsl(210 10% 11%);
+  --color-popover: hsl(215 14% 10%);
   --color-popover-foreground: hsl(210 20% 96%);
 
-  --color-primary: hsl(43 84% 65%);
-  --color-primary-foreground: hsl(210 11% 8%);
+  --color-primary: hsl(195 65% 65%);
+  --color-primary-foreground: hsl(215 16% 7%);
 
-  --color-secondary: hsl(210 10% 15%);
+  --color-secondary: hsl(215 12% 14%);
   --color-secondary-foreground: hsl(210 15% 90%);
 
-  --color-muted: hsl(210 9% 18%);
-  --color-muted-foreground: hsl(210 8% 58%);
+  --color-muted: hsl(215 10% 18%);
+  --color-muted-foreground: hsl(215 8% 55%);
 
-  --color-accent: hsl(210 10% 15%);
+  --color-accent: hsl(215 12% 14%);
   --color-accent-foreground: hsl(210 15% 90%);
 
-  --color-destructive: hsl(0 62% 62%);
+  --color-destructive: hsl(355 55% 60%);
   --color-destructive-foreground: hsl(210 20% 96%);
 
-  --color-border: hsl(210 9% 22%);
-  --color-input: hsl(210 9% 22%);
-  --color-ring: hsl(43 84% 65%);
+  --color-border: hsl(215 10% 20%);
+  --color-input: hsl(215 10% 20%);
+  --color-ring: hsl(195 65% 65%);
 
-  --color-agent: hsl(0 100% 70%);
+  --color-agent: hsl(355 55% 60%);
   --color-agent-foreground: hsl(210 20% 96%);
 
-  --color-success: hsl(145 52% 62%);
-  --color-success-foreground: hsl(210 11% 8%);
+  --color-success: hsl(165 45% 55%);
+  --color-success-foreground: hsl(215 16% 7%);
 
-  --color-warning: hsl(43 84% 65%);
-  --color-warning-foreground: hsl(210 11% 8%);
+  --color-warning: hsl(35 70% 60%);
+  --color-warning-foreground: hsl(215 16% 7%);
 
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;

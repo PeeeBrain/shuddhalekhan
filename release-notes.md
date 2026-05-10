@@ -1,12 +1,42 @@
-# Shuddhalekhan 4.0.1
+# Shuddhalekhan 4.1.0
 
-This hotfix resolves a packaged Agent Mode startup regression introduced in 4.0.0.
+This release delivers a comprehensive UI/UX polish pass with a new cohesive color theme, cleaner settings window, and native-feeling agent toasts.
 
 ## What's Changed
 
-- Fixed packaged Agent Mode sidecar launch so it runs under Electron's Node mode instead of recursively launching full Shuddhalekhan app instances.
-- Added a single-instance startup guard so duplicate full app launches exit immediately.
+### New Theme: Arctic Steel
+- Replaced the jarring slate-grey + yellow + red palette with a cool, cohesive **Arctic Steel** theme.
+- New primary color is a soft cyan (`hsl(195 65% 65%)`) — calm and distinctive.
+- Destructive/agent states now use muted coral (`hsl(355 55% 60%)`) instead of harsh bright red.
+- Success states use soft teal (`hsl(165 45% 55%)`).
+- Warning states are warm amber (`hsl(35 70% 60%)`), clearly distinct from primary.
+- Background shifted to deep blue-black (`hsl(215 16% 7%)`) for a refined, native dark feel.
+
+### Settings Window Redesign
+- Adopted a **floating panel / sheet** style inspired by Apple System Settings and Windows 11.
+- Sidebar and content area now share the same background with a single subtle 1px separator.
+- Eliminated all hardcoded hex colors (`#101214`, `#181b1e`, etc.) in favor of Tailwind theme tokens.
+- Replaced arbitrary Tailwind values with standard tokens for consistency and scalability.
+- Navigation simplified to minimal text-only rows with hover/active states.
+- Layout standardized: flex rows for toggles, stacked label-above-input for text fields.
+- MCP server cards and tool policy editor cleaned up.
+- Shortcut display redesigned as **individual keycaps** with 3D gradient styling.
+- Windows key now shows the **official Windows logo icon** instead of plain text.
+
+### Agent Toast Redesign
+- Removed CSS grid pattern overlays and all gradient backgrounds.
+- Adopted a minimal, native-feeling **card aesthetic**: `bg-card`, `border-border`, subtle shadow.
+- State communicated via a **small left accent border** color-coded by state:
+  - Blue for agent thinking / streaming
+  - Amber (thicker border + stronger shadow) for approval
+  - Red for failure / cancelled
+  - Green for completed
+- Typography standardized to theme tokens.
+
+### Architecture Cleanup
+- Removed the hidden `MainWindow` that was never shown. The tray menu and settings window are now the only persistent user-facing surfaces.
+- Added `@svgl` registry support for high-quality SVG icon components.
 
 ## Update Note
 
-Users on 4.0.0 should update immediately, especially if Agent Mode was enabled before restarting the app.
+No breaking changes. All existing configuration and behavior remain identical — only visual presentation has changed.
