@@ -6,6 +6,7 @@ import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../typ
 import { logSidecar, writeJsonLine } from './protocol';
 import type { AgentRuntimeCallbacks, ToolApprovalRequest } from './runtime';
 import { SidecarOAuthProvider } from './oauth-provider';
+import { getMcpServerConnectionKey } from './mcp-server-config';
 
 type RequestToolApproval = AgentRuntimeCallbacks['requestToolApproval'];
 type AuditCallback = NonNullable<AgentRuntimeCallbacks['onAudit']>;
@@ -27,7 +28,7 @@ export class McpRegistry {
 
     for (const [serverId, server] of this.servers) {
       const nextConfig = enabledServers.get(serverId);
-      if (!nextConfig || serverConnectionKey(server.config) !== serverConnectionKey(nextConfig)) {
+      if (!nextConfig || getMcpServerConnectionKey(server.config) !== getMcpServerConnectionKey(nextConfig)) {
         await this.disconnect(serverId);
       }
     }
@@ -252,11 +253,4 @@ function collectToolPolicies(config: AppConfig): Map<string, AgentToolApprovalPo
     }
   }
   return policies;
-}
-
-function serverConnectionKey(server: McpServerConfig): string {
-  return JSON.stringify({
-    enabled: server.enabled,
-    transport: server.transport,
-  });
 }

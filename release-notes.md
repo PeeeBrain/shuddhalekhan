@@ -1,3 +1,21 @@
+# Shuddhalekhan 4.1.1
+
+This patch release focuses on internal architecture cleanup for the Electron main process, MCP configuration, and Settings UI. User-facing behavior is intended to remain unchanged.
+
+## What's Changed
+
+### Architecture Cleanup
+- Centralized the recording lifecycle behind a `RecordingSession` module.
+- Added shared window lifecycle, sidecar event routing, sidecar config restart policy, MCP config normalization, and text injection modules.
+- Split MCP settings UI and settings IPC access into dedicated renderer modules.
+- Expanded regression coverage for the new module seams.
+
+## Update Note
+
+No breaking changes. This release preserves existing configuration and workflows while improving maintainability and test coverage.
+
+---
+
 # Shuddhalekhan 4.1.0
 
 This release delivers a comprehensive UI/UX polish pass with a new cohesive color theme, cleaner settings window, and native-feeling agent toasts.

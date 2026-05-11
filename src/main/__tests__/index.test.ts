@@ -233,10 +233,15 @@ describe('main process IPC orchestration', () => {
   });
 
   it('transcribes completed audio and restores the clipboard after paste', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    ipcHandlers.get('audio:start-recording')?.({});
+    await ipcHandlers.get('audio:stop-recording')?.({});
+
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await new Promise((resolve) => setTimeout(resolve, 70));
     expect(simulatePaste).toHaveBeenCalled();
     await listenerPromise;
+    await new Promise((resolve) => setTimeout(resolve, 120));
 
     expect(fetch).toHaveBeenCalledWith('http://localhost:8080/inference', expect.objectContaining({
       method: 'POST',
@@ -264,8 +269,9 @@ describe('main process IPC orchestration', () => {
     };
     getConfig.mockReturnValue(config);
     ipcListeners.get('audio-window-ready')?.({});
-    const [onStart] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void];
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
     onStart('agent');
+    onStop();
 
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await listenerPromise;
@@ -277,8 +283,9 @@ describe('main process IPC orchestration', () => {
 
   it('routes dictation recordings through clipboard injection and not the agent sidecar', async () => {
     ipcListeners.get('audio-window-ready')?.({});
-    const [onStart] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void];
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
     onStart('dictation');
+    onStop();
 
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await new Promise((resolve) => setTimeout(resolve, 70));
@@ -292,8 +299,9 @@ describe('main process IPC orchestration', () => {
 
   it('shows a config toast instead of starting the sidecar when Agent Mode is disabled', async () => {
     ipcListeners.get('audio-window-ready')?.({});
-    const [onStart] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void];
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
     onStart('agent');
+    onStop();
 
     await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer);
 
@@ -340,7 +348,7 @@ describe('main process IPC orchestration', () => {
     expect(simulatePaste).not.toHaveBeenCalled();
   });
 
-  it('proxies config, device, update, and recording pill events', async () => {
+  it('proxies config, device, update, and recording pill events without restarting sidecar for audio config', async () => {
     expect(ipcHandlers.get('config:get')?.({})).toEqual(getConfig());
     await expect(ipcHandlers.get('app:get-info')?.({})).resolves.toEqual({
       name: 'Shuddhalekhan',
@@ -360,7 +368,8 @@ describe('main process IPC orchestration', () => {
     ipcListeners.get('agent-toast:content-size')?.({}, 280);
 
     expect(setConfig).toHaveBeenCalledWith('whisperUrl', 'http://new');
-    expect(agentStop).toHaveBeenCalled();
+    expect(agentStart).not.toHaveBeenCalled();
+    expect(agentStop).not.toHaveBeenCalled();
     expect(openSettingsWindow).toHaveBeenCalled();
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
     expect(hideAgentToast).toHaveBeenCalled();
@@ -371,6 +380,24 @@ describe('main process IPC orchestration', () => {
     expect(send).toHaveBeenCalledWith('audio:level-changed', 0.75);
     expect(send).toHaveBeenCalledWith('audio:duration-changed', 12);
     expect(handleAgentToastContentSize).toHaveBeenCalledWith(280);
+  });
+
+  it('applies sidecar lifecycle policy for Agent Mode config changes', () => {
+    const enabledConfig = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        enabled: true,
+      },
+    };
+
+    getConfig.mockReturnValueOnce(baseConfig).mockReturnValueOnce(enabledConfig);
+    ipcHandlers.get('config:set')?.({}, 'agent', enabledConfig.agent);
+    expect(agentStart).toHaveBeenCalledWith(enabledConfig);
+
+    getConfig.mockReturnValueOnce(enabledConfig).mockReturnValueOnce(baseConfig);
+    ipcHandlers.get('config:set')?.({}, 'agent', baseConfig.agent);
+    expect(agentStop).toHaveBeenCalled();
   });
 
   it('stops native hooks and destroys the audio window before quit', () => {

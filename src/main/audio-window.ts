@@ -1,18 +1,9 @@
-import { app, BrowserWindow } from 'electron';
-import { join } from 'path';
+import type { BrowserWindow } from 'electron';
+import { createSingletonWindow } from './window-factory';
 
-let audioWindow: BrowserWindow | null = null;
-
-export function getAudioWindow(): BrowserWindow | null {
-  return audioWindow;
-}
-
-export function createAudioWindow(): BrowserWindow {
-  if (audioWindow && !audioWindow.isDestroyed()) {
-    return audioWindow;
-  }
-
-  audioWindow = new BrowserWindow({
+const audioWindow = createSingletonWindow({
+  route: 'audio',
+  options: {
     width: 1,
     height: 1,
     show: false,
@@ -21,33 +12,19 @@ export function createAudioWindow(): BrowserWindow {
     skipTaskbar: true,
     focusable: false,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
       backgroundThrottling: false,
     },
-  });
+  },
+});
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    audioWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}#/audio`);
-  } else if (!app.isPackaged) {
-    audioWindow.loadURL('http://localhost:5173/#/audio');
-  } else {
-    audioWindow.loadFile(join(__dirname, '../renderer/index.html'), {
-      hash: 'audio',
-    });
-  }
+export function getAudioWindow(): BrowserWindow | null {
+  return audioWindow.get();
+}
 
-  audioWindow.on('closed', () => {
-    audioWindow = null;
-  });
-
-  return audioWindow;
+export function createAudioWindow(): BrowserWindow {
+  return audioWindow.create();
 }
 
 export function destroyAudioWindow(): void {
-  if (audioWindow && !audioWindow.isDestroyed()) {
-    audioWindow.destroy();
-    audioWindow = null;
-  }
+  audioWindow.destroy();
 }

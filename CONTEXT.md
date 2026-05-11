@@ -36,6 +36,9 @@ The small floating UI window displayed at the bottom-center of the screen while 
 - **Transcription Mode** — Blue-hued pill (border glow, shadow) indicating standard speech-to-text recording.
 - **Agent Mode** — Red-hued pill indicating the recording will be routed to the AI agent for tool execution. Discontinued during the v3 Electron port and revived in v4 as the visual state for `Alt + Win` agent commands.
 
+### Recording Session
+A deep module that owns the complete audio-capture lifecycle: keyboard hook, hidden audio window, recording pill visibility, and transcription. Callers use three verbs — `begin(intent)`, `end()`, `cancel()` — and receive `{ text, intent }` on completion. The session hides the audio-window readiness race (`pendingStartRecording`), modifier-state tracking, and process-crash recovery behind its seam. Dictation/Agent routing (clipboard paste vs. sidecar dispatch) stays in the Electron main orchestrator, not inside the session.
+
 ### Dictation
 The act of converting captured audio into text and injecting it into the currently focused application. Triggered by holding the `Ctrl + Win` hotkey chord. Synonymous with "transcription mode" in user-facing language.
 

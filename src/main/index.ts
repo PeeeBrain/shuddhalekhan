@@ -1,186 +1,53 @@
-import { app, ipcMain, clipboard, dialog, session, shell } from 'electron';
-import { keyboardHook } from './native/keyboard';
-import { simulatePaste } from './native/clipboard';
-import { createAudioWindow, getAudioWindow, destroyAudioWindow } from './audio-window';
-import { showRecordingPill, hideRecordingPill, getRecordingPillWindow } from './recording-pill';
+import { app, ipcMain, dialog, session, shell } from 'electron';
+import { createAudioWindow, getAudioWindow } from './audio-window';
+import { getRecordingPillWindow } from './recording-pill';
 import { getSettingsWindow, openSettingsWindow } from './settings-window';
 import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
 import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './agent-toast-window';
 import { getConfig, setConfig } from './config';
-import { transcribe } from './whisper';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
-import type { AppConfig, AudioDevice, McpDiscoveredTool, RecordingIntent, UpdateStatus } from '../types/ipc';
+import { createRecordingSession } from './recording-session';
+import { createSidecarEventRouter } from './sidecar-event-router';
+import { getSidecarConfigAction } from './sidecar-config-policy';
+import { injectIntoFocusedApp } from './inject-text';
+import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
+import type { RecordingResult } from './recording-session';
 
-let isRecording = false;
-let isAudioWindowReady = false;
-let pendingStartRecording = false;
-let activeRecordingIntent: RecordingIntent | null = null;
 let cachedAgentEnabled = getConfig().agent.enabled;
-const agentSidecar = new AgentSidecarManager((event) => {
-  switch (event.type) {
-    case 'sidecar:ready':
-      console.log('Agent sidecar ready');
-      break;
-    case 'mcp:server-status':
-      console.log(`MCP server ${event.serverId}: ${event.status}`);
-      getSettingsWindow()?.webContents.send('mcp:server-status', {
-        serverId: event.serverId,
-        status: event.status,
-        message: event.message,
-      });
-      break;
-    case 'mcp:tools-discovered':
-      persistDiscoveredTools(event.serverId, event.tools);
-      break;
-    case 'oauth:open-url':
-      shell.openExternal(event.url).catch((err) => {
-        console.error(`Failed to open OAuth URL for ${event.serverId}:`, err);
-      });
-      break;
-    case 'agent:status':
-      console.log(`Agent run ${event.agentRunId}: ${event.status}`);
-      showAgentToast({ kind: 'status', agentRunId: event.agentRunId, message: event.status });
-      break;
-    case 'agent:response-delta':
-      showAgentToast({ kind: 'streaming', agentRunId: event.agentRunId, response: event.response });
-      break;
-    case 'approval:requested':
-      console.log(`Agent run ${event.agentRunId} requested approval for ${event.serverId}:${event.toolName}`);
-      showAgentToast({
-        kind: 'status',
-        agentRunId: event.agentRunId,
-        message: `Waiting for approval: ${event.serverId}.${event.toolName}`,
-      });
-      showAgentToast({
-        kind: 'approval',
-        agentRunId: event.agentRunId,
-        approvalId: event.approvalId,
-        serverId: event.serverId,
-        toolName: event.toolName,
-        modelToolName: event.modelToolName,
-        arguments: event.arguments,
-        expiresAt: event.expiresAt,
-      });
-      break;
-    case 'agent:completed':
-      console.log(`Agent run ${event.agentRunId} completed: ${event.response}`);
-      showAgentToast({
-        kind: 'completed',
-        agentRunId: event.agentRunId,
-        response: event.response,
-        toolSummary: event.toolSummary,
-      });
-      break;
-    case 'agent:failed':
-      console.error(`Agent run ${event.agentRunId} failed: ${event.error}`);
-      showAgentToast({ kind: 'failed', agentRunId: event.agentRunId, error: event.error });
-      break;
-    case 'agent:cancelled':
-      console.log(`Agent run ${event.agentRunId} cancelled`);
-      showAgentToast({ kind: 'cancelled', agentRunId: event.agentRunId });
-      break;
-  }
+const sidecarEventRouter = createSidecarEventRouter({
+  getSettingsWindow,
+  getConfig,
+  setConfig,
+  openExternal: shell.openExternal,
+  showAgentToast,
 });
+const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
+const recordingSession = createRecordingSession(() => cachedAgentEnabled);
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
-function persistDiscoveredTools(
-  serverId: string,
-  tools: Array<{ name: string; description: string; inputSchema?: unknown }>
-): void {
-  const config = getConfig();
-  const discoveredAt = new Date().toISOString();
-  const nextServers = config.agent.mcpServers.map((server) => {
-    if (server.id !== serverId) return server;
-
-    const discoveredTools: McpDiscoveredTool[] = tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      discoveredAt,
-    }));
-    const toolPolicies = { ...server.toolPolicies };
-    for (const tool of discoveredTools) {
-      const key = `${server.id}:${tool.name}` as const;
-      if (!toolPolicies[key]) toolPolicies[key] = 'alwaysAsk';
-    }
-
-    return {
-      ...server,
-      discoveredTools,
-      toolPolicies,
-    };
-  });
-
-  setConfig('agent', {
-    ...config.agent,
-    mcpServers: nextServers,
-  });
-}
-
-function startRecording(intent: RecordingIntent = 'dictation'): void {
-  if (isRecording) return;
-  isRecording = true;
-  activeRecordingIntent = intent;
-
-  const audioWin = createAudioWindow();
-  if (isAudioWindowReady && !audioWin.webContents.isLoading()) {
-    audioWin.webContents.send('audio:start-recording');
-  } else {
-    pendingStartRecording = true;
-    console.log('Queued recording start until audio window is ready');
-  }
-
-  showRecordingPill(intent);
-}
-
-async function stopRecording(): Promise<void> {
-  if (!isRecording) return;
-  isRecording = false;
-
-  hideRecordingPill();
-
-  const audioWin = getAudioWindow();
-  if (audioWin && !audioWin.isDestroyed()) {
-    audioWin.webContents.send('audio:stop-recording');
-  }
-}
-
-async function handleTranscription(audioData: Uint8Array): Promise<void> {
-  const intent = activeRecordingIntent ?? 'dictation';
-  activeRecordingIntent = null;
-
-  if (audioData.byteLength <= 44) {
-    console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
-    return;
-  }
-
+async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
+  if (!result?.text) return;
   try {
-    const text = await transcribe(audioData);
-    if (!text) return;
-
-    if (intent === 'agent') {
-      handleAgentTranscript(text);
+    if (result.intent === 'agent') {
+      handleAgentTranscript(result.text);
       return;
     }
 
-    // Clipboard sandwich
-    const originalClipboard = clipboard.readText();
-
-    clipboard.writeText(text);
-    await delay(50);
-
-    simulatePaste();
-    await delay(100);
-
-    // Restore original clipboard
-    if (originalClipboard) {
-      clipboard.writeText(originalClipboard);
-    }
+    await injectIntoFocusedApp(result.text);
   } catch (err) {
     console.error('Transcription failed:', err);
     dialog.showErrorBox('Transcription Error', err instanceof Error ? err.message : String(err));
   }
+}
+
+function finishRecording(): void {
+  void recordingSession.end().then(routeRecordingResult).catch(showTranscriptionError);
+}
+
+function showTranscriptionError(err: unknown): void {
+  console.error('Transcription failed:', err);
+  dialog.showErrorBox('Transcription Error', err instanceof Error ? err.message : String(err));
 }
 
 function handleAgentTranscript(text: string): void {
@@ -196,10 +63,6 @@ function handleAgentTranscript(text: string): void {
   console.log(`Started Agent Mode run ${agentRunId}`);
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function publishUpdateStatus(status: UpdateStatus): void {
   updateUpdaterStatus(status);
   const settingsWin = getSettingsWindow();
@@ -210,11 +73,11 @@ function publishUpdateStatus(status: UpdateStatus): void {
 
 // IPC handlers
 ipcMain.handle('audio:start-recording', () => {
-  startRecording('dictation');
+  recordingSession.begin('dictation');
 });
 
 ipcMain.handle('audio:stop-recording', async () => {
-  await stopRecording();
+  finishRecording();
   return 'stopped';
 });
 
@@ -239,12 +102,14 @@ ipcMain.handle('config:get', () => {
 });
 
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
+  const previousConfig = getConfig();
   setConfig(key, value);
   const config = getConfig();
   cachedAgentEnabled = config.agent.enabled;
-  if (!config.agent.enabled) {
+  const sidecarAction = getSidecarConfigAction(previousConfig, config);
+  if (sidecarAction === 'stop') {
     agentSidecar.stop();
-  } else {
+  } else if (sidecarAction === 'start') {
     agentSidecar.start(config);
   }
 });
@@ -271,17 +136,8 @@ ipcMain.handle('settings:open', () => {
   openSettingsWindow();
 });
 
-ipcMain.handle('clipboard:inject-text', (_event, text: string) => {
-  const originalClipboard = clipboard.readText();
-  clipboard.writeText(text);
-  setTimeout(() => {
-    simulatePaste();
-    setTimeout(() => {
-      if (originalClipboard) {
-        clipboard.writeText(originalClipboard);
-      }
-    }, 100);
-  }, 50);
+ipcMain.handle('clipboard:inject-text', async (_event, text: string) => {
+  await injectIntoFocusedApp(text);
 });
 
 ipcMain.handle(
@@ -310,22 +166,13 @@ ipcMain.handle('updater:check', async () => {
 
 // Renderer -> Main events
 ipcMain.on('audio-window-ready', () => {
-  isAudioWindowReady = true;
-  console.log('Audio window ready');
-
-  if (pendingStartRecording && isRecording) {
-    pendingStartRecording = false;
-    const audioWin = getAudioWindow();
-    if (audioWin && !audioWin.isDestroyed()) {
-      audioWin.webContents.send('audio:start-recording');
-    }
-  }
+  recordingSession.markAudioWindowReady();
 });
 
 ipcMain.on('audio-data-ready', async (_event, audioData: ArrayBuffer) => {
   const data = new Uint8Array(audioData);
   console.log(`Audio data ready: ${data.byteLength} bytes`);
-  await handleTranscription(data);
+  await recordingSession.complete(data);
 });
 
 ipcMain.on('audio-devices', (_event, devices: AudioDevice[]) => {
@@ -364,15 +211,10 @@ if (!gotSingleInstanceLock) {
       console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
     });
     audioWin.webContents.on('render-process-gone', (_event, details) => {
-      isAudioWindowReady = false;
-      console.error('Audio window renderer exited:', details.reason);
+      recordingSession.markAudioWindowCrashed(details.reason);
     });
 
-    keyboardHook.start(
-      (intent) => startRecording(intent),
-      () => stopRecording(),
-      () => cachedAgentEnabled
-    );
+    recordingSession.startKeyboardHook(routeRecordingResult);
 
     createTray(() => {
       openSettingsWindow();
@@ -397,8 +239,8 @@ if (!gotSingleInstanceLock) {
   });
 
   app.on('before-quit', () => {
-    keyboardHook.stop();
+    recordingSession.stopKeyboardHook();
     agentSidecar.stop();
-    destroyAudioWindow();
+    recordingSession.destroyAudioWindow();
   });
 }

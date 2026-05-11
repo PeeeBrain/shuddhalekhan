@@ -1,21 +1,15 @@
-import { app, BrowserWindow, screen } from 'electron';
-import { join } from 'path';
+import { screen } from 'electron';
+import type { BrowserWindow } from 'electron';
 import type { RecordingIntent } from '../types/ipc';
+import { createSingletonWindow } from './window-factory';
 
-let pillWindow: BrowserWindow | null = null;
 const PILL_WINDOW_WIDTH = 118;
 const PILL_WINDOW_HEIGHT = 54;
+let initialIntent: RecordingIntent = 'dictation';
 
-export function getRecordingPillWindow(): BrowserWindow | null {
-  return pillWindow;
-}
-
-export function createRecordingPillWindow(intent: RecordingIntent = 'dictation'): BrowserWindow {
-  if (pillWindow && !pillWindow.isDestroyed()) {
-    return pillWindow;
-  }
-
-  pillWindow = new BrowserWindow({
+const pillWindow = createSingletonWindow({
+  route: () => `recording?mode=${initialIntent}`,
+  options: {
     width: PILL_WINDOW_WIDTH,
     height: PILL_WINDOW_HEIGHT,
     show: false,
@@ -27,28 +21,16 @@ export function createRecordingPillWindow(intent: RecordingIntent = 'dictation')
     resizable: false,
     focusable: false,
     hasShadow: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
+  },
+});
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    pillWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}#/recording?mode=${intent}`);
-  } else if (!app.isPackaged) {
-    pillWindow.loadURL(`http://localhost:5173/#/recording?mode=${intent}`);
-  } else {
-    pillWindow.loadFile(join(__dirname, '../renderer/index.html'), {
-      hash: `recording?mode=${intent}`,
-    });
-  }
+export function getRecordingPillWindow(): BrowserWindow | null {
+  return pillWindow.get();
+}
 
-  pillWindow.on('closed', () => {
-    pillWindow = null;
-  });
-
-  return pillWindow;
+export function createRecordingPillWindow(intent: RecordingIntent = 'dictation'): BrowserWindow {
+  initialIntent = intent;
+  return pillWindow.create();
 }
 
 export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
@@ -60,8 +42,9 @@ export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
 }
 
 export function hideRecordingPill(): void {
-  if (pillWindow && !pillWindow.isDestroyed()) {
-    pillWindow.hide();
+  const win = pillWindow.get();
+  if (win && !win.isDestroyed()) {
+    win.hide();
   }
 }
 
