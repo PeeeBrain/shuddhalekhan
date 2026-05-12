@@ -8,13 +8,10 @@ export async function transcribe(audioData: Uint8Array, config?: AppConfig): Pro
   form.append('file', blob, 'audio.wav');
   form.append('temperature', '0.2');
   form.append('response_format', 'json');
+  form.append('translate', task === 'translate' ? 'true' : 'false');
 
   if (language && language !== 'auto') {
     form.append('language', language);
-  }
-
-  if (task && task !== 'transcribe') {
-    form.append('task', task);
   }
 
   if (removeFillerWords) {

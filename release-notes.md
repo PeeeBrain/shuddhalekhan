@@ -1,3 +1,17 @@
+# Shuddhalekhan 4.2.0
+
+This minor release adds multilingual Whisper controls for dictation and Agent Mode.
+
+## What's Changed
+
+### Multilingual Dictation
+- Added Settings → Audio controls for spoken language and transcription mode.
+- Sends the selected spoken language to Whisper-compatible endpoints.
+- Sends whisper.cpp's explicit `translate=true|false` flag so Transcribe mode is not affected by server-level translation defaults.
+- Clarified that Whisper translation mode translates speech to English.
+
+---
+
 # Shuddhalekhan 4.1.1
 
 This patch release focuses on internal architecture cleanup for the Electron main process, MCP configuration, and Settings UI. User-facing behavior is intended to remain unchanged.

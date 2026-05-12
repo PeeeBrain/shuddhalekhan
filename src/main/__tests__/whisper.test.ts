@@ -96,7 +96,7 @@ describe('transcribe', () => {
     expect(warn).toHaveBeenCalledWith('Whisper response did not include text:', { result: 'missing text' });
   });
 
-  it('appends language and task form fields when configured', async () => {
+  it('appends language and whisper.cpp translate form fields when configured', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof mock>;
     fetchMock.mockResolvedValue({
       ok: true,
@@ -107,10 +107,11 @@ describe('transcribe', () => {
 
     const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
     expect(body.get('language')).toBe('mr');
-    expect(body.get('task')).toBe('translate');
+    expect(body.get('translate')).toBe('true');
+    expect(body.has('task')).toBe(false);
   });
 
-  it('omits language when empty and task when transcribe (default)', async () => {
+  it('omits auto language and explicitly disables translation by default', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof mock>;
     fetchMock.mockResolvedValue({
       ok: true,
@@ -121,6 +122,7 @@ describe('transcribe', () => {
 
     const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
     expect(body.has('language')).toBe(false);
+    expect(body.get('translate')).toBe('false');
     expect(body.has('task')).toBe(false);
   });
 });

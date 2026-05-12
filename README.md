@@ -89,7 +89,7 @@ The application requires a Whisper-compatible HTTP endpoint to transcribe audio.
 http://localhost:8080/inference
 ```
 
-The request is sent as `multipart/form-data` with a WAV `file`, `temperature=0.2`, and `response_format=json`. When transcription cleanup is enabled, resultant transcriptions are much cleaner excluding filler words (umms and ahhs) and common transcription artifacts.
+The request is sent as `multipart/form-data` with a WAV `file`, `temperature=0.2`, `response_format=json`, and an explicit `translate=true|false` flag. When a spoken language is selected in Settings, the request also includes `language=<code>`. When transcription cleanup is enabled, resultant transcriptions are much cleaner excluding filler words (umms and ahhs) and common transcription artifacts.
 
 ### Option 1: Local whisper.cpp with Docker (Recommended)
 

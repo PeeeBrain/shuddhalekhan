@@ -1,7 +1,7 @@
 {
   "name": "shuddhalekhan",
   "private": true,
-  "version": "4.1.1",
+  "version": "4.2.0",
   "description": "Shuddhalekhan — speech-to-text dictation app",
   "type": "module",
   "main": "./out/main/index.cjs",
@@ -17,6 +17,7 @@
     "lint:fix": "eslint . --fix",
     "test": "bun test",
     "test:watch": "bun test --watch",
+    "verify:whisper": "bun scripts/verify-whisper-endpoint.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

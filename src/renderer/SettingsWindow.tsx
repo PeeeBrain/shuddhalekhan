@@ -181,16 +181,16 @@ export function SettingsWindow() {
                   onChange={(value) => updateConfig('whisperUrl', value)}
                 />
                 <SelectRow
-                  label="Task"
+                  label="Mode"
                   value={config.task}
                   options={[
-                    { value: 'transcribe', label: 'Transcribe (same language)' },
-                    { value: 'translate', label: 'Translate (to English)' },
+                    { value: 'transcribe', label: 'Transcribe spoken language' },
+                    { value: 'translate', label: 'Translate speech to English' },
                   ]}
                   onChange={(value) => updateConfig('task', value as AppConfig['task'])}
                 />
                 <SelectRow
-                  label="Language"
+                  label="Spoken language"
                   value={config.language}
                   options={WHISPER_LANGUAGES}
                   onChange={(value) => updateConfig('language', value)}
