@@ -17,7 +17,7 @@ permissions:
 jobs:
   checks:
     name: Typecheck, lint, and test
-    runs-on: windows-latest
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 20
 
     steps:
