@@ -9,7 +9,7 @@ export async function transcribe(audioData: Uint8Array, config?: AppConfig): Pro
   form.append('temperature', '0.2');
   form.append('response_format', 'json');
 
-  if (language) {
+  if (language && language !== 'auto') {
     form.append('language', language);
   }
 

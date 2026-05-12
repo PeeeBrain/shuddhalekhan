@@ -50,7 +50,7 @@ describe('config store', () => {
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,
-      language: '',
+      language: 'auto',
       task: 'transcribe',
       agent: {
         enabled: false,
@@ -76,7 +76,7 @@ describe('config store', () => {
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: 'usb-mic',
       removeFillerWords: false,
-      language: '',
+      language: 'auto',
       task: 'transcribe',
       agent: {
         enabled: false,
@@ -105,7 +105,7 @@ describe('config store', () => {
       whisperUrl: 'http://legacy.test/inference',
       selectedDeviceId: 'legacy-mic',
       removeFillerWords: false,
-      language: '',
+      language: 'auto',
       task: 'transcribe',
       agent: {
         enabled: false,
@@ -132,7 +132,7 @@ describe('config store', () => {
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,
-      language: '',
+      language: 'auto',
       task: 'transcribe',
       agent: {
         enabled: false,

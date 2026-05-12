@@ -33,7 +33,7 @@ const sections: Array<{ id: SettingsSection; label: string }> = [
 ];
 
 const WHISPER_LANGUAGES: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Auto-detect' },
+  { value: 'auto', label: 'Auto-detect' },
   { value: 'en', label: 'English' },
   { value: 'hi', label: 'Hindi (हिन्दी)' },
   { value: 'mr', label: 'Marathi (मराठी)' },
