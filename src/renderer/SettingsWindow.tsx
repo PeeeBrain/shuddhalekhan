@@ -12,6 +12,13 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { McpSettings } from './settings/McpSettings';
 import { createSettingsIpc } from './settings/settings-ipc';
 
@@ -23,6 +30,30 @@ const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: 'agent', label: 'Agent' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'about', label: 'About' },
+];
+
+const WHISPER_LANGUAGES: Array<{ value: string; label: string }> = [
+  { value: '', label: 'Auto-detect' },
+  { value: 'en', label: 'English' },
+  { value: 'hi', label: 'Hindi (हिन्दी)' },
+  { value: 'mr', label: 'Marathi (मराठी)' },
+  { value: 'gu', label: 'Gujarati (ગુજરાતી)' },
+  { value: 'bn', label: 'Bengali (বাংলা)' },
+  { value: 'ta', label: 'Tamil (தமிழ்)' },
+  { value: 'te', label: 'Telugu (తెలుగు)' },
+  { value: 'kn', label: 'Kannada (ಕನ್ನಡ)' },
+  { value: 'ml', label: 'Malayalam (മലയാളം)' },
+  { value: 'pa', label: 'Punjabi (ਪੰਜਾਬੀ)' },
+  { value: 'ur', label: 'Urdu (اردو)' },
+  { value: 'fr', label: 'French' },
+  { value: 'es', label: 'Spanish' },
+  { value: 'de', label: 'German' },
+  { value: 'ja', label: 'Japanese' },
+  { value: 'zh', label: 'Chinese' },
+  { value: 'ko', label: 'Korean' },
+  { value: 'pt', label: 'Portuguese' },
+  { value: 'ar', label: 'Arabic' },
+  { value: 'ru', label: 'Russian' },
 ];
 
 export function SettingsWindow() {
@@ -148,6 +179,21 @@ export function SettingsWindow() {
                   value={config.whisperUrl}
                   placeholder="http://localhost:8080/inference"
                   onChange={(value) => updateConfig('whisperUrl', value)}
+                />
+                <SelectRow
+                  label="Task"
+                  value={config.task}
+                  options={[
+                    { value: 'transcribe', label: 'Transcribe (same language)' },
+                    { value: 'translate', label: 'Translate (to English)' },
+                  ]}
+                  onChange={(value) => updateConfig('task', value as AppConfig['task'])}
+                />
+                <SelectRow
+                  label="Language"
+                  value={config.language}
+                  options={WHISPER_LANGUAGES}
+                  onChange={(value) => updateConfig('language', value)}
                 />
                 <ReadOnlyRow label="Selected device" value={config.selectedDeviceId ?? 'Default input device'} />
                 <ReadOnlyRow label="Capture path" value="Shared by Dictation and Agent Mode" />
@@ -302,6 +348,36 @@ function ReadOnlyRow({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col gap-1 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className="text-sm font-medium break-words">{value}</span>
+    </div>
+  );
+}
+
+function SelectRow({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2 border-b border-border py-5">
+      <Label className="text-sm font-medium">{label}</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="w-full max-w-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value || '__auto__'} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

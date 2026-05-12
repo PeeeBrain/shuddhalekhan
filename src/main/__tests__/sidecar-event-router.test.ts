@@ -8,6 +8,8 @@ const baseConfig: AppConfig = {
   whisperUrl: 'http://localhost:8080/inference',
   selectedDeviceId: null,
   removeFillerWords: true,
+  language: '',
+  task: 'transcribe',
   agent: {
     enabled: true,
     provider: {
