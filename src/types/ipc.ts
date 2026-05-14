@@ -20,12 +20,6 @@ export type McpServerTransport =
   | {
       type: 'http';
       url: string;
-      oauth?: {
-        enabled: boolean;
-        credentialSource: 'userProvided' | 'bundledAppClient';
-        clientIdEnvVar?: string;
-        clientSecretEnvVar?: string;
-      };
     };
 
 export interface McpDiscoveredTool {
@@ -42,7 +36,6 @@ export interface McpServerConfig {
   transport: McpServerTransport;
   discoveredTools: McpDiscoveredTool[];
   toolPolicies: Record<McpToolPolicyKey, AgentToolApprovalPolicy>;
-  preset?: 'gmail';
 }
 
 export interface RendererToMainSendChannels {
