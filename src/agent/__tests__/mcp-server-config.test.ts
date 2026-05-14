@@ -6,13 +6,13 @@ describe('MCP server config', () => {
   it('defaults discovered tool policies and server enabled state', () => {
     const [server] = normalizeMcpServers([
       {
-        id: 'gmail',
-        displayName: 'Gmail',
-        transport: { type: 'http', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+        id: 'mail',
+        displayName: 'Hosted Mail',
+        transport: { type: 'http', url: 'https://mail.example.com/mcp' },
         discoveredTools: [
           {
-            name: 'send_email',
-            description: 'Send an email',
+            name: 'read_email',
+            description: 'Read email',
             discoveredAt: '2026-05-11T00:00:00.000Z',
           },
         ],
@@ -22,36 +22,35 @@ describe('MCP server config', () => {
 
     expect(server.enabled).toBe(false);
     expect(server.toolPolicies).toEqual({
-      'gmail:send_email': 'alwaysAsk',
+      'mail:read_email': 'alwaysAsk',
     });
   });
 
-  it('keeps existing tool policies and removes duplicate Gmail presets', () => {
+  it('keeps multiple generic HTTP servers and existing tool policies', () => {
     const servers = normalizeMcpServers([
       {
-        id: 'gmail-primary',
-        displayName: 'Gmail',
+        id: 'mail-primary',
+        displayName: 'Hosted Mail',
         enabled: true,
-        preset: 'gmail',
-        transport: { type: 'http', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+        transport: { type: 'http', url: 'https://mail.example.com/mcp' },
         discoveredTools: [{ name: 'read_email', description: 'Read email', discoveredAt: '2026-05-11T00:00:00.000Z' }],
-        toolPolicies: { 'gmail-primary:read_email': 'alwaysAllow' },
+        toolPolicies: { 'mail-primary:read_email': 'alwaysAllow' },
       },
       {
-        id: 'gmail-duplicate',
-        displayName: 'Gmail Duplicate',
+        id: 'mail-secondary',
+        displayName: 'Hosted Mail Second Account',
         enabled: true,
-        preset: 'gmail',
-        transport: { type: 'http', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+        transport: { type: 'http', url: 'https://mail2.example.com/mcp' },
         discoveredTools: [],
         toolPolicies: {},
       },
     ]);
 
-    expect(servers).toHaveLength(1);
+    expect(servers).toHaveLength(2);
     expect(servers[0].toolPolicies).toEqual({
-      'gmail-primary:read_email': 'alwaysAllow',
+      'mail-primary:read_email': 'alwaysAllow',
     });
+    expect(servers[1].id).toBe('mail-secondary');
   });
 
   it('creates stable policy keys and connection keys', () => {
