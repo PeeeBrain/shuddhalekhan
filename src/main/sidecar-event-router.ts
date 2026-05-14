@@ -6,7 +6,6 @@ interface SidecarEventRouterDeps {
   getSettingsWindow: () => BrowserWindow | null;
   getConfig: () => AppConfig;
   setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-  openExternal: (url: string) => Promise<unknown>;
   showAgentToast: (state: Parameters<typeof import('./agent-toast-window').showAgentToast>[0]) => void;
 }
 
@@ -34,11 +33,6 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
     },
     'mcp:tools-discovered': (event) => {
       persistDiscoveredTools(deps, event.serverId, event.tools);
-    },
-    'oauth:open-url': (event) => {
-      deps.openExternal(event.url).catch((err) => {
-        console.error(`Failed to open OAuth URL for ${event.serverId}:`, err);
-      });
     },
     'agent:status': (event) => {
       console.log(`Agent run ${event.agentRunId}: ${event.status}`);

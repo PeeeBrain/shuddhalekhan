@@ -36,7 +36,6 @@ describe('SidecarEventRouter', () => {
   let getSettingsWindow: ReturnType<typeof vi.fn>;
   let getConfig: ReturnType<typeof vi.fn>;
   let setConfig: ReturnType<typeof vi.fn>;
-  let openExternal: ReturnType<typeof vi.fn>;
   let showAgentToast: ReturnType<typeof vi.fn>;
   let router: ReturnType<typeof createSidecarEventRouter>;
 
@@ -48,13 +47,11 @@ describe('SidecarEventRouter', () => {
     }));
     getConfig = vi.fn(() => baseConfig);
     setConfig = vi.fn();
-    openExternal = vi.fn(() => Promise.resolve());
     showAgentToast = vi.fn();
     router = createSidecarEventRouter({
       getSettingsWindow,
       getConfig,
       setConfig,
-      openExternal,
       showAgentToast,
     });
   });
@@ -109,16 +106,6 @@ describe('SidecarEventRouter', () => {
         }),
       ],
     });
-  });
-
-  it('opens OAuth URLs externally', () => {
-    router.handle({
-      type: 'oauth:open-url',
-      serverId: 'gmail',
-      url: 'https://accounts.google.com/o/oauth2/v2/auth',
-    });
-
-    expect(openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth');
   });
 
   it('maps agent status, streaming, completion, failure, and cancellation to toasts', () => {

@@ -1,4 +1,4 @@
-import { app, ipcMain, dialog, session, shell } from 'electron';
+import { app, ipcMain, dialog, session } from 'electron';
 import { createAudioWindow, getAudioWindow } from './audio-window';
 import { getRecordingPillWindow } from './recording-pill';
 import { getSettingsWindow, openSettingsWindow } from './settings-window';
@@ -19,7 +19,6 @@ const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
   getConfig,
   setConfig,
-  openExternal: shell.openExternal,
   showAgentToast,
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);

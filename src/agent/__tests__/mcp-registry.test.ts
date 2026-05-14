@@ -71,6 +71,13 @@ describe('McpRegistry', () => {
       },
     } as never);
 
+    expect(createMCPClientMock).toHaveBeenCalledWith({
+      transport: {
+        type: 'http',
+        url: 'http://localhost:3000/mcp',
+      },
+    });
+
     const snapshot = registry.createRunSnapshot(makeApproval());
 
     expect(snapshot.tools).toHaveProperty('srv1__search');

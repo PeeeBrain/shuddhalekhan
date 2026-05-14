@@ -5,7 +5,7 @@ import type { Tool } from 'ai';
 import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../types/ipc';
 import { logSidecar, writeJsonLine } from './protocol';
 import type { AgentRuntimeCallbacks, ToolApprovalRequest } from './runtime';
-import { SidecarOAuthProvider } from './oauth-provider';
+
 import { getMcpServerConnectionKey } from './mcp-server-config';
 
 type RequestToolApproval = AgentRuntimeCallbacks['requestToolApproval'];
@@ -16,7 +16,6 @@ type ManagedServer = {
   config: McpServerConfig;
   client: MCPClient;
   rawTools: Record<string, Tool>;
-  oauthProvider?: SidecarOAuthProvider;
 };
 
 export class McpRegistry {
@@ -86,16 +85,10 @@ export class McpRegistry {
   private async connect(server: McpServerConfig): Promise<void> {
     writeJsonLine({ type: 'mcp:server-status', serverId: server.id, status: 'connecting' });
 
-    let oauthProvider: SidecarOAuthProvider | undefined;
     try {
-      oauthProvider = createOAuthProvider(server);
-      if (oauthProvider) {
-        await oauthProvider.ensureAuthenticated();
-      }
-
-      const client = await createMCPClient({ transport: createTransport(server, oauthProvider) });
+      const client = await createMCPClient({ transport: createTransport(server) });
       const rawTools = (await client.tools()) as Record<string, Tool>;
-      this.servers.set(server.id, { config: server, client, rawTools, oauthProvider });
+      this.servers.set(server.id, { config: server, client, rawTools });
       writeJsonLine({
         type: 'mcp:tools-discovered',
         serverId: server.id,
@@ -115,7 +108,6 @@ export class McpRegistry {
         message: err instanceof Error ? err.message : String(err),
       });
       logSidecar(`MCP server failed: ${server.id}`, err);
-      oauthProvider?.close();
     }
   }
 
@@ -125,12 +117,11 @@ export class McpRegistry {
 
     this.servers.delete(serverId);
     await server.client.close().catch(() => undefined);
-    server.oauthProvider?.close();
     writeJsonLine({ type: 'mcp:server-status', serverId, status: 'disconnected' });
   }
 }
 
-function createTransport(server: McpServerConfig, oauthProvider?: SidecarOAuthProvider) {
+function createTransport(server: McpServerConfig) {
   if (server.transport.type === 'stdio') {
     const env: Record<string, string> = {};
     for (const name of server.transport.envVarNames) {
@@ -147,13 +138,7 @@ function createTransport(server: McpServerConfig, oauthProvider?: SidecarOAuthPr
   return {
     type: 'http' as const,
     url: server.transport.url,
-    authProvider: oauthProvider,
   };
-}
-
-function createOAuthProvider(server: McpServerConfig): SidecarOAuthProvider | undefined {
-  if (server.transport.type !== 'http' || !server.transport.oauth?.enabled) return undefined;
-  return new SidecarOAuthProvider(server);
 }
 
 function wrapToolWithPolicy(
