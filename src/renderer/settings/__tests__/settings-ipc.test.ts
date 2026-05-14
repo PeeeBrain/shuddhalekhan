@@ -58,11 +58,11 @@ describe('settings IPC adapter', () => {
 
   it('saves config and forwards actions without exposing channel names to callers', async () => {
     await ipc.setConfig('agent', config.agent);
-    await ipc.testMcpServer('gmail');
+    await ipc.testMcpServer('mail');
     await ipc.checkForUpdates();
 
     expect(invoke).toHaveBeenCalledWith('config:set', 'agent', config.agent);
-    expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'gmail');
+    expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'mail');
     expect(invoke).toHaveBeenCalledWith('updater:check');
   });
 
@@ -76,7 +76,7 @@ describe('settings IPC adapter', () => {
     expect(ipc.onUpdateStatusChanged(onUpdate)).toBe(offUpdate);
     expect(ipc.onMcpServerStatus(onMcpStatus)).toBe(offMcp);
 
-    const status: McpServerRuntimeStatus = { serverId: 'gmail', status: 'connected' };
+    const status: McpServerRuntimeStatus = { serverId: 'mail', status: 'connected' };
     const updateCallback = on.mock.calls[0]?.[1] as (nextStatus: UpdateStatus) => void;
     const mcpCallback = on.mock.calls[1]?.[1] as (nextStatus: McpServerRuntimeStatus) => void;
     updateCallback(updateStatus);

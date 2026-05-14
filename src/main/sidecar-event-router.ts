@@ -6,8 +6,8 @@ interface SidecarEventRouterDeps {
   getSettingsWindow: () => BrowserWindow | null;
   getConfig: () => AppConfig;
   setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
-  openExternal: (url: string) => Promise<unknown>;
   showAgentToast: (state: Parameters<typeof import('./agent-toast-window').showAgentToast>[0]) => void;
+  openExternal: (url: string) => Promise<unknown>;
 }
 
 type SidecarEventHandler<T extends SidecarEvent['type']> = (event: Extract<SidecarEvent, { type: T }>) => void;

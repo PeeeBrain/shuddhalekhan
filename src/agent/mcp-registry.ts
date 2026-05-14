@@ -5,8 +5,9 @@ import type { Tool } from 'ai';
 import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../types/ipc';
 import { logSidecar, writeJsonLine } from './protocol';
 import type { AgentRuntimeCallbacks, ToolApprovalRequest } from './runtime';
-import { SidecarOAuthProvider } from './oauth-provider';
+
 import { getMcpServerConnectionKey } from './mcp-server-config';
+import { SidecarOAuthProvider } from './oauth-provider';
 
 type RequestToolApproval = AgentRuntimeCallbacks['requestToolApproval'];
 type AuditCallback = NonNullable<AgentRuntimeCallbacks['onAudit']>;
@@ -88,13 +89,8 @@ export class McpRegistry {
 
     let oauthProvider: SidecarOAuthProvider | undefined;
     try {
-      oauthProvider = createOAuthProvider(server);
-      if (oauthProvider) {
-        await oauthProvider.ensureAuthenticated();
-      }
-
-      const client = await createMCPClient({ transport: createTransport(server, oauthProvider) });
-      const rawTools = (await client.tools()) as Record<string, Tool>;
+      oauthProvider = await createOAuthProvider(server);
+      const { client, rawTools } = await connectMcpClient(server, oauthProvider);
       this.servers.set(server.id, { config: server, client, rawTools, oauthProvider });
       writeJsonLine({
         type: 'mcp:tools-discovered',
@@ -151,9 +147,37 @@ function createTransport(server: McpServerConfig, oauthProvider?: SidecarOAuthPr
   };
 }
 
-function createOAuthProvider(server: McpServerConfig): SidecarOAuthProvider | undefined {
-  if (server.transport.type !== 'http' || !server.transport.oauth?.enabled) return undefined;
-  return new SidecarOAuthProvider(server);
+async function createOAuthProvider(server: McpServerConfig): Promise<SidecarOAuthProvider | undefined> {
+  if (server.transport.type !== 'http') return undefined;
+  const provider = new SidecarOAuthProvider(server);
+  await provider.start();
+  return provider;
+}
+
+async function connectMcpClient(
+  server: McpServerConfig,
+  oauthProvider?: SidecarOAuthProvider
+): Promise<{ client: MCPClient; rawTools: Record<string, Tool> }> {
+  try {
+    return await createConnectedClient(server, oauthProvider);
+  } catch (err) {
+    if (!oauthProvider?.tokens()?.access_token) throw err;
+    return await createConnectedClient(server, oauthProvider);
+  }
+}
+
+async function createConnectedClient(
+  server: McpServerConfig,
+  oauthProvider?: SidecarOAuthProvider
+): Promise<{ client: MCPClient; rawTools: Record<string, Tool> }> {
+  const client = await createMCPClient({ transport: createTransport(server, oauthProvider) });
+  try {
+    const rawTools = (await client.tools()) as Record<string, Tool>;
+    return { client, rawTools };
+  } catch (err) {
+    await client.close().catch(() => undefined);
+    throw err;
+  }
 }
 
 function wrapToolWithPolicy(

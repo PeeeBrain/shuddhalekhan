@@ -1,50 +1,35 @@
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'fs';
+import { randomBytes } from 'crypto';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { createServer, type Server } from 'http';
 import { join } from 'path';
-import { randomBytes } from 'crypto';
-import { auth, type OAuthClientInformation, type OAuthClientMetadata, type OAuthClientProvider, type OAuthTokens } from '@ai-sdk/mcp';
+import {
+  auth,
+  type OAuthClientInformation,
+  type OAuthClientMetadata,
+  type OAuthClientProvider,
+  type OAuthTokens,
+} from '@ai-sdk/mcp';
 import type { McpServerConfig } from '../types/ipc';
 import { logSidecar, writeJsonLine } from './protocol';
 
-const GMAIL_SCOPES = [
-  'https://www.googleapis.com/auth/gmail.readonly',
-  'https://www.googleapis.com/auth/gmail.compose',
-];
-
 type TokenFile = {
   tokens?: OAuthTokens;
+  clientInformation?: OAuthClientInformation;
   codeVerifier?: string;
   state?: string;
 };
 
 export class SidecarOAuthProvider implements OAuthClientProvider {
   private readonly tokenPath: string;
-  private readonly clientId: string;
-  private readonly clientSecret: string | undefined;
   private callbackServer: Server | null = null;
   private callbackUrl: string | null = null;
   private lastRedirectUrl: string | null = null;
 
   constructor(private readonly server: McpServerConfig) {
-    if (server.transport.type !== 'http' || !server.transport.oauth?.enabled) {
-      throw new Error('OAuth provider requires an OAuth-enabled HTTP MCP server.');
+    if (server.transport.type !== 'http') {
+      throw new Error('OAuth provider requires an HTTP MCP server.');
     }
 
-    const clientIdEnvVar = server.transport.oauth.clientIdEnvVar ?? 'GOOGLE_CLIENT_ID';
-    const clientSecretEnvVar = server.transport.oauth.clientSecretEnvVar ?? 'GOOGLE_CLIENT_SECRET';
-    const clientId = process.env[clientIdEnvVar];
-    const clientSecret = process.env[clientSecretEnvVar];
-
-    if (!clientId) {
-      throw new Error(`Missing OAuth client ID environment variable: ${clientIdEnvVar}`);
-    }
-
-    if (server.transport.oauth.credentialSource === 'userProvided' && !clientSecret) {
-      throw new Error(`Missing OAuth client secret environment variable: ${clientSecretEnvVar}`);
-    }
-
-    this.clientId = clientId;
-    this.clientSecret = clientSecret;
     this.tokenPath = join(getAgentDataDir(), 'oauth', `${sanitizeFileName(server.id)}.json`);
   }
 
@@ -59,24 +44,26 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   get clientMetadata(): OAuthClientMetadata {
     return {
       redirect_uris: [this.redirectUrl],
-      token_endpoint_auth_method: this.clientSecret ? 'client_secret_post' : 'none',
+      token_endpoint_auth_method: 'none',
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       client_name: 'Shuddhalekhan',
-      scope: GMAIL_SCOPES.join(' '),
     };
   }
 
+  async start(): Promise<void> {
+    await this.startCallbackServer();
+  }
+
   async ensureAuthenticated(): Promise<void> {
-    if (this.tokens()?.refresh_token) return;
+    if (this.tokens()?.access_token) return;
 
     await this.startCallbackServer();
     const result = await auth(this, {
       serverUrl: this.server.transport.type === 'http' ? this.server.transport.url : '',
-      scope: GMAIL_SCOPES.join(' '),
     });
 
-    if (result !== 'AUTHORIZED' && !this.tokens()?.refresh_token) {
+    if (result !== 'AUTHORIZED' && !this.tokens()?.access_token) {
       throw new Error('OAuth authorization did not complete.');
     }
   }
@@ -88,6 +75,15 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   saveTokens(tokens: OAuthTokens): void {
     const current = this.readTokenFile();
     this.writeTokenFile({ ...current, tokens });
+  }
+
+  clientInformation(): OAuthClientInformation | undefined {
+    return this.readTokenFile().clientInformation;
+  }
+
+  saveClientInformation(clientInformation: OAuthClientInformation): void {
+    const current = this.readTokenFile();
+    this.writeTokenFile({ ...current, clientInformation });
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -103,7 +99,6 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
       serverUrl: this.server.transport.type === 'http' ? this.server.transport.url : '',
       authorizationCode: callback.code,
       callbackState: callback.state,
-      scope: GMAIL_SCOPES.join(' '),
     });
   }
 
@@ -116,13 +111,6 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
     const verifier = this.readTokenFile().codeVerifier;
     if (!verifier) throw new Error('OAuth code verifier is missing.');
     return verifier;
-  }
-
-  clientInformation(): OAuthClientInformation {
-    return {
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
-    };
   }
 
   state(): string {
@@ -145,6 +133,7 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
     }
 
     const current = this.readTokenFile();
+    if (scope === 'client') delete current.clientInformation;
     if (scope === 'tokens') delete current.tokens;
     if (scope === 'verifier') delete current.codeVerifier;
     this.writeTokenFile(current);
@@ -207,6 +196,8 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
         this.close();
       };
 
+      let handledCallback = false;
+
       this.callbackServer.on('request', (request, response) => {
         try {
           const url = new URL(request.url ?? '/', this.redirectUrl);
@@ -214,6 +205,12 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
             response.writeHead(404).end();
             return;
           }
+
+          if (handledCallback) {
+            response.writeHead(409, { 'Content-Type': 'text/plain' }).end('Authorization callback already handled.');
+            return;
+          }
+          handledCallback = true;
 
           const error = url.searchParams.get('error');
           if (error) {
@@ -229,7 +226,7 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
             return;
           }
 
-          response.writeHead(200, { 'Content-Type': 'text/plain' }).end('Gmail connected. You can close this window.');
+          response.writeHead(200, { 'Content-Type': 'text/plain' }).end('MCP server connected. You can close this window.');
           const state = url.searchParams.get('state') ?? undefined;
           cleanup();
           resolve({ code, state });

@@ -19,8 +19,8 @@ const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
   getConfig,
   setConfig,
-  openExternal: shell.openExternal,
   showAgentToast,
+  openExternal: shell.openExternal,
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
 const recordingSession = createRecordingSession(() => cachedAgentEnabled);

@@ -32,15 +32,7 @@ export function normalizeMcpServer(server: McpServerConfig): McpServerConfig {
 export function normalizeMcpServers(servers: McpServerConfig[] | undefined): McpServerConfig[] {
   if (!Array.isArray(servers)) return [];
 
-  const seenPresets = new Set<string>();
-  return servers
-    .filter((server) => {
-      if (server.preset !== 'gmail') return true;
-      if (seenPresets.has(server.preset)) return false;
-      seenPresets.add(server.preset);
-      return true;
-    })
-    .map(normalizeMcpServer);
+  return servers.map(normalizeMcpServer);
 }
 
 export function getMcpServerConnectionKey(server: McpServerConfig): string {

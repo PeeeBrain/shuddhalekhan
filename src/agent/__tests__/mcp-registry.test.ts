@@ -1,12 +1,27 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { McpRegistry } from '../mcp-registry';
 import type { AgentRuntimeCallbacks } from '../runtime';
 
 const createMCPClientMock = mock();
+const authMock = mock();
 const closeMock = mock(() => Promise.resolve());
+
+type TestOAuthProvider = {
+  saveTokens: (tokens: { access_token: string; token_type: string }) => void;
+};
+
+type TestMcpClientConfig = {
+  transport: {
+    authProvider: TestOAuthProvider;
+  };
+};
 
 mock.module('@ai-sdk/mcp', () => ({
   createMCPClient: createMCPClientMock,
+  auth: authMock,
 }));
 
 mock.module('@ai-sdk/mcp/mcp-stdio', () => ({
@@ -45,7 +60,13 @@ const baseConfig = {
 
 describe('McpRegistry', () => {
   beforeEach(() => {
+    process.env.APPDATA = mkdtempSync(join(tmpdir(), 'shudd-mcp-oauth-'));
     createMCPClientMock.mockClear();
+    authMock.mockClear();
+    authMock.mockImplementation(async (provider: TestOAuthProvider) => {
+      provider.saveTokens({ access_token: 'token-1', token_type: 'Bearer' });
+      return 'REDIRECT';
+    });
     closeMock.mockClear();
   });
 
@@ -71,11 +92,64 @@ describe('McpRegistry', () => {
       },
     } as never);
 
+    expect(createMCPClientMock).toHaveBeenCalledWith({
+      transport: {
+        type: 'http',
+        url: 'http://localhost:3000/mcp',
+        authProvider: expect.any(Object),
+      },
+    });
+
     const snapshot = registry.createRunSnapshot(makeApproval());
 
     expect(snapshot.tools).toHaveProperty('srv1__search');
     expect(snapshot.tools).not.toHaveProperty('srv1__delete');
     expect(snapshot.tools).not.toHaveProperty('search');
+
+    await registry.close();
+  });
+
+  it('attaches a generic OAuth provider to HTTP servers', async () => {
+    createMCPClientMock.mockImplementation(async () => ({
+      tools: async () => ({}),
+      close: closeMock,
+    }));
+
+    const registry = new McpRegistry();
+    await registry.updateConfig(baseConfig as never);
+
+    const transport = createMCPClientMock.mock.calls[0]?.[0]?.transport;
+    expect(transport.authProvider.clientMetadata).toEqual({
+      redirect_uris: [expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/oauth\/callback$/)],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      client_name: 'Shuddhalekhan',
+    });
+
+    await registry.close();
+  });
+
+  it('retries a protected HTTP server after OAuth saves a token', async () => {
+    const firstClose = mock(() => Promise.resolve());
+    createMCPClientMock
+      .mockImplementationOnce(async (config: TestMcpClientConfig) => ({
+        tools: async () => {
+          config.transport.authProvider.saveTokens({ access_token: 'token-1', token_type: 'Bearer' });
+          throw new Error('Unauthorized');
+        },
+        close: firstClose,
+      }))
+      .mockImplementationOnce(async () => ({
+        tools: async () => ({}),
+        close: closeMock,
+      }));
+
+    const registry = new McpRegistry();
+    await registry.updateConfig(baseConfig as never);
+
+    expect(createMCPClientMock).toHaveBeenCalledTimes(2);
+    expect(firstClose).toHaveBeenCalled();
 
     await registry.close();
   });

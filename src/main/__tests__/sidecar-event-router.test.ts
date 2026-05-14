@@ -20,10 +20,10 @@ const baseConfig: AppConfig = {
     },
     mcpServers: [
       {
-        id: 'gmail',
-        displayName: 'Gmail',
+        id: 'mail',
+        displayName: 'Hosted Mail',
         enabled: true,
-        transport: { type: 'http', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+        transport: { type: 'http', url: 'https://mail.example.com/mcp' },
         discoveredTools: [],
         toolPolicies: {},
       },
@@ -36,8 +36,8 @@ describe('SidecarEventRouter', () => {
   let getSettingsWindow: ReturnType<typeof vi.fn>;
   let getConfig: ReturnType<typeof vi.fn>;
   let setConfig: ReturnType<typeof vi.fn>;
-  let openExternal: ReturnType<typeof vi.fn>;
   let showAgentToast: ReturnType<typeof vi.fn>;
+  let openExternal: ReturnType<typeof vi.fn>;
   let router: ReturnType<typeof createSidecarEventRouter>;
 
   beforeEach(() => {
@@ -48,36 +48,46 @@ describe('SidecarEventRouter', () => {
     }));
     getConfig = vi.fn(() => baseConfig);
     setConfig = vi.fn();
-    openExternal = vi.fn(() => Promise.resolve());
     showAgentToast = vi.fn();
+    openExternal = vi.fn(async () => undefined);
     router = createSidecarEventRouter({
       getSettingsWindow,
       getConfig,
       setConfig,
-      openExternal,
       showAgentToast,
+      openExternal,
     });
   });
 
   it('forwards MCP server status to the settings window', () => {
     router.handle({
       type: 'mcp:server-status',
-      serverId: 'gmail',
+      serverId: 'mail',
       status: 'connected',
       message: 'ready',
     });
 
     expect(send).toHaveBeenCalledWith('mcp:server-status', {
-      serverId: 'gmail',
+      serverId: 'mail',
       status: 'connected',
       message: 'ready',
     });
   });
 
+  it('opens OAuth authorization URLs externally', () => {
+    router.handle({
+      type: 'oauth:open-url',
+      serverId: 'mail',
+      url: 'https://perfect-horizon.example.com/oauth/authorize',
+    });
+
+    expect(openExternal).toHaveBeenCalledWith('https://perfect-horizon.example.com/oauth/authorize');
+  });
+
   it('persists discovered tools and defaults new tool policies to alwaysAsk', () => {
     router.handle({
       type: 'mcp:tools-discovered',
-      serverId: 'gmail',
+      serverId: 'mail',
       tools: [
         { name: 'read_email', description: 'Read messages', inputSchema: { type: 'object' } },
         { name: 'send_email', description: 'Send messages' },
@@ -88,7 +98,7 @@ describe('SidecarEventRouter', () => {
       ...baseConfig.agent,
       mcpServers: [
         expect.objectContaining({
-          id: 'gmail',
+          id: 'mail',
           discoveredTools: [
             expect.objectContaining({
               name: 'read_email',
@@ -103,26 +113,16 @@ describe('SidecarEventRouter', () => {
             }),
           ],
           toolPolicies: {
-            'gmail:read_email': 'alwaysAsk',
-            'gmail:send_email': 'alwaysAsk',
+            'mail:read_email': 'alwaysAsk',
+            'mail:send_email': 'alwaysAsk',
           },
         }),
       ],
     });
   });
 
-  it('opens OAuth URLs externally', () => {
-    router.handle({
-      type: 'oauth:open-url',
-      serverId: 'gmail',
-      url: 'https://accounts.google.com/o/oauth2/v2/auth',
-    });
-
-    expect(openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth');
-  });
-
   it('maps agent status, streaming, completion, failure, and cancellation to toasts', () => {
-    router.handle({ type: 'agent:status', agentRunId: 'run-1', status: 'Checking Gmail' });
+    router.handle({ type: 'agent:status', agentRunId: 'run-1', status: 'Checking mail' });
     router.handle({ type: 'agent:response-delta', agentRunId: 'run-1', delta: 'Done', response: 'Done' });
     router.handle({ type: 'agent:completed', agentRunId: 'run-1', response: 'Finished', toolSummary: ['Read 3 messages'] });
     router.handle({ type: 'agent:failed', agentRunId: 'run-1', error: 'Provider failed' });
@@ -131,7 +131,7 @@ describe('SidecarEventRouter', () => {
     expect(showAgentToast).toHaveBeenNthCalledWith(1, {
       kind: 'status',
       agentRunId: 'run-1',
-      message: 'Checking Gmail',
+      message: 'Checking mail',
     });
     expect(showAgentToast).toHaveBeenNthCalledWith(2, {
       kind: 'streaming',
@@ -160,9 +160,9 @@ describe('SidecarEventRouter', () => {
       type: 'approval:requested',
       agentRunId: 'run-1',
       approvalId: 'approval-1',
-      serverId: 'gmail',
+      serverId: 'mail',
       toolName: 'send_email',
-      modelToolName: 'gmail__send_email',
+      modelToolName: 'mail__send_email',
       arguments: { to: 'a@example.com' },
       expiresAt: '2026-05-11T12:00:00.000Z',
     });
@@ -170,15 +170,15 @@ describe('SidecarEventRouter', () => {
     expect(showAgentToast).toHaveBeenNthCalledWith(1, {
       kind: 'status',
       agentRunId: 'run-1',
-      message: 'Waiting for approval: gmail.send_email',
+      message: 'Waiting for approval: mail.send_email',
     });
     expect(showAgentToast).toHaveBeenNthCalledWith(2, {
       kind: 'approval',
       agentRunId: 'run-1',
       approvalId: 'approval-1',
-      serverId: 'gmail',
+      serverId: 'mail',
       toolName: 'send_email',
-      modelToolName: 'gmail__send_email',
+      modelToolName: 'mail__send_email',
       arguments: { to: 'a@example.com' },
       expiresAt: '2026-05-11T12:00:00.000Z',
     });

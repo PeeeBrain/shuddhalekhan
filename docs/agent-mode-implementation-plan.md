@@ -42,7 +42,7 @@ Revive Agent Mode as an opt-in, voice-first, stateless command executor. `Ctrl +
   - dev/debug typed command entry behind feature flag.
 - MCP settings:
   - registry list.
-  - Gmail preset.
+  - generic HTTP and stdio MCP server entries.
   - server status.
   - discovered tools and per-tool policy.
 
@@ -58,7 +58,7 @@ Revive Agent Mode as an opt-in, voice-first, stateless command executor. `Ctrl +
 - Every newly discovered tool defaults to `alwaysAsk`.
 - Tool policies are keyed by server ID plus original MCP tool name.
 - Disabled tools are not exposed to the model.
-- Gmail preset is single-instance in v4.
+- MCP presets/templates are not shipped in v4.
 
 ## Phase 5: Sidecar Build Boundary — Done
 
@@ -162,21 +162,15 @@ Revive Agent Mode as an opt-in, voice-first, stateless command executor. `Ctrl +
   - tool policy changes apply without reconnecting.
 - Active runs use the immutable MCP/tool-policy snapshot they started with.
 
-## Phase 13: Official Gmail MCP — In Progress
+## Phase 13: Generic Hosted MCP Servers — In Progress
 
-- Add Gmail preset for Google's first-party Gmail MCP endpoint:
-  - `https://gmailmcp.googleapis.com/mcp/v1`
-- Use HTTP MCP OAuth from the sidecar.
-- Support credential source modes:
-  - `userProvided` for development/private builds.
-  - `bundledAppClient` for future distribution.
-- v4 can start with `userProvided`.
-- OAuth flow:
-  - settings collects required credential metadata.
-  - user clicks connect.
-  - browser-based Google OAuth flow completes.
-  - sidecar stores tokens securely outside `electron-store` and audit DB.
-- Gmail MCP is optional. Agent Mode works without it.
+- Remove the broken Gmail preset for Google's first-party Gmail MCP endpoint.
+- Keep generic MCP-client OAuth for protected hosted MCP servers.
+- Keep generic HTTP and stdio MCP server configuration.
+- Hosted MCP servers may manage their own downstream OAuth internally.
+- Shuddhalekhan opens server-provided authorization URLs and stores MCP access tokens per configured server.
+- If a hosted server is not authorized with its downstream service, Shuddhalekhan surfaces the server's MCP status/tool errors rather than adding app-owned login UI.
+- Agent Mode works without any MCP server configured.
 
 ## Phase 14: Verification — Done
 

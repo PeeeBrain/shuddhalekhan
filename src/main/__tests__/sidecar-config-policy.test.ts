@@ -18,10 +18,10 @@ const baseConfig: AppConfig = {
     },
     mcpServers: [
       {
-        id: 'gmail',
-        displayName: 'Gmail',
+        id: 'mail',
+        displayName: 'Hosted Mail',
         enabled: true,
-        transport: { type: 'http', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+        transport: { type: 'http', url: 'https://mail.example.com/mcp' },
         discoveredTools: [],
         toolPolicies: {},
       },

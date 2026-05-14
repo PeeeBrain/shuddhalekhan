@@ -1,3 +1,17 @@
+# Shuddhalekhan 4.2.1
+
+This patch release restores generic OAuth support for protected hosted MCP servers.
+
+## What's Changed
+
+### Agent Mode MCP OAuth
+- Added generic MCP-client OAuth for HTTP MCP servers that advertise protected-resource authorization.
+- Opens server-provided OAuth URLs in the system browser and stores access tokens per configured MCP server.
+- Retries MCP discovery after OAuth completes so protected remote servers can discover tools immediately.
+- Keeps Gmail presets removed; OAuth support is generic and server-driven.
+
+---
+
 # Shuddhalekhan 4.2.0
 
 This minor release adds multilingual Whisper controls for dictation and Agent Mode.

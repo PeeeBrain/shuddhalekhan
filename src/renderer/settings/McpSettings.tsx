@@ -39,32 +39,6 @@ export function McpSettings({
   const [draft, setDraft] = useState<McpServerConfig>(() => createBlankMcpServer());
   const [editingServerId, setEditingServerId] = useState<string | null>(null);
 
-  const addGmailPreset = () => {
-    if (servers.some((server) => server.preset === 'gmail')) return;
-
-    onChange([
-      ...servers,
-      {
-        id: 'gmail-primary',
-        displayName: 'Gmail',
-        enabled: false,
-        preset: 'gmail',
-        transport: {
-          type: 'http',
-          url: 'https://gmailmcp.googleapis.com/mcp/v1',
-          oauth: {
-            enabled: true,
-            credentialSource: 'userProvided',
-            clientIdEnvVar: 'GOOGLE_CLIENT_ID',
-            clientSecretEnvVar: 'GOOGLE_CLIENT_SECRET',
-          },
-        },
-        discoveredTools: [],
-        toolPolicies: {},
-      },
-    ]);
-  };
-
   const saveDraft = () => {
     const server = normalizeDraftServer(draft, editingServerId);
     if (editingServerId) {
@@ -88,21 +62,8 @@ export function McpSettings({
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[0.9fr_1fr]">
       <Card>
         <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <CardTitle className="text-base">{editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}</CardTitle>
-              <CardDescription>Configure one server, save it, then test discovery from the configured list.</CardDescription>
-            </div>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={servers.some((server) => server.preset === 'gmail')}
-              onClick={addGmailPreset}
-            >
-              Add Gmail Preset
-            </Button>
-          </div>
+          <CardTitle className="text-base">{editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}</CardTitle>
+          <CardDescription>Configure one server, save it, then test discovery from the configured list.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <McpServerForm server={draft} onChange={setDraft} />
@@ -198,7 +159,6 @@ function McpServerForm({
           <Label className="text-xs font-semibold text-muted-foreground">Transport</Label>
           <Select
             value={server.transport.type}
-            disabled={server.preset === 'gmail'}
             onValueChange={(type) => {
               onChange({
                 ...server,
@@ -224,7 +184,6 @@ function McpServerForm({
             <Label className="text-xs font-semibold text-muted-foreground">URL</Label>
             <Input
               value={transport.url}
-              disabled={server.preset === 'gmail'}
               placeholder="http://localhost:3000/mcp"
               onChange={(event) => onChange({ ...server, transport: { ...transport, url: event.target.value } })}
             />
@@ -251,7 +210,7 @@ function McpServerForm({
               <Label className="text-xs font-semibold text-muted-foreground">Environment variable names</Label>
               <Input
                 value={transport.envVarNames.join(', ')}
-                placeholder="GITHUB_TOKEN, GOOGLE_CLIENT_ID"
+                placeholder="GITHUB_TOKEN, MY_API_KEY"
                 onChange={(event) => onChange({ ...server, transport: { ...transport, envVarNames: splitCommaList(event.target.value) } })}
               />
             </div>
@@ -259,45 +218,7 @@ function McpServerForm({
         )}
       </div>
 
-      {transport.type === 'http' && transport.oauth?.enabled ? (
-        <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-muted-foreground">OAuth client ID env var</Label>
-              <Input
-                value={transport.oauth.clientIdEnvVar ?? ''}
-                placeholder="GOOGLE_CLIENT_ID"
-                onChange={(event) => onChange({
-                  ...server,
-                  transport: {
-                    ...transport,
-                    oauth: { ...transport.oauth!, clientIdEnvVar: event.target.value },
-                  },
-                })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-muted-foreground">OAuth client secret env var</Label>
-              <Input
-                value={transport.oauth.clientSecretEnvVar ?? ''}
-                placeholder="GOOGLE_CLIENT_SECRET"
-                onChange={(event) => onChange({
-                  ...server,
-                  transport: {
-                    ...transport,
-                    oauth: { ...transport.oauth!, clientSecretEnvVar: event.target.value },
-                  },
-                })}
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>Scopes</span>
-            <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-primary">gmail.readonly</code>
-            <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-primary">gmail.compose</code>
-          </div>
-        </div>
-      ) : null}
+
     </div>
   );
 }

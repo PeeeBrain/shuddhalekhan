@@ -148,7 +148,7 @@ describe('config store', () => {
     expect(unlinkSync).not.toHaveBeenCalled();
   });
 
-  it('defaults newly discovered MCP tools to alwaysAsk and keeps one Gmail preset', async () => {
+  it('defaults newly discovered MCP tools to alwaysAsk for generic MCP servers', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-5`);
 
@@ -162,13 +162,12 @@ describe('config store', () => {
       },
       mcpServers: [
         {
-          id: 'gmail-primary',
-          displayName: 'Gmail',
+          id: 'mail-primary',
+          displayName: 'Hosted Mail',
           enabled: true,
-          preset: 'gmail',
           transport: {
             type: 'http',
-            url: 'https://gmailmcp.googleapis.com/mcp/v1',
+            url: 'https://mail.example.com/mcp',
           },
           discoveredTools: [
             {
@@ -180,13 +179,12 @@ describe('config store', () => {
           toolPolicies: {},
         },
         {
-          id: 'gmail-secondary',
-          displayName: 'Gmail duplicate',
+          id: 'mail-secondary',
+          displayName: 'Hosted Mail Second Account',
           enabled: true,
-          preset: 'gmail',
           transport: {
             type: 'http',
-            url: 'https://gmailmcp.googleapis.com/mcp/v1',
+            url: 'https://mail2.example.com/mcp',
           },
           discoveredTools: [],
           toolPolicies: {},
@@ -196,13 +194,12 @@ describe('config store', () => {
 
     expect(getConfig().agent.mcpServers).toEqual([
       {
-        id: 'gmail-primary',
-        displayName: 'Gmail',
+        id: 'mail-primary',
+        displayName: 'Hosted Mail',
         enabled: true,
-        preset: 'gmail',
         transport: {
           type: 'http',
-          url: 'https://gmailmcp.googleapis.com/mcp/v1',
+          url: 'https://mail.example.com/mcp',
         },
         discoveredTools: [
           {
@@ -212,8 +209,19 @@ describe('config store', () => {
           },
         ],
         toolPolicies: {
-          'gmail-primary:draft_email': 'alwaysAsk',
+          'mail-primary:draft_email': 'alwaysAsk',
         },
+      },
+      {
+        id: 'mail-secondary',
+        displayName: 'Hosted Mail Second Account',
+        enabled: true,
+        transport: {
+          type: 'http',
+          url: 'https://mail2.example.com/mcp',
+        },
+        discoveredTools: [],
+        toolPolicies: {},
       },
     ]);
     expect(getConfig().agent.provider.thinkingEnabled).toBe(false);
