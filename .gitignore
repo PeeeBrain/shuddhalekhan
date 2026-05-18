@@ -47,6 +47,7 @@ report.*.json
 CLAUDE.md
 GEMINI.md
 .codex
+.superpowers/
 
 
 # Tauri updater key
