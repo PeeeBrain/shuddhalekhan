@@ -22,7 +22,7 @@ permissions:
 jobs:
   checks:
     name: Linux typecheck, lint, and test
-    runs-on: ${{ vars.BLACKSMITH_LINUX_RUNNER }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
 
     steps:

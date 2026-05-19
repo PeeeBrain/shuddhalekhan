@@ -22,7 +22,7 @@ permissions:
 jobs:
   checks:
     name: macOS typecheck, lint, and test
-    runs-on: ${{ vars.BLACKSMITH_MACOS_RUNNER }}
+    runs-on: blacksmith-6vcpu-macos-latest
     timeout-minutes: 20
 
     steps:

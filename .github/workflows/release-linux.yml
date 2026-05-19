@@ -10,7 +10,7 @@ on:
 jobs:
   release-linux:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ${{ vars.BLACKSMITH_LINUX_RUNNER }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
 

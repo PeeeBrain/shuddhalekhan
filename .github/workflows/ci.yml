@@ -22,7 +22,7 @@ permissions:
 jobs:
   checks:
     name: Windows typecheck, lint, and test
-    runs-on: ${{ vars.BLACKSMITH_WINDOWS_RUNNER }}
+    runs-on: blacksmith-4vcpu-windows-2025
     timeout-minutes: 20
 
     steps:

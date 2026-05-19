@@ -10,7 +10,7 @@ on:
 jobs:
   release:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ${{ vars.BLACKSMITH_WINDOWS_RUNNER }}
+    runs-on: blacksmith-4vcpu-windows-2025
     permissions:
       contents: write
 
