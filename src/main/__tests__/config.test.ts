@@ -33,6 +33,8 @@ mock.module('fs', () => ({
   unlinkSync,
 }));
 
+const expectedShortcutStatus = process.platform === 'win32' ? 'ready' : 'unassigned';
+
 describe('config store', () => {
   beforeEach(() => {
     storeData.clear();
@@ -63,6 +65,20 @@ describe('config store', () => {
         },
         mcpServers: [],
       },
+      shortcuts: {
+        dictation: {
+          action: 'dictation',
+          accelerator: 'Control+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
+        agent: {
+          action: 'agent',
+          accelerator: 'Alt+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
+      },
     });
   });
 
@@ -89,6 +105,20 @@ describe('config store', () => {
           thinkingEnabled: true,
         },
         mcpServers: [],
+      },
+      shortcuts: {
+        dictation: {
+          action: 'dictation',
+          accelerator: 'Control+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
+        agent: {
+          action: 'agent',
+          accelerator: 'Alt+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
       },
     });
   });
@@ -120,6 +150,20 @@ describe('config store', () => {
         },
         mcpServers: [],
       },
+      shortcuts: {
+        dictation: {
+          action: 'dictation',
+          accelerator: 'Control+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
+        agent: {
+          action: 'agent',
+          accelerator: 'Alt+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
+      },
     });
     expect(readFileSync).toHaveBeenCalledWith(normalize('/home/tester/.speech-2-text/config.json'), 'utf-8');
     expect(unlinkSync).toHaveBeenCalledWith(normalize('/home/tester/.speech-2-text/config.json'));
@@ -147,6 +191,20 @@ describe('config store', () => {
           thinkingEnabled: true,
         },
         mcpServers: [],
+      },
+      shortcuts: {
+        dictation: {
+          action: 'dictation',
+          accelerator: 'Control+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
+        agent: {
+          action: 'agent',
+          accelerator: 'Alt+Meta',
+          triggerMode: 'hold',
+          status: expectedShortcutStatus,
+        },
       },
     });
     expect(unlinkSync).not.toHaveBeenCalled();
@@ -229,6 +287,26 @@ describe('config store', () => {
       },
     ]);
     expect(getConfig().agent.provider.thinkingEnabled).toBe(false);
+  });
+
+  it('defaults shortcut actions to suggested Windows bindings when available in config', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig } = await import(`../config?test=${Date.now()}-shortcuts`);
+
+    expect(getConfig().shortcuts).toEqual({
+      dictation: {
+        action: 'dictation',
+        accelerator: 'Control+Meta',
+        triggerMode: 'hold',
+        status: expectedShortcutStatus,
+      },
+      agent: {
+        action: 'agent',
+        accelerator: 'Alt+Meta',
+        triggerMode: 'hold',
+        status: expectedShortcutStatus,
+      },
+    });
   });
 
   it('defaults missing provider thinking toggle to enabled', async () => {

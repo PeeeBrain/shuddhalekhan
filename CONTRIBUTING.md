@@ -63,11 +63,13 @@ bun run typecheck
 bun test
 ```
 
-CI runs the same checks on `windows-latest`, then verifies Electron native dependencies with:
+CI is platform-scoped. `CI Windows` gates Windows release artifacts, `CI Linux` gates Linux artifacts, and `CI macOS` gates macOS artifacts. A failure on an experimental platform must not block publication of a stable Windows release.
 
-```bash
-bun x electron-builder install-app-deps
-```
+Blacksmith runner labels are configured through repository variables:
+
+- `BLACKSMITH_WINDOWS_RUNNER`
+- `BLACKSMITH_LINUX_RUNNER`
+- `BLACKSMITH_MACOS_RUNNER`
 
 Do not run build commands such as `bun run build`, `bun run build:agent`, or `bun run dist` during normal feature work unless you specifically need to test packaging. Build outputs are ephemeral and should not be committed.
 
@@ -103,11 +105,20 @@ The release workflow reads `package.json` and publishes against tag `v<version>`
 
 ## Build and Packaging
 
-Packaging is handled by GitHub Actions on Windows. The release workflow runs:
+Packaging is handled by platform-scoped GitHub Actions workflows. Each platform runs independently:
 
-```bash
-bun run build
-bun run dist -- --publish always
-```
+| Platform | CI Workflow | Release Workflow |
+| --- | --- | --- |
+| Windows | `CI Windows` | `Release Windows App` |
+| Linux | `CI Linux` | `Release Linux App` |
+| macOS | `CI macOS` | `Release macOS App` |
+
+Windows is the only stable release gate. Linux and macOS artifacts are backfilled into the existing GitHub Release as experimental or developer preview assets.
 
 Run these locally only when you are deliberately testing packaging. If local build artifacts are created, remove them before committing unless the project explicitly starts tracking a new generated asset.
+
+### Platform Providers
+
+Platform-specific desktop behavior belongs behind provider modules under `src/main/platform/`. Providers report capability state and adapt platform behavior into existing recording and injection flows.
+
+Do not replace the Windows `koffi` implementation as part of cross-platform provider work. Normalizing Windows away from `koffi` is a separate future refactor after Electron APIs prove they can preserve current Windows behavior.

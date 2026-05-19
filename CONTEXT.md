@@ -25,6 +25,7 @@
 
 ## Decision Principle
 - Prefer widely-documented, industry-standard libraries and patterns over custom solutions. This ensures future breakage is Google-able.
+- Cross-platform support must preserve Shuddhalekhan's tray-first, focused-app dictation contract. Platform-specific implementations may differ, but macOS/Linux support should not mean "record only while a Shuddhalekhan window is focused" unless explicitly described as a temporary limited mode.
 
 # Domain Glossary
 
@@ -41,6 +42,40 @@ A deep module that owns the complete audio-capture lifecycle: keyboard hook, hid
 
 ### Dictation
 The act of converting captured audio into text and injecting it into the currently focused application. Triggered by holding the `Ctrl + Win` hotkey chord. Synonymous with "transcription mode" in user-facing language.
+
+Cross-platform Dictation still means focused-app injection from a global recording trigger. Windows, macOS, and Linux may use different native trigger and injection providers, but the product behavior remains: start recording from outside the app, transcribe speech, and place the resulting text into the user's active application.
+
+WSL is useful for Linux-adjacent checks such as TypeScript, tests, package resolution, and possibly headless packaging experiments, but it is not a sufficient validation environment for Linux Dictation. Global hotkeys, desktop focus, clipboard ownership, paste simulation, tray behavior, Wayland/X11 differences, and microphone permissions must be verified on a real Linux desktop session or CI/container setup that exposes those desktop services. macOS validation is expected to rely on macOS CI and community testing when no local Mac is available.
+
+macOS support is staged. macOS CI may produce unsigned `.dmg`/`.zip` artifacts for smoke testing and community validation, but Shuddhalekhan should not claim stable macOS support until signing, notarization, and real permission-flow validation are in place.
+
+The first macOS shortcut implementation should use Electron's standard global shortcut capability where possible, with native macOS event taps deferred until validation proves they are necessary. macOS providers must report permission/capability state clearly instead of hiding Accessibility, microphone, or automation failures.
+
+Unsigned macOS artifacts may be published only as Experimental/Developer Preview builds for community validation. Stable macOS support requires signing and notarization so normal users can launch the app without Gatekeeper workarounds.
+
+Normalizing Windows away from `koffi` and toward Electron shortcut/paste APIs is a future consideration, not part of the first cross-platform support scope. `koffi` should be treated as the current Windows implementation detail and possible fallback while macOS/Linux provider work proceeds separately. Removing or replacing it should be handled as its own focused refactor after Electron APIs prove they can preserve Windows behavior.
+
+CI and release gating are platform-scoped. A platform's release packaging job should depend on that same platform's CI result, not on every supported platform passing. For example, a macOS CI failure must not block a Windows release artifact when Windows CI passed. Cross-platform aggregate status may still be reported separately, but artifact publication is one-to-one by platform.
+
+GitHub Releases are one-per-version. Platform artifacts for `vX.Y.Z` should attach to the same release as they become available; failed platform builds may be fixed and backfilled into that same release without creating platform-specific tags. Backfilled artifacts must be built from the same release tag/source commit unless the change is purely release infrastructure. If app behavior changes, the package version must advance.
+
+Public release publication is gated by stable platforms, not experimental ones. Windows is the current stable platform and may publish a release when its CI/package job succeeds. Early Linux/macOS artifacts are experimental and may be added to the same release without blocking Windows users. Once Linux or macOS are declared stable, their platform-specific release gate should be promoted accordingly.
+
+Release notes should label platform artifact status explicitly: `Stable`, `Experimental`, `Pending`, or `Unavailable`. Initial Windows artifacts are Stable. Initial Linux `.deb` artifacts are Experimental. Initial macOS unsigned artifacts are Experimental/Developer Preview until signing, notarization, and permission-flow validation are complete.
+
+Linux support is Wayland-first, with X11 as a compatibility fallback. The Linux implementation should be designed around modern Wayland desktop constraints instead of assuming X11-style global input capture and synthetic key injection are always available.
+
+Every supported OS must provide a global hotkey path for Dictation and Agent Mode. On platforms that restrict arbitrary global keyboard capture, especially Wayland Linux, Shuddhalekhan should integrate with desktop-approved global shortcut mechanisms or user-configured desktop shortcuts instead of requiring the app window to be focused.
+
+On GNOME Wayland and similar desktops, user-mediated shortcut setup is an acceptable first-class global hotkey path when direct app registration is unavailable. Settings should present this as setup work to complete, not as a hidden failure: show the action being configured, provide copyable/deep-link instructions where possible, detect completion where possible, and keep the shortcut unassigned until setup succeeds.
+
+The first cross-platform pass should not expose a user-facing CLI action interface for triggering Dictation or Agent Mode. Avoid commands such as `shuddhalekhan --action dictation-toggle` unless a later design explicitly accepts the support and documentation burden. Shortcut setup should stay inside app-managed or desktop-approved integration paths.
+
+The first Linux package target is Debian/Ubuntu `.deb`. Broader Linux artifacts such as AppImage, RPM, Flatpak, or Snap are deferred until user demand and platform permission behavior justify them.
+
+The first Linux desktop validation target is GNOME on Wayland. X11 is a compatibility fallback. KDE Wayland, wlroots compositors, Sway, Hyprland, and other desktop environments are community-validation targets until explicitly tested; Linux release notes should not imply uniform Wayland support across all compositors.
+
+Linux may ship as Experimental with incomplete desktop integration if capability reporting is honest and Dictation is not shown as ready when global shortcuts or paste injection are unavailable. Linux must not be promoted beyond Experimental until the primary validation target, GNOME Wayland, has a working global shortcut path and focused-app injection story.
 
 ### Agent (Jarvis)
 The local AI assistant that receives transcribed prompts, interprets them, and can execute tools. Triggered by holding the `Alt + Win` hotkey chord, separate from `Ctrl + Win` Dictation.
@@ -137,7 +172,15 @@ The agent sidecar starts lazily only when Agent Mode is enabled and needed, such
 
 The first MCP lifecycle repair should prioritize the user-visible contract over a broad lifecycle rewrite: hydrate persisted Agent Mode configuration on app startup, connect/discover enabled MCP servers automatically, keep the manual server action diagnostic, and guard against empty final responses. A fuller sidecar lifecycle state machine can follow only if these narrower fixes expose unresolved cancellation, crash recovery, or reconnect semantics.
 
-Hotkeys are hardcoded in v4: `Ctrl + Win` for Dictation and `Alt + Win` for Agent Mode. Implementation should still model them as named recording intents so both hotkeys can become user-configurable in a future version without rewriting the recording state machine.
+Hotkeys are hardcoded in v4: `Ctrl + Win` for Dictation and `Alt + Win` for Agent Mode. Cross-platform support should replace this with user-configurable shortcuts modeled as named recording actions. The settings UI should use a focused recorder sheet, similar in spirit to Raycast shortcut recording: choose an action, enter a temporary recording state, press the desired shortcut, then save or cancel with clear conflict/platform feedback.
+
+Shortcut configuration is strict: Shuddhalekhan should save only shortcuts that the current platform provider successfully registers or can authoritatively mark as ready. Default shortcuts are suggestions, not entitlements. If an OS or another app already owns the default Dictation or Agent Mode shortcut, Shuddhalekhan must not override it; the corresponding shortcut remains empty/unassigned until the user explicitly records a usable binding.
+
+Dictation and Agent Mode shortcut readiness are independent. Dictation may be ready while Agent Mode is unassigned or disabled, and Agent Mode may have a configured shortcut that remains inactive until Agent Mode is enabled. Setup/status UI should report readiness per action instead of treating all shortcuts as a single all-or-nothing setup block.
+
+Cross-platform shortcut work must adapt platform input into the existing Recording Session verbs instead of rewriting the recording lifecycle. Hold-to-record maps key-down to `begin(intent)` and key-up to `end()`. Toggle-to-record maps each shortcut activation to `begin(intent)` when idle or `end()` when active. The recording session, audio capture, transcription, and Dictation/Agent routing semantics should remain stable unless a platform integration exposes a concrete lifecycle bug.
+
+Trigger mode is a per-action setting. The focused recorder sheet should expose a restrained `Hold` / `Toggle` choice, defaulting to Hold where press/release events are supported and Toggle where the platform only provides shortcut activation callbacks. Unsupported modes should be disabled with a concise reason rather than hidden.
 
 Agent Mode reuses the existing Whisper transcription path and configuration. Dictation and Agent Mode share audio capture and transcription; after transcription, Dictation injects text into the focused application while Agent Mode sends the transcript to the sidecar as a one-off agent command.
 
@@ -173,6 +216,10 @@ Agent Mode also needs post-tool-use observation so Shuddhalekhan can display wha
 
 ### Text Injection
 The process of simulating keystrokes to type transcribed text into the active window. Implemented via the **clipboard sandwich** pattern: save existing clipboard → write text → simulate paste (Ctrl+V) → restore original clipboard. Must not append Enter/newline by default.
+
+Cross-platform Text Injection should keep the clipboard sandwich as the product contract. The platform-specific boundary is paste simulation and capability reporting: Windows may use `SendInput`, macOS should simulate the platform paste command or use an approved accessibility path, and Linux must account for Wayland/X11 constraints. Direct character-by-character typing is not the primary strategy because it is slower and more fragile for multilingual text, IMEs, and keyboard layouts.
+
+If paste simulation is unavailable or blocked after transcription succeeds, Dictation should degrade by leaving the transcribed text on the clipboard and showing a clear paste-blocked notification. In that failure path, preserving the new transcript on the clipboard is more useful than restoring the previous clipboard. The UI must not present this as a fully successful focused-app injection.
 
 ## Technical Terms
 

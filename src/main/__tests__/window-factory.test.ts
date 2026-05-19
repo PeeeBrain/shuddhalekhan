@@ -9,6 +9,7 @@ const destroy = vi.fn();
 const isDestroyed = vi.fn(() => false);
 const loadURL = vi.fn();
 const loadFile = vi.fn();
+const setMenu = vi.fn();
 const BrowserWindow = vi.fn(() => ({
   loadURL,
   loadFile,
@@ -16,6 +17,7 @@ const BrowserWindow = vi.fn(() => ({
   once,
   destroy,
   isDestroyed,
+  setMenu,
 }));
 
 installElectronMock();
@@ -31,6 +33,7 @@ describe('createSingletonWindow', () => {
     on.mockClear();
     once.mockClear();
     destroy.mockClear();
+    setMenu.mockClear();
     isDestroyed.mockReturnValue(false);
   });
 
@@ -51,12 +54,14 @@ describe('createSingletonWindow', () => {
       width: 1,
       height: 1,
       show: false,
+      autoHideMenuBar: true,
       webPreferences: expect.objectContaining({
         preload: expect.stringContaining('preload'),
         contextIsolation: true,
         nodeIntegration: false,
       }) as Electron.BrowserWindowConstructorOptions['webPreferences'],
     }));
+    expect(setMenu).toHaveBeenCalledWith(null);
     expect(loadURL).toHaveBeenCalledWith('http://localhost:5173/#/audio');
   });
 

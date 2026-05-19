@@ -11,8 +11,10 @@ import { createRecordingSession } from './recording-session';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp } from './inject-text';
-import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
+import type { AppConfig, AudioDevice, ShortcutBinding, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
+import { validateShortcutBinding } from './shortcuts/validation';
+import { createPlatformProvider } from './platform';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 const sidecarEventRouter = createSidecarEventRouter({
@@ -23,7 +25,8 @@ const sidecarEventRouter = createSidecarEventRouter({
   openExternal: shell.openExternal,
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
-const recordingSession = createRecordingSession(() => cachedAgentEnabled);
+const platformProvider = createPlatformProvider();
+const recordingSession = createRecordingSession(() => cachedAgentEnabled, () => getConfig().shortcuts);
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
@@ -34,7 +37,15 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
       return;
     }
 
-    await injectIntoFocusedApp(result.text);
+    const injection = await injectIntoFocusedApp(result.text);
+    if (injection.status === 'paste-blocked') {
+      dialog.showMessageBox({
+        type: 'warning',
+        title: 'Paste blocked',
+        message: 'Shuddhalekhan copied the transcript, but could not paste into the focused app.',
+        detail: injection.message,
+      });
+    }
   } catch (err) {
     console.error('Transcription failed:', err);
     dialog.showErrorBox('Transcription Error', err instanceof Error ? err.message : String(err));
@@ -147,6 +158,25 @@ ipcMain.handle(
     hideAgentToast();
   }
 );
+
+ipcMain.handle('platform:get-capabilities', () => platformProvider.getCapabilities());
+
+ipcMain.handle('shortcuts:get', () => getConfig().shortcuts);
+
+ipcMain.handle('shortcuts:validate', (_event, binding: ShortcutBinding) => {
+  return validateShortcutBinding(binding, getConfig().shortcuts, platformProvider.getCapabilities().shortcuts);
+});
+
+ipcMain.handle('shortcuts:save', (_event, binding: ShortcutBinding) => {
+  const config = getConfig();
+  const validation = validateShortcutBinding(binding, config.shortcuts, platformProvider.getCapabilities().shortcuts);
+  if (!validation.ok) return;
+
+  setConfig('shortcuts', {
+    ...config.shortcuts,
+    [binding.action]: { ...binding, status: 'ready' },
+  });
+});
 
 ipcMain.handle('app:get-info', async () => {
   return {

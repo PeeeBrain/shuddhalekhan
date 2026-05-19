@@ -81,4 +81,50 @@ describe('KeyboardHook mode detection', () => {
 
     expect(started).not.toHaveBeenCalled();
   });
+
+  it('uses saved shortcut bindings instead of hard-coded defaults', async () => {
+    const { KeyboardHook, keyboardTestKeyCodes } = await import(`../native/keyboard?test=${Date.now()}-custom`);
+    const hook = new KeyboardHook();
+    const started = mock();
+    const stopped = mock();
+
+    hook.start(started, stopped, () => true, () => ({
+      dictation: { action: 'dictation', accelerator: 'Control+Space', triggerMode: 'hold', status: 'ready' },
+      agent: { action: 'agent', accelerator: 'Alt+Meta', triggerMode: 'hold', status: 'ready' },
+    }));
+
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftControl, true);
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftWin, true);
+    expect(started).not.toHaveBeenCalled();
+
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftWin, false);
+    hook.handleKeyForTest(keyboardTestKeyCodes.space, true);
+    expect(started).toHaveBeenCalledWith('dictation');
+
+    hook.handleKeyForTest(keyboardTestKeyCodes.space, false);
+    expect(stopped).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles recording for toggle shortcut bindings', async () => {
+    const { KeyboardHook, keyboardTestKeyCodes } = await import(`../native/keyboard?test=${Date.now()}-toggle`);
+    const hook = new KeyboardHook();
+    const started = mock();
+    const stopped = mock();
+
+    hook.start(started, stopped, () => true, () => ({
+      dictation: { action: 'dictation', accelerator: 'Control+Space', triggerMode: 'toggle', status: 'ready' },
+      agent: { action: 'agent', accelerator: 'Alt+Meta', triggerMode: 'hold', status: 'ready' },
+    }));
+
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftControl, true);
+    hook.handleKeyForTest(keyboardTestKeyCodes.space, true);
+    hook.handleKeyForTest(keyboardTestKeyCodes.space, true);
+    expect(stopped).not.toHaveBeenCalled();
+
+    hook.handleKeyForTest(keyboardTestKeyCodes.space, false);
+    hook.handleKeyForTest(keyboardTestKeyCodes.space, true);
+
+    expect(started).toHaveBeenCalledWith('dictation');
+    expect(stopped).toHaveBeenCalledTimes(1);
+  });
 });

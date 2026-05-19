@@ -4,6 +4,9 @@ import type {
   AppInfo,
   McpServerConfig,
   McpServerRuntimeStatus,
+  PlatformCapabilitiesSnapshot,
+  ShortcutBinding,
+  ShortcutValidationResponse,
   UpdateStatus,
 } from '../types/ipc';
 import { Button } from '@/components/ui/button';
@@ -20,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { X as XIcon } from 'lucide-react';
+import { Windows as WindowsIcon } from '@/components/ui/svgs/windows';
 import { McpSettings } from './settings/McpSettings';
 import { createSettingsIpc } from './settings/settings-ipc';
 
@@ -64,6 +68,7 @@ export function SettingsWindow() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerRuntimeStatus>>({});
+  const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapabilitiesSnapshot | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
 
   useEffect(() => {
@@ -75,6 +80,9 @@ export function SettingsWindow() {
     });
     settingsIpc.getUpdateStatus().then(setUpdateStatus).catch((err) => {
       console.error('Failed to load update status:', err);
+    });
+    settingsIpc.getPlatformCapabilities().then(setPlatformCapabilities).catch((err) => {
+      console.error('Failed to load platform capabilities:', err);
     });
 
     const offUpdater = settingsIpc.onUpdateStatusChanged(setUpdateStatus);
@@ -168,8 +176,19 @@ export function SettingsWindow() {
                   checked={config.removeFillerWords}
                   onChange={(checked) => updateConfig('removeFillerWords', checked)}
                 />
-                <KeyRow label="Dictation hotkey" value="Ctrl + Win" />
-                <KeyRow label="Agent hotkey" value="Alt + Win" />
+                <ShortcutSettings
+                  shortcuts={config.shortcuts}
+                  agentEnabled={config.agent.enabled}
+                  platform={platformCapabilities?.platform}
+                  capabilities={platformCapabilities}
+                  onValidate={settingsIpc.validateShortcut}
+                  onSave={async (binding) => {
+                    await settingsIpc.saveShortcut(binding);
+                    const next = await settingsIpc.getConfig();
+                    setConfigState(next);
+                  }}
+                />
+                {platformCapabilities ? <PlatformSetupNotice capabilities={platformCapabilities} /> : null}
               </SettingsPanel>
             ) : null}
 
@@ -395,31 +414,271 @@ function SelectRow({
   );
 }
 
-import { Windows as WindowsIcon } from '@/components/ui/svgs/windows';
+function ShortcutSettings({
+  shortcuts,
+  agentEnabled,
+  platform,
+  capabilities,
+  onValidate,
+  onSave,
+}: {
+  shortcuts: AppConfig['shortcuts'];
+  agentEnabled: boolean;
+  platform?: PlatformCapabilitiesSnapshot['platform'];
+  capabilities: PlatformCapabilitiesSnapshot | null;
+  onValidate: (binding: ShortcutBinding) => Promise<ShortcutValidationResponse>;
+  onSave: (binding: ShortcutBinding) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState<ShortcutBinding | null>(null);
+  const [validation, setValidation] = useState<ShortcutValidationResponse | null>(null);
 
-function KeyRow({ label, value }: { label: string; value: string }) {
-  const keys = value.split(' + ');
+  const startEditing = (binding: ShortcutBinding) => {
+    setEditing(binding);
+    if (binding.accelerator) {
+      onValidate(binding).then(setValidation);
+    } else {
+      setValidation(null);
+    }
+  };
+
+  const updateEditing = (binding: ShortcutBinding) => {
+    setEditing(binding);
+    onValidate(binding).then(setValidation);
+  };
+
+  if (editing) {
+    return (
+      <div className="space-y-4 border-b border-border py-5">
+        <div>
+          <p className="text-sm font-medium">
+            Record {editing.action === 'dictation' ? 'Dictation' : 'Agent Mode'} shortcut
+          </p>
+          <p className="text-xs text-muted-foreground">Press a shortcut, choose hold or toggle, then save.</p>
+        </div>
+        <Input
+          value={formatAccelerator(editing.accelerator, platform)}
+          placeholder="Press shortcut"
+          onKeyDown={(event) => {
+            event.preventDefault();
+            const parts = [];
+            if (event.ctrlKey) parts.push('Control');
+            if (event.altKey) parts.push('Alt');
+            if (event.metaKey) parts.push('Meta');
+            if (event.shiftKey) parts.push('Shift');
+            if (!['Control', 'Alt', 'Meta', 'Shift'].includes(event.key)) parts.push(event.key.length === 1 ? event.key.toUpperCase() : event.key);
+            updateEditing({ ...editing, accelerator: parts.join('+') });
+          }}
+        />
+        <div className="inline-flex rounded-md border border-border p-1">
+          {(['hold', 'toggle'] as const).map((mode) => (
+            <Button
+              key={mode}
+              type="button"
+              variant={editing.triggerMode === mode ? 'default' : 'ghost'}
+              onClick={() => updateEditing({ ...editing, triggerMode: mode })}
+            >
+              {mode === 'hold' ? 'Hold' : 'Toggle'}
+            </Button>
+          ))}
+        </div>
+        {validation && !validation.ok ? <p className="text-xs text-destructive">{validation.message}</p> : null}
+        {validation?.ok ? <p className="text-xs text-muted-foreground">Shortcut available.</p> : null}
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setEditing(null);
+              setValidation(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            disabled={!validation?.ok}
+            onClick={async () => {
+              await onSave({ ...editing, status: 'ready' });
+              setEditing(null);
+              setValidation(null);
+            }}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-1 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-1">
-        {keys.map((key, i) => (
-          <span key={key} className="flex items-center gap-1">
-            <kbd className="inline-flex items-center justify-center rounded border border-border bg-gradient-to-b from-muted to-muted/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground shadow-sm">
-              {key === 'Win' ? (
-                <WindowsIcon className="size-3 text-primary" aria-hidden="true" />
-              ) : (
-                key
-              )}
-            </kbd>
-            {i < keys.length - 1 ? (
-              <span className="text-xs text-muted-foreground/60">+</span>
-            ) : null}
-          </span>
+    <>
+      <ShortcutRow
+        binding={shortcuts.dictation}
+        platform={platform}
+        capability={capabilities?.shortcuts.dictation}
+        onEdit={() => startEditing(shortcuts.dictation)}
+      />
+      <ShortcutRow
+        binding={shortcuts.agent}
+        platform={platform}
+        capability={capabilities?.shortcuts.agent}
+        disabled={!agentEnabled}
+        disabledLabel="Inactive until Agent Mode is enabled"
+        onEdit={() => startEditing(shortcuts.agent)}
+      />
+    </>
+  );
+}
+
+function ShortcutRow({
+  binding,
+  platform,
+  capability,
+  disabled = false,
+  disabledLabel,
+  onEdit,
+}: {
+  binding: ShortcutBinding;
+  platform?: PlatformCapabilitiesSnapshot['platform'];
+  capability?: PlatformCapabilitiesSnapshot['shortcuts']['dictation'];
+  disabled?: boolean;
+  disabledLabel?: string;
+  onEdit: () => void;
+}) {
+  const needsAttention = !disabled && (binding.status !== 'ready' || (capability && capability.state !== 'ready'));
+  const detail = disabled
+    ? disabledLabel
+    : needsAttention
+      ? capability?.message ?? 'Record a shortcut to enable this action.'
+      : `${capitalize(binding.triggerMode)} mode`;
+
+  return (
+    <div className="flex flex-col gap-3 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="space-y-1">
+        <p className="text-sm font-medium">{binding.action === 'dictation' ? 'Dictation hotkey' : 'Agent hotkey'}</p>
+        <p className={`text-xs ${needsAttention ? 'text-amber-300' : 'text-muted-foreground'}`}>
+          {detail}
+        </p>
+      </div>
+      <Button
+        type="button"
+        variant={needsAttention ? 'secondary' : 'outline'}
+        disabled={disabled}
+        onClick={onEdit}
+        className="min-w-32 justify-center font-mono"
+      >
+        {binding.status === 'ready' && binding.accelerator ? (
+          <ShortcutKeys accelerator={binding.accelerator} platform={platform} />
+        ) : 'Record'}
+      </Button>
+    </div>
+  );
+}
+
+function PlatformSetupNotice({ capabilities }: { capabilities: PlatformCapabilitiesSnapshot }) {
+  const items = [
+    {
+      key: 'text-injection',
+      label: 'Paste into other apps',
+      state: capabilities.textInjection.state,
+      message: capabilities.textInjection.message,
+    },
+    {
+      key: 'dictation-shortcut',
+      label: 'Dictation shortcut',
+      state: capabilities.shortcuts.dictation.state,
+      message: capabilities.shortcuts.dictation.message,
+    },
+    {
+      key: 'agent-shortcut',
+      label: 'Agent shortcut',
+      state: capabilities.shortcuts.agent.state,
+      message: capabilities.shortcuts.agent.message,
+    },
+  ].filter((item) => item.state !== 'ready');
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="space-y-3 border-b border-border py-5">
+      <div>
+        <p className="text-sm font-medium">Platform setup</p>
+        <p className="text-xs text-muted-foreground">{formatPlatformName(capabilities.platform, capabilities.desktop)}</p>
+      </div>
+      <div className="space-y-2">
+        {items.map((item) => (
+          <div key={item.key} className="rounded-md border border-amber-400/25 bg-amber-400/5 px-3 py-2">
+            <p className="text-xs font-medium text-amber-200">{item.label}</p>
+            <p className="text-xs text-muted-foreground">{item.message}</p>
+          </div>
         ))}
       </div>
     </div>
   );
+}
+
+function formatAccelerator(accelerator: string | null, platform: PlatformCapabilitiesSnapshot['platform'] = 'win32'): string {
+  if (!accelerator) return '';
+  return accelerator
+    .split('+')
+    .filter(Boolean)
+    .map((part) => formatShortcutPart(part, platform))
+    .join(' + ');
+}
+
+function ShortcutKeys({
+  accelerator,
+  platform = 'win32',
+}: {
+  accelerator: string;
+  platform?: PlatformCapabilitiesSnapshot['platform'];
+}) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {accelerator.split('+').filter(Boolean).map((part, index, parts) => (
+        <span key={`${part}-${index}`} className="inline-flex items-center gap-1">
+          <ShortcutKeyPart part={part} platform={platform} />
+          {index < parts.length - 1 ? <span className="text-muted-foreground/70">+</span> : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ShortcutKeyPart({
+  part,
+  platform,
+}: {
+  part: string;
+  platform: PlatformCapabilitiesSnapshot['platform'];
+}) {
+  if (part === 'Meta' && platform === 'win32') {
+    return <WindowsIcon className="size-3.5 text-primary" aria-label="Windows" />;
+  }
+
+  return <span>{formatShortcutPart(part, platform)}</span>;
+}
+
+function formatShortcutPart(part: string, platform: PlatformCapabilitiesSnapshot['platform']): string {
+  if (part === 'Meta') {
+    if (platform === 'darwin') return '⌘';
+    if (platform === 'linux') return 'Super';
+    return 'Win';
+  }
+  if (part === 'Control') return platform === 'darwin' ? '⌃' : 'Ctrl';
+  if (part === 'Alt') return platform === 'darwin' ? '⌥' : 'Alt';
+  if (part === 'Shift') return platform === 'darwin' ? '⇧' : 'Shift';
+  return part;
+}
+
+function formatPlatformName(platform: PlatformCapabilitiesSnapshot['platform'], desktop: string): string {
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'darwin') return 'macOS';
+  return desktop;
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function looksLikeRawApiKey(value: string): boolean {

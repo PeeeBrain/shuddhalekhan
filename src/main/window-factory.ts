@@ -27,6 +27,7 @@ export function createSingletonWindow(config: SingletonWindowConfig): SingletonW
     }
 
     window = new BrowserWindow({
+      autoHideMenuBar: true,
       ...config.options,
       webPreferences: {
         preload: join(__dirname, '../preload/index.cjs'),
@@ -35,6 +36,7 @@ export function createSingletonWindow(config: SingletonWindowConfig): SingletonW
         ...config.options.webPreferences,
       },
     });
+    window.setMenu?.(null);
     config.onCreated?.(window);
     loadRendererRoute(window, resolveRoute(config.route));
     window.on('closed', () => {

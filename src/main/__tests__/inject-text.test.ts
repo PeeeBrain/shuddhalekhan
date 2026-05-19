@@ -23,12 +23,12 @@ describe('injectIntoFocusedApp', () => {
   });
 
   it('writes text, simulates paste, and restores the previous clipboard text', async () => {
-    await injectIntoFocusedApp('transcribed text', {
+    await expect(injectIntoFocusedApp('transcribed text', {
       readText,
       writeText,
       simulatePaste,
       delay,
-    });
+    })).resolves.toEqual({ status: 'injected' });
 
     expect(readText).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
@@ -38,15 +38,35 @@ describe('injectIntoFocusedApp', () => {
     expect(writeText).toHaveBeenNthCalledWith(2, 'original clipboard');
   });
 
-  it('does not restore when the previous clipboard was empty', async () => {
-    readText.mockReturnValue('');
+  it('restores the previous clipboard text when paste simulation fails', async () => {
+    simulatePaste.mockImplementation(() => {
+      throw new Error('paste blocked');
+    });
 
-    await injectIntoFocusedApp('text', {
+    await expect(injectIntoFocusedApp('transcribed text', {
       readText,
       writeText,
       simulatePaste,
       delay,
+    })).resolves.toEqual({
+      status: 'paste-blocked',
+      message: 'paste blocked',
     });
+
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
+    expect(writeText).toHaveBeenNthCalledWith(2, 'original clipboard');
+  });
+
+  it('does not restore when the previous clipboard was empty', async () => {
+    readText.mockReturnValue('');
+
+    await expect(injectIntoFocusedApp('text', {
+      readText,
+      writeText,
+      simulatePaste,
+      delay,
+    })).resolves.toEqual({ status: 'injected' });
 
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledWith('text');

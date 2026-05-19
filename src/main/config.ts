@@ -28,6 +28,7 @@ const store = new Store<StoreConfig>({
       },
       mcpServers: [],
     },
+    shortcuts: defaultShortcuts(),
   },
 });
 
@@ -82,6 +83,25 @@ export function getConfig(): AppConfig {
         thinkingEnabled: agent?.provider?.thinkingEnabled ?? true,
       },
       mcpServers,
+    },
+    shortcuts: store.get('shortcuts') ?? defaultShortcuts(),
+  };
+}
+
+function defaultShortcuts(): StoreConfig['shortcuts'] {
+  const status = process.platform === 'win32' ? 'ready' : 'unassigned';
+  return {
+    dictation: {
+      action: 'dictation',
+      accelerator: 'Control+Meta',
+      triggerMode: 'hold',
+      status,
+    },
+    agent: {
+      action: 'agent',
+      accelerator: 'Alt+Meta',
+      triggerMode: 'hold',
+      status,
     },
   };
 }

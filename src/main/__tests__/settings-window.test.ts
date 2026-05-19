@@ -10,6 +10,7 @@ const on = vi.fn();
 const isDestroyed = vi.fn(() => false);
 const loadURL = vi.fn();
 const loadFile = vi.fn();
+const setMenu = vi.fn();
 const BrowserWindow = vi.fn(() => ({
   show,
   focus,
@@ -18,6 +19,7 @@ const BrowserWindow = vi.fn(() => ({
   isDestroyed,
   loadURL,
   loadFile,
+  setMenu,
 }));
 
 installElectronMock();
@@ -35,6 +37,7 @@ describe('settings window', () => {
     isDestroyed.mockReturnValue(false);
     loadURL.mockClear();
     loadFile.mockClear();
+    setMenu.mockClear();
   });
 
   it('creates the settings window hidden and shows it when ready', async () => {
@@ -50,9 +53,11 @@ describe('settings window', () => {
       minWidth: 820,
       minHeight: 560,
       show: false,
+      autoHideMenuBar: true,
       title: 'Shuddhalekhan Settings',
       backgroundColor: '#0f1115',
     }));
+    expect(setMenu).toHaveBeenCalledWith(null);
     expect(loadURL).toHaveBeenCalledWith('http://localhost:5173/#/settings');
     expect(show).toHaveBeenCalled();
   });

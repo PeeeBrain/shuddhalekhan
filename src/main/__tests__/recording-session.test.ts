@@ -7,11 +7,13 @@ const vi = { fn: mock };
 let RecordingSessionCtor: typeof RecordingSession;
 
 installElectronMock();
-mock.module('../audio-window', () => ({
+const audioWindowMock = {
   createAudioWindow: vi.fn(),
   getAudioWindow: vi.fn(),
   destroyAudioWindow: vi.fn(),
-}));
+};
+mock.module('../audio-window', () => audioWindowMock);
+mock.module('../audio-window.ts', () => audioWindowMock);
 mock.module('../native/keyboard', () => ({
   keyboardHook: { start: vi.fn(), stop: vi.fn() },
 }));
@@ -72,6 +74,10 @@ describe('RecordingSession', () => {
         stop: keyboardStop,
       },
       isAgentModeEnabled,
+      getShortcuts: vi.fn(() => ({
+        dictation: { action: 'dictation', accelerator: 'Control+Meta', triggerMode: 'hold', status: 'ready' },
+        agent: { action: 'agent', accelerator: 'Alt+Meta', triggerMode: 'hold', status: 'ready' },
+      })),
     });
   });
 

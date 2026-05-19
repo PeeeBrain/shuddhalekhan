@@ -6,6 +6,20 @@ export type AudioDevice = {
 
 export type RecordingIntent = 'dictation' | 'agent';
 
+export type PlatformCapabilityState = 'ready' | 'unassigned' | 'needsSetup' | 'blocked' | 'unsupported';
+
+export interface PlatformCapabilityStatus {
+  state: PlatformCapabilityState;
+  message: string;
+}
+
+export interface PlatformCapabilitiesSnapshot {
+  platform: 'win32' | 'darwin' | 'linux';
+  desktop: string;
+  shortcuts: Record<RecordingIntent, PlatformCapabilityStatus>;
+  textInjection: PlatformCapabilityStatus;
+}
+
 export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
 
 export type McpToolPolicyKey = `${string}:${string}`;
@@ -63,6 +77,10 @@ export interface RendererToMainInvokeChannels {
     message?: string
   ) => void;
   'mcp:test-server': (serverId: string) => void;
+  'platform:get-capabilities': () => Promise<PlatformCapabilitiesSnapshot>;
+  'shortcuts:get': () => Promise<AppConfig['shortcuts']>;
+  'shortcuts:validate': (binding: ShortcutBinding) => ShortcutValidationResponse;
+  'shortcuts:save': (binding: ShortcutBinding) => void;
   'app:get-info': () => Promise<AppInfo>;
   'updater:get-status': () => Promise<UpdateStatus>;
   'updater:check': () => Promise<UpdateStatus>;
@@ -129,6 +147,31 @@ export type AgentToastState =
       message: string;
     };
 
+export type ShortcutAction = RecordingIntent;
+
+export type ShortcutTriggerMode = 'hold' | 'toggle';
+
+export type ShortcutRegistrationStatus =
+  | 'ready'
+  | 'unassigned'
+  | 'conflict'
+  | 'blocked'
+  | 'reserved'
+  | 'needsSetup'
+  | 'unsupported';
+
+export interface ShortcutBinding {
+  action: ShortcutAction;
+  accelerator: string | null;
+  triggerMode: ShortcutTriggerMode;
+  status: ShortcutRegistrationStatus;
+  statusMessage?: string;
+}
+
+export type ShortcutValidationResponse =
+  | { ok: true; status: 'ready' }
+  | { ok: false; status: Exclude<ShortcutRegistrationStatus, 'ready'>; message: string };
+
 export interface AppConfig {
   whisperUrl: string;
   selectedDeviceId: string | null;
@@ -146,6 +189,7 @@ export interface AppConfig {
     };
     mcpServers: McpServerConfig[];
   };
+  shortcuts: Record<ShortcutAction, ShortcutBinding>;
 }
 
 export interface AppInfo {
