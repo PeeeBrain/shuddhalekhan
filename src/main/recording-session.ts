@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron';
-import type { RecordingIntent } from '../types/ipc';
+import type { RecordingIntent, ShortcutBinding } from '../types/ipc';
 import { createAudioWindow, destroyAudioWindow, getAudioWindow } from './audio-window';
 import { keyboardHook } from './native/keyboard';
 import { hideRecordingPill, showRecordingPill } from './recording-pill';
@@ -16,7 +16,8 @@ interface KeyboardHookAdapter {
   start: (
     onStart: (intent: RecordingIntent) => void,
     onStop: () => void,
-    isAgentModeEnabled?: () => boolean
+    isAgentModeEnabled?: () => boolean,
+    getShortcuts?: () => Record<RecordingIntent, ShortcutBinding>
   ) => void;
   stop: () => void;
 }
@@ -30,6 +31,7 @@ interface RecordingSessionDeps {
   transcribe: (audioData: Uint8Array) => Promise<string>;
   keyboardHook: KeyboardHookAdapter;
   isAgentModeEnabled: () => boolean;
+  getShortcuts: () => Record<RecordingIntent, ShortcutBinding>;
 }
 
 export class RecordingSession {
@@ -139,7 +141,8 @@ export class RecordingSession {
       () => {
         void this.end().then(onResult);
       },
-      this.deps.isAgentModeEnabled
+      this.deps.isAgentModeEnabled,
+      this.deps.getShortcuts
     );
   }
 
@@ -159,7 +162,10 @@ export class RecordingSession {
   }
 }
 
-export function createRecordingSession(isAgentModeEnabled: () => boolean): RecordingSession {
+export function createRecordingSession(
+  isAgentModeEnabled: () => boolean,
+  getShortcuts: () => Record<RecordingIntent, ShortcutBinding>
+): RecordingSession {
   return new RecordingSession({
     createAudioWindow,
     getAudioWindow,
@@ -169,5 +175,6 @@ export function createRecordingSession(isAgentModeEnabled: () => boolean): Recor
     transcribe,
     keyboardHook,
     isAgentModeEnabled,
+    getShortcuts,
   });
 }

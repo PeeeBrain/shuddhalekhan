@@ -1,5 +1,13 @@
 # Shuddhalekhan 4.2.2
 
+## Platform Artifacts
+
+| Platform | Status | Artifact |
+| --- | --- | --- |
+| Windows | Stable | NSIS installer |
+| Linux | Experimental | Debian/Ubuntu `.deb` |
+| macOS | Developer Preview | Unsigned `.dmg` / `.zip` |
+
 This patch release adds a Personal Dictionary to Whisper dictation.
 
 ## What's Changed

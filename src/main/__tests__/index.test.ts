@@ -40,6 +40,20 @@ const getConfig = vi.fn(() => ({
     },
     mcpServers: [],
   },
+  shortcuts: {
+    dictation: {
+      action: 'dictation',
+      accelerator: 'Control+Meta',
+      triggerMode: 'hold',
+      status: 'unassigned',
+    },
+    agent: {
+      action: 'agent',
+      accelerator: 'Alt+Meta',
+      triggerMode: 'hold',
+      status: 'unassigned',
+    },
+  },
 }));
 const simulatePaste = vi.fn();
 const checkForUpdates = vi.fn();
@@ -78,6 +92,55 @@ mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, 
 mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow }));
 mock.module('../tray', () => ({ createTray: vi.fn(), updateAudioDevices, updateUpdaterStatus }));
 mock.module('../config', () => ({ getConfig, setConfig }));
+mock.module('../platform', () => ({
+  createPlatformProvider: () => ({
+    getCapabilities: vi.fn(() => ({
+      platform: 'win32',
+      desktop: 'windows',
+      shortcuts: {
+        dictation: { state: 'ready', message: 'Ready.' },
+        agent: { state: 'ready', message: 'Ready.' },
+      },
+      textInjection: { state: 'ready', message: 'Ready.' },
+    })),
+  }),
+  createPlatformProviderForTest: (platform: 'win32' | 'darwin' | 'linux', env?: NodeJS.ProcessEnv) => ({
+    getCapabilities: vi.fn(() => {
+      if (platform === 'darwin') {
+        return {
+          platform,
+          desktop: 'macos',
+          shortcuts: {
+            dictation: { state: 'unassigned', message: 'Record a macOS shortcut in Settings.' },
+            agent: { state: 'unassigned', message: 'Record a macOS shortcut in Settings.' },
+          },
+          textInjection: { state: 'needsSetup', message: 'macOS may require Accessibility permission.' },
+        };
+      }
+      if (platform === 'linux') {
+        const isGnomeWayland = env?.XDG_CURRENT_DESKTOP === 'GNOME' && env?.XDG_SESSION_TYPE === 'wayland';
+        return {
+          platform,
+          desktop: isGnomeWayland ? 'gnome-wayland' : 'linux-unknown',
+          shortcuts: {
+            dictation: { state: isGnomeWayland ? 'needsSetup' : 'unsupported', message: 'Linux shortcut setup required.' },
+            agent: { state: isGnomeWayland ? 'needsSetup' : 'unsupported', message: 'Linux shortcut setup required.' },
+          },
+          textInjection: { state: 'unsupported', message: 'Paste simulation is not verified.' },
+        };
+      }
+      return {
+        platform,
+        desktop: 'windows',
+        shortcuts: {
+          dictation: { state: 'ready', message: 'Ready.' },
+          agent: { state: 'ready', message: 'Ready.' },
+        },
+        textInjection: { state: 'ready', message: 'Ready.' },
+      };
+    }),
+  }),
+}));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
 mock.module('../agent-toast-window', () => ({ showAgentToast, hideAgentToast, handleAgentToastContentSize }));
 mock.module('../agent-sidecar', () => ({
@@ -107,6 +170,20 @@ describe('main process IPC orchestration', () => {
         thinkingEnabled: true,
       },
       mcpServers: [],
+    },
+    shortcuts: {
+      dictation: {
+        action: 'dictation',
+        accelerator: 'Control+Meta',
+        triggerMode: 'hold',
+        status: 'unassigned',
+      },
+      agent: {
+        action: 'agent',
+        accelerator: 'Alt+Meta',
+        triggerMode: 'hold',
+        status: 'unassigned',
+      },
     },
   };
 
@@ -188,7 +265,11 @@ describe('main process IPC orchestration', () => {
       'config:get',
       'config:set',
       'mcp:test-server',
+      'platform:get-capabilities',
       'settings:open',
+      'shortcuts:get',
+      'shortcuts:save',
+      'shortcuts:validate',
       'updater:check',
       'updater:get-status',
     ]);
@@ -312,6 +393,25 @@ describe('main process IPC orchestration', () => {
     });
   });
 
+  it('restores the previous clipboard and warns when paste is blocked', async () => {
+    simulatePaste.mockImplementation(() => {
+      throw new Error('paste blocked');
+    });
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('dictation');
+    onStop();
+
+    await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('transcribed text');
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('original');
+    expect(electronMock.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Paste blocked',
+    }));
+  });
+
   it('shows explicit approval status and approval toast when a tool asks for HITL', async () => {
     agentEventHandler?.({
       type: 'approval:requested',
@@ -407,6 +507,36 @@ describe('main process IPC orchestration', () => {
     expect(keyboardStop).toHaveBeenCalledTimes(1);
     expect(agentStop).toHaveBeenCalledTimes(1);
     expect(destroyAudioWindow).toHaveBeenCalled();
+  });
+
+  it('returns platform capability status', () => {
+    const capabilities = ipcHandlers.get('platform:get-capabilities')?.({});
+
+    expect(capabilities).toEqual(expect.objectContaining({
+      platform: 'win32',
+      shortcuts: expect.objectContaining({
+        dictation: expect.objectContaining({ state: 'ready' }),
+      }),
+    }));
+  });
+
+  it('validates and saves shortcut config through IPC', () => {
+    const config = getConfig();
+    const candidate = {
+      action: 'dictation' as const,
+      accelerator: 'Control+Space',
+      triggerMode: 'toggle' as const,
+      status: 'unassigned' as const,
+    };
+
+    expect(ipcHandlers.get('shortcuts:get')?.({})).toEqual(config.shortcuts);
+    expect(ipcHandlers.get('shortcuts:validate')?.({}, candidate)).toEqual({ ok: true, status: 'ready' });
+    ipcHandlers.get('shortcuts:save')?.({}, candidate);
+
+    expect(setConfig).toHaveBeenCalledWith('shortcuts', {
+      ...config.shortcuts,
+      dictation: { ...candidate, status: 'ready' },
+    });
   });
 
   it('starts the agent sidecar on app ready when persisted Agent Mode is enabled', async () => {

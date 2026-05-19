@@ -80,6 +80,15 @@
       "target": "nsis",
       "icon": "icons/tray-icon.ico"
     },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": ["deb"],
+      "category": "Utility",
+      "maintainer": "parthashirolkar"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true

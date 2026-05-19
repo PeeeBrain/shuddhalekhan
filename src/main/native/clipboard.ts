@@ -1,7 +1,5 @@
 import koffi from 'koffi';
 
-const user32 = koffi.load('user32.dll');
-
 const INPUT_KEYBOARD = 1;
 const KEYEVENTF_KEYUP = 0x0002;
 
@@ -11,7 +9,7 @@ const VK_V = 0x56;
 
 const INPUT_SIZE = 40; // sizeof(INPUT) on 64-bit Windows
 
-const SendInput = user32.func('uint32_t __stdcall SendInput(uint32_t cInputs, uint8_t * pInputs, int32_t cbSize)');
+let sendInput: ((cInputs: number, pInputs: Buffer, cbSize: number) => number) | null = null;
 
 function buildKeyboardInput(vk: number, flags: number): Buffer {
   const buf = Buffer.alloc(INPUT_SIZE);
@@ -25,6 +23,10 @@ function buildKeyboardInput(vk: number, flags: number): Buffer {
 }
 
 export function simulatePaste(): void {
+  if (process.platform !== 'win32') {
+    throw new Error('Paste simulation is not available on this platform yet.');
+  }
+
   const inputs = Buffer.concat([
     buildKeyboardInput(VK_CONTROL, 0),
     buildKeyboardInput(VK_V, 0),
@@ -32,5 +34,18 @@ export function simulatePaste(): void {
     buildKeyboardInput(VK_CONTROL, KEYEVENTF_KEYUP),
   ]);
 
-  SendInput(4, inputs, INPUT_SIZE);
+  getSendInput()(4, inputs, INPUT_SIZE);
+}
+
+function getSendInput(): (cInputs: number, pInputs: Buffer, cbSize: number) => number {
+  if (!sendInput) {
+    const user32 = koffi.load('user32.dll');
+    sendInput = user32.func('uint32_t __stdcall SendInput(uint32_t cInputs, uint8_t * pInputs, int32_t cbSize)') as (
+      cInputs: number,
+      pInputs: Buffer,
+      cbSize: number
+    ) => number;
+  }
+
+  return sendInput;
 }

@@ -77,7 +77,17 @@ Build production app artifacts locally:
 bun run dist
 ```
 
-The GitHub release workflow runs lint, typecheck, tests, build, and Electron Builder packaging on `windows-latest`.
+### Platform Release Status
+
+Shuddhalekhan uses one GitHub Release per app version. Platform artifacts are uploaded to that release as their platform jobs pass.
+
+| Platform | Initial Status | Artifact |
+| --- | --- | --- |
+| Windows | Stable | NSIS installer |
+| Linux | Experimental | Debian/Ubuntu `.deb` |
+| macOS | Developer Preview | Unsigned `.dmg` / `.zip` |
+
+Windows remains the stable release gate. Linux and macOS artifacts can be backfilled into the same release after platform-specific packaging succeeds.
 
 For contribution guidelines, feature workflow, PR checks, and release version bump steps, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -185,11 +195,19 @@ Disabled tools are not exposed to the model. Always-allowed tools can run withou
 
 Agent Mode writes a local SQLite audit database named `agent-audit.sqlite` under the Shuddhalekhan app data directory. The audit log is for local debugging and records agent run events, tool requests, approval decisions, tool results, errors, and final responses. Shuddhalekhan does not send audit data to a remote service.
 
+## Platform Support
+
+Windows is the current stable platform. Linux and macOS builds may be published as Experimental or Developer Preview artifacts while global shortcuts, focused-app paste injection, tray behavior, and permission flows are validated.
+
+Linux validation starts with GNOME on Wayland and Debian/Ubuntu `.deb` packages. Other Wayland compositors and desktop environments are community-validation targets until explicitly tested.
+
+macOS Developer Preview builds may be unsigned. Stable macOS support requires signing, notarization, and validated Accessibility/microphone permission flows.
+
 ## Notes
 
-- The app is **Windows-only** because global keyboard hooks and paste simulation call Windows APIs through `koffi`.
-- Dictation is controlled by the global `Ctrl+Win` chord.
-- Agent Mode is controlled by the global `Alt+Win` chord when enabled.
+- Windows is the stable platform; Linux and macOS builds are experimental while global shortcuts and paste injection mature.
+- Dictation defaults to the global `Ctrl+Win` chord on Windows.
+- Agent Mode defaults to the global `Alt+Win` chord on Windows when enabled.
 - The tray menu supports microphone selection, transcription cleanup toggling, Settings, manual update checks, and exit.
 - Recording popup is bottom-center and pill-shaped, with a distinct Agent Mode visual state.
 - Agent responses and approvals appear as toast windows near the bottom-right of the primary display.

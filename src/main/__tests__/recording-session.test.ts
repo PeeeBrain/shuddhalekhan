@@ -72,6 +72,10 @@ describe('RecordingSession', () => {
         stop: keyboardStop,
       },
       isAgentModeEnabled,
+      getShortcuts: vi.fn(() => ({
+        dictation: { action: 'dictation', accelerator: 'Control+Meta', triggerMode: 'hold', status: 'ready' },
+        agent: { action: 'agent', accelerator: 'Alt+Meta', triggerMode: 'hold', status: 'ready' },
+      })),
     });
   });
 

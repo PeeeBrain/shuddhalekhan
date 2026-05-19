@@ -21,6 +21,10 @@ const config: AppConfig = {
     },
     mcpServers: [],
   },
+  shortcuts: {
+    dictation: { action: 'dictation', accelerator: 'Control+Meta', triggerMode: 'hold', status: 'unassigned' },
+    agent: { action: 'agent', accelerator: 'Alt+Meta', triggerMode: 'hold', status: 'unassigned' },
+  },
 };
 
 describe('cleanFillerWords', () => {

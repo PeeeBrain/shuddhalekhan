@@ -21,6 +21,10 @@ const config: AppConfig = {
     },
     mcpServers: [],
   },
+  shortcuts: {
+    dictation: { action: 'dictation', accelerator: 'Control+Meta', triggerMode: 'hold', status: 'unassigned' },
+    agent: { action: 'agent', accelerator: 'Alt+Meta', triggerMode: 'hold', status: 'unassigned' },
+  },
 };
 
 const updateStatus: UpdateStatus = {
@@ -41,6 +45,7 @@ describe('settings IPC adapter', () => {
       if (channel === 'app:get-info') return Promise.resolve({ name: 'Shuddhalekhan', version: '4.0.0', isPackaged: false });
       if (channel === 'updater:get-status') return Promise.resolve(updateStatus);
       if (channel === 'updater:check') return Promise.resolve(updateStatus);
+      if (channel === 'platform:get-capabilities') return Promise.resolve({ platform: 'win32', desktop: 'windows', shortcuts: { dictation: { state: 'ready', message: 'Ready' }, agent: { state: 'ready', message: 'Ready' } }, textInjection: { state: 'ready', message: 'Ready' } });
       return Promise.resolve(undefined);
     });
     on = vi.fn(() => vi.fn());
@@ -51,6 +56,8 @@ describe('settings IPC adapter', () => {
     await expect(ipc.getConfig()).resolves.toBe(config);
     await expect(ipc.getAppInfo()).resolves.toEqual({ name: 'Shuddhalekhan', version: '4.0.0', isPackaged: false });
     await expect(ipc.getUpdateStatus()).resolves.toBe(updateStatus);
+    await ipc.getPlatformCapabilities();
+    expect(invoke).toHaveBeenCalledWith('platform:get-capabilities');
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'config:get');
     expect(invoke).toHaveBeenNthCalledWith(2, 'app:get-info');
@@ -65,6 +72,26 @@ describe('settings IPC adapter', () => {
     expect(invoke).toHaveBeenCalledWith('config:set', 'agent', config.agent);
     expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'mail');
     expect(invoke).toHaveBeenCalledWith('updater:check');
+  });
+
+  it('exposes shortcut IPC methods', async () => {
+    await ipc.getShortcuts();
+    await ipc.validateShortcut({
+      action: 'dictation',
+      accelerator: 'Control+Space',
+      triggerMode: 'toggle',
+      status: 'unassigned',
+    });
+    await ipc.saveShortcut({
+      action: 'dictation',
+      accelerator: 'Control+Space',
+      triggerMode: 'toggle',
+      status: 'ready',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('shortcuts:get');
+    expect(invoke).toHaveBeenCalledWith('shortcuts:validate', expect.objectContaining({ action: 'dictation' }));
+    expect(invoke).toHaveBeenCalledWith('shortcuts:save', expect.objectContaining({ action: 'dictation' }));
   });
 
   it('subscribes to updater and MCP status events', () => {
