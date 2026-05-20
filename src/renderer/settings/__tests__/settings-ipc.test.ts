@@ -88,4 +88,30 @@ describe('settings IPC adapter', () => {
     expect(onUpdate).toHaveBeenCalledWith(updateStatus);
     expect(onMcpStatus).toHaveBeenCalledWith(status);
   });
+
+  it('handles audit log queries and updates', async () => {
+    const mockRuns = [{ agentRunId: 'run-1', startedAt: '2026-05-20T12:00:00Z', transcript: 'test prompt', status: 'completed' as const, tools: [] }];
+    const mockEvents = [{ id: 1, agentRunId: 'run-1', eventType: 'run_started', payload: {}, createdAt: '2026-05-20T12:00:00Z' }];
+    invoke.mockImplementation((channel: string, ...args: any[]) => {
+      if (channel === 'audit:get-runs') return Promise.resolve(mockRuns);
+      if (channel === 'audit:get-run-detail' && args[0] === 'run-1') return Promise.resolve(mockEvents);
+      return Promise.resolve(undefined);
+    });
+
+    await expect(ipc.getAuditRuns()).resolves.toEqual(mockRuns);
+    await expect(ipc.getAuditRunDetail('run-1')).resolves.toEqual(mockEvents);
+    expect(invoke).toHaveBeenCalledWith('audit:get-runs');
+    expect(invoke).toHaveBeenCalledWith('audit:get-run-detail', 'run-1');
+
+    const onAuditUpdated = vi.fn();
+    const offAudit = vi.fn();
+    on.mockReturnValueOnce(offAudit);
+
+    expect(ipc.onAuditRunUpdated(onAuditUpdated)).toBe(offAudit);
+    expect(on).toHaveBeenLastCalledWith('audit:run-updated', expect.any(Function));
+
+    const auditCallback = on.mock.calls[on.mock.calls.length - 1]?.[1] as (runId: string) => void;
+    auditCallback('run-1');
+    expect(onAuditUpdated).toHaveBeenCalledWith('run-1');
+  });
 });

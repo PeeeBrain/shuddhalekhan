@@ -184,6 +184,8 @@ describe('main process IPC orchestration', () => {
       'audio:select-device',
       'audio:start-recording',
       'audio:stop-recording',
+      'audit:get-run-detail',
+      'audit:get-runs',
       'clipboard:inject-text',
       'config:get',
       'config:set',

@@ -4,6 +4,8 @@ import type {
   AppInfo,
   McpServerRuntimeStatus,
   UpdateStatus,
+  AuditRunSummary,
+  AuditEventDetail,
 } from '../../types/ipc';
 
 type Unsubscribe = () => void;
@@ -17,6 +19,9 @@ export interface SettingsIpc {
   testMcpServer: (serverId: string) => Promise<void>;
   onUpdateStatusChanged: (callback: (status: UpdateStatus) => void) => Unsubscribe | undefined;
   onMcpServerStatus: (callback: (status: McpServerRuntimeStatus) => void) => Unsubscribe | undefined;
+  getAuditRuns: () => Promise<AuditRunSummary[]>;
+  getAuditRunDetail: (agentRunId: string) => Promise<AuditEventDetail[]>;
+  onAuditRunUpdated: (callback: (agentRunId: string) => void) => Unsubscribe | undefined;
 }
 
 export function createSettingsIpc(electronAPI: ElectronAPI | undefined): SettingsIpc {
@@ -33,6 +38,9 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     },
     onUpdateStatusChanged: (callback) => electronAPI?.on('updater:status-changed', callback),
     onMcpServerStatus: (callback) => electronAPI?.on('mcp:server-status', callback),
+    getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
+    getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),
+    onAuditRunUpdated: (callback) => electronAPI?.on('audit:run-updated', callback),
   };
 }
 

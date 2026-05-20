@@ -66,6 +66,8 @@ export interface RendererToMainInvokeChannels {
   'app:get-info': () => Promise<AppInfo>;
   'updater:get-status': () => Promise<UpdateStatus>;
   'updater:check': () => Promise<UpdateStatus>;
+  'audit:get-runs': () => Promise<AuditRunSummary[]>;
+  'audit:get-run-detail': (agentRunId: string) => Promise<AuditEventDetail[]>;
 }
 
 export interface MainToRendererChannels {
@@ -80,6 +82,7 @@ export interface MainToRendererChannels {
   'agent-toast:update': (state: AgentToastState) => void;
   'mcp:server-status': (status: McpServerRuntimeStatus) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
+  'audit:run-updated': (agentRunId: string) => void;
 }
 
 export type McpServerRuntimeStatus = {
@@ -202,3 +205,21 @@ export type UpdateStatus =
       message: string;
       checkedAt: string;
     };
+
+export interface AuditRunSummary {
+  agentRunId: string;
+  startedAt: string;
+  transcript: string;
+  status: 'completed' | 'failed' | 'cancelled' | 'running';
+  response?: string;
+  error?: string;
+  tools: string[];
+}
+
+export interface AuditEventDetail {
+  id: number;
+  agentRunId: string;
+  eventType: string;
+  payload: Record<string, any>;
+  createdAt: string;
+}

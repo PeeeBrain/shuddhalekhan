@@ -11,6 +11,7 @@ import { createRecordingSession } from './recording-session';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp } from './inject-text';
+import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
 import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
 
@@ -61,6 +62,7 @@ function handleAgentTranscript(text: string): void {
 
   const agentRunId = agentSidecar.startRun(text, config);
   console.log(`Started Agent Mode run ${agentRunId}`);
+  getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);
 }
 
 function publishUpdateStatus(status: UpdateStatus): void {
@@ -164,6 +166,14 @@ ipcMain.handle('updater:check', async () => {
   return checkForUpdates();
 });
 
+ipcMain.handle('audit:get-runs', async () => {
+  return getAuditRuns();
+});
+
+ipcMain.handle('audit:get-run-detail', async (_event, agentRunId: string) => {
+  return getAuditRunDetail(agentRunId);
+});
+
 // Renderer -> Main events
 ipcMain.on('audio-window-ready', () => {
   recordingSession.markAudioWindowReady();
@@ -242,5 +252,6 @@ if (!gotSingleInstanceLock) {
     recordingSession.stopKeyboardHook();
     agentSidecar.stop();
     recordingSession.destroyAudioWindow();
+    closeDb();
   });
 }

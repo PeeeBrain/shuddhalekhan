@@ -22,14 +22,16 @@ import {
 import { X as XIcon } from 'lucide-react';
 import { McpSettings } from './settings/McpSettings';
 import { createSettingsIpc } from './settings/settings-ipc';
+import { AuditHistorySettings } from './settings/AuditHistorySettings';
 
-type SettingsSection = 'general' | 'audio' | 'agent' | 'mcp' | 'about';
+type SettingsSection = 'general' | 'audio' | 'agent' | 'mcp' | 'history' | 'about';
 
 const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'audio', label: 'Audio' },
   { id: 'agent', label: 'Agent' },
   { id: 'mcp', label: 'MCP Servers' },
+  { id: 'history', label: 'History' },
   { id: 'about', label: 'About' },
 ];
 
@@ -148,9 +150,12 @@ export function SettingsWindow() {
         </nav>
       </aside>
 
-      <section className="min-w-0 flex-1 bg-background">
-        <ScrollArea className="h-full">
-          <div className="px-10 py-8">
+      <section className="min-w-0 flex-1 bg-background h-screen flex flex-col">
+        {activeSection === 'history' ? (
+          <AuditHistorySettings settingsIpc={settingsIpc} />
+        ) : (
+          <ScrollArea className="h-full flex-1">
+            <div className="px-10 py-8">
             <header className="mb-8 flex items-start justify-between gap-6">
               <h2 className="text-2xl font-semibold tracking-tight">
                 {sections.find((section) => section.id === activeSection)?.label}
@@ -295,8 +300,9 @@ export function SettingsWindow() {
                 </Button>
               </SettingsPanel>
             ) : null}
-          </div>
-        </ScrollArea>
+            </div>
+          </ScrollArea>
+        )}
       </section>
     </main>
   );
