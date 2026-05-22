@@ -304,6 +304,12 @@ function StatusBadge({
           Cancelled
         </Badge>
       );
+    case 'interrupted':
+      return (
+        <Badge variant="outline" className={`${baseClass} border-amber-500/30 bg-amber-500/10 text-amber-500`}>
+          Interrupted
+        </Badge>
+      );
     case 'running':
       return (
         <Badge
@@ -504,7 +510,14 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
         description: 'Agent finished reasoning and outputs are finalized.',
         icon: <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500 fill-emerald-500" />,
       };
+    case 'run_interrupted':
+      return {
+        title: 'Run Interrupted',
+        description: `Run ended before normal completion. Reason: ${p.reason || 'interrupted'}`,
+        icon: <XCircle className="h-2.5 w-2.5 text-muted-foreground" />,
+      };
     case 'run_cancelled':
+    case 'cancelled':
       return {
         title: 'Run Cancelled',
         description: `Run was aborted. Reason: ${p.reason || 'User requested cancellation'}`,

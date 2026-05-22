@@ -4,6 +4,9 @@ import { app } from 'electron';
 import fs from 'fs';
 import type { AuditRunSummary, AuditEventDetail } from '../types/ipc';
 
+const INTERRUPTED_RUN_GRACE_MS = 5 * 60 * 1000;
+const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interrupted', 'run_cancelled', 'cancelled']);
+
 function getAuditDbPath(): string {
   const baseDir =
     process.env.SHUDDHALEKHAN_AUDIT_DIR ||
@@ -23,6 +26,8 @@ function getDb(): Database.Database {
     
     // In case the DB file exists but table isn't created yet (e.g. settings window opened on fresh install)
     dbInstance.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS agent_audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         agent_run_id TEXT NOT NULL,
@@ -94,8 +99,15 @@ export function getAuditRuns(): AuditRunSummary[] {
       };
       
       const toolsSet = new Set<string>();
+      let latestEventAt = runEvents[0].created_at;
+      let hasTerminalEvent = false;
       
       for (const event of runEvents) {
+        latestEventAt = event.created_at;
+        if (TERMINAL_EVENT_TYPES.has(event.event_type)) {
+          hasTerminalEvent = true;
+        }
+
         let payload: any = {};
         try {
           payload = JSON.parse(event.payload_json);
@@ -115,7 +127,11 @@ export function getAuditRuns(): AuditRunSummary[] {
             summary.status = 'failed';
             summary.error = payload.error;
             break;
+          case 'run_interrupted':
+            summary.status = 'interrupted';
+            break;
           case 'run_cancelled':
+          case 'cancelled':
             summary.status = 'cancelled';
             break;
           case 'approval_requested':
@@ -141,6 +157,10 @@ export function getAuditRuns(): AuditRunSummary[] {
         }
       }
       
+      if (!hasTerminalEvent && isStaleInterruptedRun(latestEventAt)) {
+        summary.status = 'interrupted';
+      }
+
       summary.tools = Array.from(toolsSet);
       summaries.push(summary);
     }
@@ -150,6 +170,11 @@ export function getAuditRuns(): AuditRunSummary[] {
     console.error('Failed to query audit runs:', err);
     return [];
   }
+}
+
+function isStaleInterruptedRun(latestEventAt: string, now = Date.now()): boolean {
+  const latestTime = new Date(latestEventAt).getTime();
+  return Number.isFinite(latestTime) && now - latestTime > INTERRUPTED_RUN_GRACE_MS;
 }
 
 export function getAuditRunDetail(agentRunId: string): AuditEventDetail[] {

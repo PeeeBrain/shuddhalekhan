@@ -53,7 +53,7 @@ export function showAgentToast(state: AgentToastState): void {
     hideTimer = null;
   }
 
-  if (state.kind !== 'approval' && state.kind !== 'streaming') {
+  if (shouldAutoHide(state.kind)) {
     hideTimer = setTimeout(() => {
       if (toastWindow && !toastWindow.isDestroyed()) {
         toastWindow.hide();
@@ -86,8 +86,7 @@ export function handleAgentToastContentSize(contentHeight: number): void {
   }
 
   streamedContentHeight = Math.max(streamedContentHeight, nextContentHeight);
-  const display = screen.getPrimaryDisplay();
-  const bounds = calculateToastBounds(display.workArea, {
+  const bounds = calculateToastBounds(getToastWorkArea(), {
     isApproval: false,
     contentHeight: streamedContentHeight,
   });
@@ -108,9 +107,12 @@ export function calculateToastBounds(
     : Math.max(TOAST_HEIGHT, Math.ceil(options.contentHeight ?? TOAST_HEIGHT));
   const toastHeight = options.isApproval ? APPROVAL_TOAST_HEIGHT : Math.min(requestedHeight, maxHeight);
 
+  const maxX = workArea.x + workArea.width - toastWidth;
+  const maxY = workArea.y + workArea.height - toastHeight;
+
   return {
-    x: workArea.x + workArea.width - toastWidth - TOAST_MARGIN,
-    y: workArea.y + workArea.height - toastHeight - TOAST_MARGIN,
+    x: Math.max(workArea.x, Math.min(maxX, workArea.x + workArea.width - toastWidth - TOAST_MARGIN)),
+    y: Math.max(workArea.y, Math.min(maxY, workArea.y + workArea.height - toastHeight - TOAST_MARGIN)),
     width: toastWidth,
     height: toastHeight,
   };
@@ -169,8 +171,11 @@ function createAgentToastWindow(): BrowserWindow {
 }
 
 function positionToastWindow(win: BrowserWindow, isApproval = false): void {
-  const display = screen.getPrimaryDisplay();
-  setToastBounds(win, calculateToastBounds(display.workArea, { isApproval }));
+  setToastBounds(win, calculateToastBounds(getToastWorkArea(), { isApproval }));
+}
+
+function getToastWorkArea(): ToastWorkArea {
+  return screen.getPrimaryDisplay().workArea;
 }
 
 function setToastBounds(win: BrowserWindow, bounds: Electron.Rectangle): void {
@@ -186,6 +191,10 @@ function setToastBounds(win: BrowserWindow, bounds: Electron.Rectangle): void {
 
   win.setBounds(bounds, false);
   lastBounds = bounds;
+}
+
+function shouldAutoHide(kind: AgentToastState['kind']): boolean {
+  return kind !== 'approval' && kind !== 'streaming' && kind !== 'completed';
 }
 
 function shouldPositionForState(

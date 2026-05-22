@@ -189,7 +189,7 @@ describe('McpRegistry', () => {
     await registry.close();
   });
 
-  it('returns denial feedback instead of executing denied tools', async () => {
+  it('marks alwaysAsk tools as needing AI SDK approval without blocking execute', async () => {
     const execute = mock(async () => 'result');
     const send = { description: 'send', inputSchema: {}, execute };
     createMCPClientMock.mockImplementation(async () => ({
@@ -200,26 +200,20 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry();
     await registry.updateConfig(baseConfig as never);
 
-    const approval = makeApproval(async () => ({
-      approved: false,
-      message: 'Rejected: user said no.',
-    }));
+    const approval = makeApproval(async () => ({ approved: false, message: 'No' }));
     const snapshot = registry.createRunSnapshot(approval);
-    const result = await snapshot.tools.srv1__send.execute?.({ to: 'a@example.com' }, makeToolOptions());
+    const tool = snapshot.tools.srv1__send;
+    const result = await tool.execute?.({ to: 'a@example.com' }, makeToolOptions());
 
-    expect(approval).toHaveBeenCalledWith({
-      serverId: 'srv1',
-      toolName: 'send',
-      modelToolName: 'srv1__send',
-      arguments: { to: 'a@example.com' },
-    });
-    expect(execute).not.toHaveBeenCalled();
-    expect(result).toBe('Rejected: user said no.');
+    expect(tool.needsApproval).toBe(true);
+    expect(approval).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith({ to: 'a@example.com' }, makeToolOptions());
+    expect(result).toBe('result');
 
     await registry.close();
   });
 
-  it('returns approval timeout feedback without executing the tool', async () => {
+  it('does not require AI SDK approval for alwaysAllow tools', async () => {
     const execute = mock(async () => 'result');
     const send = { description: 'send', inputSchema: {}, execute };
     createMCPClientMock.mockImplementation(async () => ({
@@ -228,17 +222,22 @@ describe('McpRegistry', () => {
     }));
 
     const registry = new McpRegistry();
-    await registry.updateConfig(baseConfig as never);
+    await registry.updateConfig({
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        mcpServers: [
+          {
+            ...baseConfig.agent.mcpServers[0],
+            toolPolicies: { 'srv1:send': 'alwaysAllow' },
+          },
+        ],
+      },
+    } as never);
 
-    const approval = makeApproval(async () => ({
-      approved: false,
-      message: 'Rejected: tool approval window expired.',
-    }));
-    const snapshot = registry.createRunSnapshot(approval);
-    const result = await snapshot.tools.srv1__send.execute?.({ to: 'a@example.com' }, makeToolOptions());
+    const snapshot = registry.createRunSnapshot(makeApproval());
 
-    expect(execute).not.toHaveBeenCalled();
-    expect(result).toBe('Rejected: tool approval window expired.');
+    expect(snapshot.tools.srv1__send.needsApproval).toBeUndefined();
 
     await registry.close();
   });

@@ -146,7 +146,6 @@ ipcMain.handle(
   'agent:approval-decision',
   (_event, agentRunId: string, approvalId: string, decision: 'approved' | 'denied', message?: string) => {
     agentSidecar.sendApprovalDecision(agentRunId, approvalId, decision, message);
-    hideAgentToast();
   }
 );
 
@@ -205,6 +204,10 @@ ipcMain.on('audio-duration-changed', (_event, seconds: number) => {
 
 ipcMain.on('agent-toast:content-size', (_event, height: number) => {
   handleAgentToastContentSize(height);
+});
+
+ipcMain.on('agent-toast:dismiss', () => {
+  hideAgentToast();
 });
 
 // App lifecycle

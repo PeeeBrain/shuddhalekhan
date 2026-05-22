@@ -45,6 +45,7 @@ export interface RendererToMainSendChannels {
   'audio-level-changed': (level: number) => void;
   'audio-duration-changed': (seconds: number) => void;
   'agent-toast:content-size': (height: number) => void;
+  'agent-toast:dismiss': () => void;
 }
 
 export interface RendererToMainInvokeChannels {
@@ -210,7 +211,7 @@ export interface AuditRunSummary {
   agentRunId: string;
   startedAt: string;
   transcript: string;
-  status: 'completed' | 'failed' | 'cancelled' | 'running';
+  status: 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'running';
   response?: string;
   error?: string;
   tools: string[];

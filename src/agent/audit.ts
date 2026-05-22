@@ -27,6 +27,8 @@ export class AgentAuditStore {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = createDatabase(dbPath);
     this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS agent_audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         agent_run_id TEXT NOT NULL,
@@ -45,8 +47,12 @@ export class AgentAuditStore {
   record(agentRunId: string, eventType: string, payload: AuditPayload = {}): void {
     if (this.isClosed) return;
 
-    const sanitized = sanitizeAuditPayload(payload);
-    this.insertEvent.run(agentRunId, eventType, JSON.stringify(sanitized), new Date().toISOString());
+    try {
+      const sanitized = sanitizeAuditPayload(payload);
+      this.insertEvent.run(agentRunId, eventType, JSON.stringify(sanitized), new Date().toISOString());
+    } catch (err) {
+      console.error('[agent-audit] failed to record audit event', eventType, err);
+    }
   }
 
   close(): void {

@@ -18,7 +18,7 @@ const auditStore = new AgentAuditStore();
 const mcpRegistry = new McpRegistry();
 
 const APPROVAL_TIMEOUT_MS = 30_000;
-const APPROVAL_TIMEOUT_MESSAGE = 'Rejected: tool approval window expired.';
+const APPROVAL_TIMEOUT_MESSAGE = 'Tool approval window expired.';
 
 type PendingApproval = {
   agentRunId: string;
@@ -82,7 +82,8 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
 
   if (previousAgentRunId && previousAbortController) {
     previousAbortController.abort();
-    rejectPendingApproval(previousAgentRunId, 'Rejected: agent run was cancelled.');
+    rejectPendingApproval(previousAgentRunId, 'Agent run was interrupted.');
+    auditStore.record(previousAgentRunId, 'run_interrupted', { reason: 'replaced_by_new_run', replacementAgentRunId: agentRunId });
     writeJsonLine({ type: 'agent:cancelled', agentRunId: previousAgentRunId });
   }
 
@@ -136,8 +137,8 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
         },
         onCancelled: () => {
           if (activeAgentRunId !== agentRunId) return;
-          rejectPendingApproval(agentRunId, 'Rejected: agent run was cancelled.');
-          auditStore.record(agentRunId, 'cancelled');
+          rejectPendingApproval(agentRunId, 'Agent run was interrupted.');
+          auditStore.record(agentRunId, 'run_interrupted');
           writeJsonLine({ type: 'agent:cancelled', agentRunId });
           activeAgentRunId = null;
           activeAbortController = null;
@@ -165,8 +166,8 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
 function handleAgentCancel(agentRunId: string): void {
   if (activeAgentRunId === agentRunId && activeAbortController) {
     activeAbortController.abort();
-    rejectPendingApproval(agentRunId, 'Rejected: agent run was cancelled.');
-    auditStore.record(agentRunId, 'cancelled', { reason: 'requested' });
+    rejectPendingApproval(agentRunId, 'Agent run was interrupted.');
+    auditStore.record(agentRunId, 'run_interrupted', { reason: 'requested' });
     activeAgentRunId = null;
     activeAbortController = null;
   }
@@ -273,7 +274,8 @@ function rejectPendingApproval(agentRunId: string, message: string): void {
 async function shutdown(): Promise<void> {
   activeAbortController?.abort();
   if (activeAgentRunId) {
-    rejectPendingApproval(activeAgentRunId, 'Rejected: sidecar is shutting down.');
+    auditStore.record(activeAgentRunId, 'run_interrupted', { reason: 'sidecar_shutdown' });
+    rejectPendingApproval(activeAgentRunId, 'Agent run was interrupted because the sidecar is shutting down.');
   }
   await mcpRegistry.close();
   auditStore.close();
