@@ -43,6 +43,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
     'agent:status': (event) => {
       console.log(`Agent run ${event.agentRunId}: ${event.status}`);
       deps.showAgentToast({ kind: 'status', agentRunId: event.agentRunId, message: event.status });
+      deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
     },
     'agent:response-delta': (event) => {
       deps.showAgentToast({ kind: 'streaming', agentRunId: event.agentRunId, response: event.response });
@@ -73,14 +74,17 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
         response: event.response,
         toolSummary: event.toolSummary,
       });
+      deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
     },
     'agent:failed': (event) => {
       console.error(`Agent run ${event.agentRunId} failed: ${event.error}`);
       deps.showAgentToast({ kind: 'failed', agentRunId: event.agentRunId, error: event.error });
+      deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
     },
     'agent:cancelled': (event) => {
       console.log(`Agent run ${event.agentRunId} cancelled`);
       deps.showAgentToast({ kind: 'cancelled', agentRunId: event.agentRunId });
+      deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
     },
   };
 

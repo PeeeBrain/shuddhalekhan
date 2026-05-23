@@ -218,7 +218,7 @@ describe('runAgent', () => {
   it('performs fallback when max steps reached with pending tool calls', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     let callCount = 0;
-    streamTextMock.mockImplementation((options: { onStepFinish?: (args: unknown) => void; onChunk?: (args: TextChunkEvent) => void }) => {
+    streamTextMock.mockImplementation((options: { onStepFinish?: (args: unknown) => void }) => {
       callCount++;
       if (callCount === 1) {
         options.onStepFinish?.({
@@ -239,13 +239,12 @@ describe('runAgent', () => {
           toolResults: [],
         });
       }
-      options.onChunk?.({ chunk: { type: 'text-delta', text: 'Step ' } });
-      options.onChunk?.({ chunk: { type: 'text-delta', text: 'limit fallback' } });
       return makeStreamResult({
         text: 'Step limit fallback',
         steps: [],
         toolCalls: [],
         toolResults: [],
+        streamChunks: ['Step ', 'limit fallback'],
       });
     });
 
@@ -259,18 +258,150 @@ describe('runAgent', () => {
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Step limit fallback', expect.arrayContaining(['Max step guardrail reached']));
   });
 
-  it('streams text deltas and completes with the accumulated response', async () => {
+  it('resumes the model with a denied tool approval response', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
-    streamTextMock.mockImplementation((options: { onChunk?: (args: TextChunkEvent) => void }) => {
-      options.onChunk?.({ chunk: { type: 'text-delta', text: 'Hello' } });
-      options.onChunk?.({ chunk: { type: 'text-delta', text: ' world' } });
-      return makeStreamResult({
-        text: 'Hello world',
+    streamTextMock
+      .mockImplementationOnce(() => makeStreamResult({
+        text: '',
         steps: [],
         toolCalls: [],
         toolResults: [],
-      });
+        fullStreamParts: [makeApprovalRequest('approval-1', 'call-1', 'srv1__send', { to: 'a@example.com' })],
+        responseMessages: [
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: 'call-1', toolName: 'srv1__send', input: { to: 'a@example.com' } },
+              { type: 'tool-approval-request', approvalId: 'approval-1', toolCallId: 'call-1' },
+            ],
+          },
+        ],
+      }))
+      .mockImplementationOnce(() => makeStreamResult({
+        text: 'I will not send it.',
+        steps: [],
+        toolCalls: [],
+        toolResults: [],
+      }));
+
+    const callbacks = makeCallbacks();
+    callbacks.requestToolApproval.mockImplementation(async () => ({
+      approved: false,
+      message: 'Use US instead.',
+    }));
+
+    await runAgent('run-1', 'send the email', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(callbacks.requestToolApproval).toHaveBeenCalledWith({
+      serverId: 'srv1',
+      toolName: 'send',
+      modelToolName: 'srv1__send',
+      arguments: { to: 'a@example.com' },
     });
+    expect(streamTextMock.mock.calls[1]?.[0].messages).toEqual([
+      { role: 'user', content: 'send the email' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'tool-call', toolCallId: 'call-1', toolName: 'srv1__send', input: { to: 'a@example.com' } },
+          { type: 'tool-approval-request', approvalId: 'approval-1', toolCallId: 'call-1' },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-approval-response',
+            approvalId: 'approval-1',
+            approved: false,
+            reason: 'Use US instead.',
+          },
+        ],
+      },
+    ]);
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('I will not send it.', []);
+  });
+
+  it('prompts for multiple approval requests sequentially and resumes once with batched responses', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock
+      .mockImplementationOnce(() => makeStreamResult({
+        text: '',
+        steps: [],
+        toolCalls: [],
+        toolResults: [],
+        fullStreamParts: [
+          makeApprovalRequest('approval-1', 'call-1', 'srv1__send', { to: 'a@example.com' }),
+          makeApprovalRequest('approval-2', 'call-2', 'srv1__delete', { id: 'msg-1' }),
+        ],
+        responseMessages: [
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool-call', toolCallId: 'call-1', toolName: 'srv1__send', input: { to: 'a@example.com' } },
+              { type: 'tool-approval-request', approvalId: 'approval-1', toolCallId: 'call-1' },
+              { type: 'tool-call', toolCallId: 'call-2', toolName: 'srv1__delete', input: { id: 'msg-1' } },
+              { type: 'tool-approval-request', approvalId: 'approval-2', toolCallId: 'call-2' },
+            ],
+          },
+        ],
+      }))
+      .mockImplementationOnce(() => makeStreamResult({
+        text: 'Handled decisions.',
+        steps: [],
+        toolCalls: [],
+        toolResults: [],
+      }));
+
+    const callbacks = makeCallbacks();
+    callbacks.requestToolApproval
+      .mockImplementationOnce(async () => ({ approved: true }))
+      .mockImplementationOnce(async () => ({ approved: false, message: 'Do not delete.' }));
+
+    await runAgent('run-1', 'send and delete', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(callbacks.requestToolApproval).toHaveBeenNthCalledWith(1, {
+      serverId: 'srv1',
+      toolName: 'send',
+      modelToolName: 'srv1__send',
+      arguments: { to: 'a@example.com' },
+    });
+    expect(callbacks.requestToolApproval).toHaveBeenNthCalledWith(2, {
+      serverId: 'srv1',
+      toolName: 'delete',
+      modelToolName: 'srv1__delete',
+      arguments: { id: 'msg-1' },
+    });
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(streamTextMock.mock.calls[1]?.[0].messages.at(-1)).toEqual({
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-approval-response',
+          approvalId: 'approval-1',
+          approved: true,
+          reason: 'User approved tool execution.',
+        },
+        {
+          type: 'tool-approval-response',
+          approvalId: 'approval-2',
+          approved: false,
+          reason: 'Do not delete.',
+        },
+      ],
+    });
+  });
+
+  it('streams text deltas and completes with the accumulated response', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Hello world',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+      streamChunks: ['Hello', ' world'],
+    }));
 
     const callbacks = makeCallbacks();
 
@@ -283,17 +414,13 @@ describe('runAgent', () => {
 
   it('ignores blank streamed text deltas so the UI does not show an empty streaming toast', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
-    streamTextMock.mockImplementation((options: { onChunk?: (args: TextChunkEvent) => void }) => {
-      options.onChunk?.({ chunk: { type: 'text-delta', text: '   ' } });
-      options.onChunk?.({ chunk: { type: 'text-delta', text: '\n' } });
-      options.onChunk?.({ chunk: { type: 'text-delta', text: 'Ready' } });
-      return makeStreamResult({
-        text: 'Ready',
-        steps: [],
-        toolCalls: [],
-        toolResults: [],
-      });
-    });
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Ready',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+      streamChunks: ['   ', '\n', 'Ready'],
+    }));
 
     const callbacks = makeCallbacks();
 
@@ -467,23 +594,35 @@ function makeCallbacks(): AgentRuntimeCallbacks & { [K in keyof AgentRuntimeCall
   };
 }
 
-type TextChunkEvent = {
-  chunk: {
-    type: 'text-delta';
-    text: string;
-  };
-};
-
 function makeStreamResult(result: {
   text: string;
   steps: Array<{ toolCalls: Array<{ toolName: string }>; toolResults: unknown[] }>;
   toolCalls: unknown[];
   toolResults: unknown[];
+  streamChunks?: string[];
+  fullStreamParts?: Array<{ type: string; text?: string; approvalId?: string; toolCall?: { toolName: string; input: unknown } }>;
+  responseMessages?: unknown[];
 }) {
+  const fullStreamParts = result.fullStreamParts ?? result.streamChunks?.map((text) => ({ type: 'text-delta', text })) ?? undefined;
   return {
     text: Promise.resolve(result.text),
+    textStream: result.streamChunks ? toAsyncIterable(result.streamChunks) : undefined,
+    fullStream: fullStreamParts ? toAsyncIterable(fullStreamParts) : undefined,
+    response: Promise.resolve({ messages: result.responseMessages ?? [] }),
     steps: Promise.resolve(result.steps),
     toolCalls: Promise.resolve(result.toolCalls),
     toolResults: Promise.resolve(result.toolResults),
   };
+}
+
+function makeApprovalRequest(approvalId: string, toolCallId: string, toolName: string, input: unknown) {
+  return {
+    type: 'tool-approval-request',
+    approvalId,
+    toolCall: { toolCallId, toolName, input },
+  };
+}
+
+async function* toAsyncIterable<T>(chunks: T[]): AsyncIterable<T> {
+  for (const chunk of chunks) yield chunk;
 }

@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 export function AgentToast() {
   const [state, setState] = useState<AgentToastState | null>(null);
   const [message, setMessage] = useState('');
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const toastRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -15,6 +16,7 @@ export function AgentToast() {
     const remove = window.electronAPI?.on('agent-toast:update', (nextState) => {
       setState(nextState);
       setMessage('');
+      setApprovalSubmitting(false);
     });
 
     const interval = window.setInterval(() => setNow(Date.now()), 500);
@@ -63,6 +65,16 @@ export function AgentToast() {
   const accentColor = getAccentColor(state.kind);
 
   if (state.kind === 'approval') {
+    const submitDecision = (decision: 'approved' | 'denied', denialMessage?: string) => {
+      setApprovalSubmitting(true);
+      setState({
+        kind: 'status',
+        agentRunId: state.agentRunId,
+        message: decision === 'approved' ? 'Approval sent. Continuing…' : 'Feedback sent. Continuing…',
+      });
+      decide(state, decision, denialMessage);
+    };
+
     return (
       <main
         ref={toastRef}
@@ -99,7 +111,8 @@ export function AgentToast() {
             variant="secondary"
             size="sm"
             className="h-8 w-24"
-            onClick={() => decide(state, 'denied', message)}
+            disabled={approvalSubmitting}
+            onClick={() => submitDecision('denied', message)}
           >
             Deny
           </Button>
@@ -107,7 +120,8 @@ export function AgentToast() {
             type="button"
             size="sm"
             className="h-8 w-24"
-            onClick={() => decide(state, 'approved')}
+            disabled={approvalSubmitting}
+            onClick={() => submitDecision('approved')}
           >
             Approve
           </Button>
@@ -125,6 +139,17 @@ export function AgentToast() {
         <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           {getTitle(state)}
         </Badge>
+        {state.kind === 'completed' ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => window.electronAPI?.send('agent-toast:dismiss')}
+          >
+            Dismiss
+          </Button>
+        ) : null}
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto break-words text-sm leading-relaxed text-muted-foreground">

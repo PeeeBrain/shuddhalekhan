@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { stepCountIs, streamText, type JSONValue, type Tool } from "ai";
+import { stepCountIs, streamText, type JSONValue, type ModelMessage, type Tool } from "ai";
 import type { AppConfig } from "../types/ipc";
 import { logSidecar } from "./protocol";
 
@@ -43,7 +43,7 @@ You are Shuddhalekhan Agent, a concise voice-controlled assistant for short, one
 <persistence>
 - Keep going until the user's request is resolved or a stop condition is reached.
 - Do not ask clarifying questions when a reasonable assumption is available; proceed and state the assumption briefly in the final response.
-- Stop and hand back to the user when the request requires missing credentials, an unavailable tool, an approval denial, or an unsafe/destructive action that was not explicitly requested.
+- Stop and hand back to the user when the request requires missing credentials, an unavailable tool, refused consent, or an unsafe/destructive action that was not explicitly requested.
 </persistence>
 
 <context_gathering>
@@ -62,9 +62,11 @@ Goal: Get enough context fast, then act.
 
 <approval_handling>
 - Respect tool policies and approval decisions exactly.
-- If a tool result says exactly "Rejected: tool approval window expired.", stop execution and say the request stopped because tool approval expired.
-- Do not mention deliberate focus unless that exact timeout rejection was received from a tool.
-- If approval is denied or unavailable, do not retry the same action; explain the limitation briefly.
+- If a Tool Approval Response is denied with the reason "Tool approval window expired.", stop execution and say the request stopped because tool approval expired.
+- Do not mention deliberate focus unless that exact timeout denial reason was received.
+- If a denied Tool Approval Response contains corrective feedback that changes the target, arguments, or scope, revise the tool call and continue.
+- If a denied Tool Approval Response refuses the action or withholds consent, stop and explain the limitation briefly.
+- Never retry the exact same rejected tool call with the same arguments.
 </approval_handling>
 
 <response_style>
@@ -186,6 +188,86 @@ function stringifyForMessage(value: unknown): string {
   }
 }
 
+type ApprovalRequestPart = {
+  type: "tool-approval-request";
+  approvalId: string;
+  toolCall: {
+    toolCallId?: string;
+    toolName: string;
+    input?: unknown;
+  };
+};
+
+type StreamPart =
+  | { type: "text-delta"; text?: string; textDelta?: string }
+  | { type: "reasoning"; text?: string; textDelta?: string }
+  | ApprovalRequestPart
+  | { type: string; [key: string]: unknown };
+
+async function consumeGenerationStream(
+  result: {
+    text: PromiseLike<string>;
+    textStream?: AsyncIterable<string>;
+    fullStream?: AsyncIterable<StreamPart>;
+  },
+  callbacks: AgentRuntimeCallbacks,
+): Promise<{ text: string; approvalRequests: ApprovalRequestPart[] }> {
+  let streamedResponse = "";
+  const approvalRequests: ApprovalRequestPart[] = [];
+
+  if (result.fullStream) {
+    for await (const part of result.fullStream) {
+      if (isApprovalRequestPart(part)) {
+        approvalRequests.push(part);
+        continue;
+      }
+
+      if (part.type !== "text-delta") continue;
+      const text = typeof part.text === "string" ? part.text : typeof part.textDelta === "string" ? part.textDelta : "";
+      if (!streamedResponse && !text.trim()) continue;
+      streamedResponse += text;
+      callbacks.onResponseDelta(text, streamedResponse);
+    }
+  } else if (result.textStream) {
+    for await (const text of result.textStream) {
+      if (!streamedResponse && !text.trim()) continue;
+      streamedResponse += text;
+      callbacks.onResponseDelta(text, streamedResponse);
+    }
+  }
+
+  const finalText = await result.text;
+  if (!streamedResponse && finalText) {
+    callbacks.onResponseDelta(finalText, finalText);
+  }
+
+  return { text: finalText || streamedResponse, approvalRequests };
+}
+
+function isApprovalRequestPart(part: StreamPart): part is ApprovalRequestPart {
+  return (
+    part.type === "tool-approval-request" &&
+    typeof (part as { approvalId?: unknown }).approvalId === "string" &&
+    typeof (part as { toolCall?: { toolName?: unknown } }).toolCall?.toolName === "string"
+  );
+}
+
+function toApprovalRequest(part: ApprovalRequestPart): ToolApprovalRequest {
+  const modelToolName = part.toolCall.toolName;
+  const separatorIndex = modelToolName.indexOf("__");
+  return {
+    serverId: separatorIndex > 0 ? modelToolName.slice(0, separatorIndex) : "",
+    toolName: separatorIndex > 0 ? modelToolName.slice(separatorIndex + 2) : modelToolName,
+    modelToolName,
+    arguments: part.toolCall.input,
+  };
+}
+
+function toApprovalReason(decision: ToolApprovalDecision): string {
+  if (decision.approved) return "User approved tool execution.";
+  return decision.message.trim() || "User denied tool execution.";
+}
+
 function normalizeFinalResponse(
   response: string,
   toolSummary: string[],
@@ -275,48 +357,72 @@ export async function runAgent(
     callbacks.onStatus("Thinking...");
 
     const systemPrompt = buildSystemPrompt();
-    let streamedResponse = "";
-    const result = streamText({
-      model,
-      system: systemPrompt,
-      messages: [{ role: "user", content: transcript }],
-      tools,
-      providerOptions: getDefaultProviderOptions(),
-      stopWhen: stepCountIs(5),
-      abortSignal: signal,
-      onChunk: ({ chunk }) => {
-        if (chunk.type !== "text-delta") return;
-        if (!streamedResponse && !chunk.text.trim()) return;
-        streamedResponse += chunk.text;
-        callbacks.onResponseDelta(chunk.text, streamedResponse);
-      },
-      onStepFinish: ({ toolCalls }) => {
-        if (toolCalls.length > 0) {
-          const names = toolCalls.map((t) => String(t.toolName)).join(", ");
-          callbacks.onAudit?.("tool_requests", { toolCalls });
-          callbacks.onStatus(`Using tools: ${names}`);
-        } else {
-          callbacks.onStatus("Thinking...");
-        }
-      },
-    });
-
-    let finalResponse = await result.text;
-    if (!streamedResponse && finalResponse) {
-      callbacks.onResponseDelta(finalResponse, finalResponse);
-    }
+    const messages: ModelMessage[] = [{ role: "user", content: transcript }];
     const toolSummary: string[] = [];
-    const steps = await result.steps;
-    const toolCalls = await result.toolCalls;
-    const toolResults = await result.toolResults;
+    let finalResponse = "";
+    let steps: Array<{ toolCalls: Array<{ toolName: string }>; toolResults: unknown[] }> = [];
+    let toolCalls: unknown[] = [];
+    let toolResults: unknown[] = [];
 
-    for (const step of steps) {
-      for (const tc of step.toolCalls) {
-        toolSummary.push(`Used ${String(tc.toolName)}`);
+    while (true) {
+      callbacks.onStatus("Thinking...");
+      const result = streamText({
+        model,
+        system: systemPrompt,
+        messages,
+        tools,
+        providerOptions: getDefaultProviderOptions(),
+        stopWhen: stepCountIs(5),
+        abortSignal: signal,
+        onStepFinish: ({ toolCalls }) => {
+          if (toolCalls.length > 0) {
+            const names = toolCalls.map((t) => String(t.toolName)).join(", ");
+            callbacks.onAudit?.("tool_requests", { toolCalls });
+            callbacks.onStatus(`Using tools: ${names}`);
+          } else {
+            callbacks.onStatus("Thinking...");
+          }
+        },
+      });
+
+      const consumed = await consumeGenerationStream(result, callbacks);
+      finalResponse = consumed.text;
+      if ("response" in result && result.response) {
+        messages.push(...((await result.response).messages as ModelMessage[]));
       }
-      if (step.toolResults.length > 0) {
-        callbacks.onAudit?.("tool_results", { toolResults: step.toolResults });
+
+      steps = await result.steps;
+      toolCalls = await result.toolCalls;
+      toolResults = await result.toolResults;
+
+      for (const step of steps) {
+        for (const tc of step.toolCalls) {
+          toolSummary.push(`Used ${String(tc.toolName)}`);
+        }
+        if (step.toolResults.length > 0) {
+          callbacks.onAudit?.("tool_results", { toolResults: step.toolResults });
+        }
       }
+
+      if (consumed.approvalRequests.length === 0) break;
+
+      callbacks.onAudit?.("tool_approval_requests", {
+        approvalRequests: consumed.approvalRequests,
+      });
+      const approvalResponses = [];
+      for (const request of consumed.approvalRequests) {
+        const decision = await callbacks.requestToolApproval(toApprovalRequest(request));
+        approvalResponses.push({
+          type: "tool-approval-response" as const,
+          approvalId: request.approvalId,
+          approved: decision.approved,
+          reason: toApprovalReason(decision),
+        });
+      }
+      callbacks.onAudit?.("tool_approval_responses_sent", {
+        approvalResponses,
+      });
+      messages.push({ role: "tool", content: approvalResponses } as ModelMessage);
     }
 
     const reachedMaxSteps = steps.length >= 5;
@@ -324,7 +430,6 @@ export async function runAgent(
 
     if (reachedMaxSteps && hasPendingToolCalls) {
       callbacks.onStatus("Step limit reached. Summarizing...");
-      let fallbackResponse = "";
       const fallback = streamText({
         model,
         system: systemPrompt,
@@ -344,17 +449,8 @@ export async function runAgent(
         ],
         providerOptions: getDefaultProviderOptions(),
         abortSignal: signal,
-        onChunk: ({ chunk }) => {
-          if (chunk.type !== "text-delta") return;
-          if (!fallbackResponse && !chunk.text.trim()) return;
-          fallbackResponse += chunk.text;
-          callbacks.onResponseDelta(chunk.text, fallbackResponse);
-        },
       });
-      finalResponse = await fallback.text;
-      if (!fallbackResponse && finalResponse) {
-        callbacks.onResponseDelta(finalResponse, finalResponse);
-      }
+      finalResponse = (await consumeGenerationStream(fallback, callbacks)).text;
       toolSummary.push("Max step guardrail reached");
       callbacks.onAudit?.("max_step_guardrail", { stepCount: steps.length });
     }
@@ -372,7 +468,7 @@ export async function runAgent(
     callbacks.onCompleted(finalResponse, toolSummary);
   } catch (err) {
     if (signal.aborted) {
-      callbacks.onAudit?.("run_cancelled");
+      callbacks.onAudit?.("run_interrupted");
       callbacks.onCancelled();
       return;
     }

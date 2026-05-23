@@ -47,6 +47,8 @@ report.*.json
 CLAUDE.md
 GEMINI.md
 .codex
+.agents/
+TODO.md
 
 
 # Tauri updater key

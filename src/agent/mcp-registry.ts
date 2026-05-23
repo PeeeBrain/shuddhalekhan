@@ -4,7 +4,7 @@ import type { MCPClient } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
 import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../types/ipc';
 import { logSidecar, writeJsonLine } from './protocol';
-import type { AgentRuntimeCallbacks, ToolApprovalRequest } from './runtime';
+import type { AgentRuntimeCallbacks } from './runtime';
 
 import { getMcpServerConnectionKey } from './mcp-server-config';
 import { SidecarOAuthProvider } from './oauth-provider';
@@ -186,24 +186,14 @@ function wrapToolWithPolicy(
   modelToolName: string,
   toolDef: Tool,
   policy: Exclude<AgentToolApprovalPolicy, 'disabled'>,
-  requestToolApproval: RequestToolApproval,
+  _requestToolApproval: RequestToolApproval,
   onAudit?: AuditCallback,
   onToolStarted?: ToolStartedCallback
 ): Tool {
   return {
     ...toolDef,
+    needsApproval: policy === 'alwaysAsk' ? true : undefined,
     execute: async (args, options) => {
-      if (policy === 'alwaysAsk') {
-        const approval = await requestToolApproval({
-          serverId,
-          toolName,
-          modelToolName,
-          arguments: args,
-        } satisfies ToolApprovalRequest);
-
-        if (!approval.approved) return approval.message;
-      }
-
       if (!toolDef.execute) {
         throw new Error(`MCP tool ${serverId}:${toolName} is missing an execute handler.`);
       }

@@ -184,6 +184,8 @@ describe('main process IPC orchestration', () => {
       'audio:select-device',
       'audio:start-recording',
       'audio:stop-recording',
+      'audit:get-run-detail',
+      'audit:get-runs',
       'clipboard:inject-text',
       'config:get',
       'config:set',
@@ -194,6 +196,7 @@ describe('main process IPC orchestration', () => {
     ]);
     expect([...ipcListeners.keys()].sort()).toEqual([
       'agent-toast:content-size',
+      'agent-toast:dismiss',
       'audio-data-ready',
       'audio-devices',
       'audio-duration-changed',
@@ -366,6 +369,7 @@ describe('main process IPC orchestration', () => {
     ipcListeners.get('audio-level-changed')?.({}, 0.75);
     ipcListeners.get('audio-duration-changed')?.({}, 12);
     ipcListeners.get('agent-toast:content-size')?.({}, 280);
+    ipcListeners.get('agent-toast:dismiss')?.({});
 
     expect(setConfig).toHaveBeenCalledWith('whisperUrl', 'http://new');
     expect(agentStart).not.toHaveBeenCalled();

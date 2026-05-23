@@ -151,6 +151,7 @@ export class AgentSidecarManager {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: '1',
+          SHUDDHALEKHAN_AUDIT_DIR: app.getPath('userData'),
         },
       };
     }
@@ -158,6 +159,10 @@ export class AgentSidecarManager {
     return {
       command: getBunCommand(),
       args: [join(app.getAppPath(), 'src', 'agent', 'index.ts')],
+      env: {
+        ...process.env,
+        SHUDDHALEKHAN_AUDIT_DIR: app.getPath('userData'),
+      },
     };
   }
 }

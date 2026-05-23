@@ -11,6 +11,7 @@ import { createRecordingSession } from './recording-session';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp } from './inject-text';
+import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
 import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
 
@@ -61,6 +62,7 @@ function handleAgentTranscript(text: string): void {
 
   const agentRunId = agentSidecar.startRun(text, config);
   console.log(`Started Agent Mode run ${agentRunId}`);
+  getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);
 }
 
 function publishUpdateStatus(status: UpdateStatus): void {
@@ -144,7 +146,6 @@ ipcMain.handle(
   'agent:approval-decision',
   (_event, agentRunId: string, approvalId: string, decision: 'approved' | 'denied', message?: string) => {
     agentSidecar.sendApprovalDecision(agentRunId, approvalId, decision, message);
-    hideAgentToast();
   }
 );
 
@@ -162,6 +163,14 @@ ipcMain.handle('updater:get-status', () => {
 
 ipcMain.handle('updater:check', async () => {
   return checkForUpdates();
+});
+
+ipcMain.handle('audit:get-runs', async () => {
+  return getAuditRuns();
+});
+
+ipcMain.handle('audit:get-run-detail', async (_event, agentRunId: string) => {
+  return getAuditRunDetail(agentRunId);
 });
 
 // Renderer -> Main events
@@ -195,6 +204,10 @@ ipcMain.on('audio-duration-changed', (_event, seconds: number) => {
 
 ipcMain.on('agent-toast:content-size', (_event, height: number) => {
   handleAgentToastContentSize(height);
+});
+
+ipcMain.on('agent-toast:dismiss', () => {
+  hideAgentToast();
 });
 
 // App lifecycle
@@ -242,5 +255,6 @@ if (!gotSingleInstanceLock) {
     recordingSession.stopKeyboardHook();
     agentSidecar.stop();
     recordingSession.destroyAudioWindow();
+    closeDb();
   });
 }
