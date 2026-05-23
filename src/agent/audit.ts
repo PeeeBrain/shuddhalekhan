@@ -1,6 +1,7 @@
 import { mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { createRequire } from 'module';
+import { AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
 
 type AuditPayload = Record<string, unknown>;
 type SqliteStatement = {
@@ -26,19 +27,7 @@ export class AgentAuditStore {
   constructor(dbPath = getDefaultAuditDbPath()) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = createDatabase(dbPath);
-    this.db.exec(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA busy_timeout = 5000;
-      CREATE TABLE IF NOT EXISTS agent_audit_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_run_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_agent_audit_events_run
-        ON agent_audit_events(agent_run_id, created_at);
-    `);
+    this.db.exec(AGENT_AUDIT_SCHEMA_SQL);
     this.insertEvent = this.db.prepare(
       'INSERT INTO agent_audit_events (agent_run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)'
     );
@@ -101,9 +90,5 @@ export function sanitizeAuditPayload(value: unknown): unknown {
 }
 
 function getDefaultAuditDbPath(): string {
-  const baseDir =
-    process.env.SHUDDHALEKHAN_AUDIT_DIR ||
-    (process.env.APPDATA ? join(process.env.APPDATA, 'Shuddhalekhan') : join(process.cwd(), '.shuddhalekhan'));
-
-  return join(baseDir, 'agent-audit.sqlite');
+  return resolveAuditDbPath(join(process.cwd(), '.shuddhalekhan'));
 }

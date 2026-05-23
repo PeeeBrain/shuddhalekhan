@@ -1,17 +1,15 @@
 import Database from 'better-sqlite3';
-import { join, dirname } from 'path';
+import { dirname } from 'path';
 import { app } from 'electron';
 import fs from 'fs';
 import type { AuditRunSummary, AuditEventDetail } from '../types/ipc';
+import { AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
 
 const INTERRUPTED_RUN_GRACE_MS = 5 * 60 * 1000;
 const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interrupted', 'run_cancelled', 'cancelled']);
 
 function getAuditDbPath(): string {
-  const baseDir =
-    process.env.SHUDDHALEKHAN_AUDIT_DIR ||
-    (process.env.APPDATA ? join(process.env.APPDATA, 'Shuddhalekhan') : join(app.getPath('userData')));
-  return join(baseDir, 'agent-audit.sqlite');
+  return resolveAuditDbPath(app.getPath('userData'));
 }
 
 let dbInstance: Database.Database | null = null;
@@ -25,19 +23,7 @@ function getDb(): Database.Database {
     dbInstance = new Database(dbPath, { fileMustExist: false });
     
     // In case the DB file exists but table isn't created yet (e.g. settings window opened on fresh install)
-    dbInstance.exec(`
-      PRAGMA journal_mode = WAL;
-      PRAGMA busy_timeout = 5000;
-      CREATE TABLE IF NOT EXISTS agent_audit_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_run_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_agent_audit_events_run
-        ON agent_audit_events(agent_run_id, created_at);
-    `);
+    dbInstance.exec(AGENT_AUDIT_SCHEMA_SQL);
   }
   return dbInstance;
 }

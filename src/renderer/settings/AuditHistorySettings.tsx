@@ -35,6 +35,7 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
         const data = await settingsIpc.getAuditRuns();
         setRuns(data);
         if (data.length > 0 && !selectedRunId) {
+          setIsLoadingDetail(true);
           setSelectedRunId(data[0].agentRunId);
         }
       } catch (err) {
@@ -70,26 +71,20 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
 
   useEffect(() => {
     if (!selectedRunId) {
-      Promise.resolve().then(() => {
-        setSelectedRunEvents(null);
-      });
       return;
     }
 
-    Promise.resolve().then(() => {
-      setIsLoadingDetail(true);
-      settingsIpc
-        .getAuditRunDetail(selectedRunId)
-        .then((detail) => {
-          setSelectedRunEvents(detail);
-        })
-        .catch((err) => {
-          console.error(`Failed to fetch events for run ${selectedRunId}:`, err);
-        })
-        .finally(() => {
-          setIsLoadingDetail(false);
-        });
-    });
+    settingsIpc
+      .getAuditRunDetail(selectedRunId)
+      .then((detail) => {
+        setSelectedRunEvents(detail);
+      })
+      .catch((err) => {
+        console.error(`Failed to fetch events for run ${selectedRunId}:`, err);
+      })
+      .finally(() => {
+        setIsLoadingDetail(false);
+      });
   }, [selectedRunId, settingsIpc]);
 
   const selectedRunSummary = runs.find((r) => r.agentRunId === selectedRunId);
@@ -122,7 +117,11 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                 return (
                   <div
                     key={run.agentRunId}
-                    onClick={() => setSelectedRunId(run.agentRunId)}
+                    onClick={() => {
+                      setSelectedRunEvents(null);
+                      setIsLoadingDetail(true);
+                      setSelectedRunId(run.agentRunId);
+                    }}
                     className={`p-3 rounded-lg border text-left cursor-pointer transition-all duration-150 ${
                       isActive
                         ? 'bg-secondary/40 border-primary/50 shadow-sm'
@@ -223,16 +222,12 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                     <p className="text-xs text-muted-foreground italic">Loading events...</p>
                   ) : selectedRunEvents && selectedRunEvents.length > 0 ? (
                     <div className="relative pl-6 border-l border-border space-y-6">
-                      {selectedRunEvents.map((event, index) => {
-                        const isLast = index === selectedRunEvents.length - 1;
-                        return (
-                          <TimelineNode
-                            key={event.id}
-                            event={event}
-                            isLast={isLast}
-                          />
-                        );
-                      })}
+                      {selectedRunEvents.map((event) => (
+                        <TimelineNode
+                          key={event.id}
+                          event={event}
+                        />
+                      ))}
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground italic">No detailed timeline events found.</p>
@@ -326,7 +321,6 @@ function StatusBadge({
 
 interface TimelineNodeProps {
   event: AuditEventDetail;
-  isLast: boolean;
 }
 
 function TimelineNode({ event }: TimelineNodeProps) {
@@ -429,7 +423,7 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
     case 'run_started':
       return {
         title: 'Run Started',
-        description: `Agent initialized with prompt: "${p.transcript}"`,
+        description: `Agent initialized with prompt: "${formatPromptPreview(p.transcript)}"`,
         icon: <Play className="h-2.5 w-2.5 text-sky-500 fill-sky-500" />,
       };
     case 'status':
@@ -536,4 +530,13 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
         icon: <Terminal className="h-2.5 w-2.5 text-muted-foreground" />,
       };
   }
+}
+
+function formatPromptPreview(transcript: unknown): string {
+  if (typeof transcript !== 'string' || transcript.length === 0) {
+    return '';
+  }
+
+  const normalized = transcript.replace(/\s+/g, ' ').trim();
+  return normalized.length > 80 ? `${normalized.slice(0, 80)}...` : normalized;
 }

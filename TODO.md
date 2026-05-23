@@ -1,5 +1,0 @@
-- [ ] Handle tool rejection message to be fed back to the model so that it can learn from rejected tool calls.
-- [ ] Convert toast notifications from time based to static, for just the AI responses, so that in case of long responses, users can read the whole thing without having the notification disappear in the middle.
-- [ ] Handle agent interruptions threads stored in DB gracefully (Read agent trace history section to better articulate to the model.)
-- [ ] *Optional* : Resize pill UI to be a bit more smaller.
-- [ ] Use whisper prompting guide to make transcriptions formatted e.g. numbered lists, bullet points, etc.
