@@ -1,12 +1,32 @@
-# Shuddhalekhan 4.2.2
+# Shuddhalekhan 4.3.0
 
-This patch release adds a Personal Dictionary to Whisper dictation.
+This minor release introduces an Agent Run Inspector & Audit Log Viewer, a Personal Dictionary for dictation, generic MCP OAuth support, multilingual Whisper controls, and agent toast refinements.
 
 ## What's Changed
 
+### Agent Run Inspector & Audit Log Viewer
+- Added a new **History** tab in Settings with a full audit log viewer for agent runs.
+- Browse past agent runs with transcript, status, tool usage, and final response summaries.
+- Drill into individual runs to see a detailed execution timeline with expandable JSON payloads.
+- Live updates: agent runs update in real-time as execution progresses.
+- Audit data is persisted in a local SQLite database via the `better-sqlite3` dependency.
+
 ### Dictation
-- Added a Personal Dictionary feature to the Settings > Audio tab.
-- Users can add custom words to the dictionary, which are passed to the Whisper endpoint to improve transcription accuracy.
+- Added a **Personal Dictionary** to the Settings > Audio tab. Users can add specific names, technical terms, or acronyms to help Whisper spell them correctly.
+- Added **multilingual Whisper controls**: spoken language selector and transcription mode (Transcribe / Translate) in Settings > Audio.
+- Sends `language` and `translate` flags to Whisper-compatible endpoints.
+
+### Agent Mode
+- Removed hardcoded Gmail MCP preset in favor of **generic MCP-client OAuth** for HTTP MCP servers.
+- MCP servers that advertise protected-resource authorization now open OAuth URLs in the system browser.
+- Access tokens are stored per configured MCP server and retried after OAuth completes.
+- Agent toast approval buttons now show loading states with instant feedback on approve/deny.
+- Added a **Dismiss** button to completed agent toasts.
+- Recording pill visual polish: smaller, tighter bars for a cleaner look.
+- Agent status events, completions, failures, and cancellations now push live updates to the audit log.
+
+### CI
+- Release workflow now depends on CI success via `workflow_run`.
 
 ---
 
