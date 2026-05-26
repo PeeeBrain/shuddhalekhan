@@ -26,6 +26,7 @@ const getRecordingPillWindow = vi.fn(() => ({
   isDestroyed,
 }));
 const setConfig = vi.fn();
+const mergeDiscoveredTools = vi.fn();
 const getConfig = vi.fn(() => ({
   whisperUrl: 'http://localhost:8080/inference',
   selectedDeviceId: null,
@@ -58,10 +59,10 @@ const getSettingsWindow = vi.fn(() => ({
 }));
 const keyboardStart = vi.fn();
 const keyboardStop = vi.fn();
-const agentStartRun = vi.fn(() => 'run-1');
+const agentStartRun = vi.fn();
 const agentStart = vi.fn();
 const agentStop = vi.fn();
-const agentGetActiveAgentRunId = vi.fn(() => null);
+const agentCancelRun = vi.fn();
 const agentSendApprovalDecision = vi.fn();
 const showAgentToast = vi.fn();
 const hideAgentToast = vi.fn();
@@ -77,7 +78,7 @@ mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destr
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
 mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow }));
 mock.module('../tray', () => ({ createTray: vi.fn(), updateAudioDevices, updateUpdaterStatus }));
-mock.module('../config', () => ({ getConfig, setConfig }));
+mock.module('../config', () => ({ getConfig, setConfig, mergeDiscoveredTools }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
 mock.module('../agent-toast-window', () => ({ showAgentToast, hideAgentToast, handleAgentToastContentSize }));
 mock.module('../agent-sidecar', () => ({
@@ -88,7 +89,7 @@ mock.module('../agent-sidecar', () => ({
     start = agentStart;
     startRun = agentStartRun;
     stop = agentStop;
-    getActiveAgentRunId = agentGetActiveAgentRunId;
+    cancelRun = agentCancelRun;
     sendApprovalDecision = agentSendApprovalDecision;
   },
 }));
@@ -150,6 +151,7 @@ describe('main process IPC orchestration', () => {
     hideRecordingPill.mockClear();
     setConfig.mockClear();
     getConfig.mockClear();
+    mergeDiscoveredTools.mockClear();
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({ text: 'transcribed text' }),
@@ -166,7 +168,7 @@ describe('main process IPC orchestration', () => {
     agentStartRun.mockClear();
     agentStart.mockClear();
     agentStop.mockClear();
-    agentGetActiveAgentRunId.mockClear();
+    agentCancelRun.mockClear();
     agentSendApprovalDecision.mockClear();
     showAgentToast.mockClear();
     hideAgentToast.mockClear();
@@ -280,7 +282,7 @@ describe('main process IPC orchestration', () => {
     await listenerPromise;
 
     expect(showRecordingPill).toHaveBeenCalledWith('agent');
-    expect(agentStartRun).toHaveBeenCalledWith('transcribed text', config);
+    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config);
     expect(simulatePaste).not.toHaveBeenCalled();
   });
 
@@ -316,9 +318,19 @@ describe('main process IPC orchestration', () => {
   });
 
   it('shows explicit approval status and approval toast when a tool asks for HITL', async () => {
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('agent');
+    onStop();
+    await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer);
+    const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
+    showAgentToast.mockClear();
+
     agentEventHandler?.({
       type: 'approval:requested',
-      agentRunId: 'run-1',
+      agentRunId: activeRunId,
       approvalId: 'approval-1',
       serverId: 'exa',
       toolName: 'web_search_exa',
@@ -329,12 +341,12 @@ describe('main process IPC orchestration', () => {
 
     expect(showAgentToast).toHaveBeenNthCalledWith(1, {
       kind: 'status',
-      agentRunId: 'run-1',
+      agentRunId: activeRunId,
       message: 'Waiting for approval: exa.web_search_exa',
     });
     expect(showAgentToast).toHaveBeenNthCalledWith(2, {
       kind: 'approval',
-      agentRunId: 'run-1',
+      agentRunId: activeRunId,
       approvalId: 'approval-1',
       serverId: 'exa',
       toolName: 'web_search_exa',

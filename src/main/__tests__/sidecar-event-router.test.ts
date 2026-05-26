@@ -1,62 +1,33 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { AppConfig } from '../../types/ipc';
-import { createSidecarEventRouter } from '../sidecar-event-router';
 
 const vi = { fn: mock };
-
-const baseConfig: AppConfig = {
-  whisperUrl: 'http://localhost:8080/inference',
-  selectedDeviceId: null,
-  removeFillerWords: true,
-  language: 'auto',
-  task: 'transcribe',
-  dictionary: [],
-  agent: {
-    enabled: true,
-    provider: {
-      baseUrl: 'https://openrouter.ai/api/v1',
-      model: 'openai/gpt-4.1-mini',
-      apiKeyEnvVar: 'OPENROUTER_API_KEY',
-      thinkingEnabled: true,
-    },
-    mcpServers: [
-      {
-        id: 'mail',
-        displayName: 'Hosted Mail',
-        enabled: true,
-        transport: { type: 'http', url: 'https://mail.example.com/mcp' },
-        discoveredTools: [],
-        toolPolicies: {},
-      },
-    ],
-  },
-};
+const mergeDiscoveredTools = vi.fn();
 
 describe('SidecarEventRouter', () => {
   let send: ReturnType<typeof vi.fn>;
   let getSettingsWindow: ReturnType<typeof vi.fn>;
-  let getConfig: ReturnType<typeof vi.fn>;
-  let setConfig: ReturnType<typeof vi.fn>;
+  let getActiveAgentRunId: ReturnType<typeof vi.fn>;
   let showAgentToast: ReturnType<typeof vi.fn>;
   let openExternal: ReturnType<typeof vi.fn>;
-  let router: ReturnType<typeof createSidecarEventRouter>;
+  let router: import('../sidecar-event-router').SidecarEventRouter;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    const { createSidecarEventRouter } = await import(`../sidecar-event-router?test=${Date.now()}-${Math.random()}`);
     send = vi.fn();
     getSettingsWindow = vi.fn(() => ({
       webContents: { send },
       isDestroyed: vi.fn(() => false),
     }));
-    getConfig = vi.fn(() => baseConfig);
-    setConfig = vi.fn();
+    getActiveAgentRunId = vi.fn(() => 'run-1');
     showAgentToast = vi.fn();
     openExternal = vi.fn(async () => undefined);
+    mergeDiscoveredTools.mockClear();
     router = createSidecarEventRouter({
       getSettingsWindow,
-      getConfig,
-      setConfig,
+      getActiveAgentRunId,
       showAgentToast,
       openExternal,
+      mergeDiscoveredTools,
     });
   });
 
@@ -85,41 +56,19 @@ describe('SidecarEventRouter', () => {
     expect(openExternal).toHaveBeenCalledWith('https://perfect-horizon.example.com/oauth/authorize');
   });
 
-  it('persists discovered tools and defaults new tool policies to alwaysAsk', () => {
+  it('dispatches discovered tools to the config module', () => {
+    const tools = [
+      { name: 'read_email', description: 'Read messages', inputSchema: { type: 'object' } },
+      { name: 'send_email', description: 'Send messages' },
+    ];
+
     router.handle({
       type: 'mcp:tools-discovered',
       serverId: 'mail',
-      tools: [
-        { name: 'read_email', description: 'Read messages', inputSchema: { type: 'object' } },
-        { name: 'send_email', description: 'Send messages' },
-      ],
+      tools,
     });
 
-    expect(setConfig).toHaveBeenCalledWith('agent', {
-      ...baseConfig.agent,
-      mcpServers: [
-        expect.objectContaining({
-          id: 'mail',
-          discoveredTools: [
-            expect.objectContaining({
-              name: 'read_email',
-              description: 'Read messages',
-              inputSchema: { type: 'object' },
-              discoveredAt: expect.any(String),
-            }),
-            expect.objectContaining({
-              name: 'send_email',
-              description: 'Send messages',
-              discoveredAt: expect.any(String),
-            }),
-          ],
-          toolPolicies: {
-            'mail:read_email': 'alwaysAsk',
-            'mail:send_email': 'alwaysAsk',
-          },
-        }),
-      ],
-    });
+    expect(mergeDiscoveredTools).toHaveBeenCalledWith('mail', tools);
   });
 
   it('maps agent status, streaming, completion, failure, and cancellation to toasts', () => {

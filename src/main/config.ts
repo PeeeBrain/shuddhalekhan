@@ -2,7 +2,7 @@ import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import type { AppConfig } from '../types/ipc';
+import type { AppConfig, McpDiscoveredTool } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 
 type StoreConfig = AppConfig & {
@@ -88,4 +88,38 @@ export function getConfig(): AppConfig {
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
   store.set(key, value);
+}
+
+export function mergeDiscoveredTools(
+  serverId: string,
+  tools: Array<{ name: string; description: string; inputSchema?: unknown }>
+): void {
+  const config = getConfig();
+  const discoveredAt = new Date().toISOString();
+  const mcpServers = config.agent.mcpServers.map((server) => {
+    if (server.id !== serverId) return server;
+
+    const discoveredTools: McpDiscoveredTool[] = tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      discoveredAt,
+    }));
+    const toolPolicies = { ...server.toolPolicies };
+    for (const tool of discoveredTools) {
+      const key = `${server.id}:${tool.name}` as const;
+      if (!toolPolicies[key]) toolPolicies[key] = 'alwaysAsk';
+    }
+
+    return {
+      ...server,
+      discoveredTools,
+      toolPolicies,
+    };
+  });
+
+  store.set('agent', {
+    ...config.agent,
+    mcpServers,
+  });
 }

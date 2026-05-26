@@ -1,3 +1,17 @@
+# Shuddhalekhan 4.3.1
+
+This patch release improves Agent Mode sidecar architecture and run-event routing reliability.
+
+## What's Changed
+
+### Agent Mode Architecture
+- Extracted reusable JSONL process management for sidecar workers.
+- Made sidecar run IDs explicit and moved active-run filtering to the UI event router.
+- Centralized discovered MCP tool merging and default policy injection in the config module.
+- Expanded regression coverage for sidecar process, config, and routing behavior.
+
+---
+
 # Shuddhalekhan 4.3.0
 
 This minor release introduces an Agent Run Inspector & Audit Log Viewer, a Personal Dictionary for dictation, generic MCP OAuth support, multilingual Whisper controls, and agent toast refinements.
