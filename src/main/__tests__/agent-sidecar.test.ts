@@ -69,7 +69,8 @@ describe('AgentSidecarManager', () => {
     const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-1`);
     const manager = new AgentSidecarManager((event: SidecarEvent) => events.push(event));
 
-    const agentRunId = manager.startRun('check mail', config);
+    const agentRunId = 'run-1';
+    manager.startRun(agentRunId, 'check mail', config);
 
     expect(spawn).toHaveBeenCalledWith(
       'bun.exe',
@@ -123,72 +124,54 @@ describe('AgentSidecarManager', () => {
     const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-blank`);
     const manager = new AgentSidecarManager((event: SidecarEvent) => events.push(event));
 
-    manager.startRun('check mail', config);
+    manager.startRun('run-1', 'check mail', config);
     stdoutLines.emit('line', '');
     stdoutLines.emit('line', '   ');
 
     expect(events).toEqual([]);
   });
 
-  it('cancels the active run before starting the next run', async () => {
+  it('uses the provided run id when starting and cancelling runs', async () => {
     const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-2`);
     const manager = new AgentSidecarManager(() => undefined);
 
-    const firstRunId = manager.startRun('first', config);
-    const secondRunId = manager.startRun('second', config);
+    manager.startRun('run-1', 'first', config);
+    manager.cancelRun('run-1');
 
+    expect(JSON.parse(stdinWrite.mock.calls[1]?.[0] as string)).toEqual({
+      type: 'agent:start',
+      agentRunId: 'run-1',
+      transcript: 'first',
+    });
     expect(JSON.parse(stdinWrite.mock.calls[2]?.[0] as string)).toEqual({
       type: 'agent:cancel',
-      agentRunId: firstRunId,
-    });
-    expect(JSON.parse(stdinWrite.mock.calls[3]?.[0] as string)).toEqual({
-      type: 'config:update',
-      config,
-    });
-    expect(JSON.parse(stdinWrite.mock.calls[4]?.[0] as string)).toEqual({
-      type: 'agent:start',
-      agentRunId: secondRunId,
-      transcript: 'second',
+      agentRunId: 'run-1',
     });
   });
 
-  it('ignores stale run-scoped sidecar events', async () => {
+  it('emits all parsed sidecar events regardless of run id', async () => {
     const events: unknown[] = [];
     const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-3`);
     const manager = new AgentSidecarManager((event: SidecarEvent) => events.push(event));
 
-    const agentRunId = manager.startRun('current', config);
-    stdoutLines.emit('line', JSON.stringify({ type: 'agent:completed', agentRunId: 'stale', response: 'old' }));
-    stdoutLines.emit('line', JSON.stringify({
-      type: 'agent:completed',
-      agentRunId,
-      response: 'done',
-      toolSummary: [],
-    }));
+    manager.startRun('current', 'current', config);
+    stdoutLines.emit('line', JSON.stringify({ type: 'agent:completed', agentRunId: 'stale', response: 'old', toolSummary: [] }));
+    stdoutLines.emit('line', JSON.stringify({ type: 'agent:completed', agentRunId: 'current', response: 'done', toolSummary: [] }));
 
     expect(events).toEqual([
-      {
-        type: 'agent:completed',
-        agentRunId,
-        response: 'done',
-        toolSummary: [],
-      },
+      { type: 'agent:completed', agentRunId: 'stale', response: 'old', toolSummary: [] },
+      { type: 'agent:completed', agentRunId: 'current', response: 'done', toolSummary: [] },
     ]);
-    expect(manager.getActiveAgentRunId()).toBeNull();
   });
 
-  it('stops the process and clears active run state', async () => {
+  it('stops the process without sending a run-scoped cancel', async () => {
     const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-4`);
     const manager = new AgentSidecarManager(() => undefined);
 
-    const agentRunId = manager.startRun('cancel me', config);
+    manager.startRun('run-1', 'cancel me', config);
     manager.stop();
 
-    expect(JSON.parse(stdinWrite.mock.calls[2]?.[0] as string)).toEqual({
-      type: 'agent:cancel',
-      agentRunId,
-    });
+    expect(stdinWrite.mock.calls).toHaveLength(2);
     expect(childKill).toHaveBeenCalled();
-    expect(manager.getActiveAgentRunId()).toBeNull();
   });
 });

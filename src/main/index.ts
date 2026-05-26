@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { app, ipcMain, dialog, session, shell } from 'electron';
 import { createAudioWindow, getAudioWindow } from './audio-window';
 import { getRecordingPillWindow } from './recording-pill';
@@ -16,10 +17,10 @@ import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
+let activeAgentRunId: string | null = null;
 const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
-  getConfig,
-  setConfig,
+  getActiveAgentRunId: () => activeAgentRunId,
   showAgentToast,
   openExternal: shell.openExternal,
 });
@@ -60,9 +61,14 @@ function handleAgentTranscript(text: string): void {
     return;
   }
 
-  const agentRunId = agentSidecar.startRun(text, config);
-  console.log(`Started Agent Mode run ${agentRunId}`);
-  getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);
+  if (activeAgentRunId) {
+    agentSidecar.cancelRun(activeAgentRunId);
+  }
+
+  activeAgentRunId = randomUUID();
+  agentSidecar.startRun(activeAgentRunId, text, config);
+  console.log(`Started Agent Mode run ${activeAgentRunId}`);
+  getSettingsWindow()?.webContents.send('audit:run-updated', activeAgentRunId);
 }
 
 function publishUpdateStatus(status: UpdateStatus): void {

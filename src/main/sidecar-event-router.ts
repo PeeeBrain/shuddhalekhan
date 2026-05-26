@@ -1,13 +1,13 @@
 import type { BrowserWindow } from 'electron';
 import type { SidecarEvent } from '../agent/protocol';
-import type { AppConfig, McpDiscoveredTool } from '../types/ipc';
+import { mergeDiscoveredTools } from './config';
 
 interface SidecarEventRouterDeps {
   getSettingsWindow: () => BrowserWindow | null;
-  getConfig: () => AppConfig;
-  setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+  getActiveAgentRunId: () => string | null;
   showAgentToast: (state: Parameters<typeof import('./agent-toast-window').showAgentToast>[0]) => void;
   openExternal: (url: string) => Promise<unknown>;
+  mergeDiscoveredTools?: typeof mergeDiscoveredTools;
 }
 
 type SidecarEventHandler<T extends SidecarEvent['type']> = (event: Extract<SidecarEvent, { type: T }>) => void;
@@ -20,6 +20,12 @@ export interface SidecarEventRouter {
 }
 
 export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarEventRouter {
+  const mergeTools = deps.mergeDiscoveredTools ?? mergeDiscoveredTools;
+  const whenActive = <T extends SidecarEvent & { agentRunId: string }>(handler: (event: T) => void) => (event: T) => {
+    if (event.agentRunId !== deps.getActiveAgentRunId()) return;
+    handler(event);
+  };
+
   const handlers: SidecarEventHandlers = {
     'sidecar:ready': () => {
       console.log('Agent sidecar ready');
@@ -33,22 +39,22 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       });
     },
     'mcp:tools-discovered': (event) => {
-      persistDiscoveredTools(deps, event.serverId, event.tools);
+      mergeTools(event.serverId, event.tools);
     },
     'oauth:open-url': (event) => {
       deps.openExternal(event.url).catch((err) => {
         console.error(`Failed to open OAuth URL for ${event.serverId}:`, err);
       });
     },
-    'agent:status': (event) => {
+    'agent:status': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId}: ${event.status}`);
       deps.showAgentToast({ kind: 'status', agentRunId: event.agentRunId, message: event.status });
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
-    },
-    'agent:response-delta': (event) => {
+    }),
+    'agent:response-delta': whenActive((event) => {
       deps.showAgentToast({ kind: 'streaming', agentRunId: event.agentRunId, response: event.response });
-    },
-    'approval:requested': (event) => {
+    }),
+    'approval:requested': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId} requested approval for ${event.serverId}:${event.toolName}`);
       deps.showAgentToast({
         kind: 'status',
@@ -65,8 +71,8 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
         arguments: event.arguments,
         expiresAt: event.expiresAt,
       });
-    },
-    'agent:completed': (event) => {
+    }),
+    'agent:completed': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId} completed: ${event.response}`);
       deps.showAgentToast({
         kind: 'completed',
@@ -75,17 +81,17 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
         toolSummary: event.toolSummary,
       });
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
-    },
-    'agent:failed': (event) => {
+    }),
+    'agent:failed': whenActive((event) => {
       console.error(`Agent run ${event.agentRunId} failed: ${event.error}`);
       deps.showAgentToast({ kind: 'failed', agentRunId: event.agentRunId, error: event.error });
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
-    },
-    'agent:cancelled': (event) => {
+    }),
+    'agent:cancelled': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId} cancelled`);
       deps.showAgentToast({ kind: 'cancelled', agentRunId: event.agentRunId });
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
-    },
+    }),
   };
 
   return {
@@ -94,39 +100,4 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       handler?.(event);
     },
   };
-}
-
-function persistDiscoveredTools(
-  deps: Pick<SidecarEventRouterDeps, 'getConfig' | 'setConfig'>,
-  serverId: string,
-  tools: Array<{ name: string; description: string; inputSchema?: unknown }>
-): void {
-  const config = deps.getConfig();
-  const discoveredAt = new Date().toISOString();
-  const nextServers = config.agent.mcpServers.map((server) => {
-    if (server.id !== serverId) return server;
-
-    const discoveredTools: McpDiscoveredTool[] = tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      discoveredAt,
-    }));
-    const toolPolicies = { ...server.toolPolicies };
-    for (const tool of discoveredTools) {
-      const key = `${server.id}:${tool.name}` as const;
-      if (!toolPolicies[key]) toolPolicies[key] = 'alwaysAsk';
-    }
-
-    return {
-      ...server,
-      discoveredTools,
-      toolPolicies,
-    };
-  });
-
-  deps.setConfig('agent', {
-    ...config.agent,
-    mcpServers: nextServers,
-  });
 }
