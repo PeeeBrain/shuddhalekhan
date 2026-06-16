@@ -1,13 +1,9 @@
 import { clipboard } from 'electron';
 import { simulatePaste } from './native/clipboard';
 import type { PasteDispatchResult } from './native/clipboard';
+import type { InjectResult } from '../types/ipc';
 
-export type InjectResult =
-  | { kind: 'input-dispatched'; acceptedEvents: number }
-  | { kind: 'input-blocked'; acceptedEvents: number; reason?: string }
-  | { kind: 'target-changed' }
-  | { kind: 'clipboard-conflict' }
-  | { kind: 'error'; message: string };
+export type { InjectResult };
 
 interface InjectTextDeps {
   readText: () => string;

@@ -18,7 +18,7 @@ import {
   setLastTranscript,
 } from './last-transcript';
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
-import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
+import type { AppConfig, AudioDevice, InjectResult, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
@@ -56,7 +56,11 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
 async function pasteLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
   if (!transcript) return;
-  await injectIntoFocusedApp(transcript.text);
+
+  const result = await injectIntoFocusedApp(transcript.text);
+  if (result.kind !== 'input-dispatched') {
+    showRecoveryNotification(result, 'Paste Last Transcript failed');
+  }
 }
 
 function copyLastTranscript(): void {
@@ -65,14 +69,16 @@ function copyLastTranscript(): void {
   copyLastTranscriptToClipboard(transcript.text);
 }
 
-function showRecoveryNotification(result: { kind: string; message?: string }): void {
-  const detail = result.message ? `: ${result.message}` : '';
+function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste Failed'): void {
+  const detail = result.kind === 'error' ? `: ${result.message}`
+    : result.kind === 'input-blocked' && result.reason ? `: ${result.reason}`
+    : '';
   const body = `Automatic paste failed${detail}. Use the tray to paste or copy the last transcript.`;
-  console.warn('Dictation recovery:', result.kind, result.message ?? '');
+  console.warn('Dictation recovery:', result.kind, detail);
 
   if (Notification.isSupported()) {
     new Notification({
-      title: 'Dictation Paste Failed',
+      title,
       body,
       silent: true,
     }).show();
@@ -180,8 +186,8 @@ ipcMain.handle('settings:open', () => {
   openSettingsWindow();
 });
 
-ipcMain.handle('clipboard:inject-text', async (_event, text: string) => {
-  await injectIntoFocusedApp(text);
+ipcMain.handle('clipboard:inject-text', async (_event, text: string): Promise<InjectResult> => {
+  return injectIntoFocusedApp(text);
 });
 
 ipcMain.handle(

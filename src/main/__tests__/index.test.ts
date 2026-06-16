@@ -546,4 +546,21 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('transcribed text');
     expect(simulatePaste).not.toHaveBeenCalled();
   });
+
+  it('notifies when tray paste-last-transcript fails again', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('dictation');
+    onStop();
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await listenerPromise;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    notificationShow.mockClear();
+    simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
+    await trayHandlers.onPasteLastTranscript?.();
+
+    expect(notificationShow).toHaveBeenCalledTimes(1);
+  });
 });
