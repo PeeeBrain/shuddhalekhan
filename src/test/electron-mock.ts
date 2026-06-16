@@ -32,6 +32,9 @@ export const electronMock = {
       setPermissionRequestHandler: mock(),
     },
   },
+  Notification: Object.assign(mock(() => ({ show: mock() })), {
+    isSupported: mock(() => true),
+  }),
   shell: {
     openExternal: mock(() => Promise.resolve()),
   },
@@ -87,6 +90,10 @@ export function resetElectronMock(): void {
   electronMock.dialog.showMessageBox.mockReset();
   electronMock.dialog.showMessageBox.mockResolvedValue({ response: 0 });
   electronMock.session.defaultSession.setPermissionRequestHandler.mockReset();
+  electronMock.Notification.mockReset();
+  electronMock.Notification.mockImplementation(() => ({ show: mock() }));
+  electronMock.Notification.isSupported.mockReset();
+  electronMock.Notification.isSupported.mockReturnValue(true);
   electronMock.shell.openExternal.mockReset();
   electronMock.shell.openExternal.mockResolvedValue(undefined);
   electronMock.screen.getPrimaryDisplay.mockReset();

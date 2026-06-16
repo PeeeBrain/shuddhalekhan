@@ -48,6 +48,11 @@ export interface RendererToMainSendChannels {
   'agent-toast:dismiss': () => void;
 }
 
+export type InjectResult =
+  | { kind: 'input-dispatched'; acceptedEvents: number }
+  | { kind: 'input-blocked'; acceptedEvents: number; reason?: string }
+  | { kind: 'error'; message: string };
+
 export interface RendererToMainInvokeChannels {
   'audio:start-recording': () => void;
   'audio:stop-recording': () => Promise<string>;
@@ -56,7 +61,7 @@ export interface RendererToMainInvokeChannels {
   'config:get': () => Promise<AppConfig>;
   'config:set': (key: keyof AppConfig, value: unknown) => void;
   'settings:open': () => void;
-  'clipboard:inject-text': (text: string) => void;
+  'clipboard:inject-text': (text: string) => Promise<InjectResult>;
   'agent:approval-decision': (
     agentRunId: string,
     approvalId: string,

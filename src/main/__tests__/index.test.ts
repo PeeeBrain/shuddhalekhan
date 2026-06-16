@@ -42,7 +42,7 @@ const getConfig = vi.fn(() => ({
     mcpServers: [],
   },
 }));
-const simulatePaste = vi.fn();
+const simulatePaste = vi.fn(() => ({ acceptedEvents: 4 }));
 const checkForUpdates = vi.fn();
 const getUpdateStatus = vi.fn(() => ({
   state: 'idle',
@@ -52,6 +52,8 @@ const getUpdateStatus = vi.fn(() => ({
 }));
 const updateAudioDevices = vi.fn();
 const updateUpdaterStatus = vi.fn();
+let trayHandlers: { onOpenSettings?: () => void; onPasteLastTranscript?: () => void; onCopyLastTranscript?: () => void } = {};
+let notificationShow: ReturnType<typeof vi.fn>;
 const openSettingsWindow = vi.fn();
 const getSettingsWindow = vi.fn(() => ({
   webContents: { send },
@@ -77,7 +79,13 @@ mock.module('../native/clipboard', () => ({ simulatePaste }));
 mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destroyAudioWindow }));
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
 mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow }));
-mock.module('../tray', () => ({ createTray: vi.fn(), updateAudioDevices, updateUpdaterStatus }));
+mock.module('../tray', () => ({
+  createTray: vi.fn((handlers: typeof trayHandlers) => {
+    trayHandlers = handlers;
+  }),
+  updateAudioDevices,
+  updateUpdaterStatus,
+}));
 mock.module('../config', () => ({ getConfig, setConfig, mergeDiscoveredTools }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
 mock.module('../agent-toast-window', () => ({ showAgentToast, hideAgentToast, handleAgentToastContentSize }));
@@ -119,8 +127,11 @@ describe('main process IPC orchestration', () => {
     ipcHandlers.clear();
     ipcListeners.clear();
     appListeners.clear();
+    trayHandlers = {};
     clipboardText.value = 'original';
     resetElectronMock();
+    notificationShow = vi.fn();
+    electronMock.Notification.mockImplementation(() => ({ show: notificationShow }));
     electronMock.app.on.mockImplementation((event: string, listener: (...args: any[]) => void) => {
       appListeners.set(event, listener);
     });
@@ -156,7 +167,8 @@ describe('main process IPC orchestration', () => {
       ok: true,
       json: async () => ({ text: 'transcribed text' }),
     })) as unknown as typeof fetch;
-    simulatePaste.mockClear();
+    simulatePaste.mockReset();
+    simulatePaste.mockReturnValue({ acceptedEvents: 4 });
     checkForUpdates.mockClear();
     getUpdateStatus.mockClear();
     updateAudioDevices.mockClear();
@@ -481,5 +493,74 @@ describe('main process IPC orchestration', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     expect(agentStart).not.toHaveBeenCalled();
+  });
+
+  it('stores the last transcript before injection so it survives paste failures', async () => {
+    simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
+
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('dictation');
+    onStop();
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await listenerPromise;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
+    expect(notificationShow).toHaveBeenCalledTimes(1);
+
+    simulatePaste.mockReturnValue({ acceptedEvents: 4 });
+    await trayHandlers.onPasteLastTranscript?.();
+
+    expect(simulatePaste).toHaveBeenCalled();
+  });
+
+  it('does not show a recovery notification when automatic paste succeeds', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('dictation');
+    onStop();
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await listenerPromise;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(notificationShow).not.toHaveBeenCalled();
+    expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
+  });
+
+  it('copies the last transcript from the tray without sending synthetic input', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('dictation');
+    onStop();
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await listenerPromise;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    simulatePaste.mockClear();
+    trayHandlers.onCopyLastTranscript?.();
+
+    expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('transcribed text');
+    expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('notifies when tray paste-last-transcript fails again', async () => {
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('dictation');
+    onStop();
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await listenerPromise;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    notificationShow.mockClear();
+    simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
+    await trayHandlers.onPasteLastTranscript?.();
+
+    expect(notificationShow).toHaveBeenCalledTimes(1);
   });
 });
