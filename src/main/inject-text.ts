@@ -1,10 +1,18 @@
 import { clipboard } from 'electron';
 import { simulatePaste } from './native/clipboard';
+import type { PasteDispatchResult } from './native/clipboard';
+
+export type InjectResult =
+  | { kind: 'input-dispatched'; acceptedEvents: number }
+  | { kind: 'input-blocked'; acceptedEvents: number; reason?: string }
+  | { kind: 'target-changed' }
+  | { kind: 'clipboard-conflict' }
+  | { kind: 'error'; message: string };
 
 interface InjectTextDeps {
   readText: () => string;
   writeText: (text: string) => void;
-  simulatePaste: () => void;
+  simulatePaste: () => PasteDispatchResult;
   delay: (ms: number) => Promise<void>;
 }
 
@@ -15,18 +23,80 @@ const defaultDeps: InjectTextDeps = {
   delay,
 };
 
-export async function injectIntoFocusedApp(text: string, deps: InjectTextDeps = defaultDeps): Promise<void> {
-  const originalClipboard = deps.readText();
+let injectionQueue: Promise<unknown> = Promise.resolve();
 
+export async function injectIntoFocusedApp(text: string, deps: InjectTextDeps = defaultDeps): Promise<InjectResult> {
+  const task = injectionQueue.then(() => runInjection(text, deps));
+  injectionQueue = task.catch(() => undefined);
+  return task;
+}
+
+export function copyLastTranscriptToClipboard(text: string, deps: InjectTextDeps = defaultDeps): void {
   deps.writeText(text);
+}
+
+async function runInjection(text: string, deps: InjectTextDeps): Promise<InjectResult> {
+  let originalClipboard: string;
+  try {
+    originalClipboard = deps.readText();
+  } catch (error) {
+    return { kind: 'error', message: formatError('Failed to read clipboard', error) };
+  }
+
+  try {
+    deps.writeText(text);
+  } catch (error) {
+    return { kind: 'error', message: formatError('Failed to stage clipboard', error) };
+  }
+
   await deps.delay(50);
 
-  deps.simulatePaste();
-  await deps.delay(100);
-
-  if (originalClipboard) {
-    deps.writeText(originalClipboard);
+  let dispatchResult: PasteDispatchResult;
+  try {
+    dispatchResult = deps.simulatePaste();
+  } catch (error) {
+    await restoreClipboard(originalClipboard, deps);
+    return { kind: 'error', message: formatError('Paste dispatch failed', error) };
   }
+
+  await deps.delay(100);
+  await restoreClipboard(originalClipboard, deps);
+
+  if (dispatchResult.acceptedEvents === 0) {
+    return {
+      kind: 'input-blocked',
+      acceptedEvents: 0,
+      reason: dispatchResult.errorCode
+        ? `No input events accepted (Win32 error ${dispatchResult.errorCode})`
+        : 'No input events accepted',
+    };
+  }
+
+  if (dispatchResult.acceptedEvents < 4) {
+    return {
+      kind: 'input-blocked',
+      acceptedEvents: dispatchResult.acceptedEvents,
+      reason: dispatchResult.errorCode
+        ? `Partial input dispatch (Win32 error ${dispatchResult.errorCode})`
+        : 'Partial input dispatch',
+    };
+  }
+
+  return { kind: 'input-dispatched', acceptedEvents: dispatchResult.acceptedEvents };
+}
+
+async function restoreClipboard(originalClipboard: string, deps: InjectTextDeps): Promise<void> {
+  if (!originalClipboard) return;
+  try {
+    deps.writeText(originalClipboard);
+  } catch {
+    // Preserve the original failure mode; restoration failure is not recoverable here.
+  }
+}
+
+function formatError(context: string, error: unknown): string {
+  const suffix = error instanceof Error ? error.message : String(error);
+  return `${context}: ${suffix}`;
 }
 
 function delay(ms: number): Promise<void> {

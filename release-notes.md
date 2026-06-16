@@ -1,3 +1,20 @@
+# Shuddhalekhan 4.3.2
+
+This patch release makes successful dictations recoverable when automatic clipboard paste fails or is blocked.
+
+## What's Changed
+
+### Dictation Recovery
+- Every non-empty successful transcription is now kept as an in-memory "last transcript" before any clipboard or synthetic input work begins.
+- Text injection now returns a structured result that distinguishes full dispatch, partial/zero-event dispatch, clipboard conflicts, target changes, and unexpected errors.
+- Native `SendInput` paste dispatch now reports the number of accepted input events and the relevant Win32 error code when dispatch is incomplete.
+- Failed automatic paste shows a passive system notification instead of a modal transcription error, and the transcript remains recoverable from the tray.
+- Added tray actions to **Paste Last Transcript** (through the same injection pipeline as normal dictation) and **Copy Last Transcript** (without sending synthetic keyboard input).
+- Concurrent injection and retry operations are serialized through a central queue so clipboard staging, paste, and restoration cannot interleave.
+- Transcript contents stay in memory only and are never written to logs, diagnostics, or release artifacts.
+
+---
+
 # Shuddhalekhan 4.3.1
 
 This patch release improves Agent Mode sidecar architecture and run-event routing reliability.

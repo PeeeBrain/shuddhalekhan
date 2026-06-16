@@ -1,6 +1,7 @@
 import koffi from 'koffi';
 
 const user32 = koffi.load('user32.dll');
+const kernel32 = koffi.load('kernel32.dll');
 
 const INPUT_KEYBOARD = 1;
 const KEYEVENTF_KEYUP = 0x0002;
@@ -12,6 +13,12 @@ const VK_V = 0x56;
 const INPUT_SIZE = 40; // sizeof(INPUT) on 64-bit Windows
 
 const SendInput = user32.func('uint32_t __stdcall SendInput(uint32_t cInputs, uint8_t * pInputs, int32_t cbSize)');
+const GetLastError = kernel32.func('uint32_t __stdcall GetLastError()');
+
+export interface PasteDispatchResult {
+  acceptedEvents: number;
+  errorCode?: number;
+}
 
 function buildKeyboardInput(vk: number, flags: number): Buffer {
   const buf = Buffer.alloc(INPUT_SIZE);
@@ -24,7 +31,7 @@ function buildKeyboardInput(vk: number, flags: number): Buffer {
   return buf;
 }
 
-export function simulatePaste(): void {
+export function simulatePaste(): PasteDispatchResult {
   const inputs = Buffer.concat([
     buildKeyboardInput(VK_CONTROL, 0),
     buildKeyboardInput(VK_V, 0),
@@ -32,5 +39,10 @@ export function simulatePaste(): void {
     buildKeyboardInput(VK_CONTROL, KEYEVENTF_KEYUP),
   ]);
 
-  SendInput(4, inputs, INPUT_SIZE);
+  const acceptedEvents = Number(SendInput(4, inputs, INPUT_SIZE));
+  if (acceptedEvents < 4) {
+    const errorCode = Number(GetLastError());
+    return { acceptedEvents, errorCode };
+  }
+  return { acceptedEvents };
 }

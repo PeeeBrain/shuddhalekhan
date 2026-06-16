@@ -7,6 +7,8 @@ import type { AudioDevice, UpdateStatus } from '../types/ipc';
 
 let tray: Tray | null = null;
 let openSettingsHandler: (() => void) | null = null;
+let pasteLastTranscriptHandler: (() => void) | null = null;
+let copyLastTranscriptHandler: (() => void) | null = null;
 let audioDevices: AudioDevice[] = [];
 let updateStatus: UpdateStatus = {
   state: 'idle',
@@ -15,8 +17,16 @@ let updateStatus: UpdateStatus = {
   checkedAt: null,
 };
 
-export function createTray(onOpenSettings: () => void): Tray {
-  openSettingsHandler = onOpenSettings;
+export interface TrayHandlers {
+  onOpenSettings: () => void;
+  onPasteLastTranscript?: () => void;
+  onCopyLastTranscript?: () => void;
+}
+
+export function createTray(handlers: TrayHandlers): Tray {
+  openSettingsHandler = handlers.onOpenSettings;
+  pasteLastTranscriptHandler = handlers.onPasteLastTranscript ?? null;
+  copyLastTranscriptHandler = handlers.onCopyLastTranscript ?? null;
 
   const icon = loadTrayIcon();
   
@@ -61,6 +71,17 @@ export function updateTrayMenu(): void {
     {
       label: 'Settings...',
       click: () => openSettingsHandler?.(),
+    },
+    { type: 'separator' },
+    {
+      label: 'Paste Last Transcript',
+      enabled: !!pasteLastTranscriptHandler,
+      click: () => pasteLastTranscriptHandler?.(),
+    },
+    {
+      label: 'Copy Last Transcript',
+      enabled: !!copyLastTranscriptHandler,
+      click: () => copyLastTranscriptHandler?.(),
     },
     { type: 'separator' },
     {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { app, ipcMain, dialog, session, shell } from 'electron';
+import { app, ipcMain, dialog, session, shell, Notification } from 'electron';
 import { createAudioWindow, getAudioWindow } from './audio-window';
 import { getRecordingPillWindow } from './recording-pill';
 import { getSettingsWindow, openSettingsWindow } from './settings-window';
@@ -11,7 +11,12 @@ import { AgentSidecarManager } from './agent-sidecar';
 import { createRecordingSession } from './recording-session';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
-import { injectIntoFocusedApp } from './inject-text';
+import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
+import {
+  getLastTranscript,
+  markLastTranscriptInjected,
+  setLastTranscript,
+} from './last-transcript';
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
 import type { AppConfig, AudioDevice, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
@@ -30,16 +35,47 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
   if (!result?.text) return;
-  try {
-    if (result.intent === 'agent') {
-      handleAgentTranscript(result.text);
-      return;
-    }
 
-    await injectIntoFocusedApp(result.text);
-  } catch (err) {
-    console.error('Transcription failed:', err);
-    dialog.showErrorBox('Transcription Error', err instanceof Error ? err.message : String(err));
+  if (result.intent === 'agent') {
+    handleAgentTranscript(result.text);
+    return;
+  }
+
+  setLastTranscript(result.text);
+
+  const injectResult = await injectIntoFocusedApp(result.text);
+  if (injectResult.kind === 'input-dispatched') {
+    markLastTranscriptInjected('dispatched');
+    return;
+  }
+
+  markLastTranscriptInjected('failed');
+  showRecoveryNotification(injectResult);
+}
+
+async function pasteLastTranscript(): Promise<void> {
+  const transcript = getLastTranscript();
+  if (!transcript) return;
+  await injectIntoFocusedApp(transcript.text);
+}
+
+function copyLastTranscript(): void {
+  const transcript = getLastTranscript();
+  if (!transcript) return;
+  copyLastTranscriptToClipboard(transcript.text);
+}
+
+function showRecoveryNotification(result: { kind: string; message?: string }): void {
+  const detail = result.message ? `: ${result.message}` : '';
+  const body = `Automatic paste failed${detail}. Use the tray to paste or copy the last transcript.`;
+  console.warn('Dictation recovery:', result.kind, result.message ?? '');
+
+  if (Notification.isSupported()) {
+    new Notification({
+      title: 'Dictation Paste Failed',
+      body,
+      silent: true,
+    }).show();
   }
 }
 
@@ -235,8 +271,10 @@ if (!gotSingleInstanceLock) {
 
     recordingSession.startKeyboardHook(routeRecordingResult);
 
-    createTray(() => {
-      openSettingsWindow();
+    createTray({
+      onOpenSettings: () => openSettingsWindow(),
+      onPasteLastTranscript: () => pasteLastTranscript(),
+      onCopyLastTranscript: () => copyLastTranscript(),
     });
 
     const startupConfig = getConfig();

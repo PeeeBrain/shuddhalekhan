@@ -77,7 +77,7 @@ describe('tray', () => {
   it('creates a tray with tooltip, icon, and context menu', async () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-1`);
 
-    createTray(vi.fn());
+    createTray({ onOpenSettings: vi.fn() });
 
     expect(createFromPath).toHaveBeenCalledWith(normalize('/app/icons/tray-icon.ico'));
     expect(resize).toHaveBeenCalledWith({ width: 16, height: 16 });
@@ -90,7 +90,7 @@ describe('tray', () => {
     existsSync.mockReturnValue(false);
     const { createTray } = await import(`../tray?test=${Date.now()}-2`);
 
-    createTray(vi.fn());
+    createTray({ onOpenSettings: vi.fn() });
 
     expect(createFromDataURL).toHaveBeenCalledWith(expect.stringContaining('data:image/svg+xml'));
   });
@@ -103,7 +103,7 @@ describe('tray', () => {
     });
     const { createTray } = await import(`../tray?test=${Date.now()}-packaged`);
 
-    createTray(vi.fn());
+    createTray({ onOpenSettings: vi.fn() });
 
     expect(createFromPath).toHaveBeenCalledWith(normalize('/resources/icons/tray-icon.ico'));
   });
@@ -111,7 +111,7 @@ describe('tray', () => {
   it('filters audio inputs and sends device selections to the audio window', async () => {
     audioWindow = { isDestroyed: () => false, webContents: { send } };
     const { createTray, updateAudioDevices } = await import(`../tray?test=${Date.now()}-3`);
-    createTray(vi.fn());
+    createTray({ onOpenSettings: vi.fn() });
 
     updateAudioDevices([
       { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
@@ -131,12 +131,12 @@ describe('tray', () => {
   it('keeps settings-owned actions out of the tray and handles exit', async () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-4`);
 
-    createTray(vi.fn());
+    createTray({ onOpenSettings: vi.fn() });
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
     expect(menu.some((item: { label?: string }) => item.label === 'Clean Transcription')).toBe(false);
     expect(menu.some((item: { label?: string }) => item.label === 'Check for Updates')).toBe(false);
-    menu[8].click();
+    menu[11].click();
 
     expect(quit).toHaveBeenCalled();
   });
@@ -145,7 +145,7 @@ describe('tray', () => {
     const settingsHandler = vi.fn();
     const { createTray } = await import(`../tray?test=${Date.now()}-settings`);
 
-    createTray(settingsHandler);
+    createTray({ onOpenSettings: settingsHandler });
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
     expect(menu[5].label).toBe('Agent Mode: Disabled');
@@ -156,7 +156,7 @@ describe('tray', () => {
   it('shows update status in the tray menu', async () => {
     const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-5`);
 
-    createTray(vi.fn());
+    createTray({ onOpenSettings: vi.fn() });
     updateUpdaterStatus({
       state: 'latest',
       currentVersion: '4.0.0',
@@ -168,5 +168,36 @@ describe('tray', () => {
 
     expect(menu[0].label).toBe('Shuddhalekhan v4.0.0');
     expect(menu[1].label).toBe('Update status: latest (4.0.0)');
+  });
+
+  it('exposes paste and copy last transcript actions when handlers are provided', async () => {
+    const pasteHandler = vi.fn();
+    const copyHandler = vi.fn();
+    const { createTray } = await import(`../tray?test=${Date.now()}-recovery`);
+
+    createTray({ onOpenSettings: vi.fn(), onPasteLastTranscript: pasteHandler, onCopyLastTranscript: copyHandler });
+    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
+
+    expect(menu[8].label).toBe('Paste Last Transcript');
+    expect(menu[8].enabled).toBe(true);
+    menu[8].click();
+    expect(pasteHandler).toHaveBeenCalled();
+
+    expect(menu[9].label).toBe('Copy Last Transcript');
+    expect(menu[9].enabled).toBe(true);
+    menu[9].click();
+    expect(copyHandler).toHaveBeenCalled();
+  });
+
+  it('disables recovery actions when no handlers are provided', async () => {
+    const { createTray } = await import(`../tray?test=${Date.now()}-no-recovery`);
+
+    createTray({ onOpenSettings: vi.fn() });
+    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
+
+    expect(menu[8].label).toBe('Paste Last Transcript');
+    expect(menu[8].enabled).toBe(false);
+    expect(menu[9].label).toBe('Copy Last Transcript');
+    expect(menu[9].enabled).toBe(false);
   });
 });
