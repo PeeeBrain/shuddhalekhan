@@ -57,6 +57,7 @@ describe('config store', () => {
       language: 'auto',
       task: 'transcribe',
       dictionary: [],
+      pasteStrategy: { default: 'ctrl-v', overrides: {} },
       agent: {
         enabled: false,
         provider: {
@@ -84,6 +85,7 @@ describe('config store', () => {
       language: 'auto',
       task: 'transcribe',
       dictionary: [],
+      pasteStrategy: { default: 'ctrl-v', overrides: {} },
       agent: {
         enabled: false,
         provider: {
@@ -114,6 +116,7 @@ describe('config store', () => {
       language: 'auto',
       task: 'transcribe',
       dictionary: [],
+      pasteStrategy: { default: 'ctrl-v', overrides: {} },
       agent: {
         enabled: false,
         provider: {
@@ -142,6 +145,7 @@ describe('config store', () => {
       language: 'auto',
       task: 'transcribe',
       dictionary: [],
+      pasteStrategy: { default: 'ctrl-v', overrides: {} },
       agent: {
         enabled: false,
         provider: {

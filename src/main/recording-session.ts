@@ -1,13 +1,15 @@
 import type { BrowserWindow } from 'electron';
-import type { RecordingIntent } from '../types/ipc';
+import type { DictationTargetSnapshot, RecordingIntent } from '../types/ipc';
 import { createAudioWindow, destroyAudioWindow, getAudioWindow } from './audio-window';
 import { keyboardHook } from './native/keyboard';
+import { captureForegroundTarget } from './native/target';
 import { hideRecordingPill, showRecordingPill } from './recording-pill';
 import { transcribe } from './whisper';
 
 export interface RecordingResult {
   text: string;
   intent: RecordingIntent;
+  targetSnapshot: DictationTargetSnapshot | null;
 }
 
 type AudioWindow = Pick<BrowserWindow, 'isDestroyed' | 'webContents'>;
@@ -29,11 +31,13 @@ interface RecordingSessionDeps {
   hideRecordingPill: () => void;
   transcribe: (audioData: Uint8Array) => Promise<string>;
   keyboardHook: KeyboardHookAdapter;
+  captureTarget: () => DictationTargetSnapshot | null;
   isAgentModeEnabled: () => boolean;
 }
 
 export class RecordingSession {
   private activeIntent: RecordingIntent | null = null;
+  private targetSnapshot: DictationTargetSnapshot | null = null;
   private isAudioWindowReady = false;
   private pendingStartRecording = false;
   private pendingEnd:
@@ -49,6 +53,7 @@ export class RecordingSession {
   begin(intent: RecordingIntent = 'dictation'): void {
     if (this.activeIntent) return;
     this.activeIntent = intent;
+    this.targetSnapshot = this.deps.captureTarget();
 
     const audioWin = this.deps.createAudioWindow();
     if (this.isAudioWindowReady && !audioWin.webContents.isLoading()) {
@@ -77,6 +82,7 @@ export class RecordingSession {
 
   async cancel(): Promise<void> {
     this.activeIntent = null;
+    this.targetSnapshot = null;
     this.pendingStartRecording = false;
     this.deps.hideRecordingPill();
     this.stopAudioCapture();
@@ -115,13 +121,16 @@ export class RecordingSession {
 
     if (audioData.byteLength <= 44) {
       console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
+      this.targetSnapshot = null;
       pendingEnd?.resolve(null);
       return null;
     }
 
     try {
       const text = await this.deps.transcribe(audioData);
-      const result = text ? { text, intent } : null;
+      const snapshot = this.targetSnapshot;
+      this.targetSnapshot = null;
+      const result = text ? { text, intent, targetSnapshot: snapshot } : null;
       pendingEnd?.resolve(result);
       return result;
     } catch (error) {
@@ -168,6 +177,7 @@ export function createRecordingSession(isAgentModeEnabled: () => boolean): Recor
     hideRecordingPill,
     transcribe,
     keyboardHook,
+    captureTarget: captureForegroundTarget,
     isAgentModeEnabled,
   });
 }

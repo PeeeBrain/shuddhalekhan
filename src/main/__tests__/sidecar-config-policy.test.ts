@@ -9,6 +9,7 @@ const baseConfig: AppConfig = {
   language: 'auto',
   task: 'transcribe',
   dictionary: [],
+  pasteStrategy: { default: 'ctrl-v', overrides: {} },
   agent: {
     enabled: true,
     provider: {

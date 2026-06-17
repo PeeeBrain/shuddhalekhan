@@ -72,4 +72,30 @@ describe('native clipboard paste dispatch', () => {
     expect(result.acceptedEvents).toBe(2);
     expect(result.errorCode).toBe(87);
   });
+
+  it('defaults to ctrl-v and sends four events', () => {
+    const result = simulatePaste();
+
+    expect(funcs.get('SendInput')).toHaveBeenCalledWith(4, expect.any(Buffer), 40);
+    expect(result.acceptedEvents).toBe(4);
+  });
+
+  it('sends six events for ctrl-shift-v', () => {
+    sendInputResult = 6;
+
+    const result = simulatePaste('ctrl-shift-v');
+
+    expect(funcs.get('SendInput')).toHaveBeenCalledWith(6, expect.any(Buffer), 40);
+    expect(result.acceptedEvents).toBe(6);
+  });
+
+  it('reports partial dispatch for a six-event strategy', () => {
+    sendInputResult = 5;
+    lastErrorCode = 87;
+
+    const result = simulatePaste('ctrl-shift-v');
+
+    expect(result.acceptedEvents).toBe(5);
+    expect(result.errorCode).toBe(87);
+  });
 });

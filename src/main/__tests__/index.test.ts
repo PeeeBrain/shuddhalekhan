@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
+import type { DictationTargetSnapshot } from '../../types/ipc';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
 
@@ -31,6 +32,7 @@ const getConfig = vi.fn(() => ({
   whisperUrl: 'http://localhost:8080/inference',
   selectedDeviceId: null,
   removeFillerWords: true,
+  pasteStrategy: { default: 'ctrl-v', overrides: {} },
   agent: {
     enabled: false,
     provider: {
@@ -43,6 +45,15 @@ const getConfig = vi.fn(() => ({
   },
 }));
 const simulatePaste = vi.fn(() => ({ acceptedEvents: 4 }));
+const defaultTargetSnapshot: DictationTargetSnapshot = {
+  hwnd: 12345,
+  processId: 67890,
+  threadId: 111,
+  windowClass: 'Notepad',
+  executablePath: 'C:\\Windows\\notepad.exe',
+  capturedAt: '2026-01-01T00:00:00.000Z',
+};
+const captureForegroundTarget = vi.fn(() => defaultTargetSnapshot);
 const checkForUpdates = vi.fn();
 const getUpdateStatus = vi.fn(() => ({
   state: 'idle',
@@ -76,6 +87,7 @@ mock.module('../native/keyboard', () => ({
   keyboardHook: { start: keyboardStart, stop: keyboardStop },
 }));
 mock.module('../native/clipboard', () => ({ simulatePaste }));
+mock.module('../native/target', () => ({ captureForegroundTarget }));
 mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destroyAudioWindow }));
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
 mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow }));
@@ -107,6 +119,7 @@ describe('main process IPC orchestration', () => {
     whisperUrl: 'http://localhost:8080/inference',
     selectedDeviceId: null,
     removeFillerWords: true,
+    pasteStrategy: { default: 'ctrl-v', overrides: {} },
     agent: {
       enabled: false,
       provider: {
@@ -169,6 +182,8 @@ describe('main process IPC orchestration', () => {
     })) as unknown as typeof fetch;
     simulatePaste.mockReset();
     simulatePaste.mockReturnValue({ acceptedEvents: 4 });
+    captureForegroundTarget.mockReset();
+    captureForegroundTarget.mockReturnValue(defaultTargetSnapshot);
     checkForUpdates.mockClear();
     getUpdateStatus.mockClear();
     updateAudioDevices.mockClear();

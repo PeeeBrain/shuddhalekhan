@@ -41,6 +41,7 @@ describe('RecordingSession', () => {
   let transcribe: ReturnType<typeof vi.fn>;
   let keyboardStart: ReturnType<typeof vi.fn>;
   let keyboardStop: ReturnType<typeof vi.fn>;
+  let captureTarget: ReturnType<typeof vi.fn>;
   let isAgentModeEnabled: ReturnType<typeof vi.fn>;
   let session: RecordingSession;
 
@@ -59,6 +60,14 @@ describe('RecordingSession', () => {
     transcribe = vi.fn(async () => 'transcribed text');
     keyboardStart = vi.fn();
     keyboardStop = vi.fn();
+    captureTarget = vi.fn(() => ({
+      hwnd: 12345,
+      processId: 67890,
+      threadId: 111,
+      windowClass: 'Notepad',
+      executablePath: 'C:\\Windows\\notepad.exe',
+      capturedAt: new Date().toISOString(),
+    }));
     isAgentModeEnabled = vi.fn(() => false);
     session = new RecordingSessionCtor({
       createAudioWindow,
@@ -71,6 +80,7 @@ describe('RecordingSession', () => {
         start: keyboardStart,
         stop: keyboardStop,
       },
+      captureTarget,
       isAgentModeEnabled,
     });
   });
@@ -111,11 +121,34 @@ describe('RecordingSession', () => {
     await expect(resultPromise).resolves.toEqual({
       text: 'transcribed text',
       intent: 'agent' satisfies RecordingIntent,
+      targetSnapshot: expect.any(Object),
     });
     expect(hideRecordingPill).toHaveBeenCalled();
     expect(audioWindow.webContents.send).toHaveBeenCalledWith('audio:stop-recording');
     expect(transcribe).toHaveBeenCalledWith(new Uint8Array(64));
     expect(session.isActive()).toBe(false);
+  });
+
+  it('captures the foreground target when recording begins and returns it with the result', async () => {
+    const snapshot = {
+      hwnd: 42,
+      processId: 100,
+      threadId: 200,
+      windowClass: 'Chrome_WidgetWin_1',
+      executablePath: 'C:\\Program Files\\Chrome\\chrome.exe',
+      capturedAt: new Date().toISOString(),
+    };
+    captureTarget.mockReturnValue(snapshot);
+    session.markAudioWindowReady();
+
+    session.begin('dictation');
+
+    expect(captureTarget).toHaveBeenCalledTimes(1);
+
+    const resultPromise = session.end();
+    await session.complete(new Uint8Array(64));
+
+    await expect(resultPromise).resolves.toMatchObject({ targetSnapshot: snapshot });
   });
 
   it('resolves empty WAV payloads to null without transcription', async () => {
