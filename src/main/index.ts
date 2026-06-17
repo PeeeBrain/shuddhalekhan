@@ -70,11 +70,19 @@ function copyLastTranscript(): void {
 }
 
 function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste Failed'): void {
-  const detail = result.kind === 'error' ? `: ${result.message}`
-    : result.kind === 'input-blocked' && result.reason ? `: ${result.reason}`
-    : result.kind === 'target-changed' && result.reason ? `: ${result.reason}`
-    : '';
-  const body = `Automatic paste failed${detail}. Use the tray to paste or copy the last transcript.`;
+  let body: string;
+  let detail = '';
+
+  if (result.kind === 'clipboard-conflict') {
+    body = 'Clipboard changed during dictation; use the tray to paste or copy the last transcript.';
+  } else {
+    detail = result.kind === 'error' ? `: ${result.message}`
+      : result.kind === 'input-blocked' && result.reason ? `: ${result.reason}`
+      : result.kind === 'target-changed' && result.reason ? `: ${result.reason}`
+      : '';
+    body = `Automatic paste failed${detail}. Use the tray to paste or copy the last transcript.`;
+  }
+
   console.warn('Dictation recovery:', result.kind, detail);
 
   if (Notification.isSupported()) {

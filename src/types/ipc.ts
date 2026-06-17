@@ -63,6 +63,7 @@ export type InjectResult =
   | { kind: 'input-dispatched'; acceptedEvents: number }
   | { kind: 'input-blocked'; acceptedEvents: number; reason?: string }
   | { kind: 'target-changed'; reason: string }
+  | { kind: 'clipboard-conflict'; reason: string }
   | { kind: 'error'; message: string };
 
 export interface RendererToMainInvokeChannels {

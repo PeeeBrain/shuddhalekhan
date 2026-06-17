@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 const vi = { fn: mock };
 let sendInputResult = 4;
 let lastErrorCode = 0;
+let clipboardSequenceNumber = 0;
 
 const funcs = new Map<string, ReturnType<typeof vi.fn>>();
 
@@ -17,6 +18,9 @@ mock.module('koffi', () => ({
           }
           if (name === 'GetLastError') {
             return lastErrorCode;
+          }
+          if (name === 'GetClipboardSequenceNumber') {
+            return clipboardSequenceNumber;
           }
           return 0;
         });
@@ -33,17 +37,24 @@ mock.module('koffi', () => ({
   },
 }));
 
-import type { simulatePaste as SimulatePaste, PasteDispatchResult } from '../../native/clipboard';
+import type {
+  simulatePaste as SimulatePaste,
+  PasteDispatchResult,
+  getClipboardSequenceNumber as GetClipboardSequenceNumber,
+} from '../../native/clipboard';
 
 describe('native clipboard paste dispatch', () => {
   let simulatePaste: typeof SimulatePaste;
+  let getClipboardSequenceNumber: typeof GetClipboardSequenceNumber;
 
   beforeEach(async () => {
     sendInputResult = 4;
     lastErrorCode = 0;
+    clipboardSequenceNumber = 0;
     funcs.clear();
     const mod = await import(`../../native/clipboard?test=${Date.now()}-${Math.random()}`);
     simulatePaste = mod.simulatePaste;
+    getClipboardSequenceNumber = mod.getClipboardSequenceNumber;
   });
 
   it('returns full dispatch when all four events are accepted', () => {
@@ -97,5 +108,13 @@ describe('native clipboard paste dispatch', () => {
 
     expect(result.acceptedEvents).toBe(5);
     expect(result.errorCode).toBe(87);
+  });
+
+  it('returns the current clipboard sequence number', () => {
+    clipboardSequenceNumber = 42;
+
+    const result = getClipboardSequenceNumber();
+
+    expect(result).toBe(42);
   });
 });

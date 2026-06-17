@@ -1,9 +1,15 @@
 import { clipboard } from 'electron';
-import { simulatePaste } from './native/clipboard';
+import { simulatePaste, getClipboardSequenceNumber } from './native/clipboard';
 import { captureForegroundTarget } from './native/target';
 import { resolvePasteStrategy } from './paste-strategy';
 import { getConfig } from './config';
+import {
+  captureClipboardSnapshot,
+  createNativeClipboardIO,
+  restoreClipboardSnapshot,
+} from './clipboard-transaction';
 import type { PasteDispatchResult } from './native/clipboard';
+import type { ClipboardSnapshot } from './clipboard-transaction';
 import type {
   DictationTargetSnapshot,
   InjectResult,
@@ -26,6 +32,9 @@ interface InjectTextDeps {
   captureTarget: () => DictationTargetSnapshot | null;
   resolvePasteStrategy: (executablePath: string | null, config: PasteStrategyConfig) => PasteStrategy;
   getPasteStrategyConfig: () => PasteStrategyConfig;
+  captureClipboardSnapshot: () => ClipboardSnapshot;
+  restoreClipboardSnapshot: (snapshot: ClipboardSnapshot) => void;
+  getClipboardSequenceNumber: () => number;
   delay: (ms: number) => Promise<void>;
 }
 
@@ -36,6 +45,9 @@ const defaultDeps: InjectTextDeps = {
   captureTarget: captureForegroundTarget,
   resolvePasteStrategy,
   getPasteStrategyConfig: () => getConfig().pasteStrategy,
+  captureClipboardSnapshot: () => captureClipboardSnapshot(createNativeClipboardIO()),
+  restoreClipboardSnapshot: (snapshot) => restoreClipboardSnapshot(snapshot, createNativeClipboardIO()),
+  getClipboardSequenceNumber,
   delay,
 };
 
@@ -115,32 +127,52 @@ async function runInjection(
   const strategyConfig = deps.getPasteStrategyConfig();
   const strategy = deps.resolvePasteStrategy(currentSnapshot?.executablePath ?? null, strategyConfig);
 
-  let originalClipboard: string;
-  try {
-    originalClipboard = deps.readText();
-  } catch (error) {
-    return { kind: 'error', message: formatError('Failed to read clipboard', error) };
-  }
+  let snapshot: ClipboardSnapshot | undefined;
+  let sequenceAfterStage: number | undefined;
+  let result: InjectResult | undefined;
 
   try {
+    snapshot = deps.captureClipboardSnapshot();
     deps.writeText(text);
+    sequenceAfterStage = deps.getClipboardSequenceNumber();
+
+    await deps.delay(50);
+
+    let dispatchResult: PasteDispatchResult;
+    try {
+      dispatchResult = deps.simulatePaste(strategy);
+    } catch (error) {
+      result = { kind: 'error', message: formatError('Paste dispatch failed', error) };
+      return result;
+    }
+
+    await deps.delay(100);
+
+    result = buildDispatchResult(dispatchResult, strategy);
   } catch (error) {
-    return { kind: 'error', message: formatError('Failed to stage clipboard', error) };
+    result = { kind: 'error', message: formatError('Clipboard transaction failed', error) };
+  } finally {
+    if (snapshot !== undefined && sequenceAfterStage !== undefined) {
+      const conflict = await finalizeClipboard(snapshot, sequenceAfterStage, deps);
+      // Only overwrite a successful dispatch result. If paste dispatch already
+      // failed (error / input-blocked / target-changed), that failure is more
+      // actionable than the secondary clipboard-conflict observation.
+      if (conflict && result?.kind === 'input-dispatched') {
+        result = {
+          kind: 'clipboard-conflict',
+          reason: 'Clipboard contents changed during dictation',
+        };
+      }
+    }
   }
 
-  await deps.delay(50);
+  return result ?? { kind: 'error', message: 'Unknown injection state' };
+}
 
-  let dispatchResult: PasteDispatchResult;
-  try {
-    dispatchResult = deps.simulatePaste(strategy);
-  } catch (error) {
-    await restoreClipboard(originalClipboard, deps);
-    return { kind: 'error', message: formatError('Paste dispatch failed', error) };
-  }
-
-  await deps.delay(100);
-  await restoreClipboard(originalClipboard, deps);
-
+function buildDispatchResult(
+  dispatchResult: PasteDispatchResult,
+  strategy: PasteStrategy
+): InjectResult {
   const expectedEvents = strategy === 'ctrl-shift-v' ? 6 : 4;
 
   if (dispatchResult.acceptedEvents === 0) {
@@ -166,13 +198,35 @@ async function runInjection(
   return { kind: 'input-dispatched', acceptedEvents: dispatchResult.acceptedEvents };
 }
 
-async function restoreClipboard(originalClipboard: string, deps: InjectTextDeps): Promise<void> {
-  if (!originalClipboard) return;
+async function finalizeClipboard(
+  snapshot: ClipboardSnapshot,
+  sequenceAfterStage: number,
+  deps: InjectTextDeps
+): Promise<boolean> {
+  let sequenceBeforeRestore: number;
   try {
-    deps.writeText(originalClipboard);
+    sequenceBeforeRestore = deps.getClipboardSequenceNumber();
+  } catch {
+    // If we cannot read the current sequence number, assume the clipboard may
+    // have changed and leave it untouched to avoid overwriting user data.
+    return false;
+  }
+
+  if (sequenceBeforeRestore !== sequenceAfterStage) {
+    // Another actor modified the clipboard after we staged the transcript.
+    // Note: this is a uint32_t equality check, so a sequence-number wrap-around
+    // that lands on the same value would be treated as "no conflict". This is
+    // acceptable for a desktop dictation app and still safer than restoring over
+    // visibly-changed clipboard contents.
+    return true;
+  }
+
+  try {
+    deps.restoreClipboardSnapshot(snapshot);
   } catch {
     // Preserve the original failure mode; restoration failure is not recoverable here.
   }
+  return false;
 }
 
 function formatError(context: string, error: unknown): string {
