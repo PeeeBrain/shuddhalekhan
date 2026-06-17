@@ -3,8 +3,8 @@ import type { BrowserWindow } from 'electron';
 import type { RecordingIntent } from '../types/ipc';
 import { createSingletonWindow } from './window-factory';
 
-const PILL_WINDOW_WIDTH = 104;
-const PILL_WINDOW_HEIGHT = 46;
+const PILL_WINDOW_WIDTH = 112;
+const PILL_WINDOW_HEIGHT = 52;
 let initialIntent: RecordingIntent = 'dictation';
 
 const pillWindow = createSingletonWindow({
