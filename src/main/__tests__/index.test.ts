@@ -45,6 +45,7 @@ const getConfig = vi.fn(() => ({
   },
 }));
 const simulatePaste = vi.fn(() => ({ acceptedEvents: 4 }));
+const getClipboardSequenceNumber = vi.fn(() => 1);
 const defaultTargetSnapshot: DictationTargetSnapshot = {
   hwnd: 12345,
   processId: 67890,
@@ -88,7 +89,7 @@ mock.module('../native/keyboard', () => ({
 }));
 mock.module('../native/clipboard', () => ({
   simulatePaste,
-  getClipboardSequenceNumber: vi.fn(() => 1),
+  getClipboardSequenceNumber,
 }));
 mock.module('../native/target', () => ({ captureForegroundTarget }));
 mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destroyAudioWindow }));
@@ -165,6 +166,7 @@ describe('main process IPC orchestration', () => {
       ipcListeners.set(channel, listener);
     });
     electronMock.clipboard.readText.mockImplementation(() => clipboardText.value);
+    electronMock.clipboard.availableFormats.mockReturnValue(['text/plain']);
     electronMock.clipboard.writeText.mockImplementation((text: string) => {
       clipboardText.value = text;
     });
@@ -185,6 +187,8 @@ describe('main process IPC orchestration', () => {
     })) as unknown as typeof fetch;
     simulatePaste.mockReset();
     simulatePaste.mockReturnValue({ acceptedEvents: 4 });
+    getClipboardSequenceNumber.mockReset();
+    getClipboardSequenceNumber.mockReturnValue(1);
     captureForegroundTarget.mockReset();
     captureForegroundTarget.mockReturnValue(defaultTargetSnapshot);
     checkForUpdates.mockClear();
@@ -580,5 +584,25 @@ describe('main process IPC orchestration', () => {
     await trayHandlers.onPasteLastTranscript?.();
 
     expect(notificationShow).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a distinct recovery notification when the clipboard changes during dictation', async () => {
+    getClipboardSequenceNumber.mockReturnValueOnce(1).mockReturnValueOnce(2);
+
+    ipcListeners.get('audio-window-ready')?.({});
+    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
+    onStart('dictation');
+    onStop();
+
+    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
+    await listenerPromise;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(notificationShow).toHaveBeenCalledTimes(1);
+    expect(electronMock.Notification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining('Clipboard changed during dictation'),
+      })
+    );
   });
 });

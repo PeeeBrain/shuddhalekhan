@@ -181,6 +181,29 @@ describe('injectIntoFocusedApp', () => {
     expect(deps.restoreClipboardSnapshot).not.toHaveBeenCalled();
   });
 
+  it('treats a sequence number of 0 as valid conflict-detection input', async () => {
+    deps.getClipboardSequenceNumber.mockReturnValue(0);
+
+    const result = await injectIntoFocusedApp('text', null, deps);
+
+    expect(result).toEqual({ kind: 'input-dispatched', acceptedEvents: 4 });
+    expect(deps.restoreClipboardSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves an earlier paste dispatch error over a later clipboard-conflict', async () => {
+    let call = 0;
+    deps.getClipboardSequenceNumber.mockImplementation(() => ++call);
+    deps.simulatePaste.mockImplementation(() => {
+      throw new Error('SendInput failed');
+    });
+
+    const result = await injectIntoFocusedApp('text', null, deps);
+
+    expect(result.kind).toBe('error');
+    expect((result as Extract<InjectResult, { kind: 'error' }>).message).toContain('SendInput failed');
+    expect(deps.restoreClipboardSnapshot).not.toHaveBeenCalled();
+  });
+
   it('does not overwrite the clipboard when a conflict is detected', async () => {
     deps.captureClipboardSnapshot.mockReturnValue(
       createClipboardSnapshot({ wasEmpty: false, text: 'user content' })

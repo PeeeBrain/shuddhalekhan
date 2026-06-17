@@ -30,6 +30,12 @@ function buildKeyboardInput(vk: number, flags: number): Buffer {
 }
 
 export function getClipboardSequenceNumber(): number {
+  // GetClipboardSequenceNumber returns a uint32_t value. Windows documents it as
+  // "monotonically increasing", but it can wrap around after ~4 billion writes.
+  // Callers compare snapshots with simple equality, so a wrap to the same value
+  // would silently look like "no conflict". This is acceptable in practice for a
+  // desktop dictation app, but callers should not rely on strict ordering across
+  // wrap-around.
   return Number(GetClipboardSequenceNumber());
 }
 

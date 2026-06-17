@@ -65,6 +65,39 @@ describe('restoreClipboardSnapshot', () => {
 
     expect(clear).toHaveBeenCalledTimes(1);
   });
+
+  it('restores a snapshot containing multiple formats', () => {
+    const writeText = mock();
+    const writeHTML = mock();
+    const writeRTF = mock();
+    const writeImage = mock();
+    const writeBookmark = mock();
+    const io = fakeClipboardIO({
+      writeText,
+      writeHTML,
+      writeRTF,
+      writeImage,
+      writeBookmark,
+    });
+
+    restoreClipboardSnapshot(
+      {
+        wasEmpty: false,
+        text: 'plain',
+        html: '<p>html</p>',
+        rtf: '{\\rtf1}',
+        imagePng: Buffer.from('png'),
+        bookmark: { title: 'Example', url: 'https://example.com' },
+      },
+      io
+    );
+
+    expect(writeText).toHaveBeenCalledWith('plain');
+    expect(writeHTML).toHaveBeenCalledWith('<p>html</p>');
+    expect(writeRTF).toHaveBeenCalledWith('{\\rtf1}');
+    expect(writeImage).toHaveBeenCalledWith(Buffer.from('png'));
+    expect(writeBookmark).toHaveBeenCalledWith('Example', 'https://example.com');
+  });
 });
 
 describe('HTML clipboard contents', () => {
@@ -156,6 +189,17 @@ describe('unsupported or skipped formats', () => {
 
     expect(snapshot.text).toBe('hello');
     expect(snapshot.skippedFormats).toContain('application/x-custom');
+  });
+
+  it('deduplicates repeated unsupported formats', () => {
+    const io = fakeClipboardIO({
+      formats: ['text/plain', 'application/x-custom', 'application/x-custom'],
+      readText: () => 'hello',
+    });
+
+    const snapshot = captureClipboardSnapshot(io);
+
+    expect(snapshot.skippedFormats?.filter((format) => format === 'application/x-custom')).toHaveLength(1);
   });
 
   it('skips oversized image data but preserves text', () => {

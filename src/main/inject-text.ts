@@ -38,8 +38,6 @@ interface InjectTextDeps {
   delay: (ms: number) => Promise<void>;
 }
 
-const nativeClipboardIO = createNativeClipboardIO();
-
 const defaultDeps: InjectTextDeps = {
   readText: () => clipboard.readText(),
   writeText: (text) => clipboard.writeText(text),
@@ -47,8 +45,8 @@ const defaultDeps: InjectTextDeps = {
   captureTarget: captureForegroundTarget,
   resolvePasteStrategy,
   getPasteStrategyConfig: () => getConfig().pasteStrategy,
-  captureClipboardSnapshot: () => captureClipboardSnapshot(nativeClipboardIO),
-  restoreClipboardSnapshot: (snapshot) => restoreClipboardSnapshot(snapshot, nativeClipboardIO),
+  captureClipboardSnapshot: () => captureClipboardSnapshot(createNativeClipboardIO()),
+  restoreClipboardSnapshot: (snapshot) => restoreClipboardSnapshot(snapshot, createNativeClipboardIO()),
   getClipboardSequenceNumber,
   delay,
 };
@@ -130,8 +128,8 @@ async function runInjection(
   const strategy = deps.resolvePasteStrategy(currentSnapshot?.executablePath ?? null, strategyConfig);
 
   let snapshot: ClipboardSnapshot | undefined;
-  let sequenceAfterStage = 0;
-  let result: InjectResult;
+  let sequenceAfterStage: number | undefined;
+  let result: InjectResult | undefined;
 
   try {
     snapshot = deps.captureClipboardSnapshot();
@@ -154,9 +152,12 @@ async function runInjection(
   } catch (error) {
     result = { kind: 'error', message: formatError('Clipboard transaction failed', error) };
   } finally {
-    if (snapshot !== undefined && sequenceAfterStage > 0) {
+    if (snapshot !== undefined && sequenceAfterStage !== undefined) {
       const conflict = await finalizeClipboard(snapshot, sequenceAfterStage, deps);
-      if (conflict) {
+      // Only overwrite a successful dispatch result. If paste dispatch already
+      // failed (error / input-blocked / target-changed), that failure is more
+      // actionable than the secondary clipboard-conflict observation.
+      if (conflict && result?.kind === 'input-dispatched') {
         result = {
           kind: 'clipboard-conflict',
           reason: 'Clipboard contents changed during dictation',
@@ -165,7 +166,7 @@ async function runInjection(
     }
   }
 
-  return result;
+  return result ?? { kind: 'error', message: 'Unknown injection state' };
 }
 
 function buildDispatchResult(
@@ -213,6 +214,10 @@ async function finalizeClipboard(
 
   if (sequenceBeforeRestore !== sequenceAfterStage) {
     // Another actor modified the clipboard after we staged the transcript.
+    // Note: this is a uint32_t equality check, so a sequence-number wrap-around
+    // that lands on the same value would be treated as "no conflict". This is
+    // acceptable for a desktop dictation app and still safer than restoring over
+    // visibly-changed clipboard contents.
     return true;
   }
 

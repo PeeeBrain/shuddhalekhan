@@ -30,16 +30,31 @@ export interface ClipboardIO {
   clear: () => void;
 }
 
-const SUPPORTED_FORMATS = new Set([
-  'text/plain',
-  'text/html',
-  'Rich Text Format',
-  'image/png',
+const PLAIN_TEXT_FORMAT = 'text/plain';
+const HTML_FORMAT = 'text/html';
+const RTF_FORMAT = 'Rich Text Format';
+const PNG_FORMAT = 'image/png';
+const BOOKMARK_FORMATS = new Set([
   'text/uri-list',
+  'URL Bookmark',
+  'UniformResourceLocatorW',
+]);
+const BOOKMARK_SKIP_LABEL = 'URL Bookmark';
+
+const SUPPORTED_FORMATS = new Set([
+  PLAIN_TEXT_FORMAT,
+  HTML_FORMAT,
+  RTF_FORMAT,
+  PNG_FORMAT,
+  ...BOOKMARK_FORMATS,
 ]);
 
 function stringByteLength(value: string): number {
   return Buffer.byteLength(value, 'utf8');
+}
+
+function hasAnyFormat(formats: string[], candidates: Set<string>): boolean {
+  return formats.some((format) => candidates.has(format));
 }
 
 export function captureClipboardSnapshot(
@@ -47,69 +62,80 @@ export function captureClipboardSnapshot(
   maxSize = MAX_CLIPBOARD_SNAPSHOT_SIZE
 ): ClipboardSnapshot {
   const formats = deps.availableFormats();
-  const skippedFormats: string[] = [];
+  const skippedFormats = new Set<string>();
   for (const format of formats) {
     if (!SUPPORTED_FORMATS.has(format)) {
-      skippedFormats.push(format);
+      skippedFormats.add(format);
     }
   }
 
-  const snapshot: ClipboardSnapshot = { wasEmpty: true, skippedFormats };
+  const snapshot: ClipboardSnapshot = { wasEmpty: true, skippedFormats: [] };
   let usedSize = 0;
 
-  const text = deps.readText();
-  if (text) {
-    snapshot.wasEmpty = false;
-    snapshot.text = text;
-    usedSize += stringByteLength(text);
-  }
-
-  const html = deps.readHTML();
-  if (html) {
-    const size = stringByteLength(html);
-    if (usedSize + size <= maxSize) {
+  if (formats.includes(PLAIN_TEXT_FORMAT)) {
+    const text = deps.readText();
+    if (text) {
       snapshot.wasEmpty = false;
-      snapshot.html = html;
-      usedSize += size;
-    } else {
-      skippedFormats.push('text/html');
+      snapshot.text = text;
+      usedSize += stringByteLength(text);
     }
   }
 
-  const rtf = deps.readRTF();
-  if (rtf) {
-    const size = stringByteLength(rtf);
-    if (usedSize + size <= maxSize) {
-      snapshot.wasEmpty = false;
-      snapshot.rtf = rtf;
-      usedSize += size;
-    } else {
-      skippedFormats.push('Rich Text Format');
+  if (formats.includes(HTML_FORMAT)) {
+    const html = deps.readHTML();
+    if (html) {
+      const size = stringByteLength(html);
+      if (usedSize + size <= maxSize) {
+        snapshot.wasEmpty = false;
+        snapshot.html = html;
+        usedSize += size;
+      } else {
+        skippedFormats.add(HTML_FORMAT);
+      }
     }
   }
 
-  const bookmark = deps.readBookmark();
-  if (bookmark) {
-    const size = stringByteLength(bookmark.title) + stringByteLength(bookmark.url);
-    if (usedSize + size <= maxSize) {
-      snapshot.wasEmpty = false;
-      snapshot.bookmark = bookmark;
-      usedSize += size;
-    } else {
-      skippedFormats.push('text/uri-list');
+  if (formats.includes(RTF_FORMAT)) {
+    const rtf = deps.readRTF();
+    if (rtf) {
+      const size = stringByteLength(rtf);
+      if (usedSize + size <= maxSize) {
+        snapshot.wasEmpty = false;
+        snapshot.rtf = rtf;
+        usedSize += size;
+      } else {
+        skippedFormats.add(RTF_FORMAT);
+      }
     }
   }
 
-  const image = deps.readImage();
-  if (image) {
-    if (usedSize + image.length <= maxSize) {
-      snapshot.wasEmpty = false;
-      snapshot.imagePng = image;
-    } else {
-      skippedFormats.push('image/png');
+  if (hasAnyFormat(formats, BOOKMARK_FORMATS)) {
+    const bookmark = deps.readBookmark();
+    if (bookmark) {
+      const size = stringByteLength(bookmark.title) + stringByteLength(bookmark.url);
+      if (usedSize + size <= maxSize) {
+        snapshot.wasEmpty = false;
+        snapshot.bookmark = bookmark;
+        usedSize += size;
+      } else {
+        skippedFormats.add(BOOKMARK_SKIP_LABEL);
+      }
     }
   }
 
+  if (formats.includes(PNG_FORMAT)) {
+    const image = deps.readImage();
+    if (image) {
+      if (usedSize + image.length <= maxSize) {
+        snapshot.wasEmpty = false;
+        snapshot.imagePng = image;
+      } else {
+        skippedFormats.add(PNG_FORMAT);
+      }
+    }
+  }
+
+  snapshot.skippedFormats = [...skippedFormats];
   return snapshot;
 }
 
@@ -118,6 +144,11 @@ export function restoreClipboardSnapshot(snapshot: ClipboardSnapshot, deps: Clip
     deps.clear();
     return;
   }
+
+  // TODO: Electron's clipboard.write() can write several formats in a single
+  // clipboard open/close cycle, which would remove the race window between the
+  // sequential write* calls below. Migrate to a batched write once the API
+  // cleanly supports every format combination we need to restore.
   if (snapshot.text !== undefined) {
     deps.writeText(snapshot.text);
   }
