@@ -18,6 +18,10 @@ const store = new Store<StoreConfig>({
     language: 'auto',
     task: 'transcribe',
     dictionary: [],
+    pasteStrategy: {
+      default: 'ctrl-v',
+      overrides: {},
+    },
     agent: {
       enabled: false,
       provider: {
@@ -73,6 +77,7 @@ export function getConfig(): AppConfig {
     language: store.get('language') ?? 'auto',
     task: store.get('task') ?? 'transcribe',
     dictionary: store.get('dictionary') ?? [],
+    pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
     agent: {
       enabled: agent?.enabled ?? false,
       provider: {

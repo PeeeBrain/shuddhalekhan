@@ -43,7 +43,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
 
   setLastTranscript(result.text);
 
-  const injectResult = await injectIntoFocusedApp(result.text);
+  const injectResult = await injectIntoFocusedApp(result.text, result.targetSnapshot);
   if (injectResult.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
     return;
@@ -72,6 +72,7 @@ function copyLastTranscript(): void {
 function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste Failed'): void {
   const detail = result.kind === 'error' ? `: ${result.message}`
     : result.kind === 'input-blocked' && result.reason ? `: ${result.reason}`
+    : result.kind === 'target-changed' && result.reason ? `: ${result.reason}`
     : '';
   const body = `Automatic paste failed${detail}. Use the tray to paste or copy the last transcript.`;
   console.warn('Dictation recovery:', result.kind, detail);

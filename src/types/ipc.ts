@@ -48,9 +48,21 @@ export interface RendererToMainSendChannels {
   'agent-toast:dismiss': () => void;
 }
 
+export interface DictationTargetSnapshot {
+  hwnd: number;
+  processId: number;
+  threadId: number;
+  windowClass: string;
+  executablePath: string | null;
+  capturedAt: string;
+}
+
+export type PasteStrategy = 'ctrl-v' | 'shift-insert' | 'ctrl-shift-v';
+
 export type InjectResult =
   | { kind: 'input-dispatched'; acceptedEvents: number }
   | { kind: 'input-blocked'; acceptedEvents: number; reason?: string }
+  | { kind: 'target-changed'; reason: string }
   | { kind: 'error'; message: string };
 
 export interface RendererToMainInvokeChannels {
@@ -138,6 +150,11 @@ export type AgentToastState =
       message: string;
     };
 
+export interface PasteStrategyConfig {
+  default: PasteStrategy;
+  overrides: Record<string, PasteStrategy>;
+}
+
 export interface AppConfig {
   whisperUrl: string;
   selectedDeviceId: string | null;
@@ -145,6 +162,7 @@ export interface AppConfig {
   language: string;
   task: 'transcribe' | 'translate';
   dictionary: string[];
+  pasteStrategy: PasteStrategyConfig;
   agent: {
     enabled: boolean;
     provider: {

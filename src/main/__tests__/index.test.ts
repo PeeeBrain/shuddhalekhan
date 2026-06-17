@@ -31,6 +31,7 @@ const getConfig = vi.fn(() => ({
   whisperUrl: 'http://localhost:8080/inference',
   selectedDeviceId: null,
   removeFillerWords: true,
+  pasteStrategy: { default: 'ctrl-v', overrides: {} },
   agent: {
     enabled: false,
     provider: {
@@ -107,6 +108,7 @@ describe('main process IPC orchestration', () => {
     whisperUrl: 'http://localhost:8080/inference',
     selectedDeviceId: null,
     removeFillerWords: true,
+    pasteStrategy: { default: 'ctrl-v', overrides: {} },
     agent: {
       enabled: false,
       provider: {

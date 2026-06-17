@@ -6,6 +6,7 @@ import type {
   InjectResult,
 } from '../inject-text';
 import type { PasteDispatchResult } from '../native/clipboard';
+import type { DictationTargetSnapshot, PasteStrategy } from '../../types/ipc';
 
 const vi = { fn: mock };
 let injectIntoFocusedApp: typeof InjectIntoFocusedApp;
@@ -13,136 +14,116 @@ let copyLastTranscriptToClipboard: typeof CopyLastTranscriptToClipboard;
 
 installElectronMock();
 mock.module('../native/clipboard', () => ({ simulatePaste: vi.fn() }));
+mock.module('../config', () => ({
+  getConfig: () => ({
+    pasteStrategy: { default: 'ctrl-v', overrides: {} },
+  }),
+}));
+
+const defaultTarget: DictationTargetSnapshot = {
+  hwnd: 12345,
+  processId: 67890,
+  threadId: 111,
+  windowClass: 'Notepad',
+  executablePath: 'C:\\Windows\\notepad.exe',
+  capturedAt: new Date().toISOString(),
+};
+
+function createDeps(overrides: Record<string, unknown> = {}) {
+  return {
+    readText: overrides.readText ?? vi.fn(() => 'original clipboard'),
+    writeText: overrides.writeText ?? vi.fn(),
+    simulatePaste: overrides.simulatePaste ?? vi.fn((): PasteDispatchResult => ({ acceptedEvents: 4 })),
+    captureTarget: overrides.captureTarget ?? vi.fn(() => defaultTarget),
+    resolvePasteStrategy: overrides.resolvePasteStrategy ?? vi.fn(() => 'ctrl-v' as PasteStrategy),
+    getPasteStrategyConfig: overrides.getPasteStrategyConfig ?? vi.fn(() => ({ default: 'ctrl-v' as PasteStrategy, overrides: {} })),
+    delay: overrides.delay ?? vi.fn(async () => undefined),
+  };
+}
 
 describe('injectIntoFocusedApp', () => {
-  let readText: ReturnType<typeof vi.fn>;
-  let writeText: ReturnType<typeof vi.fn>;
-  let simulatePaste: ReturnType<typeof vi.fn>;
-  let delay: ReturnType<typeof vi.fn>;
+  let deps: ReturnType<typeof createDeps>;
 
   beforeEach(async () => {
     ({ injectIntoFocusedApp, copyLastTranscriptToClipboard } = await import(
       `../inject-text?test=${Date.now()}-${Math.random()}`
     ));
-    readText = vi.fn(() => 'original clipboard');
-    writeText = vi.fn();
-    simulatePaste = vi.fn((): PasteDispatchResult => ({ acceptedEvents: 4 }));
-    delay = vi.fn(async () => undefined);
+    deps = createDeps();
   });
 
   it('returns input-dispatched with the accepted event count on full dispatch', async () => {
-    const result = await injectIntoFocusedApp('transcribed text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    const result = await injectIntoFocusedApp('transcribed text', null, deps);
 
     expect(result).toEqual({ kind: 'input-dispatched', acceptedEvents: 4 });
-    expect(readText).toHaveBeenCalledTimes(1);
-    expect(writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
-    expect(delay).toHaveBeenNthCalledWith(1, 50);
-    expect(simulatePaste).toHaveBeenCalledTimes(1);
-    expect(delay).toHaveBeenNthCalledWith(2, 100);
-    expect(writeText).toHaveBeenNthCalledWith(2, 'original clipboard');
+    expect(deps.readText).toHaveBeenCalledTimes(1);
+    expect(deps.writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
+    expect(deps.delay).toHaveBeenNthCalledWith(1, 50);
+    expect(deps.simulatePaste).toHaveBeenCalledTimes(1);
+    expect(deps.delay).toHaveBeenNthCalledWith(2, 100);
+    expect(deps.writeText).toHaveBeenNthCalledWith(2, 'original clipboard');
   });
 
   it('does not restore clipboard when the previous clipboard was empty', async () => {
-    readText.mockReturnValue('');
+    deps.readText.mockReturnValue('');
 
-    await injectIntoFocusedApp('text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    await injectIntoFocusedApp('text', null, deps);
 
-    expect(writeText).toHaveBeenCalledTimes(1);
-    expect(writeText).toHaveBeenCalledWith('text');
+    expect(deps.writeText).toHaveBeenCalledTimes(1);
+    expect(deps.writeText).toHaveBeenCalledWith('text');
   });
 
   it('returns input-blocked when zero events are accepted', async () => {
-    simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
+    deps.simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
 
-    const result = await injectIntoFocusedApp('text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    const result = await injectIntoFocusedApp('text', null, deps);
 
     expect(result).toEqual({ kind: 'input-blocked', acceptedEvents: 0, reason: 'No input events accepted (Win32 error 5)' });
   });
 
   it('returns input-blocked with diagnostics for partial dispatch', async () => {
-    simulatePaste.mockReturnValue({ acceptedEvents: 2, errorCode: 87 });
+    deps.simulatePaste.mockReturnValue({ acceptedEvents: 2, errorCode: 87 });
 
-    const result = await injectIntoFocusedApp('text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    const result = await injectIntoFocusedApp('text', null, deps);
 
     expect(result).toEqual({ kind: 'input-blocked', acceptedEvents: 2, reason: 'Partial input dispatch (Win32 error 87)' });
   });
 
   it('returns input-blocked without an error code when none is reported', async () => {
-    simulatePaste.mockReturnValue({ acceptedEvents: 1 });
+    deps.simulatePaste.mockReturnValue({ acceptedEvents: 1 });
 
-    const result = await injectIntoFocusedApp('text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    const result = await injectIntoFocusedApp('text', null, deps);
 
     expect(result).toEqual({ kind: 'input-blocked', acceptedEvents: 1, reason: 'Partial input dispatch' });
   });
 
   it('returns error when reading the clipboard fails', async () => {
-    readText.mockImplementation(() => {
+    deps.readText.mockImplementation(() => {
       throw new Error('clipboard locked');
     });
 
-    const result = await injectIntoFocusedApp('text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    const result = await injectIntoFocusedApp('text', null, deps);
 
     expect(result.kind).toBe('error');
     expect((result as Extract<InjectResult, { kind: 'error' }>).message).toContain('clipboard locked');
   });
 
   it('returns error when staging the clipboard fails', async () => {
-    writeText.mockImplementation(() => {
+    deps.writeText.mockImplementation(() => {
       throw new Error('write failed');
     });
 
-    const result = await injectIntoFocusedApp('text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    const result = await injectIntoFocusedApp('text', null, deps);
 
     expect(result.kind).toBe('error');
     expect((result as Extract<InjectResult, { kind: 'error' }>).message).toContain('write failed');
   });
 
   it('returns error when paste dispatch throws', async () => {
-    simulatePaste.mockImplementation(() => {
+    deps.simulatePaste.mockImplementation(() => {
       throw new Error('SendInput failed');
     });
 
-    const result = await injectIntoFocusedApp('text', {
-      readText,
-      writeText,
-      simulatePaste,
-      delay,
-    });
+    const result = await injectIntoFocusedApp('text', null, deps);
 
     expect(result.kind).toBe('error');
     expect((result as Extract<InjectResult, { kind: 'error' }>).message).toContain('SendInput failed');
@@ -150,17 +131,17 @@ describe('injectIntoFocusedApp', () => {
 
   it('serializes concurrent injections so they do not interleave', async () => {
     const writeOrder: string[] = [];
-    writeText.mockImplementation((text: string) => {
+    deps.writeText.mockImplementation((text: string) => {
       writeOrder.push(text);
     });
-    simulatePaste.mockImplementation(() => {
+    deps.simulatePaste.mockImplementation(() => {
       writeOrder.push('paste');
       return { acceptedEvents: 4 };
     });
 
     const [first, second] = await Promise.all([
-      injectIntoFocusedApp('first', { readText, writeText, simulatePaste, delay }),
-      injectIntoFocusedApp('second', { readText, writeText, simulatePaste, delay }),
+      injectIntoFocusedApp('first', null, deps),
+      injectIntoFocusedApp('second', null, deps),
     ]);
 
     expect(first.kind).toBe('input-dispatched');
@@ -168,11 +149,65 @@ describe('injectIntoFocusedApp', () => {
     expect(writeOrder).toEqual(['first', 'paste', 'original clipboard', 'second', 'paste', 'original clipboard']);
   });
 
-  it('copies the last transcript to the clipboard without synthetic input', () => {
-    copyLastTranscriptToClipboard('saved text', { readText, writeText, simulatePaste, delay });
+  it('captures the current foreground target before injection', async () => {
+    await injectIntoFocusedApp('text', null, deps);
 
-    expect(writeText).toHaveBeenCalledTimes(1);
-    expect(writeText).toHaveBeenCalledWith('saved text');
-    expect(simulatePaste).not.toHaveBeenCalled();
+    expect(deps.captureTarget).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves the paste strategy from the current target executable', async () => {
+    deps.resolvePasteStrategy.mockReturnValue('shift-insert');
+
+    await injectIntoFocusedApp('text', null, deps);
+
+    expect(deps.resolvePasteStrategy).toHaveBeenCalledWith('C:\\Windows\\notepad.exe', { default: 'ctrl-v', overrides: {} });
+    expect(deps.simulatePaste).toHaveBeenCalledWith('shift-insert');
+  });
+
+  it('returns target-changed when the foreground target moved to a different process', async () => {
+    const startSnapshot: DictationTargetSnapshot = { ...defaultTarget, processId: 100 };
+    deps.captureTarget.mockReturnValue({ ...defaultTarget, processId: 200 });
+
+    const result = await injectIntoFocusedApp('text', startSnapshot, deps);
+
+    expect(result).toEqual({ kind: 'target-changed', reason: 'target-changed: focus moved to a different process' });
+    expect(deps.simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('returns target-changed when the foreground target is no longer inspectable', async () => {
+    deps.captureTarget.mockReturnValue(null);
+
+    const result = await injectIntoFocusedApp('text', defaultTarget, deps);
+
+    expect(result).toEqual({ kind: 'target-changed', reason: 'target-changed: foreground target is missing or invalid' });
+    expect(deps.simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('dispatches paste for a different window in the same process and logs the transition', async () => {
+    const startSnapshot: DictationTargetSnapshot = { ...defaultTarget, hwnd: 1 };
+    deps.captureTarget.mockReturnValue({ ...defaultTarget, hwnd: 2 });
+
+    const result = await injectIntoFocusedApp('text', startSnapshot, deps);
+
+    expect(result).toEqual({ kind: 'input-dispatched', acceptedEvents: 4 });
+  });
+
+  it('copies the last transcript to the clipboard without synthetic input', () => {
+    copyLastTranscriptToClipboard('saved text', { writeText: deps.writeText });
+
+    expect(deps.writeText).toHaveBeenCalledTimes(1);
+    expect(deps.writeText).toHaveBeenCalledWith('saved text');
+    expect(deps.simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('returns target-changed when inspecting the current foreground target fails', async () => {
+    deps.captureTarget.mockImplementation(() => {
+      throw new Error('user32 failed');
+    });
+
+    const result = await injectIntoFocusedApp('text', defaultTarget, deps);
+
+    expect(result).toEqual({ kind: 'target-changed', reason: 'target-changed: foreground target inspection failed' });
+    expect(deps.simulatePaste).not.toHaveBeenCalled();
   });
 });

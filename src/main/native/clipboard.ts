@@ -1,14 +1,11 @@
 import koffi from 'koffi';
+import { buildPasteStrategyEvents } from '../paste-strategy';
+import type { PasteStrategy } from '../../types/ipc';
 
 const user32 = koffi.load('user32.dll');
 const kernel32 = koffi.load('kernel32.dll');
 
 const INPUT_KEYBOARD = 1;
-const KEYEVENTF_KEYUP = 0x0002;
-
-// Virtual key codes
-const VK_CONTROL = 0x11;
-const VK_V = 0x56;
 
 const INPUT_SIZE = 40; // sizeof(INPUT) on 64-bit Windows
 
@@ -31,16 +28,12 @@ function buildKeyboardInput(vk: number, flags: number): Buffer {
   return buf;
 }
 
-export function simulatePaste(): PasteDispatchResult {
-  const inputs = Buffer.concat([
-    buildKeyboardInput(VK_CONTROL, 0),
-    buildKeyboardInput(VK_V, 0),
-    buildKeyboardInput(VK_V, KEYEVENTF_KEYUP),
-    buildKeyboardInput(VK_CONTROL, KEYEVENTF_KEYUP),
-  ]);
+export function simulatePaste(strategy: PasteStrategy = 'ctrl-v'): PasteDispatchResult {
+  const events = buildPasteStrategyEvents(strategy);
+  const inputs = Buffer.concat(events.map((event) => buildKeyboardInput(event.vk, event.flags)));
 
-  const acceptedEvents = Number(SendInput(4, inputs, INPUT_SIZE));
-  if (acceptedEvents < 4) {
+  const acceptedEvents = Number(SendInput(events.length, inputs, INPUT_SIZE));
+  if (acceptedEvents < events.length) {
     const errorCode = Number(GetLastError());
     return { acceptedEvents, errorCode };
   }
