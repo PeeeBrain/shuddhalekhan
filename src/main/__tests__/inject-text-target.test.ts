@@ -4,7 +4,10 @@ import type { validatePasteTarget as ValidatePasteTarget } from '../inject-text'
 import type { DictationTargetSnapshot } from '../../types/ipc';
 
 installElectronMock();
-mock.module('../native/clipboard', () => ({ simulatePaste: mock(() => undefined) }));
+mock.module('../native/clipboard', () => ({
+  simulatePaste: mock(() => undefined),
+  getClipboardSequenceNumber: mock(() => 1),
+}));
 mock.module('../config', () => ({
   getConfig: () => ({
     pasteStrategy: { default: 'ctrl-v', overrides: {} },

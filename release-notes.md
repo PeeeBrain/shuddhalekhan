@@ -1,6 +1,6 @@
-# Shuddhalekhan 4.3.2
+# Shuddhalekhan 4.4.0
 
-This patch release makes successful dictations recoverable when automatic clipboard paste fails or is blocked.
+This minor release hardens dictation end-to-end: it makes every successful transcript recoverable, validates the paste target before injecting, supports configurable paste strategies, and protects clipboard contents during the paste transaction.
 
 ## What's Changed
 
@@ -12,6 +12,24 @@ This patch release makes successful dictations recoverable when automatic clipbo
 - Added tray actions to **Paste Last Transcript** (through the same injection pipeline as normal dictation) and **Copy Last Transcript** (without sending synthetic keyboard input).
 - Concurrent injection and retry operations are serialized through a central queue so clipboard staging, paste, and restoration cannot interleave.
 - Transcript contents stay in memory only and are never written to logs, diagnostics, or release artifacts.
+
+### Target-Aware Paste & Paste Strategies
+- Captures privacy-safe foreground target metadata (window handle, process/thread IDs, window class, executable path, and timestamp) when dictation starts.
+- Validates the current foreground target against the captured snapshot before any clipboard modification.
+- Same window and same process → paste proceeds.
+- Different window in the same process → paste proceeds and a privacy-safe transition diagnostic is logged.
+- Different process, missing, or uninspectable target → returns a structured `target-changed` result and leaves the transcript recoverable.
+- Shuddhalekhan never forcibly restores focus to the original target.
+- Added configurable paste strategies: `ctrl-v`, `shift-insert`, and `ctrl-shift-v`, with per-application overrides keyed by executable file name.
+
+### Clipboard Transactions
+- Replaced the plain-text-only clipboard "sandwich" with a bounded multi-format snapshot that captures and restores plain text, HTML, RTF, PNG image data, and bookmarks where available.
+- An originally empty clipboard is now restored with an explicit clear operation instead of being left populated with the transcript.
+- Added a native wrapper around Windows `GetClipboardSequenceNumber()` so Shuddhalekhan can detect when another application or the user changes the clipboard after staging the transcript.
+- If the clipboard sequence number changes before restoration, Shuddhalekhan leaves the current clipboard untouched and reports a structured `clipboard-conflict` result.
+- Clipboard restoration and conflict handling always run through `finally`-style cleanup, even when paste dispatch throws or returns a failure.
+- Unsupported or oversized clipboard formats are recorded as skipped diagnostics instead of crashing dictation; a configurable size limit keeps large images from being copied into app memory.
+- Clipboard and transcript contents are never written to runtime logs or diagnostics.
 
 ---
 

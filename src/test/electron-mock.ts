@@ -20,8 +20,18 @@ export const electronMock = {
     on: mock(),
   },
   clipboard: {
+    availableFormats: mock(() => []),
     readText: mock(() => ''),
+    readHTML: mock(() => ''),
+    readRTF: mock(() => ''),
+    readImage: mock(() => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) })),
+    readBookmark: mock(() => ({ title: '', url: '' })),
     writeText: mock(),
+    writeHTML: mock(),
+    writeRTF: mock(),
+    writeImage: mock(),
+    writeBookmark: mock(),
+    clear: mock(),
   },
   dialog: {
     showErrorBox: mock(),
@@ -48,6 +58,7 @@ export const electronMock = {
   nativeImage: {
     createFromPath: mock(),
     createFromDataURL: mock(),
+    createFromBuffer: mock(() => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) })),
   },
   contextBridge: {
     exposeInMainWorld: mock(),
@@ -83,9 +94,28 @@ export function resetElectronMock(): void {
   electronMock.BrowserWindow.getAllWindows.mockReturnValue([]);
   electronMock.ipcMain.handle.mockReset();
   electronMock.ipcMain.on.mockReset();
+  electronMock.clipboard.availableFormats.mockReset();
+  electronMock.clipboard.availableFormats.mockReturnValue([]);
   electronMock.clipboard.readText.mockReset();
   electronMock.clipboard.readText.mockReturnValue('');
+  electronMock.clipboard.readHTML.mockReset();
+  electronMock.clipboard.readHTML.mockReturnValue('');
+  electronMock.clipboard.readRTF.mockReset();
+  electronMock.clipboard.readRTF.mockReturnValue('');
+  electronMock.clipboard.readImage.mockReset();
+  electronMock.clipboard.readImage.mockReturnValue({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) });
+  electronMock.clipboard.readBookmark.mockReset();
+  electronMock.clipboard.readBookmark.mockReturnValue({ title: '', url: '' });
   electronMock.clipboard.writeText.mockReset();
+  electronMock.clipboard.writeHTML.mockReset();
+  electronMock.clipboard.writeRTF.mockReset();
+  electronMock.clipboard.writeImage.mockReset();
+  electronMock.clipboard.writeBookmark.mockReset();
+  electronMock.clipboard.clear.mockReset();
+  electronMock.nativeImage.createFromPath.mockReset();
+  electronMock.nativeImage.createFromDataURL.mockReset();
+  electronMock.nativeImage.createFromBuffer.mockReset();
+  electronMock.nativeImage.createFromBuffer.mockReturnValue({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) });
   electronMock.dialog.showErrorBox.mockReset();
   electronMock.dialog.showMessageBox.mockReset();
   electronMock.dialog.showMessageBox.mockResolvedValue({ response: 0 });

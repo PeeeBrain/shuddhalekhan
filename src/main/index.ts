@@ -73,6 +73,7 @@ function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste
   const detail = result.kind === 'error' ? `: ${result.message}`
     : result.kind === 'input-blocked' && result.reason ? `: ${result.reason}`
     : result.kind === 'target-changed' && result.reason ? `: ${result.reason}`
+    : result.kind === 'clipboard-conflict' && result.reason ? `: ${result.reason}`
     : '';
   const body = `Automatic paste failed${detail}. Use the tray to paste or copy the last transcript.`;
   console.warn('Dictation recovery:', result.kind, detail);

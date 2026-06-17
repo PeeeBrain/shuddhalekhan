@@ -11,6 +11,7 @@ const INPUT_SIZE = 40; // sizeof(INPUT) on 64-bit Windows
 
 const SendInput = user32.func('uint32_t __stdcall SendInput(uint32_t cInputs, uint8_t * pInputs, int32_t cbSize)');
 const GetLastError = kernel32.func('uint32_t __stdcall GetLastError()');
+const GetClipboardSequenceNumber = user32.func('uint32_t __stdcall GetClipboardSequenceNumber()');
 
 export interface PasteDispatchResult {
   acceptedEvents: number;
@@ -26,6 +27,10 @@ function buildKeyboardInput(vk: number, flags: number): Buffer {
   buf.writeUInt32LE(0, 16); // time
   buf.writeBigUInt64LE(BigInt(0), 24); // dwExtraInfo
   return buf;
+}
+
+export function getClipboardSequenceNumber(): number {
+  return Number(GetClipboardSequenceNumber());
 }
 
 export function simulatePaste(strategy: PasteStrategy = 'ctrl-v'): PasteDispatchResult {

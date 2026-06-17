@@ -86,7 +86,10 @@ installElectronMock();
 mock.module('../native/keyboard', () => ({
   keyboardHook: { start: keyboardStart, stop: keyboardStop },
 }));
-mock.module('../native/clipboard', () => ({ simulatePaste }));
+mock.module('../native/clipboard', () => ({
+  simulatePaste,
+  getClipboardSequenceNumber: vi.fn(() => 1),
+}));
 mock.module('../native/target', () => ({ captureForegroundTarget }));
 mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destroyAudioWindow }));
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
