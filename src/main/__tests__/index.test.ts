@@ -527,7 +527,7 @@ describe('main process IPC orchestration', () => {
 
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await listenerPromise;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
     expect(notificationShow).toHaveBeenCalledTimes(1);
@@ -546,7 +546,7 @@ describe('main process IPC orchestration', () => {
 
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await listenerPromise;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(notificationShow).not.toHaveBeenCalled();
     expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
@@ -560,7 +560,7 @@ describe('main process IPC orchestration', () => {
 
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await listenerPromise;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     simulatePaste.mockClear();
     trayHandlers.onCopyLastTranscript?.();
@@ -577,7 +577,7 @@ describe('main process IPC orchestration', () => {
 
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await listenerPromise;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     notificationShow.mockClear();
     simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
@@ -596,7 +596,7 @@ describe('main process IPC orchestration', () => {
 
     const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
     await listenerPromise;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(notificationShow).toHaveBeenCalledTimes(1);
     expect(electronMock.Notification).toHaveBeenCalledWith(
