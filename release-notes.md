@@ -1,3 +1,19 @@
+# Shuddhalekhan 4.4.1
+
+This patch release improves the recording pill waveform so it is easier to see and actually reacts to the microphone.
+
+## What's Changed
+
+### Recording Pill Waveform
+- Enlarged the waveform bars and made them fill more of the pill.
+- The bars now scale with the live microphone level instead of playing a static left-to-right pulse.
+- Added per-bar sine-wave motion for an organic, waveform-like feel.
+- Clamped bar height so the waveform stays inside the pill bounds even on loud audio peaks.
+- Added a subtle mode-colored glow (cool blue for dictation, warm red for Agent Mode).
+- Slightly increased the pill window size to give the larger waveform room to breathe without clipping.
+
+---
+
 # Shuddhalekhan 4.4.0
 
 This minor release protects clipboard contents during automatic paste by capturing a bounded multi-format snapshot before dictation and restoring it afterward.

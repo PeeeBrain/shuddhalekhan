@@ -11,22 +11,22 @@ body,
 }
 
 .bar {
-    width: 2px;
-    height: 7px;
+    width: 3px;
+    height: 18px;
     border-radius: 999px;
-    background: #f5f5f5;
-    animation: pulse 0.9s ease-in-out infinite;
+    background: #ffffff;
+    transform-origin: center;
+    will-change: transform;
 }
 
-@keyframes pulse {
-    0%,
-    100% {
-        transform: scaleY(0.7);
-        opacity: 0.7;
-    }
+.bar.dictation {
+    box-shadow:
+        0 0 3px rgba(133, 146, 255, 0.75),
+        0 0 6px rgba(100, 108, 255, 0.4);
+}
 
-    50% {
-        transform: scaleY(1.65);
-        opacity: 1;
-    }
+.bar.agent {
+    box-shadow:
+        0 0 3px rgba(255, 106, 106, 0.75),
+        0 0 6px rgba(255, 64, 64, 0.4);
 }
