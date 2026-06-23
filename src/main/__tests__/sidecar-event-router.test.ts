@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
 const vi = { fn: mock };
 const mergeDiscoveredTools = vi.fn();
+const getConfig = vi.fn(() => ({
+  agent: {
+    mcpServers: [
+      { id: 'mail', displayName: 'Gmail' },
+    ],
+  },
+}));
 
 describe('SidecarEventRouter', () => {
   let send: ReturnType<typeof vi.fn>;
@@ -28,6 +35,7 @@ describe('SidecarEventRouter', () => {
       showAgentToast,
       openExternal,
       mergeDiscoveredTools,
+      getConfig,
     });
   });
 
@@ -127,6 +135,7 @@ describe('SidecarEventRouter', () => {
       agentRunId: 'run-1',
       approvalId: 'approval-1',
       serverId: 'mail',
+      serverDisplayName: 'Gmail',
       toolName: 'send_email',
       modelToolName: 'mail__send_email',
       arguments: { to: 'a@example.com' },

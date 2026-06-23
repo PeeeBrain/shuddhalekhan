@@ -3,7 +3,7 @@ import type { BrowserWindow } from 'electron';
 import type { RecordingIntent } from '../types/ipc';
 import { createSingletonWindow } from './window-factory';
 
-const PILL_WINDOW_WIDTH = 140;
+const PILL_WINDOW_WIDTH = 172;
 const PILL_WINDOW_HEIGHT = 52;
 let initialIntent: RecordingIntent = 'dictation';
 
@@ -38,13 +38,19 @@ export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
   positionPillWindow(win);
   win.show();
   win.setAlwaysOnTop(true, 'screen-saver');
+  win.webContents.send('recording:pill-show');
   win.webContents.send('recording:mode-changed', intent);
 }
 
 export function hideRecordingPill(): void {
   const win = pillWindow.get();
   if (win && !win.isDestroyed()) {
-    win.hide();
+    win.webContents.send('recording:pill-hide');
+    setTimeout(() => {
+      if (!win.isDestroyed()) {
+        win.hide();
+      }
+    }, 100);
   }
 }
 

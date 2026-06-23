@@ -27,6 +27,19 @@ export function AgentToast() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!state) return undefined;
+    if (state.kind === 'approval' || state.kind === 'streaming') return undefined;
+
+    const timer = window.setTimeout(() => {
+      window.electronAPI?.send('agent-toast:dismiss');
+    }, 6000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [state]);
+
   const secondsLeft = useMemo(() => {
     if (state?.kind !== 'approval') return null;
     return Math.max(0, Math.ceil((new Date(state.expiresAt).getTime() - now) / 1000));
@@ -76,6 +89,11 @@ export function AgentToast() {
       decide(state, decision, denialMessage);
     };
 
+    const timerUrgent = secondsLeft !== null && secondsLeft <= 5;
+    const timerClass = timerUrgent
+      ? 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-destructive motion-safe:animate-pulse'
+      : 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-warning';
+
     return (
       <main
         ref={toastRef}
@@ -86,14 +104,19 @@ export function AgentToast() {
           <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-warning">
             Approval
           </Badge>
-          <span className="min-w-9 text-right text-xs font-bold uppercase tracking-wide text-warning">
+          <span className={timerClass}>
             {secondsLeft}s
           </span>
         </div>
 
-        <h1 className="mb-2 break-words text-base font-semibold leading-snug line-clamp-3">
-          {state.serverId}:{state.toolName}
+        <h1 className="mb-1 break-words text-base font-semibold leading-snug line-clamp-3">
+          {(state.serverDisplayName || state.serverId)}:{state.toolName}
         </h1>
+        {state.serverDisplayName ? (
+          <p className="mb-2 text-xs text-muted-foreground font-mono">
+            {state.serverId}
+          </p>
+        ) : null}
 
         <p className="mb-2 block min-h-10 flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-2 text-sm leading-relaxed text-muted-foreground">
           {formatArguments(state.arguments)}
@@ -142,7 +165,7 @@ export function AgentToast() {
         <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           {getTitle(state)}
         </Badge>
-        {state.kind === 'completed' ? (
+        {state.kind === 'completed' || state.kind === 'failed' || state.kind === 'cancelled' || state.kind === 'config' ? (
           <Button
             type="button"
             variant="ghost"
@@ -156,9 +179,11 @@ export function AgentToast() {
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto break-words text-sm leading-relaxed text-muted-foreground">
-        {state.kind === 'streaming' || state.kind === 'completed'
-          ? renderMarkdown(getBody(state))
-          : <p className="m-0 whitespace-pre-wrap">{getBody(state)}</p>}
+        {state.kind === 'status' && isThinkingMessage(getBody(state))
+          ? <ThinkingDots />
+          : state.kind === 'streaming' || state.kind === 'completed'
+            ? renderMarkdown(getBody(state))
+            : <p className="m-0 whitespace-pre-wrap">{getBody(state)}</p>}
       </div>
 
       {state.kind === 'completed' && state.toolSummary.length > 0 ? (
@@ -170,7 +195,39 @@ export function AgentToast() {
           ))}
         </ul>
       ) : null}
+
+      {state.kind === 'config' ? (
+        <div className="mt-3 flex-shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => window.electronAPI?.invoke('settings:open')}
+          >
+            Open Settings
+          </Button>
+        </div>
+      ) : null}
     </main>
+  );
+}
+
+function isThinkingMessage(message: string): boolean {
+  return /^thinking/i.test(message);
+}
+
+function ThinkingDots() {
+  return (
+    <span className="inline-flex items-center gap-1" aria-label="Thinking" role="status">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="motion-safe:animate-thinking-dot inline-block h-[5px] w-[5px] rounded-full bg-current opacity-20"
+          style={{ animationDelay: `${i * 0.2}s` }}
+        />
+      ))}
+    </span>
   );
 }
 

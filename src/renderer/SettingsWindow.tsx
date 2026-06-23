@@ -12,6 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -20,20 +21,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { X as XIcon } from 'lucide-react';
+import { Check, X as XIcon, Settings, Mic, Bot, Plug, History, Info } from 'lucide-react';
 import { McpSettings } from './settings/McpSettings';
 import { createSettingsIpc } from './settings/settings-ipc';
 import { AuditHistorySettings } from './settings/AuditHistorySettings';
 
 type SettingsSection = 'general' | 'audio' | 'agent' | 'mcp' | 'history' | 'about';
 
-const sections: Array<{ id: SettingsSection; label: string }> = [
-  { id: 'general', label: 'General' },
-  { id: 'audio', label: 'Audio' },
-  { id: 'agent', label: 'Agent' },
-  { id: 'mcp', label: 'MCP Servers' },
-  { id: 'history', label: 'History' },
-  { id: 'about', label: 'About' },
+const sections: Array<{ id: SettingsSection; label: string; icon: React.ElementType }> = [
+  { id: 'general', label: 'General', icon: Settings },
+  { id: 'audio', label: 'Audio', icon: Mic },
+  { id: 'agent', label: 'Agent', icon: Bot },
+  { id: 'mcp', label: 'MCP Servers', icon: Plug },
+  { id: 'history', label: 'History', icon: History },
+  { id: 'about', label: 'About', icon: Info },
 ];
 
 const WHISPER_LANGUAGES: Array<{ value: string; label: string }> = [
@@ -67,7 +68,9 @@ export function SettingsWindow() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerRuntimeStatus>>({});
-  const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [whisperUrlError, setWhisperUrlError] = useState<string | null>(null);
+  const [whisperTestState, setWhisperTestState] = useState<'idle' | 'checking' | 'success' | 'failed'>('idle');
   const [pendingDisableAgent, setPendingDisableAgent] = useState(false);
 
   useEffect(() => {
@@ -95,10 +98,14 @@ export function SettingsWindow() {
     };
   }, [settingsIpc]);
 
-  const updateConfig = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
+  const updateConfig = async <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
     setConfigState((current) => current ? { ...current, [key]: value } : current);
-    settingsIpc.setConfig(key, value);
-    setSaveState('saved');
+    try {
+      await settingsIpc.setConfig(key, value);
+      setSaveState('saved');
+    } catch {
+      setSaveState('error');
+    }
     window.setTimeout(() => setSaveState('idle'), 1200);
   };
 
@@ -108,6 +115,50 @@ export function SettingsWindow() {
     if (!updateStatus) return 'Update status unavailable';
     return updateStatus.message;
   }, [updateStatus]);
+
+  const handleWhisperUrlChange = (value: string) => {
+    if (!config) return;
+    if (whisperUrlError) setWhisperUrlError(null);
+    if (whisperTestState !== 'idle') setWhisperTestState('idle');
+    updateConfig('whisperUrl', value);
+  };
+
+  const handleWhisperUrlBlur = () => {
+    if (!config) return;
+    const url = config.whisperUrl;
+    if (!url.trim()) {
+      setWhisperUrlError('Whisper endpoint URL is required.');
+      return;
+    }
+    try {
+      new URL(url);
+      setWhisperUrlError(null);
+    } catch {
+      setWhisperUrlError('Enter a valid URL (e.g. http://localhost:8080/inference).');
+    }
+  };
+
+  const testWhisperConnection = async () => {
+    if (!config) return;
+    try {
+      new URL(config.whisperUrl);
+      setWhisperUrlError(null);
+    } catch {
+      setWhisperUrlError('Enter a valid URL (e.g. http://localhost:8080/inference).');
+      return;
+    }
+
+    setWhisperTestState('checking');
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 5000);
+      await fetch(config.whisperUrl, { method: 'GET', signal: controller.signal });
+      clearTimeout(id);
+      setWhisperTestState('success');
+    } catch {
+      setWhisperTestState('failed');
+    }
+  };
 
   if (!config) {
     return (
@@ -139,13 +190,14 @@ export function SettingsWindow() {
               type="button"
               role="tab"
               aria-selected={activeSection === section.id}
-              className={`flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:outline-none ${
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:outline-none ${
                 activeSection === section.id
                   ? 'bg-secondary text-foreground'
                   : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
               }`}
               onClick={() => setActiveSection(section.id)}
             >
+              <section.icon className="h-4 w-4 shrink-0" />
               {section.label}
             </button>
           ))}
@@ -153,12 +205,10 @@ export function SettingsWindow() {
       </aside>
 
       <section className="min-w-0 flex-1 bg-background h-screen flex flex-col">
+        <div key={activeSection} className="flex-1 flex flex-col min-h-0 content-enter">
         {activeSection === 'history' ? (
-          <AuditHistorySettings settingsIpc={settingsIpc} />
-        ) : (
-          <ScrollArea className="h-full flex-1">
-            <div className="px-10 py-8">
-            <header className="mb-8 flex items-start justify-between gap-6">
+          <div className="flex flex-col flex-1 min-h-0">
+            <header className="px-10 pt-8 pb-0 flex items-start justify-between gap-6 shrink-0">
               <h2 className="text-2xl font-semibold tracking-tight">
                 {sections.find((section) => section.id === activeSection)?.label}
               </h2>
@@ -166,9 +216,32 @@ export function SettingsWindow() {
                 {saveState === 'saved' ? 'Saved' : 'Ready'}
               </Badge>
             </header>
+            <div className="flex-1 min-h-0 overflow-hidden px-10 pb-8 flex flex-col">
+              <AuditHistorySettings settingsIpc={settingsIpc} />
+            </div>
+          </div>
+        ) : (
+          <ScrollArea className="h-full flex-1">
+            <div className="px-10 py-8">
+            <header className="mb-8 flex items-start justify-between gap-6">
+              <h2 className="text-2xl font-semibold tracking-tight">
+                {sections.find((section) => section.id === activeSection)?.label}
+              </h2>
+              <Badge variant={saveState === 'error' ? 'destructive' : 'outline'} className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
+                {saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Save failed' : 'Ready'}
+              </Badge>
+            </header>
 
             {activeSection === 'general' ? (
-              <SettingsPanel>
+              <>
+                {!config.setupChecklistDismissed ? (
+                  <SetupChecklistCard
+                    config={config}
+                    onNavigate={(section) => setActiveSection(section)}
+                    onDismiss={() => updateConfig('setupChecklistDismissed', true)}
+                  />
+                ) : null}
+                <SettingsPanel>
                 <ToggleRow
                   title="Clean transcription"
                   description="Remove common filler words before dictation text is injected."
@@ -178,16 +251,41 @@ export function SettingsWindow() {
                 <KeyRow label="Dictation hotkey" value="Ctrl + Win" />
                 <KeyRow label="Agent hotkey" value="Alt + Win" />
               </SettingsPanel>
+              </>
             ) : null}
 
             {activeSection === 'audio' ? (
               <SettingsPanel>
-                <TextRow
-                  label="Whisper endpoint"
-                  value={config.whisperUrl}
-                  placeholder="http://localhost:8080/inference"
-                  onChange={(value) => updateConfig('whisperUrl', value)}
-                />
+                <div className="space-y-2 border-b border-border py-5">
+                  <Label className="text-sm font-medium">Whisper endpoint</Label>
+                  <Input
+                    value={config.whisperUrl}
+                    placeholder="http://localhost:8080/inference"
+                    onChange={(e) => handleWhisperUrlChange(e.target.value)}
+                    onBlur={handleWhisperUrlBlur}
+                    aria-invalid={!!whisperUrlError}
+                  />
+                  {whisperUrlError && (
+                    <p className="text-xs text-destructive break-words">{whisperUrlError}</p>
+                  )}
+                  <div className="flex items-center gap-3 pt-1">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={whisperTestState === 'checking'}
+                      onClick={testWhisperConnection}
+                    >
+                      {whisperTestState === 'checking' ? 'Checking...' : 'Test connection'}
+                    </Button>
+                    {whisperTestState === 'success' && (
+                      <span className="text-xs text-success">Connected</span>
+                    )}
+                    {whisperTestState === 'failed' && (
+                      <span className="text-xs text-destructive">Could not reach endpoint — is the whisper.cpp server running?</span>
+                    )}
+                  </div>
+                </div>
                 <SelectRow
                   label="Mode"
                   value={config.task}
@@ -311,6 +409,7 @@ export function SettingsWindow() {
             </div>
           </ScrollArea>
         )}
+        </div>
       </section>
 
       <ConfirmDialog
@@ -515,5 +614,70 @@ function DictionaryInput({
         )}
       </div>
     </div>
+  );
+}
+
+function SetupChecklistCard({
+  config,
+  onNavigate,
+  onDismiss,
+}: {
+  config: AppConfig;
+  onNavigate: (section: SettingsSection) => void;
+  onDismiss: () => void;
+}) {
+  const whisperComplete = config.whisperUrl !== '' && config.whisperUrl !== 'http://localhost:8080/inference';
+  const micComplete = config.selectedDeviceId !== null && config.selectedDeviceId !== '';
+
+  const items: Array<{
+    label: string;
+    done: boolean;
+    action?: () => void;
+  }> = [
+    { label: 'Set Whisper endpoint', done: whisperComplete, action: () => onNavigate('audio') },
+    { label: 'Select microphone', done: micComplete, action: () => onNavigate('audio') },
+    { label: 'Try a dictation (Ctrl + Win)', done: false },
+  ];
+
+  return (
+    <Card className="mb-6 border-primary/20 bg-primary/[0.03]">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between text-sm font-medium">
+          <span>First-run setup</span>
+          <Button variant="ghost" size="icon-xs" onClick={onDismiss} aria-label="Dismiss setup checklist">
+            <XIcon className="size-3.5" />
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <li key={item.label}>
+              <button
+                type="button"
+                disabled={!item.action}
+                onClick={item.action}
+                className={`flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                  item.action
+                    ? 'hover:bg-muted/50 cursor-pointer'
+                    : 'cursor-default'
+                }`}
+              >
+                <span
+                  className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-xs ${
+                    item.done
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-muted-foreground/30 text-muted-foreground'
+                  }`}
+                >
+                  {item.done ? <Check className="size-3" /> : null}
+                </span>
+                <span className={item.done ? 'text-muted-foreground' : ''}>{item.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }

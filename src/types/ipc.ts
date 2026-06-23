@@ -72,7 +72,7 @@ export interface RendererToMainInvokeChannels {
   'audio:get-devices': () => Promise<AudioDevice[]>;
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
-  'config:set': (key: keyof AppConfig, value: unknown) => void;
+  'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
   'settings:open': () => void;
   'clipboard:inject-text': (text: string) => Promise<InjectResult>;
   'agent:approval-decision': (
@@ -94,6 +94,8 @@ export interface MainToRendererChannels {
   'audio:stop-recording': () => void;
   'audio:select-device': (deviceId: string) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;
+  'recording:pill-show': () => void;
+  'recording:pill-hide': () => void;
   'recording:started': () => void;
   'recording:stopped': () => void;
   'audio:level-changed': (level: number) => void;
@@ -126,6 +128,7 @@ export type AgentToastState =
       agentRunId: string;
       approvalId: string;
       serverId: string;
+      serverDisplayName?: string;
       toolName: string;
       modelToolName: string;
       arguments: unknown;
@@ -164,6 +167,7 @@ export interface AppConfig {
   task: 'transcribe' | 'translate';
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
+  setupChecklistDismissed: boolean;
   agent: {
     enabled: boolean;
     provider: {
