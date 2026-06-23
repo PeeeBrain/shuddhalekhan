@@ -44,6 +44,32 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
     });
   }, [settingsIpc, selectedRunId]);
 
+  const selectRun = useCallback((runId: string) => {
+    setSelectedRunEvents(null);
+    setIsLoadingDetail(true);
+    setSelectedRunId(runId);
+  }, []);
+
+  const handleRunListKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const currentIndex = runs.findIndex((r) => r.agentRunId === selectedRunId);
+    let nextIndex = currentIndex;
+    if (e.key === 'ArrowDown') nextIndex = Math.min(runs.length - 1, currentIndex + 1);
+    else if (e.key === 'ArrowUp') nextIndex = Math.max(0, currentIndex - 1);
+    else if (e.key === 'Home') nextIndex = 0;
+    else if (e.key === 'End') nextIndex = runs.length - 1;
+    if (nextIndex === currentIndex || nextIndex < 0 || nextIndex >= runs.length) return;
+    const nextRun = runs[nextIndex];
+    if (!nextRun) return;
+    selectRun(nextRun.agentRunId);
+    const container = e.currentTarget;
+    requestAnimationFrame(() => {
+      const items = container.querySelectorAll<HTMLElement>('[role="option"]');
+      items[nextIndex]?.focus();
+    });
+  }, [runs, selectedRunId, selectRun]);
+
   useEffect(() => {
     fetchRuns();
 
@@ -102,11 +128,11 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
             disabled={isPending}
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
           >
-            <RotateCw className={`h-4 w-4 ${isPending ? 'animate-spin' : ''}`} />
+            <RotateCw className={`h-4 w-4 ${isPending ? 'motion-safe:animate-spin' : ''}`} />
           </Button>
         </div>
         <ScrollArea className="flex-1 min-h-0">
-          <div className="p-3 space-y-2">
+          <div className="p-3 space-y-2" role="listbox" aria-label="Agent run history" onKeyDown={handleRunListKeyDown}>
             {runs.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-xs italic">
                 No agent runs recorded yet.
@@ -117,12 +143,11 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                 return (
                   <div
                     key={run.agentRunId}
-                    onClick={() => {
-                      setSelectedRunEvents(null);
-                      setIsLoadingDetail(true);
-                      setSelectedRunId(run.agentRunId);
-                    }}
-                    className={`p-3 rounded-lg border text-left cursor-pointer transition-all duration-150 ${
+                    role="option"
+                    aria-selected={isActive}
+                    tabIndex={isActive ? 0 : -1}
+                    onClick={() => selectRun(run.agentRunId)}
+                    className={`p-3 rounded-lg border text-left cursor-pointer transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       isActive
                         ? 'bg-secondary/40 border-primary/50 shadow-sm'
                         : 'bg-background hover:bg-muted/30 border-border/60 hover:border-border'
@@ -309,7 +334,7 @@ function StatusBadge({
       return (
         <Badge
           variant="outline"
-          className={`${baseClass} border-sky-500/30 bg-sky-500/10 text-sky-500 animate-pulse`}
+          className={`${baseClass} border-sky-500/30 bg-sky-500/10 text-sky-500 motion-safe:animate-pulse`}
         >
           Thinking
         </Badge>
