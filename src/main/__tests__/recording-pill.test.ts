@@ -15,14 +15,18 @@ const isDestroyed = vi.fn(() => false);
 const show = vi.fn();
 const setAlwaysOnTop = vi.fn();
 const send = vi.fn();
+const isLoading = vi.fn(() => false);
+const once = vi.fn();
+const hide = vi.fn();
 const BrowserWindow = vi.fn(() => ({
   loadURL,
   on,
   isDestroyed,
   show,
+  hide,
   setAlwaysOnTop,
   setPosition: vi.fn(),
-  webContents: { send },
+  webContents: { send, isLoading, once },
 }));
 
 installElectronMock();
@@ -43,6 +47,10 @@ describe('positionPillWindow', () => {
     show.mockClear();
     setAlwaysOnTop.mockClear();
     send.mockClear();
+    isLoading.mockClear();
+    once.mockClear();
+    isLoading.mockReturnValue(false);
+    hide.mockClear();
   });
 
   it('centers the recording pill near the bottom of the primary display', async () => {
@@ -90,5 +98,41 @@ describe('positionPillWindow', () => {
     expect(show).toHaveBeenCalled();
     expect(setAlwaysOnTop).toHaveBeenCalledWith(true, 'screen-saver');
     expect(send).toHaveBeenCalledWith('recording:mode-changed', 'agent');
+  });
+
+  it('defers pill-show IPC events until the renderer finishes loading', async () => {
+    isLoading.mockReturnValue(true);
+    once.mockImplementation((event: string, handler: () => void) => {
+      once._pendingHandler = handler;
+      once._pendingEvent = event;
+    });
+
+    const { showRecordingPill } = await import(`../recording-pill?test=${Date.now()}-4`);
+
+    showRecordingPill('dictation');
+
+    expect(once).toHaveBeenCalledWith('did-finish-load', expect.any(Function));
+    expect(send).not.toHaveBeenCalledWith('recording:pill-show');
+
+    once._pendingHandler?.();
+
+    expect(send).toHaveBeenCalledWith('recording:pill-show');
+    expect(send).toHaveBeenCalledWith('recording:mode-changed', 'dictation');
+  });
+
+  it('cancels a pending hide timeout when showRecordingPill is called again', async () => {
+    const { showRecordingPill, hideRecordingPill } = await import(`../recording-pill?test=${Date.now()}-5`);
+
+    showRecordingPill('dictation');
+    hide.mockClear();
+    send.mockClear();
+
+    hideRecordingPill();
+    showRecordingPill('agent');
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(hide).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith('recording:pill-show');
   });
 });

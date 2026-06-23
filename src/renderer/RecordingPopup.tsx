@@ -18,6 +18,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
   const [elapsed, setElapsed] = useState(0);
+  const recordingStartRef = useRef<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
@@ -47,6 +48,8 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
 
   useEffect(() => {
     const removeShow = window.electronAPI?.on('recording:pill-show', () => {
+      recordingStartRef.current = Date.now();
+      setElapsed(0);
       setPillState(reducedMotion ? 'visible' : 'entering');
     });
     const removeHide = window.electronAPI?.on('recording:pill-hide', () => {
@@ -99,9 +102,10 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   }, [reducedMotion]);
 
   useEffect(() => {
-    const startTime = Date.now();
     const id = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+      if (recordingStartRef.current !== null) {
+        setElapsed(Math.floor((Date.now() - recordingStartRef.current) / 1000));
+      }
     }, 1000);
     return () => clearInterval(id);
   }, []);

@@ -1,5 +1,6 @@
 declare module 'bun:test' {
   export const beforeEach: any;
+  export const afterEach: any;
   export const afterAll: any;
   export const describe: any;
   export const expect: any;

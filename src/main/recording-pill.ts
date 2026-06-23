@@ -6,6 +6,7 @@ import { createSingletonWindow } from './window-factory';
 const PILL_WINDOW_WIDTH = 172;
 const PILL_WINDOW_HEIGHT = 52;
 let initialIntent: RecordingIntent = 'dictation';
+let pendingHideTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const pillWindow = createSingletonWindow({
   route: () => `recording?mode=${initialIntent}`,
@@ -34,22 +35,39 @@ export function createRecordingPillWindow(intent: RecordingIntent = 'dictation')
 }
 
 export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
+  if (pendingHideTimeout) {
+    clearTimeout(pendingHideTimeout);
+    pendingHideTimeout = null;
+  }
+
   const win = createRecordingPillWindow(intent);
   positionPillWindow(win);
   win.show();
   win.setAlwaysOnTop(true, 'screen-saver');
-  win.webContents.send('recording:pill-show');
-  win.webContents.send('recording:mode-changed', intent);
+
+  const sendEvents = () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('recording:pill-show');
+      win.webContents.send('recording:mode-changed', intent);
+    }
+  };
+
+  if (win.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', sendEvents);
+  } else {
+    sendEvents();
+  }
 }
 
 export function hideRecordingPill(): void {
   const win = pillWindow.get();
   if (win && !win.isDestroyed()) {
     win.webContents.send('recording:pill-hide');
-    setTimeout(() => {
+    pendingHideTimeout = setTimeout(() => {
       if (!win.isDestroyed()) {
         win.hide();
       }
+      pendingHideTimeout = null;
     }, 100);
   }
 }
