@@ -12,6 +12,7 @@ const config: AppConfig = {
   task: 'transcribe',
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
+  setupChecklistDismissed: false,
   agent: {
     enabled: false,
     provider: {
