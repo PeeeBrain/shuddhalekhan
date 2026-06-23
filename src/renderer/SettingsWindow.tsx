@@ -67,6 +67,8 @@ export function SettingsWindow() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerRuntimeStatus>>({});
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
+  const [whisperUrlError, setWhisperUrlError] = useState<string | null>(null);
+  const [whisperTestState, setWhisperTestState] = useState<'idle' | 'checking' | 'success' | 'failed'>('idle');
 
   useEffect(() => {
     settingsIpc.getConfig().then(setConfigState).catch((err) => {
@@ -106,6 +108,50 @@ export function SettingsWindow() {
     if (!updateStatus) return 'Update status unavailable';
     return updateStatus.message;
   }, [updateStatus]);
+
+  const handleWhisperUrlChange = (value: string) => {
+    if (!config) return;
+    if (whisperUrlError) setWhisperUrlError(null);
+    if (whisperTestState !== 'idle') setWhisperTestState('idle');
+    updateConfig('whisperUrl', value);
+  };
+
+  const handleWhisperUrlBlur = () => {
+    if (!config) return;
+    const url = config.whisperUrl;
+    if (!url.trim()) {
+      setWhisperUrlError('Whisper endpoint URL is required.');
+      return;
+    }
+    try {
+      new URL(url);
+      setWhisperUrlError(null);
+    } catch {
+      setWhisperUrlError('Enter a valid URL (e.g. http://localhost:8080/inference).');
+    }
+  };
+
+  const testWhisperConnection = async () => {
+    if (!config) return;
+    try {
+      new URL(config.whisperUrl);
+      setWhisperUrlError(null);
+    } catch {
+      setWhisperUrlError('Enter a valid URL (e.g. http://localhost:8080/inference).');
+      return;
+    }
+
+    setWhisperTestState('checking');
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 5000);
+      await fetch(config.whisperUrl, { method: 'GET', signal: controller.signal });
+      clearTimeout(id);
+      setWhisperTestState('success');
+    } catch {
+      setWhisperTestState('failed');
+    }
+  };
 
   if (!config) {
     return (
@@ -180,12 +226,36 @@ export function SettingsWindow() {
 
             {activeSection === 'audio' ? (
               <SettingsPanel>
-                <TextRow
-                  label="Whisper endpoint"
-                  value={config.whisperUrl}
-                  placeholder="http://localhost:8080/inference"
-                  onChange={(value) => updateConfig('whisperUrl', value)}
-                />
+                <div className="space-y-2 border-b border-border py-5">
+                  <Label className="text-sm font-medium">Whisper endpoint</Label>
+                  <Input
+                    value={config.whisperUrl}
+                    placeholder="http://localhost:8080/inference"
+                    onChange={(e) => handleWhisperUrlChange(e.target.value)}
+                    onBlur={handleWhisperUrlBlur}
+                    aria-invalid={!!whisperUrlError}
+                  />
+                  {whisperUrlError && (
+                    <p className="text-xs text-destructive break-words">{whisperUrlError}</p>
+                  )}
+                  <div className="flex items-center gap-3 pt-1">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={whisperTestState === 'checking'}
+                      onClick={testWhisperConnection}
+                    >
+                      {whisperTestState === 'checking' ? 'Checking...' : 'Test connection'}
+                    </Button>
+                    {whisperTestState === 'success' && (
+                      <span className="text-xs text-success">Connected</span>
+                    )}
+                    {whisperTestState === 'failed' && (
+                      <span className="text-xs text-destructive">Could not reach endpoint — is the whisper.cpp server running?</span>
+                    )}
+                  </div>
+                </div>
                 <SelectRow
                   label="Mode"
                   value={config.task}
