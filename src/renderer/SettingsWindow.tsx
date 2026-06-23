@@ -66,7 +66,7 @@ export function SettingsWindow() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerRuntimeStatus>>({});
-  const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
+  const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
     settingsIpc.getConfig().then(setConfigState).catch((err) => {
@@ -93,10 +93,14 @@ export function SettingsWindow() {
     };
   }, [settingsIpc]);
 
-  const updateConfig = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
+  const updateConfig = async <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
     setConfigState((current) => current ? { ...current, [key]: value } : current);
-    settingsIpc.setConfig(key, value);
-    setSaveState('saved');
+    try {
+      await settingsIpc.setConfig(key, value);
+      setSaveState('saved');
+    } catch {
+      setSaveState('error');
+    }
     window.setTimeout(() => setSaveState('idle'), 1200);
   };
 
@@ -160,8 +164,8 @@ export function SettingsWindow() {
               <h2 className="text-2xl font-semibold tracking-tight">
                 {sections.find((section) => section.id === activeSection)?.label}
               </h2>
-              <Badge variant="outline" className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
-                {saveState === 'saved' ? 'Saved' : 'Ready'}
+              <Badge variant={saveState === 'error' ? 'destructive' : 'outline'} className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
+                {saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Save failed' : 'Ready'}
               </Badge>
             </header>
 
