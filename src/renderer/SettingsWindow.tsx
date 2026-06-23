@@ -19,20 +19,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { X as XIcon } from 'lucide-react';
+import { X as XIcon, Settings, Mic, Bot, Plug, History, Info } from 'lucide-react';
 import { McpSettings } from './settings/McpSettings';
 import { createSettingsIpc } from './settings/settings-ipc';
 import { AuditHistorySettings } from './settings/AuditHistorySettings';
 
 type SettingsSection = 'general' | 'audio' | 'agent' | 'mcp' | 'history' | 'about';
 
-const sections: Array<{ id: SettingsSection; label: string }> = [
-  { id: 'general', label: 'General' },
-  { id: 'audio', label: 'Audio' },
-  { id: 'agent', label: 'Agent' },
-  { id: 'mcp', label: 'MCP Servers' },
-  { id: 'history', label: 'History' },
-  { id: 'about', label: 'About' },
+const sections: Array<{ id: SettingsSection; label: string; icon: React.ElementType }> = [
+  { id: 'general', label: 'General', icon: Settings },
+  { id: 'audio', label: 'Audio', icon: Mic },
+  { id: 'agent', label: 'Agent', icon: Bot },
+  { id: 'mcp', label: 'MCP Servers', icon: Plug },
+  { id: 'history', label: 'History', icon: History },
+  { id: 'about', label: 'About', icon: Info },
 ];
 
 const WHISPER_LANGUAGES: Array<{ value: string; label: string }> = [
@@ -137,13 +137,14 @@ export function SettingsWindow() {
               type="button"
               role="tab"
               aria-selected={activeSection === section.id}
-              className={`flex items-center rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:outline-none ${
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:outline-none ${
                 activeSection === section.id
                   ? 'bg-secondary text-foreground'
                   : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
               }`}
               onClick={() => setActiveSection(section.id)}
             >
+              <section.icon className="h-4 w-4 shrink-0" />
               {section.label}
             </button>
           ))}
