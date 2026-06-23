@@ -76,6 +76,11 @@ export function AgentToast() {
       decide(state, decision, denialMessage);
     };
 
+    const timerUrgent = secondsLeft !== null && secondsLeft <= 5;
+    const timerClass = timerUrgent
+      ? 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-destructive motion-safe:animate-pulse'
+      : 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-warning';
+
     return (
       <main
         ref={toastRef}
@@ -86,7 +91,7 @@ export function AgentToast() {
           <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-warning">
             Approval
           </Badge>
-          <span className="min-w-9 text-right text-xs font-bold uppercase tracking-wide text-warning">
+          <span className={timerClass}>
             {secondsLeft}s
           </span>
         </div>
