@@ -22,6 +22,7 @@ const store = new Store<StoreConfig>({
       default: 'ctrl-v',
       overrides: {},
     },
+    setupChecklistDismissed: false,
     agent: {
       enabled: false,
       provider: {
@@ -78,6 +79,7 @@ export function getConfig(): AppConfig {
     task: store.get('task') ?? 'transcribe',
     dictionary: store.get('dictionary') ?? [],
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
+    setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
     agent: {
       enabled: agent?.enabled ?? false,
       provider: {

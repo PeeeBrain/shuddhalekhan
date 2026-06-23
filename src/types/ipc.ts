@@ -167,6 +167,7 @@ export interface AppConfig {
   task: 'transcribe' | 'translate';
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
+  setupChecklistDismissed: boolean;
   agent: {
     enabled: boolean;
     provider: {

@@ -58,6 +58,7 @@ describe('config store', () => {
       task: 'transcribe',
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
+      setupChecklistDismissed: false,
       agent: {
         enabled: false,
         provider: {
@@ -86,6 +87,7 @@ describe('config store', () => {
       task: 'transcribe',
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
+      setupChecklistDismissed: false,
       agent: {
         enabled: false,
         provider: {
@@ -117,6 +119,7 @@ describe('config store', () => {
       task: 'transcribe',
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
+      setupChecklistDismissed: false,
       agent: {
         enabled: false,
         provider: {
@@ -146,6 +149,7 @@ describe('config store', () => {
       task: 'transcribe',
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
+      setupChecklistDismissed: false,
       agent: {
         enabled: false,
         provider: {
