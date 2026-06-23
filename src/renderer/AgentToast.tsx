@@ -156,9 +156,11 @@ export function AgentToast() {
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto break-words text-sm leading-relaxed text-muted-foreground">
-        {state.kind === 'streaming' || state.kind === 'completed'
-          ? renderMarkdown(getBody(state))
-          : <p className="m-0 whitespace-pre-wrap">{getBody(state)}</p>}
+        {state.kind === 'status' && isThinkingMessage(getBody(state))
+          ? <ThinkingDots />
+          : state.kind === 'streaming' || state.kind === 'completed'
+            ? renderMarkdown(getBody(state))
+            : <p className="m-0 whitespace-pre-wrap">{getBody(state)}</p>}
       </div>
 
       {state.kind === 'completed' && state.toolSummary.length > 0 ? (
@@ -171,6 +173,24 @@ export function AgentToast() {
         </ul>
       ) : null}
     </main>
+  );
+}
+
+function isThinkingMessage(message: string): boolean {
+  return /^thinking/i.test(message);
+}
+
+function ThinkingDots() {
+  return (
+    <span className="inline-flex items-center gap-1" aria-label="Thinking" role="status">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="motion-safe:animate-thinking-dot inline-block h-[5px] w-[5px] rounded-full bg-current opacity-20"
+          style={{ animationDelay: `${i * 0.2}s` }}
+        />
+      ))}
+    </span>
   );
 }
 
