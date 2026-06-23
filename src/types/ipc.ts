@@ -72,7 +72,7 @@ export interface RendererToMainInvokeChannels {
   'audio:get-devices': () => Promise<AudioDevice[]>;
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
-  'config:set': (key: keyof AppConfig, value: unknown) => void;
+  'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
   'settings:open': () => void;
   'clipboard:inject-text': (text: string) => Promise<InjectResult>;
   'agent:approval-decision': (
