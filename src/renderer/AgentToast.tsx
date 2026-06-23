@@ -63,6 +63,7 @@ export function AgentToast() {
   if (!state) return null;
 
   const accentColor = getAccentColor(state.kind);
+  const liveAttrs = getLiveAttributes(state.kind);
 
   if (state.kind === 'approval') {
     const submitDecision = (decision: 'approved' | 'denied', denialMessage?: string) => {
@@ -78,6 +79,7 @@ export function AgentToast() {
     return (
       <main
         ref={toastRef}
+        {...liveAttrs}
         className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border border-l-4 border-l-warning bg-card p-4 text-card-foreground shadow-xl"
       >
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -133,6 +135,7 @@ export function AgentToast() {
   return (
     <main
       ref={toastRef}
+      {...liveAttrs}
       className={`flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border border-l-2 bg-card p-4 text-card-foreground shadow-lg ${accentColor}`}
     >
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -185,6 +188,22 @@ function getAccentColor(kind: AgentToastState['kind']): string {
       return 'border-l-muted-foreground';
     default:
       return 'border-l-border';
+  }
+}
+
+function getLiveAttributes(kind: AgentToastState['kind']): { role?: 'alert'; 'aria-live'?: 'polite' } {
+  switch (kind) {
+    case 'approval':
+    case 'failed':
+    case 'cancelled':
+    case 'config':
+      return { role: 'alert' };
+    case 'status':
+    case 'streaming':
+    case 'completed':
+      return { 'aria-live': 'polite' };
+    default:
+      return { 'aria-live': 'polite' };
   }
 }
 

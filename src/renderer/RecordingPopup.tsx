@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Mic, Bot } from 'lucide-react';
 import type { RecordingIntent } from '../types/ipc';
 import {
   BAR_COUNT,
@@ -16,6 +17,9 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const [mode, setMode] = useState<RecordingIntent>(initialMode);
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
+  const [reducedMotion, setReducedMotion] = useState(
+    () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
   const targetLevelRef = useRef(0);
   const bars = Array.from({ length: BAR_COUNT });
 
@@ -31,6 +35,15 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   }, []);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handleChange = (event: MediaQueryListEvent) => setReducedMotion(event.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (reducedMotion) return;
+
     let raf = 0;
     const loop = () => {
       setLevel((current) => current + (targetLevelRef.current - current) * SMOOTHING_FACTOR);
@@ -55,14 +68,14 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, []);
+  }, [reducedMotion]);
 
   const phase = tick * PHASE_STEP;
 
   return (
     <div className="flex h-full w-full items-center justify-center overflow-hidden bg-transparent isolate">
       <div
-        className={`flex h-10 w-24 items-center justify-center gap-1 rounded-full border px-3 transition-all duration-300 ease-out ${
+        className={`flex h-10 w-32 items-center justify-center gap-1 rounded-full border px-3 transition-all duration-300 ease-out motion-reduce:transition-none ${
           mode === 'agent'
             ? 'border-[rgba(255,106,106,0.72)] shadow-[inset_0_0_14px_rgba(255,64,64,0.32),inset_0_0_28px_rgba(255,64,64,0.14)]'
             : 'border-[rgba(133,146,255,0.66)] shadow-[inset_0_0_14px_rgba(100,108,255,0.28),inset_0_0_28px_rgba(100,108,255,0.12)]'
@@ -71,6 +84,11 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
         role="status"
         aria-label={mode === 'agent' ? 'Agent mode recording in progress' : 'Dictation recording in progress'}
       >
+        {mode === 'agent' ? (
+          <Bot className="h-3.5 w-3.5 shrink-0 text-[#ff6a6a]" aria-hidden="true" />
+        ) : (
+          <Mic className="h-3.5 w-3.5 shrink-0 text-[#8592ff]" aria-hidden="true" />
+        )}
         <div className="flex h-8 items-center gap-1">
           {bars.map((_, index) => {
             const scale = computeBarScale(level, phase, index);
