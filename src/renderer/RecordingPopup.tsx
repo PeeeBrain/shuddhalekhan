@@ -17,8 +17,12 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const [mode, setMode] = useState<RecordingIntent>(initialMode);
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+  const [pillState, setPillState] = useState<'hidden' | 'entering' | 'visible' | 'exiting'>(
+    'hidden'
   );
   const targetLevelRef = useRef(0);
   const bars = Array.from({ length: BAR_COUNT });
@@ -40,6 +44,30 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
+
+  useEffect(() => {
+    const removeShow = window.electronAPI?.on('recording:pill-show', () => {
+      setPillState(reducedMotion ? 'visible' : 'entering');
+    });
+    const removeHide = window.electronAPI?.on('recording:pill-hide', () => {
+      setPillState(reducedMotion ? 'hidden' : 'exiting');
+    });
+    return () => {
+      removeShow?.();
+      removeHide?.();
+    };
+  }, [reducedMotion]);
+
+  useEffect(() => {
+    if (pillState === 'entering') {
+      const timer = setTimeout(() => setPillState('visible'), 150);
+      return () => clearTimeout(timer);
+    }
+    if (pillState === 'exiting') {
+      const timer = setTimeout(() => setPillState('hidden'), 100);
+      return () => clearTimeout(timer);
+    }
+  }, [pillState]);
 
   useEffect(() => {
     if (reducedMotion) return;
@@ -70,12 +98,26 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
     };
   }, [reducedMotion]);
 
+  useEffect(() => {
+    const startTime = Date.now();
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const phase = tick * PHASE_STEP;
+
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+  const formatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
   return (
     <div className="flex h-full w-full items-center justify-center overflow-hidden bg-transparent isolate">
       <div
-        className={`flex h-10 w-32 items-center justify-center gap-1 rounded-full border px-3 transition-all duration-300 ease-out motion-reduce:transition-none ${
+        className={`pill-inner flex h-10 w-40 items-center justify-center gap-1 rounded-full border px-3 ${
+          pillState === 'hidden' ? '' : pillState
+        } ${
           mode === 'agent'
             ? 'border-[rgba(255,106,106,0.72)] shadow-[inset_0_0_14px_rgba(255,64,64,0.32),inset_0_0_28px_rgba(255,64,64,0.14)]'
             : 'border-[rgba(133,146,255,0.66)] shadow-[inset_0_0_14px_rgba(100,108,255,0.28),inset_0_0_28px_rgba(100,108,255,0.12)]'
@@ -101,6 +143,9 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
             );
           })}
         </div>
+        <span className="text-[10px] font-mono tabular-nums text-white/70 select-none">
+          {formatted}
+        </span>
       </div>
     </div>
   );

@@ -43,6 +43,16 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.625rem;
   --radius-xl: 0.75rem;
+  --animate-thinking-dot: thinking-dot 1.4s ease-in-out infinite;
+}
+
+@keyframes thinking-dot {
+  0%, 80%, 100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
 }
 
 @layer base {

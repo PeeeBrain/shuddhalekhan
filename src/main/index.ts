@@ -290,6 +290,7 @@ if (!gotSingleInstanceLock) {
       onOpenSettings: () => openSettingsWindow(),
       onPasteLastTranscript: () => pasteLastTranscript(),
       onCopyLastTranscript: () => copyLastTranscript(),
+      onCheckForUpdates: () => void checkForUpdates(),
     });
 
     const startupConfig = getConfig();

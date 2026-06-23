@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -19,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { X as XIcon, Settings, Mic, Bot, Plug, History, Info } from 'lucide-react';
+import { Check, X as XIcon, Settings, Mic, Bot, Plug, History, Info } from 'lucide-react';
 import { McpSettings } from './settings/McpSettings';
 import { createSettingsIpc } from './settings/settings-ipc';
 import { AuditHistorySettings } from './settings/AuditHistorySettings';
@@ -153,7 +154,19 @@ export function SettingsWindow() {
 
       <section className="min-w-0 flex-1 bg-background h-screen flex flex-col">
         {activeSection === 'history' ? (
-          <AuditHistorySettings settingsIpc={settingsIpc} />
+          <div className="flex flex-col flex-1 min-h-0">
+            <header className="px-10 pt-8 pb-0 flex items-start justify-between gap-6 shrink-0">
+              <h2 className="text-2xl font-semibold tracking-tight">
+                {sections.find((section) => section.id === activeSection)?.label}
+              </h2>
+              <Badge variant="outline" className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
+                {saveState === 'saved' ? 'Saved' : 'Ready'}
+              </Badge>
+            </header>
+            <div className="flex-1 min-h-0 overflow-hidden px-10 pb-8 flex flex-col">
+              <AuditHistorySettings settingsIpc={settingsIpc} />
+            </div>
+          </div>
         ) : (
           <ScrollArea className="h-full flex-1">
             <div className="px-10 py-8">
@@ -167,7 +180,15 @@ export function SettingsWindow() {
             </header>
 
             {activeSection === 'general' ? (
-              <SettingsPanel>
+              <>
+                {!config.setupChecklistDismissed ? (
+                  <SetupChecklistCard
+                    config={config}
+                    onNavigate={(section) => setActiveSection(section)}
+                    onDismiss={() => updateConfig('setupChecklistDismissed', true)}
+                  />
+                ) : null}
+                <SettingsPanel>
                 <ToggleRow
                   title="Clean transcription"
                   description="Remove common filler words before dictation text is injected."
@@ -177,6 +198,7 @@ export function SettingsWindow() {
                 <KeyRow label="Dictation hotkey" value="Ctrl + Win" />
                 <KeyRow label="Agent hotkey" value="Alt + Win" />
               </SettingsPanel>
+              </>
             ) : null}
 
             {activeSection === 'audio' ? (
@@ -496,5 +518,70 @@ function DictionaryInput({
         )}
       </div>
     </div>
+  );
+}
+
+function SetupChecklistCard({
+  config,
+  onNavigate,
+  onDismiss,
+}: {
+  config: AppConfig;
+  onNavigate: (section: SettingsSection) => void;
+  onDismiss: () => void;
+}) {
+  const whisperComplete = config.whisperUrl !== '' && config.whisperUrl !== 'http://localhost:8080/inference';
+  const micComplete = config.selectedDeviceId !== null && config.selectedDeviceId !== '';
+
+  const items: Array<{
+    label: string;
+    done: boolean;
+    action?: () => void;
+  }> = [
+    { label: 'Set Whisper endpoint', done: whisperComplete, action: () => onNavigate('audio') },
+    { label: 'Select microphone', done: micComplete, action: () => onNavigate('audio') },
+    { label: 'Try a dictation (Ctrl + Win)', done: false },
+  ];
+
+  return (
+    <Card className="mb-6 border-primary/20 bg-primary/[0.03]">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between text-sm font-medium">
+          <span>First-run setup</span>
+          <Button variant="ghost" size="icon-xs" onClick={onDismiss} aria-label="Dismiss setup checklist">
+            <XIcon className="size-3.5" />
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <li key={item.label}>
+              <button
+                type="button"
+                disabled={!item.action}
+                onClick={item.action}
+                className={`flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                  item.action
+                    ? 'hover:bg-muted/50 cursor-pointer'
+                    : 'cursor-default'
+                }`}
+              >
+                <span
+                  className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-xs ${
+                    item.done
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-muted-foreground/30 text-muted-foreground'
+                  }`}
+                >
+                  {item.done ? <Check className="size-3" /> : null}
+                </span>
+                <span className={item.done ? 'text-muted-foreground' : ''}>{item.label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }

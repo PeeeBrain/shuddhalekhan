@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import type { SidecarEvent } from '../agent/protocol';
-import { mergeDiscoveredTools } from './config';
+import { getConfig as getConfigFromStore, mergeDiscoveredTools } from './config';
 
 interface SidecarEventRouterDeps {
   getSettingsWindow: () => BrowserWindow | null;
@@ -8,6 +8,7 @@ interface SidecarEventRouterDeps {
   showAgentToast: (state: Parameters<typeof import('./agent-toast-window').showAgentToast>[0]) => void;
   openExternal: (url: string) => Promise<unknown>;
   mergeDiscoveredTools?: typeof mergeDiscoveredTools;
+  getConfig?: typeof getConfigFromStore;
 }
 
 type SidecarEventHandler<T extends SidecarEvent['type']> = (event: Extract<SidecarEvent, { type: T }>) => void;
@@ -56,6 +57,9 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
     }),
     'approval:requested': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId} requested approval for ${event.serverId}:${event.toolName}`);
+      const getConfig = deps.getConfig ?? getConfigFromStore;
+      const mcpServers = getConfig().agent.mcpServers;
+      const server = mcpServers.find((s) => s.id === event.serverId);
       deps.showAgentToast({
         kind: 'status',
         agentRunId: event.agentRunId,
@@ -66,6 +70,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
         agentRunId: event.agentRunId,
         approvalId: event.approvalId,
         serverId: event.serverId,
+        ...(server?.displayName ? { serverDisplayName: server.displayName } : {}),
         toolName: event.toolName,
         modelToolName: event.modelToolName,
         arguments: event.arguments,

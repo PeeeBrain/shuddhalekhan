@@ -51,7 +51,7 @@ describe('positionPillWindow', () => {
 
     positionPillWindow({ setPosition });
 
-    expect(setPosition).toHaveBeenCalledWith(890, 940);
+    expect(setPosition).toHaveBeenCalledWith(874, 940);
   });
 
   it('accounts for displays whose work area is offset', async () => {
@@ -64,7 +64,7 @@ describe('positionPillWindow', () => {
 
     positionPillWindow({ setPosition });
 
-    expect(setPosition).toHaveBeenCalledWith(2490, 660);
+    expect(setPosition).toHaveBeenCalledWith(2474, 660);
   });
 
   it('creates the recording pill for the active intent and reuses it while alive', async () => {
@@ -77,7 +77,7 @@ describe('positionPillWindow', () => {
     expect(first).toBe(second);
     expect(BrowserWindow).toHaveBeenCalledTimes(1);
     expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({
-      width: 140,
+      width: 172,
       height: 52,
       show: false,
       frame: false,
