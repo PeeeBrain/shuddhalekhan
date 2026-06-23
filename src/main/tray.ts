@@ -9,6 +9,7 @@ let tray: Tray | null = null;
 let openSettingsHandler: (() => void) | null = null;
 let pasteLastTranscriptHandler: (() => void) | null = null;
 let copyLastTranscriptHandler: (() => void) | null = null;
+let checkForUpdatesHandler: (() => void) | null = null;
 let audioDevices: AudioDevice[] = [];
 let updateStatus: UpdateStatus = {
   state: 'idle',
@@ -21,12 +22,14 @@ export interface TrayHandlers {
   onOpenSettings: () => void;
   onPasteLastTranscript?: () => void;
   onCopyLastTranscript?: () => void;
+  onCheckForUpdates?: () => void;
 }
 
 export function createTray(handlers: TrayHandlers): Tray {
   openSettingsHandler = handlers.onOpenSettings;
   pasteLastTranscriptHandler = handlers.onPasteLastTranscript ?? null;
   copyLastTranscriptHandler = handlers.onCopyLastTranscript ?? null;
+  checkForUpdatesHandler = handlers.onCheckForUpdates ?? null;
 
   const icon = loadTrayIcon();
   
@@ -57,6 +60,11 @@ export function updateTrayMenu(): void {
     {
       label: getUpdateMenuLabel(updateStatus),
       enabled: false,
+    },
+    {
+      label: updateStatus.state === 'checking' ? 'Checking...' : 'Check for Updates',
+      enabled: updateStatus.state !== 'checking',
+      click: () => checkForUpdatesHandler?.(),
     },
     { type: 'separator' },
     {
