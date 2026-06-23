@@ -17,6 +17,11 @@ import {
   Check,
   RotateCw,
 } from 'lucide-react';
+import {
+  getNextListboxIndex,
+  isListboxActivateKey,
+  isListboxNavKey,
+} from './audit-history-nav';
 
 interface AuditHistorySettingsProps {
   settingsIpc: SettingsIpc;
@@ -51,14 +56,16 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
   }, []);
 
   const handleRunListKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+    if (isListboxActivateKey(e.key)) {
+      e.preventDefault();
+      const active = runs.find((r) => r.agentRunId === selectedRunId);
+      if (active) selectRun(active.agentRunId);
+      return;
+    }
+    if (!isListboxNavKey(e.key)) return;
     e.preventDefault();
     const currentIndex = runs.findIndex((r) => r.agentRunId === selectedRunId);
-    let nextIndex = currentIndex;
-    if (e.key === 'ArrowDown') nextIndex = Math.min(runs.length - 1, currentIndex + 1);
-    else if (e.key === 'ArrowUp') nextIndex = Math.max(0, currentIndex - 1);
-    else if (e.key === 'Home') nextIndex = 0;
-    else if (e.key === 'End') nextIndex = runs.length - 1;
+    const nextIndex = getNextListboxIndex(currentIndex, e.key, runs.length);
     if (nextIndex === currentIndex || nextIndex < 0 || nextIndex >= runs.length) return;
     const nextRun = runs[nextIndex];
     if (!nextRun) return;

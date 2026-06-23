@@ -18,7 +18,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
   const targetLevelRef = useRef(0);
   const bars = Array.from({ length: BAR_COUNT });
