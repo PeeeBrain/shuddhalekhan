@@ -10,6 +10,62 @@ body,
     overflow: hidden;
 }
 
+@keyframes pill-enter {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes pill-exit {
+    from {
+        opacity: 1;
+        transform: scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+}
+
+.pill-inner {
+    opacity: 0;
+    transform: scale(0.9);
+}
+
+.pill-inner.entering {
+    animation: pill-enter 150ms ease-out forwards;
+}
+
+.pill-inner.visible {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.pill-inner.exiting {
+    animation: pill-exit 100ms ease-in forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pill-inner.entering,
+    .pill-inner.exiting {
+        animation: none;
+    }
+    .pill-inner.entering,
+    .pill-inner.visible {
+        opacity: 1;
+        transform: scale(1);
+    }
+    .pill-inner.exiting {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+}
+
 .bar {
     width: 3px;
     height: 18px;

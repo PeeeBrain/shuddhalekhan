@@ -118,7 +118,7 @@ describe('tray', () => {
       { deviceId: 'speaker', label: 'Speaker', kind: 'audioinput' },
     ]);
     const latestMenu = buildFromTemplate.mock.calls.at(-1)?.[0];
-    const deviceItems = latestMenu[3].submenu;
+    const deviceItems = latestMenu[4].submenu;
 
     expect(deviceItems).toHaveLength(2);
     expect(deviceItems[0].checked).toBe(true);
@@ -135,8 +135,7 @@ describe('tray', () => {
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
     expect(menu.some((item: { label?: string }) => item.label === 'Clean Transcription')).toBe(false);
-    expect(menu.some((item: { label?: string }) => item.label === 'Check for Updates')).toBe(false);
-    menu[11].click();
+    menu[12].click();
 
     expect(quit).toHaveBeenCalled();
   });
@@ -148,8 +147,8 @@ describe('tray', () => {
     createTray({ onOpenSettings: settingsHandler });
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[5].label).toBe('Agent Mode: Disabled');
-    menu[6].click();
+    expect(menu[6].label).toBe('Agent Mode: Disabled');
+    menu[7].click();
     expect(settingsHandler).toHaveBeenCalled();
   });
 
@@ -170,6 +169,35 @@ describe('tray', () => {
     expect(menu[1].label).toBe('Update status: latest (4.0.0)');
   });
 
+  it('shows Check for Updates menu item that triggers the check handler', async () => {
+    const checkHandler = vi.fn();
+    const { createTray } = await import(`../tray?test=${Date.now()}-check-updates`);
+
+    createTray({ onOpenSettings: vi.fn(), onCheckForUpdates: checkHandler });
+    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
+
+    expect(menu[2].label).toBe('Check for Updates');
+    expect(menu[2].enabled).toBe(true);
+    menu[2].click();
+    expect(checkHandler).toHaveBeenCalled();
+  });
+
+  it('disables Check for Updates item while checking', async () => {
+    const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-checking-state`);
+
+    createTray({ onOpenSettings: vi.fn() });
+    updateUpdaterStatus({
+      state: 'checking',
+      currentVersion: '4.0.0',
+      message: 'Checking for updates...',
+      checkedAt: null,
+    });
+    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
+
+    expect(menu[2].label).toBe('Checking...');
+    expect(menu[2].enabled).toBe(false);
+  });
+
   it('exposes paste and copy last transcript actions when handlers are provided', async () => {
     const pasteHandler = vi.fn();
     const copyHandler = vi.fn();
@@ -178,14 +206,14 @@ describe('tray', () => {
     createTray({ onOpenSettings: vi.fn(), onPasteLastTranscript: pasteHandler, onCopyLastTranscript: copyHandler });
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[8].label).toBe('Paste Last Transcript');
-    expect(menu[8].enabled).toBe(true);
-    menu[8].click();
-    expect(pasteHandler).toHaveBeenCalled();
-
-    expect(menu[9].label).toBe('Copy Last Transcript');
+    expect(menu[9].label).toBe('Paste Last Transcript');
     expect(menu[9].enabled).toBe(true);
     menu[9].click();
+    expect(pasteHandler).toHaveBeenCalled();
+
+    expect(menu[10].label).toBe('Copy Last Transcript');
+    expect(menu[10].enabled).toBe(true);
+    menu[10].click();
     expect(copyHandler).toHaveBeenCalled();
   });
 
@@ -195,9 +223,9 @@ describe('tray', () => {
     createTray({ onOpenSettings: vi.fn() });
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[8].label).toBe('Paste Last Transcript');
-    expect(menu[8].enabled).toBe(false);
-    expect(menu[9].label).toBe('Copy Last Transcript');
+    expect(menu[9].label).toBe('Paste Last Transcript');
     expect(menu[9].enabled).toBe(false);
+    expect(menu[10].label).toBe('Copy Last Transcript');
+    expect(menu[10].enabled).toBe(false);
   });
 });

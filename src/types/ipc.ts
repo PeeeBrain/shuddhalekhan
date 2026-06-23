@@ -94,6 +94,8 @@ export interface MainToRendererChannels {
   'audio:stop-recording': () => void;
   'audio:select-device': (deviceId: string) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;
+  'recording:pill-show': () => void;
+  'recording:pill-hide': () => void;
   'recording:started': () => void;
   'recording:stopped': () => void;
   'audio:level-changed': (level: number) => void;
@@ -126,6 +128,7 @@ export type AgentToastState =
       agentRunId: string;
       approvalId: string;
       serverId: string;
+      serverDisplayName?: string;
       toolName: string;
       modelToolName: string;
       arguments: unknown;
