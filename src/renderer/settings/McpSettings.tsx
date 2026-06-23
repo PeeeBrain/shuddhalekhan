@@ -5,6 +5,7 @@ import type {
   McpServerRuntimeStatus,
 } from '../../types/ipc';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
@@ -38,6 +39,7 @@ export function McpSettings({
 }) {
   const [draft, setDraft] = useState<McpServerConfig>(() => createBlankMcpServer());
   const [editingServerId, setEditingServerId] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<McpServerConfig | null>(null);
 
   const saveDraft = () => {
     const server = normalizeDraftServer(draft, editingServerId);
@@ -112,7 +114,7 @@ export function McpSettings({
                   setDraft(server);
                   setEditingServerId(server.id);
                 }}
-                onRemove={() => removeServer(server.id)}
+                onRemove={() => setRemoveTarget(server)}
                 onTest={() => onTest(server.id)}
                 onPolicyChange={(nextServer) => {
                   onChange(servers.map((item) => (item.id === server.id ? nextServer : item)));
@@ -122,6 +124,18 @@ export function McpSettings({
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={removeTarget !== null}
+        title={`Remove "${removeTarget?.displayName || 'Unnamed MCP Server'}"?`}
+        description="Per-tool approval policies for this server will be lost. This action cannot be undone."
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (removeTarget) removeServer(removeTarget.id);
+          setRemoveTarget(null);
+        }}
+        onCancel={() => setRemoveTarget(null)}
+      />
     </div>
   );
 }
