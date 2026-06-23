@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
 import {
@@ -8,6 +8,21 @@ import {
   startRecording,
   stopRecording,
 } from '../audio-capture';
+
+const originalMediaDevices = navigator.mediaDevices;
+const originalElectronAPI = window.electronAPI;
+
+afterEach(() => {
+  Object.defineProperty(navigator, 'mediaDevices', {
+    configurable: true,
+    value: originalMediaDevices,
+  });
+  Object.defineProperty(window, 'electronAPI', {
+    configurable: true,
+    writable: true,
+    value: originalElectronAPI,
+  });
+});
 
 describe('audio capture helpers', () => {
   it('encodes PCM samples into a valid 16-bit WAV file', () => {
@@ -30,19 +45,17 @@ describe('audio capture helpers', () => {
 
 describe('enumerateDevices', () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, 'navigator', {
+    Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
-        mediaDevices: {
-          getUserMedia: vi.fn(async () => ({
-            getTracks: () => [{ stop: vi.fn() }],
-          })),
-          enumerateDevices: vi.fn(async () => [
-            { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
-            { deviceId: 'speaker', label: 'Speaker', kind: 'audiooutput' },
-            { deviceId: 'mic-2', label: 'USB Mic', kind: 'audioinput' },
-          ]),
-        },
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [{ stop: vi.fn() }],
+        })),
+        enumerateDevices: vi.fn(async () => [
+          { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
+          { deviceId: 'speaker', label: 'Speaker', kind: 'audiooutput' },
+          { deviceId: 'mic-2', label: 'USB Mic', kind: 'audioinput' },
+        ]),
       },
     });
   });
@@ -56,7 +69,7 @@ describe('enumerateDevices', () => {
   });
 
   it('returns an empty list when mediaDevices is unavailable', async () => {
-    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(enumerateDevices()).resolves.toEqual([]);
@@ -71,22 +84,19 @@ describe('recording lifecycle', () => {
     const close = vi.fn();
     let audioProcess: ((event: AudioProcessingEvent) => void) | null = null;
 
-    Object.defineProperty(globalThis, 'window', {
+    Object.defineProperty(window, 'electronAPI', {
       configurable: true,
+      writable: true,
       value: {
-        electronAPI: {
-          send: vi.fn(),
-        },
+        send: vi.fn(),
       },
     });
-    Object.defineProperty(globalThis, 'navigator', {
+    Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
-        mediaDevices: {
-          getUserMedia: vi.fn(async () => ({
-            getTracks: () => [{ stop: stopTrack }],
-          })),
-        },
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [{ stop: stopTrack }],
+        })),
       },
     });
     Object.defineProperty(globalThis, 'AudioContext', {

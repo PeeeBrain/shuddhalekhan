@@ -1,3 +1,16 @@
+# Shuddhalekhan 4.5.1
+
+This patch release fixes recording pill regressions introduced during the 4.5.0 UX polish.
+
+## What's Changed
+
+### Recording Pill
+- The recording pill now appears on the first hotkey press after app startup.
+- Agent Mode push-to-talk now hides the pill when the hotkey is released.
+- The elapsed timer now resets to 00:00 for each new recording.
+
+---
+
 # Shuddhalekhan 4.5.0
 
 This minor release brings a comprehensive UX and accessibility polish pass across the recording pill, Settings window, Agent Mode toasts, and tray.
