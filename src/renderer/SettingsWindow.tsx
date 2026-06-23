@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -70,6 +71,7 @@ export function SettingsWindow() {
   const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
   const [whisperUrlError, setWhisperUrlError] = useState<string | null>(null);
   const [whisperTestState, setWhisperTestState] = useState<'idle' | 'checking' | 'success' | 'failed'>('idle');
+  const [pendingDisableAgent, setPendingDisableAgent] = useState(false);
 
   useEffect(() => {
     settingsIpc.getConfig().then(setConfigState).catch((err) => {
@@ -323,7 +325,13 @@ export function SettingsWindow() {
                   description="Activates the Alt + Win recording intent. Sidecar execution arrives in later phases."
                   checked={config.agent.enabled}
                   tone="agent"
-                  onChange={(checked) => updateAgent({ ...config.agent, enabled: checked })}
+                  onChange={(checked) => {
+                    if (!checked && config.agent.enabled) {
+                      setPendingDisableAgent(true);
+                    } else {
+                      updateAgent({ ...config.agent, enabled: checked });
+                    }
+                  }}
                 />
                 <TextRow
                   label="Provider base URL"
@@ -403,6 +411,18 @@ export function SettingsWindow() {
         )}
         </div>
       </section>
+
+      <ConfirmDialog
+        open={pendingDisableAgent}
+        title="Disable Agent Mode?"
+        description="Any active agent run will be cancelled and MCP server connections will be closed."
+        confirmLabel="Disable"
+        onConfirm={() => {
+          updateAgent({ ...config.agent, enabled: false });
+          setPendingDisableAgent(false);
+        }}
+        onCancel={() => setPendingDisableAgent(false)}
+      />
     </main>
   );
 }

@@ -1,3 +1,43 @@
+# Shuddhalekhan 4.5.0
+
+This minor release brings a comprehensive UX and accessibility polish pass across the recording pill, Settings window, Agent Mode toasts, and tray.
+
+## What's Changed
+
+### Recording Pill
+- A mode icon now appears inside the pill — a microphone for Dictation and a robot for Agent Mode — so you can tell which mode is active at a glance, not just by color.
+- The pill now smoothly fades and scales in when recording starts and fades out when recording stops.
+- An elapsed-time readout (mm:ss) is now visible inside the pill while you record.
+
+### Settings
+- The sidebar now shows an icon next to each section name for easier navigation.
+- Switching between settings sections now has a subtle fade transition.
+- A new first-run setup checklist appears in Settings to guide you through setting up the Whisper endpoint, selecting a microphone, and trying your first dictation. It dismisses once you're done.
+- The Whisper endpoint field now validates that you've entered a proper URL and offers a "Test connection" button to check that the server is reachable.
+- The save status badge now shows a clear error if a setting fails to save, instead of always claiming success.
+- The History section now looks consistent with the rest of the Settings window.
+
+### Agent Mode Toasts
+- An animated thinking indicator (three pulsing dots) appears while the agent is processing before the first response text streams in.
+- Completed, failed, cancelled, and configuration error toasts can now be dismissed manually and also auto-dismiss after a few seconds so they don't linger.
+- Configuration error toasts now include an "Open Settings" button so you can jump straight to fixing the problem.
+- The approval countdown timer turns red and pulses in the final 5 seconds to signal urgency.
+- Approval toasts now show your server's display name instead of a technical identifier.
+
+### Tray
+- A "Check for Updates" action is now available directly from the tray menu, so you don't need to open Settings to check.
+
+### Accessibility
+- Recording mode is no longer indicated by color alone — icons ensure the mode is identifiable for colorblind users.
+- Agent toast activity is now announced to screen readers via live regions.
+- The app now respects the Windows reduced-motion preference: waveform animation, pulsing badges, and spinning icons pause or freeze when reduced motion is enabled.
+- The agent run history list in Settings is now fully keyboard-navigable with arrow keys, Home, End, and Enter/Space to select.
+
+### Safety
+- Removing an MCP server and disabling Agent Mode while a run is active now ask for confirmation first, so you won't lose configuration or interrupt a run by accident.
+
+---
+
 # Shuddhalekhan 4.4.1
 
 This patch release improves the recording pill waveform so it is easier to see and actually reacts to the microphone.
