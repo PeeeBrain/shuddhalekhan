@@ -152,7 +152,19 @@ export function SettingsWindow() {
 
       <section className="min-w-0 flex-1 bg-background h-screen flex flex-col">
         {activeSection === 'history' ? (
-          <AuditHistorySettings settingsIpc={settingsIpc} />
+          <div className="flex flex-col flex-1 min-h-0">
+            <header className="px-10 pt-8 pb-0 flex items-start justify-between gap-6 shrink-0">
+              <h2 className="text-2xl font-semibold tracking-tight">
+                {sections.find((section) => section.id === activeSection)?.label}
+              </h2>
+              <Badge variant="outline" className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
+                {saveState === 'saved' ? 'Saved' : 'Ready'}
+              </Badge>
+            </header>
+            <div className="flex-1 min-h-0 overflow-hidden px-10 pb-8 flex flex-col">
+              <AuditHistorySettings settingsIpc={settingsIpc} />
+            </div>
+          </div>
         ) : (
           <ScrollArea className="h-full flex-1">
             <div className="px-10 py-8">
