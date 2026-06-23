@@ -38,13 +38,19 @@ export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
   positionPillWindow(win);
   win.show();
   win.setAlwaysOnTop(true, 'screen-saver');
+  win.webContents.send('recording:pill-show');
   win.webContents.send('recording:mode-changed', intent);
 }
 
 export function hideRecordingPill(): void {
   const win = pillWindow.get();
   if (win && !win.isDestroyed()) {
-    win.hide();
+    win.webContents.send('recording:pill-hide');
+    setTimeout(() => {
+      if (!win.isDestroyed()) {
+        win.hide();
+      }
+    }, 100);
   }
 }
 
