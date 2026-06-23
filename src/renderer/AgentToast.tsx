@@ -170,6 +170,20 @@ export function AgentToast() {
           ))}
         </ul>
       ) : null}
+
+      {state.kind === 'config' ? (
+        <div className="mt-3 flex-shrink-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => window.electronAPI?.invoke('settings:open')}
+          >
+            Open Settings
+          </Button>
+        </div>
+      ) : null}
     </main>
   );
 }
