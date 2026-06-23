@@ -27,6 +27,19 @@ export function AgentToast() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!state) return undefined;
+    if (state.kind === 'approval' || state.kind === 'streaming') return undefined;
+
+    const timer = window.setTimeout(() => {
+      window.electronAPI?.send('agent-toast:dismiss');
+    }, 6000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [state]);
+
   const secondsLeft = useMemo(() => {
     if (state?.kind !== 'approval') return null;
     return Math.max(0, Math.ceil((new Date(state.expiresAt).getTime() - now) / 1000));
@@ -142,7 +155,7 @@ export function AgentToast() {
         <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           {getTitle(state)}
         </Badge>
-        {state.kind === 'completed' ? (
+        {state.kind === 'completed' || state.kind === 'failed' || state.kind === 'cancelled' || state.kind === 'config' ? (
           <Button
             type="button"
             variant="ghost"
