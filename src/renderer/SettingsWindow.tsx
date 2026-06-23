@@ -151,6 +151,7 @@ export function SettingsWindow() {
       </aside>
 
       <section className="min-w-0 flex-1 bg-background h-screen flex flex-col">
+        <div key={activeSection} className="flex-1 flex flex-col min-h-0 content-enter">
         {activeSection === 'history' ? (
           <AuditHistorySettings settingsIpc={settingsIpc} />
         ) : (
@@ -303,6 +304,7 @@ export function SettingsWindow() {
             </div>
           </ScrollArea>
         )}
+        </div>
       </section>
     </main>
   );
