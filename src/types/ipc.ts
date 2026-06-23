@@ -126,6 +126,7 @@ export type AgentToastState =
       agentRunId: string;
       approvalId: string;
       serverId: string;
+      serverDisplayName?: string;
       toolName: string;
       modelToolName: string;
       arguments: unknown;

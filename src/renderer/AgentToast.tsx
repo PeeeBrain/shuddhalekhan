@@ -91,9 +91,14 @@ export function AgentToast() {
           </span>
         </div>
 
-        <h1 className="mb-2 break-words text-base font-semibold leading-snug line-clamp-3">
-          {state.serverId}:{state.toolName}
+        <h1 className="mb-1 break-words text-base font-semibold leading-snug line-clamp-3">
+          {(state.serverDisplayName || state.serverId)}:{state.toolName}
         </h1>
+        {state.serverDisplayName ? (
+          <p className="mb-2 text-xs text-muted-foreground font-mono">
+            {state.serverId}
+          </p>
+        ) : null}
 
         <p className="mb-2 block min-h-10 flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-2 text-sm leading-relaxed text-muted-foreground">
           {formatArguments(state.arguments)}
