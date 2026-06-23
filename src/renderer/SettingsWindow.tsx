@@ -153,6 +153,7 @@ export function SettingsWindow() {
       </aside>
 
       <section className="min-w-0 flex-1 bg-background h-screen flex flex-col">
+        <div key={activeSection} className="flex-1 flex flex-col min-h-0 content-enter">
         {activeSection === 'history' ? (
           <div className="flex flex-col flex-1 min-h-0">
             <header className="px-10 pt-8 pb-0 flex items-start justify-between gap-6 shrink-0">
@@ -326,6 +327,7 @@ export function SettingsWindow() {
             </div>
           </ScrollArea>
         )}
+        </div>
       </section>
     </main>
   );
