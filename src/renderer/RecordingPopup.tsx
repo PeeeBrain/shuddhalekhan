@@ -17,6 +17,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const [mode, setMode] = useState<RecordingIntent>(initialMode);
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
@@ -97,12 +98,24 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
     };
   }, [reducedMotion]);
 
+  useEffect(() => {
+    const startTime = Date.now();
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const phase = tick * PHASE_STEP;
+
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+  const formatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
   return (
     <div className="flex h-full w-full items-center justify-center overflow-hidden bg-transparent isolate">
       <div
-        className={`pill-inner flex h-10 w-32 items-center justify-center gap-1 rounded-full border px-3 ${
+        className={`pill-inner flex h-10 w-40 items-center justify-center gap-1 rounded-full border px-3 ${
           pillState === 'hidden' ? '' : pillState
         } ${
           mode === 'agent'
@@ -130,6 +143,9 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
             );
           })}
         </div>
+        <span className="text-[10px] font-mono tabular-nums text-white/70 select-none">
+          {formatted}
+        </span>
       </div>
     </div>
   );
