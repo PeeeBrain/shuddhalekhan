@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { AuditHistorySettings } from '../AuditHistorySettings';
 import type { SettingsIpc } from '../settings-ipc';
 import type { AuditEventDetail, AuditRunSummary } from '../../../types/ipc';
@@ -75,5 +75,40 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       setTimeoutSpy.mockRestore();
       clearTimeoutSpy.mockRestore();
     }
+  });
+
+  it('renders final responses as markdown for readability', async () => {
+    const runs: AuditRunSummary[] = [
+      {
+        agentRunId: 'run-1',
+        startedAt: '2026-06-25T10:00:00.000Z',
+        transcript: 'Active run',
+        status: 'completed',
+        response: 'Here is **bold text**:\n\n- first item\n- second item',
+        tools: [],
+      },
+    ];
+    const settingsIpc: SettingsIpc = {
+      getAuditRuns: mock(() => Promise.resolve(runs)),
+      getAuditRunDetail: mock(() => Promise.resolve([])),
+      onAuditRunUpdated: mock(() => undefined),
+      getConfig: mock(() => Promise.resolve({} as any)),
+      setConfig: mock(() => Promise.resolve()),
+      getAppInfo: mock(() => Promise.resolve({} as any)),
+      getUpdateStatus: mock(() => Promise.resolve({} as any)),
+      checkForUpdates: mock(() => Promise.resolve({} as any)),
+      testMcpServer: mock(() => Promise.resolve()),
+      onUpdateStatusChanged: mock(() => undefined),
+      onMcpServerStatus: mock(() => undefined),
+    };
+
+    const { container } = render(<AuditHistorySettings settingsIpc={settingsIpc} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('bold text')).toBeInTheDocument();
+    });
+
+    expect(container.querySelector('strong')?.textContent).toBe('bold text');
+    expect(container.querySelectorAll('li')).toHaveLength(2);
   });
 });

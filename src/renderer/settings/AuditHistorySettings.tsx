@@ -1,6 +1,7 @@
 import { useEffect, useState, useTransition, useCallback, useRef } from 'react';
 import type { SettingsIpc } from './settings-ipc';
 import type { AuditRunSummary, AuditEventDetail } from '../../types/ipc';
+import { renderMarkdown } from '../markdown';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -273,8 +274,8 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                 {selectedRunSummary?.response && (
                   <div className="space-y-1.5">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Final Response</h4>
-                    <div className="p-4 rounded-lg bg-primary-foreground border border-border text-sm select-text leading-relaxed whitespace-pre-wrap">
-                      {selectedRunSummary.response}
+                    <div className="p-4 rounded-lg bg-primary-foreground border border-border text-sm select-text leading-relaxed">
+                      {renderMarkdown(selectedRunSummary.response)}
                     </div>
                   </div>
                 )}
