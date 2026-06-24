@@ -44,6 +44,7 @@ export interface RendererToMainSendChannels {
   'audio-data-ready': (audioData: ArrayBuffer) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
+  'audio-duration-changed': (seconds: number) => void;
   'agent-toast:content-size': (height: number) => void;
   'agent-toast:dismiss': () => void;
 }
@@ -99,6 +100,7 @@ export interface MainToRendererChannels {
   'recording:started': () => void;
   'recording:stopped': () => void;
   'audio:level-changed': (level: number) => void;
+  'audio:duration-changed': (seconds: number) => void;
   'agent-toast:update': (state: AgentToastState) => void;
   'mcp:server-status': (status: McpServerRuntimeStatus) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
