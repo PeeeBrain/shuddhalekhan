@@ -1,4 +1,4 @@
-import { useEffect, useState, useTransition, useCallback } from 'react';
+import { useEffect, useState, useTransition, useCallback, useRef } from 'react';
 import type { SettingsIpc } from './settings-ipc';
 import type { AuditRunSummary, AuditEventDetail } from '../../types/ipc';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -27,27 +27,72 @@ interface AuditHistorySettingsProps {
   settingsIpc: SettingsIpc;
 }
 
+const LIVE_REFRESH_DEBOUNCE_MS = 500;
+
 export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps) {
   const [runs, setRuns] = useState<AuditRunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRunEvents, setSelectedRunEvents] = useState<AuditEventDetail[] | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const selectedRunIdRef = useRef<string | null>(null);
+  const runsQueryInFlightRef = useRef<Promise<void> | null>(null);
+  const detailQueryInFlightRef = useRef<string | null>(null);
+  const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingUpdatedRunIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    selectedRunIdRef.current = selectedRunId;
+  }, [selectedRunId]);
 
   const fetchRuns = useCallback(() => {
-    startTransition(async () => {
-      try {
-        const data = await settingsIpc.getAuditRuns();
-        setRuns(data);
-        if (data.length > 0 && !selectedRunId) {
+    if (runsQueryInFlightRef.current) return runsQueryInFlightRef.current;
+
+    const query = settingsIpc.getAuditRuns()
+      .then((data) => {
+        startTransition(() => {
+          setRuns(data);
+        });
+        if (data.length > 0 && !selectedRunIdRef.current) {
           setIsLoadingDetail(true);
           setSelectedRunId(data[0].agentRunId);
         }
-      } catch (err) {
+      })
+      .catch((err) => {
         console.error('Failed to fetch audit runs:', err);
-      }
-    });
-  }, [settingsIpc, selectedRunId]);
+      })
+      .finally(() => {
+        runsQueryInFlightRef.current = null;
+      });
+
+    runsQueryInFlightRef.current = query;
+    return query;
+  }, [settingsIpc]);
+
+  const fetchRunDetail = useCallback((runId: string, showLoading = false) => {
+    if (detailQueryInFlightRef.current === runId) return;
+    detailQueryInFlightRef.current = runId;
+    if (showLoading) setIsLoadingDetail(true);
+
+    settingsIpc
+      .getAuditRunDetail(runId)
+      .then((detail) => {
+        if (selectedRunIdRef.current === runId) {
+          setSelectedRunEvents(detail);
+        }
+      })
+      .catch((err) => {
+        console.error(`Failed to fetch events for run ${runId}:`, err);
+      })
+      .finally(() => {
+        if (detailQueryInFlightRef.current === runId) {
+          detailQueryInFlightRef.current = null;
+        }
+        if (selectedRunIdRef.current === runId) {
+          setIsLoadingDetail(false);
+        }
+      });
+  }, [settingsIpc]);
 
   const selectRun = useCallback((runId: string) => {
     setSelectedRunEvents(null);
@@ -81,44 +126,41 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
     fetchRuns();
 
     const unsubscribe = settingsIpc.onAuditRunUpdated((updatedRunId) => {
-      // Refresh runs list
-      settingsIpc.getAuditRuns().then((data) => {
-        setRuns(data);
-      }).catch(console.error);
-
-      // If the currently selected run is updated, refresh its details
-      if (selectedRunId === updatedRunId) {
-        setIsLoadingDetail(true);
-        settingsIpc.getAuditRunDetail(updatedRunId).then((detail) => {
-          setSelectedRunEvents(detail);
-        }).catch(console.error).finally(() => {
-          setIsLoadingDetail(false);
-        });
+      pendingUpdatedRunIdsRef.current.add(updatedRunId);
+      if (liveRefreshTimerRef.current) {
+        clearTimeout(liveRefreshTimerRef.current);
       }
+
+      liveRefreshTimerRef.current = setTimeout(() => {
+        liveRefreshTimerRef.current = null;
+        const updatedRunIds = pendingUpdatedRunIdsRef.current;
+        pendingUpdatedRunIdsRef.current = new Set<string>();
+        void fetchRuns();
+
+        const selected = selectedRunIdRef.current;
+        if (selected && updatedRunIds.has(selected)) {
+          fetchRunDetail(selected);
+        }
+      }, LIVE_REFRESH_DEBOUNCE_MS);
     });
 
     return () => {
       unsubscribe?.();
+      if (liveRefreshTimerRef.current) {
+        clearTimeout(liveRefreshTimerRef.current);
+      }
     };
-  }, [settingsIpc, selectedRunId, fetchRuns]);
+  }, [settingsIpc, fetchRuns, fetchRunDetail]);
 
   useEffect(() => {
     if (!selectedRunId) {
       return;
     }
 
-    settingsIpc
-      .getAuditRunDetail(selectedRunId)
-      .then((detail) => {
-        setSelectedRunEvents(detail);
-      })
-      .catch((err) => {
-        console.error(`Failed to fetch events for run ${selectedRunId}:`, err);
-      })
-      .finally(() => {
-        setIsLoadingDetail(false);
-      });
-  }, [selectedRunId, settingsIpc]);
+    queueMicrotask(() => {
+      fetchRunDetail(selectedRunId);
+    });
+  }, [selectedRunId, fetchRunDetail]);
 
   const selectedRunSummary = runs.find((r) => r.agentRunId === selectedRunId);
 
