@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
+import { spawnSync } from 'child_process';
 import { app } from 'electron';
 import fs from 'fs';
 import type { AuditRunSummary, AuditEventDetail } from '../types/ipc';
@@ -11,6 +12,7 @@ function getAuditDbPath(): string {
 }
 
 let dbInstance: Database.Database | null = null;
+let preferBunAuditReader = false;
 
 function getDb(): Database.Database {
   if (!dbInstance) {
@@ -28,6 +30,10 @@ function getDb(): Database.Database {
 
 export function getAuditRuns(): AuditRunSummary[] {
   try {
+    if (preferBunAuditReader) {
+      return queryAuditRunsWithBunFallback() ?? [];
+    }
+
     const db = getDb();
     
     // 1. Get the latest 100 unique run IDs by their start time
@@ -54,6 +60,12 @@ export function getAuditRuns(): AuditRunSummary[] {
     const events = eventsQuery.all(runIds.map(r => r.agent_run_id)) as AuditSummaryEventRow[];
     return summarizeAuditEvents(events);
   } catch (err) {
+    const fallbackRuns = queryAuditRunsWithBunFallback();
+    if (fallbackRuns) {
+      preferBunAuditReader = true;
+      return fallbackRuns;
+    }
+
     console.error('Failed to query audit runs:', err);
     return [];
   }
@@ -61,6 +73,10 @@ export function getAuditRuns(): AuditRunSummary[] {
 
 export function getAuditRunDetail(agentRunId: string): AuditEventDetail[] {
   try {
+    if (preferBunAuditReader) {
+      return queryAuditRunDetailWithBunFallback(agentRunId) ?? [];
+    }
+
     const db = getDb();
     const query = db.prepare(`
       SELECT id, agent_run_id, event_type, payload_json, created_at 
@@ -93,9 +109,47 @@ export function getAuditRunDetail(agentRunId: string): AuditEventDetail[] {
       };
     });
   } catch (err) {
+    const fallbackDetail = queryAuditRunDetailWithBunFallback(agentRunId);
+    if (fallbackDetail) {
+      preferBunAuditReader = true;
+      return fallbackDetail;
+    }
+
     console.error(`Failed to query run detail for ${agentRunId}:`, err);
     return [];
   }
+}
+
+function queryAuditRunsWithBunFallback(): AuditRunSummary[] | null {
+  return runBunAuditQuery<AuditRunSummary[]>({ mode: 'runs', dbPath: getAuditDbPath() });
+}
+
+function queryAuditRunDetailWithBunFallback(agentRunId: string): AuditEventDetail[] | null {
+  return runBunAuditQuery<AuditEventDetail[]>({ mode: 'detail', dbPath: getAuditDbPath(), agentRunId });
+}
+
+function runBunAuditQuery<T>(request: { dbPath: string; mode: 'runs' | 'detail'; agentRunId?: string }): T | null {
+  if (app.isPackaged) return null;
+
+  const scriptPath = join(app.getAppPath(), 'src', 'main', 'audit-query-fallback.ts');
+  const result = spawnSync(getBunCommand(), [scriptPath, JSON.stringify(request)], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+
+  if (result.status !== 0) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(result.stdout) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getBunCommand(): string {
+  return process.platform === 'win32' ? 'bun.exe' : 'bun';
 }
 
 export function closeDb(): void {
@@ -103,4 +157,5 @@ export function closeDb(): void {
     dbInstance.close();
     dbInstance = null;
   }
+  preferBunAuditReader = false;
 }
