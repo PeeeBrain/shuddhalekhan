@@ -2,6 +2,8 @@
 // Runs in a hidden BrowserWindow
 import type { AudioDevice } from '../types/ipc';
 
+const AUDIO_LEVEL_THROTTLE_MS = 33;
+
 let audioContext: AudioContext | null = null;
 let mediaStream: MediaStream | null = null;
 let sourceNode: MediaStreamAudioSourceNode | null = null;
@@ -9,11 +11,11 @@ let processorNode: ScriptProcessorNode | null = null;
 let audioBuffer: Float32Array[] = [];
 let isRecording = false;
 let isStreamPrepared = false;
-let startTime: number | null = null;
 let inputSampleRate = 16000;
 let inputChannels = 1;
 let selectedDeviceId: string | null = null;
 let hasAudioPermission = false;
+let lastLevelEmittedAt = 0;
 
 export function setSelectedDeviceId(deviceId: string | null): void {
   selectedDeviceId = deviceId;
@@ -104,11 +106,10 @@ export async function prepareStream(): Promise<void> {
     const avg = sum / buffer.length;
     const level = Math.min(avg * 10, 1);
 
-    window.electronAPI?.send('audio-level-changed', level);
-
-    if (startTime) {
-      const duration = Math.floor((Date.now() - startTime) / 1000);
-      window.electronAPI?.send('audio-duration-changed', duration);
+    const now = Date.now();
+    if (now - lastLevelEmittedAt >= AUDIO_LEVEL_THROTTLE_MS) {
+      lastLevelEmittedAt = now;
+      window.electronAPI?.send('audio-level-changed', level);
     }
   };
 
@@ -156,7 +157,7 @@ export async function startRecording(): Promise<void> {
   }
 
   audioBuffer = [];
-  startTime = Date.now();
+  lastLevelEmittedAt = 0;
   isRecording = true;
   console.log(`Recording started at ${inputSampleRate} Hz`);
 }
@@ -167,7 +168,6 @@ export function stopRecording(): Uint8Array {
   const wavData = encodeWAV(audioBuffer, inputSampleRate, inputChannels);
   console.log(`Recording stopped with ${audioBuffer.length} audio chunks and ${wavData.byteLength} WAV bytes`);
   audioBuffer = [];
-  startTime = null;
 
   return wavData;
 }
@@ -175,7 +175,6 @@ export function stopRecording(): Uint8Array {
 export function discardRecording(): void {
   isRecording = false;
   audioBuffer = [];
-  startTime = null;
 }
 
 function encodeWAV(
