@@ -8,6 +8,7 @@ let sourceNode: MediaStreamAudioSourceNode | null = null;
 let processorNode: ScriptProcessorNode | null = null;
 let audioBuffer: Float32Array[] = [];
 let isRecording = false;
+let isStreamPrepared = false;
 let startTime: number | null = null;
 let inputSampleRate = 16000;
 let inputChannels = 1;
@@ -32,7 +33,7 @@ export async function enumerateDevices(): Promise<AudioDevice[]> {
     return [];
   }
 
-  if (!hasAudioPermission && !isRecording) {
+  if (!hasAudioPermission && !isStreamPrepared) {
     let stream: MediaStream | null = null;
 
     try {
@@ -55,12 +56,7 @@ export async function enumerateDevices(): Promise<AudioDevice[]> {
     }));
 }
 
-export async function startRecording(): Promise<void> {
-  if (isRecording) return;
-
-  audioBuffer = [];
-  startTime = Date.now();
-
+function buildConstraints(): MediaStreamConstraints {
   const constraints: MediaStreamConstraints = {
     audio: {
       sampleRate: 16000,
@@ -76,12 +72,16 @@ export async function startRecording(): Promise<void> {
     (constraints.audio as MediaTrackConstraints).deviceId = { exact: deviceId };
   }
 
+  return constraints;
+}
+
+export async function prepareStream(): Promise<void> {
+  if (isStreamPrepared) return;
+
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+    mediaStream = await navigator.mediaDevices.getUserMedia(buildConstraints());
     hasAudioPermission = true;
   } catch (err) {
-    audioBuffer = [];
-    startTime = null;
     console.error('Failed to open microphone:', err);
     throw err;
   }
@@ -89,7 +89,6 @@ export async function startRecording(): Promise<void> {
   audioContext = new AudioContext({
     sampleRate: 16000,
   });
-  isRecording = true;
 
   sourceNode = audioContext.createMediaStreamSource(mediaStream);
   processorNode = audioContext.createScriptProcessor(4096, 1, 1);
@@ -101,10 +100,9 @@ export async function startRecording(): Promise<void> {
     const buffer = new Float32Array(inputData);
     audioBuffer.push(buffer);
 
-    // Calculate audio level for visualization
     const sum = buffer.reduce((acc, val) => acc + Math.abs(val), 0);
     const avg = sum / buffer.length;
-    const level = Math.min(avg * 10, 1); // Scale for visualization
+    const level = Math.min(avg * 10, 1);
 
     window.electronAPI?.send('audio-level-changed', level);
 
@@ -119,12 +117,12 @@ export async function startRecording(): Promise<void> {
 
   inputSampleRate = audioContext.sampleRate;
   inputChannels = 1;
-  console.log(`Recording started at ${inputSampleRate} Hz`);
+  isStreamPrepared = true;
+  console.log(`Audio stream prepared at ${inputSampleRate} Hz`);
+  window.electronAPI?.send('audio-stream-ready');
 }
 
-export function stopRecording(): Uint8Array {
-  isRecording = false;
-
+function teardownStream(): void {
   if (processorNode) {
     processorNode.disconnect();
     processorNode = null;
@@ -141,6 +139,30 @@ export function stopRecording(): Uint8Array {
     audioContext.close();
     audioContext = null;
   }
+  isStreamPrepared = false;
+}
+
+export async function recreateStream(deviceId: string | null): Promise<void> {
+  setSelectedDeviceId(deviceId);
+  teardownStream();
+  await prepareStream();
+}
+
+export async function startRecording(): Promise<void> {
+  if (isRecording) return;
+
+  if (!isStreamPrepared) {
+    await prepareStream();
+  }
+
+  audioBuffer = [];
+  startTime = Date.now();
+  isRecording = true;
+  console.log(`Recording started at ${inputSampleRate} Hz`);
+}
+
+export function stopRecording(): Uint8Array {
+  isRecording = false;
 
   const wavData = encodeWAV(audioBuffer, inputSampleRate, inputChannels);
   console.log(`Recording stopped with ${audioBuffer.length} audio chunks and ${wavData.byteLength} WAV bytes`);
@@ -148,6 +170,12 @@ export function stopRecording(): Uint8Array {
   startTime = null;
 
   return wavData;
+}
+
+export function discardRecording(): void {
+  isRecording = false;
+  audioBuffer = [];
+  startTime = null;
 }
 
 function encodeWAV(

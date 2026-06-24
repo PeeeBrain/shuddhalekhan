@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { RecordingIntent } from '../../types/ipc';
 import { installElectronMock } from '../../test/electron-mock';
 import type { RecordingSession } from '../recording-session';
+import type { AudioStreamAdapter } from '../audio-stream';
 
 const vi = { fn: mock };
 let RecordingSessionCtor: typeof RecordingSession;
@@ -20,22 +21,24 @@ mock.module('../recording-pill', () => ({
   hideRecordingPill: vi.fn(),
 }));
 
-function createWindow({ isLoading = false } = {}) {
+function createAudioStreamMock(): AudioStreamAdapter & {
+  [K in keyof AudioStreamAdapter]: ReturnType<typeof vi.fn>;
+} {
   return {
-    webContents: {
-      send: vi.fn(),
-      isLoading: vi.fn(() => isLoading),
-      on: vi.fn(),
-    },
-    isDestroyed: vi.fn(() => false),
+    prepare: vi.fn(),
+    beginCapture: vi.fn(),
+    endCapture: vi.fn(),
+    cancelCapture: vi.fn(),
+    markReady: vi.fn(),
+    markCrashed: vi.fn(),
+    isStreamReady: vi.fn(() => true),
+    setSelectedDevice: vi.fn(),
+    destroy: vi.fn(),
   };
 }
 
 describe('RecordingSession', () => {
-  let audioWindow: ReturnType<typeof createWindow>;
-  let createAudioWindow: ReturnType<typeof vi.fn>;
-  let getAudioWindow: ReturnType<typeof vi.fn>;
-  let destroyAudioWindow: ReturnType<typeof vi.fn>;
+  let audioStream: ReturnType<typeof createAudioStreamMock>;
   let showRecordingPill: ReturnType<typeof vi.fn>;
   let hideRecordingPill: ReturnType<typeof vi.fn>;
   let transcribe: ReturnType<typeof vi.fn>;
@@ -51,10 +54,7 @@ describe('RecordingSession', () => {
 
   beforeEach(async () => {
     ({ RecordingSession: RecordingSessionCtor } = await import(`../recording-session?test=${Date.now()}-${Math.random()}`));
-    audioWindow = createWindow();
-    createAudioWindow = vi.fn(() => audioWindow);
-    getAudioWindow = vi.fn(() => audioWindow);
-    destroyAudioWindow = vi.fn();
+    audioStream = createAudioStreamMock();
     showRecordingPill = vi.fn();
     hideRecordingPill = vi.fn();
     transcribe = vi.fn(async () => 'transcribed text');
@@ -70,9 +70,7 @@ describe('RecordingSession', () => {
     }));
     isAgentModeEnabled = vi.fn(() => false);
     session = new RecordingSessionCtor({
-      createAudioWindow,
-      getAudioWindow,
-      destroyAudioWindow,
+      audioStream,
       showRecordingPill,
       hideRecordingPill,
       transcribe,
@@ -85,34 +83,16 @@ describe('RecordingSession', () => {
     });
   });
 
-  it('begins recording immediately when the hidden audio window is ready', () => {
-    session.markAudioWindowReady();
-
+  it('prepares the audio stream and begins capture when recording starts', () => {
     session.begin('dictation');
 
-    expect(session.isActive()).toBe(true);
-    expect(createAudioWindow).toHaveBeenCalled();
-    expect(audioWindow.webContents.send).toHaveBeenCalledWith('audio:start-recording');
+    expect(audioStream.prepare).toHaveBeenCalledTimes(1);
+    expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
     expect(showRecordingPill).toHaveBeenCalledWith('dictation');
-  });
-
-  it('queues begin until the hidden audio window reports readiness', () => {
-    audioWindow = createWindow({ isLoading: true });
-    createAudioWindow.mockImplementation(() => audioWindow);
-    getAudioWindow.mockImplementation(() => audioWindow);
-
-    session.begin('agent');
-
-    expect(audioWindow.webContents.send).not.toHaveBeenCalledWith('audio:start-recording');
-    expect(showRecordingPill).toHaveBeenCalledWith('agent');
-
-    session.markAudioWindowReady();
-
-    expect(audioWindow.webContents.send).toHaveBeenCalledWith('audio:start-recording');
+    expect(session.isActive()).toBe(true);
   });
 
   it('ends recording and resolves with transcribed text and original intent', async () => {
-    session.markAudioWindowReady();
     session.begin('agent');
 
     const resultPromise = session.end();
@@ -124,7 +104,7 @@ describe('RecordingSession', () => {
       targetSnapshot: expect.any(Object),
     });
     expect(hideRecordingPill).toHaveBeenCalled();
-    expect(audioWindow.webContents.send).toHaveBeenCalledWith('audio:stop-recording');
+    expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
     expect(transcribe).toHaveBeenCalledWith(new Uint8Array(64));
     expect(session.isActive()).toBe(false);
   });
@@ -139,7 +119,6 @@ describe('RecordingSession', () => {
       capturedAt: new Date().toISOString(),
     };
     captureTarget.mockReturnValue(snapshot);
-    session.markAudioWindowReady();
 
     session.begin('dictation');
 
@@ -152,7 +131,6 @@ describe('RecordingSession', () => {
   });
 
   it('resolves empty WAV payloads to null without transcription', async () => {
-    session.markAudioWindowReady();
     session.begin('dictation');
 
     const resultPromise = session.end();
@@ -162,15 +140,24 @@ describe('RecordingSession', () => {
     expect(transcribe).not.toHaveBeenCalled();
   });
 
-  it('cancels recording without waiting for transcription', async () => {
-    session.markAudioWindowReady();
+  it('cancels recording and tells the audio stream to discard capture', async () => {
     session.begin('dictation');
 
     await expect(session.cancel()).resolves.toBeUndefined();
 
     expect(hideRecordingPill).toHaveBeenCalled();
-    expect(audioWindow.webContents.send).toHaveBeenCalledWith('audio:stop-recording');
+    expect(audioStream.cancelCapture).toHaveBeenCalledTimes(1);
     expect(session.isActive()).toBe(false);
+  });
+
+  it('delegates audio window readiness to the audio stream', () => {
+    session.markAudioWindowReady();
+    expect(audioStream.markReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('delegates audio window crash recovery to the audio stream', () => {
+    session.markAudioWindowCrashed('render-process-gone');
+    expect(audioStream.markCrashed).toHaveBeenCalledWith('render-process-gone');
   });
 
   it('owns keyboard hook lifecycle', () => {
@@ -185,10 +172,10 @@ describe('RecordingSession', () => {
 
     expect(enabled()).toBe(false);
     onStart('agent');
+    expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
     onStop();
     session.stopKeyboardHook();
 
-    expect(showRecordingPill).toHaveBeenCalledWith('agent');
     expect(keyboardStop).toHaveBeenCalledTimes(1);
   });
 });

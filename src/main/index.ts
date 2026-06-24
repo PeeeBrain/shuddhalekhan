@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { app, ipcMain, dialog, session, shell, Notification } from 'electron';
-import { createAudioWindow, getAudioWindow } from './audio-window';
+import { createAudioWindow, destroyAudioWindow, getAudioWindow } from './audio-window';
+import { AudioStream } from './audio-stream';
 import { getRecordingPillWindow } from './recording-pill';
 import { getSettingsWindow, openSettingsWindow } from './settings-window';
 import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
@@ -30,7 +31,8 @@ const sidecarEventRouter = createSidecarEventRouter({
   openExternal: shell.openExternal,
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
-const recordingSession = createRecordingSession(() => cachedAgentEnabled);
+const audioStream = new AudioStream({ createAudioWindow, getAudioWindow, destroyAudioWindow });
+const recordingSession = createRecordingSession(() => cachedAgentEnabled, audioStream);
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
@@ -150,10 +152,7 @@ ipcMain.handle('audio:get-devices', async () => {
 
 ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
   setConfig('selectedDeviceId', deviceId);
-  const audioWin = getAudioWindow();
-  if (audioWin && !audioWin.isDestroyed()) {
-    audioWin.webContents.send('audio:select-device', deviceId);
-  }
+  audioStream.setSelectedDevice(deviceId);
 });
 
 ipcMain.handle('config:get', () => {
@@ -232,7 +231,11 @@ ipcMain.handle('audit:get-run-detail', async (_event, agentRunId: string) => {
 
 // Renderer -> Main events
 ipcMain.on('audio-window-ready', () => {
-  recordingSession.markAudioWindowReady();
+  audioStream.prepare();
+});
+
+ipcMain.on('audio-stream-ready', () => {
+  audioStream.markReady();
 });
 
 ipcMain.on('audio-data-ready', async (_event, audioData: ArrayBuffer) => {
@@ -281,7 +284,7 @@ if (!gotSingleInstanceLock) {
       console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
     });
     audioWin.webContents.on('render-process-gone', (_event, details) => {
-      recordingSession.markAudioWindowCrashed(details.reason);
+      audioStream.markCrashed(details.reason);
     });
 
     recordingSession.startKeyboardHook(routeRecordingResult);
@@ -291,6 +294,10 @@ if (!gotSingleInstanceLock) {
       onPasteLastTranscript: () => pasteLastTranscript(),
       onCopyLastTranscript: () => copyLastTranscript(),
       onCheckForUpdates: () => void checkForUpdates(),
+      onSelectDevice: (deviceId: string) => {
+        setConfig('selectedDeviceId', deviceId);
+        audioStream.setSelectedDevice(deviceId);
+      },
     });
 
     const startupConfig = getConfig();
@@ -314,7 +321,7 @@ if (!gotSingleInstanceLock) {
   app.on('before-quit', () => {
     recordingSession.stopKeyboardHook();
     agentSidecar.stop();
-    recordingSession.destroyAudioWindow();
+    audioStream.destroy();
     closeDb();
   });
 }
