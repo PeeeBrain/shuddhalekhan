@@ -32,6 +32,11 @@ logs/
 *.log
 report.*.json
 
+# Local audio/transcription utilities
+scripts/local-record-wav.ts
+scripts/transcription-quality-cases.json
+fixtures/transcription-quality/*.wav
+
 # dotenv files
 .env
 .env.development.local

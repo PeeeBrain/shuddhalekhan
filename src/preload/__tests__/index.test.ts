@@ -52,10 +52,10 @@ describe('preload API', () => {
         },
       },
     });
-    api.send('audio-duration-changed', 4);
+    api.send('audio-level-changed', 0.4);
 
     expect(electronMock.ipcRenderer.invoke).toHaveBeenCalledWith('config:get');
-    expect(electronMock.ipcRenderer.send).toHaveBeenCalledWith('audio-duration-changed', 4);
+    expect(electronMock.ipcRenderer.send).toHaveBeenCalledWith('audio-level-changed', 0.4);
   });
 
   it('unwraps Electron events and returns an unsubscribe function', async () => {

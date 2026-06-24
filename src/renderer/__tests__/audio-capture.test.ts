@@ -78,7 +78,7 @@ describe('enumerateDevices', () => {
 });
 
 describe('recording lifecycle', () => {
-  it('opens the selected microphone, emits levels, and returns audio data when stopped without closing the warm stream', async () => {
+  it('opens the selected microphone and returns audio data after closing the capture stream', async () => {
     const stopTrack = vi.fn();
     const disconnect = vi.fn();
     const close = vi.fn();
@@ -134,12 +134,9 @@ describe('recording lifecycle', () => {
         sampleRate: 16000,
       }) as MediaTrackConstraints,
     });
-    const sendCalls = (window.electronAPI?.send as ReturnType<typeof mock>).mock.calls;
-    const levelCall = sendCalls.find(([channel]: [string, ...unknown[]]) => channel === 'audio-level-changed');
-    expect(levelCall?.[1]).toBeCloseTo(1);
-    expect(stopTrack).not.toHaveBeenCalled();
-    expect(disconnect).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+    expect(disconnect).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(1);
     expect(wav.byteLength).toBe(50);
   });
 });
@@ -197,17 +194,19 @@ describe('warm audio stream', () => {
     });
   }
 
-  it('prepares the microphone once and reuses the warm stream across recordings without re-opening it', async () => {
+  it('prepares microphone permission once and opens a fresh capture stream per recording', async () => {
     installAudioMocks();
     const mod = await importWarm();
     mod.setSelectedDeviceId('mic-123');
 
     await mod.prepareStream();
     expect(getUserMedia).toHaveBeenCalledTimes(1);
-    expect(audioProcess).toBeTypeOf('function');
+    expect(audioProcess).toBeNull();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
 
     await mod.startRecording();
-    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(audioProcess).toBeTypeOf('function');
 
     (audioProcess as unknown as (event: AudioProcessingEvent) => void)({
       inputBuffer: { getChannelData: () => new Float32Array([0.2, -0.4, 0.6]) },
@@ -215,15 +214,61 @@ describe('warm audio stream', () => {
 
     const wav = mod.stopRecording();
     expect(wav.byteLength).toBe(50);
+    expect(stopTrack).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(1);
 
     await mod.startRecording();
-    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).toHaveBeenCalledTimes(3);
     mod.stopRecording();
-    expect(stopTrack).not.toHaveBeenCalled();
-    expect(close).not.toHaveBeenCalled();
+    expect(stopTrack).toHaveBeenCalledTimes(3);
+    expect(close).toHaveBeenCalledTimes(2);
   });
 
-  it('recreates the stream with the new device on device change, tearing down the previous stream', async () => {
+  it('throttles recording pill level telemetry without dropping captured audio chunks or emitting duration updates', async () => {
+    installAudioMocks();
+    const intervalCallbacks: Array<() => void> = [];
+    const intervalSpy = spyOn(globalThis, 'setInterval').mockImplementation((callback: () => void) => {
+      intervalCallbacks.push(callback);
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    });
+    const clearIntervalSpy = spyOn(globalThis, 'clearInterval').mockImplementation(() => undefined);
+    const mod = await importWarm();
+
+    try {
+      await mod.startRecording();
+      expect(audioProcess).toBeTypeOf('function');
+      expect(intervalCallbacks).toHaveLength(1);
+
+      const processAudio = () => {
+        (audioProcess as unknown as (event: AudioProcessingEvent) => void)({
+          inputBuffer: { getChannelData: () => new Float32Array([0.2, -0.4, 0.6]) },
+        } as unknown as AudioProcessingEvent);
+      };
+
+      processAudio();
+      processAudio();
+      processAudio();
+      processAudio();
+      intervalCallbacks.forEach((callback) => callback());
+
+      const wav = mod.stopRecording();
+      const telemetryCalls = send.mock.calls.filter(([channel]: [string, ...unknown[]]) =>
+        channel === 'audio-level-changed' || channel === 'audio-duration-changed'
+      );
+
+      expect(telemetryCalls).toEqual([
+        ['audio-level-changed', 0],
+        ['audio-level-changed', expect.closeTo(1)],
+      ]);
+      expect(wav.byteLength).toBe(68);
+      expect(clearIntervalSpy).toHaveBeenCalled();
+    } finally {
+      intervalSpy.mockRestore();
+      clearIntervalSpy.mockRestore();
+    }
+  });
+
+  it('re-prepares microphone permission with the new device on device change', async () => {
     installAudioMocks();
     const mod = await importWarm();
     mod.setSelectedDeviceId('mic-1');
@@ -233,8 +278,8 @@ describe('warm audio stream', () => {
 
     await mod.recreateStream('mic-2');
 
-    expect(stopTrack).toHaveBeenCalledTimes(1);
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(stopTrack).toHaveBeenCalledTimes(2);
+    expect(close).not.toHaveBeenCalled();
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(getUserMedia).toHaveBeenNthCalledWith(2, {
       audio: expect.objectContaining({

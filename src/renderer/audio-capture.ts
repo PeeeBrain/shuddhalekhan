@@ -7,9 +7,12 @@ let mediaStream: MediaStream | null = null;
 let sourceNode: MediaStreamAudioSourceNode | null = null;
 let processorNode: ScriptProcessorNode | null = null;
 let audioBuffer: Float32Array[] = [];
+const AUDIO_LEVEL_TELEMETRY_INTERVAL_MS = 50;
+
 let isRecording = false;
 let isStreamPrepared = false;
-let startTime: number | null = null;
+let latestAudioLevel = 0;
+let levelTelemetryTimer: ReturnType<typeof setInterval> | null = null;
 let inputSampleRate = 16000;
 let inputChannels = 1;
 let selectedDeviceId: string | null = null;
@@ -78,10 +81,75 @@ function buildConstraints(): MediaStreamConstraints {
 export async function prepareStream(): Promise<void> {
   if (isStreamPrepared) return;
 
+  let permissionStream: MediaStream | null = null;
+  try {
+    permissionStream = await navigator.mediaDevices.getUserMedia(buildConstraints());
+    hasAudioPermission = true;
+  } catch (err) {
+    console.error('Failed to prepare microphone:', err);
+    throw err;
+  } finally {
+    permissionStream?.getTracks().forEach((track) => track.stop());
+  }
+
+  isStreamPrepared = true;
+  console.log('Audio stream prepared');
+  window.electronAPI?.send('audio-stream-ready');
+}
+
+function stopLevelTelemetry(): void {
+  if (levelTelemetryTimer) {
+    clearInterval(levelTelemetryTimer);
+    levelTelemetryTimer = null;
+  }
+}
+
+function startLevelTelemetry(): void {
+  stopLevelTelemetry();
+  window.electronAPI?.send('audio-level-changed', latestAudioLevel);
+  levelTelemetryTimer = setInterval(() => {
+    window.electronAPI?.send('audio-level-changed', latestAudioLevel);
+  }, AUDIO_LEVEL_TELEMETRY_INTERVAL_MS);
+}
+
+function teardownCapture(): void {
+  stopLevelTelemetry();
+  if (processorNode) {
+    processorNode.disconnect();
+    processorNode = null;
+  }
+  if (sourceNode) {
+    sourceNode.disconnect();
+    sourceNode = null;
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((track) => track.stop());
+    mediaStream = null;
+  }
+  if (audioContext) {
+    audioContext.close();
+    audioContext = null;
+  }
+}
+
+export async function recreateStream(deviceId: string | null): Promise<void> {
+  setSelectedDeviceId(deviceId);
+  teardownCapture();
+  isStreamPrepared = false;
+  await prepareStream();
+}
+
+export async function startRecording(): Promise<void> {
+  if (isRecording) return;
+
+  audioBuffer = [];
+  latestAudioLevel = 0;
+
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia(buildConstraints());
     hasAudioPermission = true;
   } catch (err) {
+    audioBuffer = [];
     console.error('Failed to open microphone:', err);
     throw err;
   }
@@ -102,14 +170,7 @@ export async function prepareStream(): Promise<void> {
 
     const sum = buffer.reduce((acc, val) => acc + Math.abs(val), 0);
     const avg = sum / buffer.length;
-    const level = Math.min(avg * 10, 1);
-
-    window.electronAPI?.send('audio-level-changed', level);
-
-    if (startTime) {
-      const duration = Math.floor((Date.now() - startTime) / 1000);
-      window.electronAPI?.send('audio-duration-changed', duration);
-    }
+    latestAudioLevel = Math.min(avg * 10, 1);
   };
 
   sourceNode.connect(processorNode);
@@ -117,65 +178,29 @@ export async function prepareStream(): Promise<void> {
 
   inputSampleRate = audioContext.sampleRate;
   inputChannels = 1;
-  isStreamPrepared = true;
-  console.log(`Audio stream prepared at ${inputSampleRate} Hz`);
-  window.electronAPI?.send('audio-stream-ready');
-}
-
-function teardownStream(): void {
-  if (processorNode) {
-    processorNode.disconnect();
-    processorNode = null;
-  }
-  if (sourceNode) {
-    sourceNode.disconnect();
-    sourceNode = null;
-  }
-  if (mediaStream) {
-    mediaStream.getTracks().forEach((track) => track.stop());
-    mediaStream = null;
-  }
-  if (audioContext) {
-    audioContext.close();
-    audioContext = null;
-  }
-  isStreamPrepared = false;
-}
-
-export async function recreateStream(deviceId: string | null): Promise<void> {
-  setSelectedDeviceId(deviceId);
-  teardownStream();
-  await prepareStream();
-}
-
-export async function startRecording(): Promise<void> {
-  if (isRecording) return;
-
-  if (!isStreamPrepared) {
-    await prepareStream();
-  }
-
-  audioBuffer = [];
-  startTime = Date.now();
   isRecording = true;
+  isStreamPrepared = true;
+  startLevelTelemetry();
   console.log(`Recording started at ${inputSampleRate} Hz`);
 }
 
 export function stopRecording(): Uint8Array {
   isRecording = false;
+  teardownCapture();
 
   const wavData = encodeWAV(audioBuffer, inputSampleRate, inputChannels);
   console.log(`Recording stopped with ${audioBuffer.length} audio chunks and ${wavData.byteLength} WAV bytes`);
   audioBuffer = [];
-  startTime = null;
+  latestAudioLevel = 0;
 
   return wavData;
 }
 
 export function discardRecording(): void {
   isRecording = false;
+  teardownCapture();
   audioBuffer = [];
-  startTime = null;
+  latestAudioLevel = 0;
 }
 
 function encodeWAV(
