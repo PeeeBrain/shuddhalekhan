@@ -12,21 +12,25 @@ const screen = {
 const loadURL = vi.fn();
 const on = vi.fn();
 const isDestroyed = vi.fn(() => false);
+const isVisible = vi.fn(() => false);
 const show = vi.fn();
 const setAlwaysOnTop = vi.fn();
 const send = vi.fn();
 const isLoading = vi.fn(() => false);
 const once = vi.fn();
+const webContentsOnce = vi.fn();
 const hide = vi.fn();
 const BrowserWindow = vi.fn(() => ({
   loadURL,
   on,
   isDestroyed,
+  isVisible,
   show,
   hide,
   setAlwaysOnTop,
   setPosition: vi.fn(),
-  webContents: { send, isLoading, once },
+  webContents: { send, isLoading, once: webContentsOnce },
+  once,
 }));
 
 installElectronMock();
@@ -44,13 +48,17 @@ describe('positionPillWindow', () => {
     loadURL.mockClear();
     on.mockClear();
     isDestroyed.mockReturnValue(false);
+    isVisible.mockReturnValue(false);
     show.mockClear();
     setAlwaysOnTop.mockClear();
     send.mockClear();
     isLoading.mockClear();
     once.mockClear();
+    webContentsOnce.mockClear();
     isLoading.mockReturnValue(false);
     hide.mockClear();
+    once._pendingHandler = undefined;
+    once._pendingEvent = undefined;
   });
 
   it('centers the recording pill near the bottom of the primary display', async () => {
@@ -100,7 +108,7 @@ describe('positionPillWindow', () => {
     expect(send).toHaveBeenCalledWith('recording:mode-changed', 'agent');
   });
 
-  it('defers pill-show IPC events until the renderer finishes loading', async () => {
+  it('defers showing the window and pill events until the renderer is ready to show (so React listeners exist)', async () => {
     isLoading.mockReturnValue(true);
     once.mockImplementation((event: string, handler: () => void) => {
       once._pendingHandler = handler;
@@ -111,13 +119,31 @@ describe('positionPillWindow', () => {
 
     showRecordingPill('dictation');
 
-    expect(once).toHaveBeenCalledWith('did-finish-load', expect.any(Function));
+    expect(once).toHaveBeenCalledWith('ready-to-show', expect.any(Function));
+    expect(show).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalledWith('recording:pill-show');
 
     once._pendingHandler?.();
 
+    expect(show).toHaveBeenCalled();
+    expect(setAlwaysOnTop).toHaveBeenCalledWith(true, 'screen-saver');
     expect(send).toHaveBeenCalledWith('recording:pill-show');
     expect(send).toHaveBeenCalledWith('recording:mode-changed', 'dictation');
+  });
+
+  it('shows the window and sends pill events immediately when the renderer is already ready', async () => {
+    isLoading.mockReturnValue(false);
+    isVisible.mockReturnValue(false);
+
+    const { showRecordingPill } = await import(`../recording-pill?test=${Date.now()}-ready2`);
+
+    showRecordingPill('dictation');
+
+    expect(show).toHaveBeenCalled();
+    expect(setAlwaysOnTop).toHaveBeenCalledWith(true, 'screen-saver');
+    expect(send).toHaveBeenCalledWith('recording:pill-show');
+    expect(send).toHaveBeenCalledWith('recording:mode-changed', 'dictation');
+    expect(once).not.toHaveBeenCalledWith('ready-to-show', expect.any(Function));
   });
 
   it('cancels a pending hide timeout when showRecordingPill is called again', async () => {

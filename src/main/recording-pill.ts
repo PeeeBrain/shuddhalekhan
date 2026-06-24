@@ -42,20 +42,28 @@ export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
 
   const win = createRecordingPillWindow(intent);
   positionPillWindow(win);
-  win.show();
-  win.setAlwaysOnTop(true, 'screen-saver');
 
   const sendEvents = () => {
-    if (!win.isDestroyed()) {
-      win.webContents.send('recording:pill-show');
-      win.webContents.send('recording:mode-changed', intent);
-    }
+    if (win.isDestroyed()) return;
+    win.webContents.send('recording:pill-show');
+    win.webContents.send('recording:mode-changed', intent);
   };
 
-  if (win.webContents.isLoading()) {
-    win.webContents.once('did-finish-load', sendEvents);
-  } else {
+  const showAndSend = () => {
+    if (win.isDestroyed()) return;
+    if (!win.isVisible()) {
+      win.show();
+      win.setAlwaysOnTop(true, 'screen-saver');
+    }
     sendEvents();
+  };
+
+  if (win.isVisible()) {
+    sendEvents();
+  } else if (win.webContents.isLoading()) {
+    win.once('ready-to-show', showAndSend);
+  } else {
+    showAndSend();
   }
 }
 
