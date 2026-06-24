@@ -1,0 +1,15 @@
+{
+  "endpoint": "http://localhost:8080/inference",
+  "language": "mr",
+  "maxWer": 0.15,
+  "maxCer": 0.08,
+  "cases": [
+    {
+      "name": "short-dictation-sample",
+      "file": "fixtures/transcription-quality/short-dictation-sample.wav",
+      "expected": "इथे तुमचा अचूक अपेक्षित मजकूर लिहा",
+      "maxWer": 0.15,
+      "maxCer": 0.08
+    }
+  ]
+}
