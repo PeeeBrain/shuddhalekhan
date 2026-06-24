@@ -18,6 +18,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
   const [elapsed, setElapsed] = useState(0);
+  const [lastStats, setLastStats] = useState<{ chunks: number; byteLength: number } | null>(null);
   const recordingStartRef = useRef<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -33,9 +34,13 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
     const removeLevel = window.electronAPI?.on('audio:level-changed', (l) => {
       targetLevelRef.current = l;
     });
+    const removeDiag = window.electronAPI?.on('recording:diagnostic', (stats) => {
+      setLastStats(stats);
+    });
     return () => {
       removeMode?.();
       removeLevel?.();
+      removeDiag?.();
     };
   }, []);
 
@@ -150,6 +155,15 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
         <span className="text-[10px] font-mono tabular-nums text-white/70 select-none">
           {formatted}
         </span>
+        {lastStats && (
+          <span
+            className="text-[8px] font-mono tabular-nums text-white/40 select-none"
+            data-testid="diagnostic-stats"
+            title={`Last recording: ${lastStats.chunks} chunks, ${lastStats.byteLength} bytes`}
+          >
+            {lastStats.byteLength > 44 ? `${(lastStats.byteLength / 1024).toFixed(1)}k` : 'empty'}
+          </span>
+        )}
       </div>
     </div>
   );

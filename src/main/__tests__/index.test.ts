@@ -238,6 +238,7 @@ describe('main process IPC orchestration', () => {
       'audio-level-changed',
       'audio-stream-ready',
       'audio-window-ready',
+      'recording:diagnostic',
     ]);
   });
 

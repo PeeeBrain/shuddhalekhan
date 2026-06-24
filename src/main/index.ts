@@ -240,7 +240,7 @@ ipcMain.on('audio-stream-ready', () => {
 
 ipcMain.on('audio-data-ready', async (_event, audioData: ArrayBuffer) => {
   const data = new Uint8Array(audioData);
-  console.log(`Audio data ready: ${data.byteLength} bytes`);
+  console.log(`[DIAGNOSTIC #80] audio-data-ready received: ${data.byteLength} bytes`);
   await recordingSession.complete(data);
 });
 
@@ -252,6 +252,14 @@ ipcMain.on('audio-level-changed', (_event, level: number) => {
   const pill = getRecordingPillWindow();
   if (pill && !pill.isDestroyed()) {
     pill.webContents.send('audio:level-changed', level);
+  }
+});
+
+ipcMain.on('recording:diagnostic', (_event, stats: { chunks: number; byteLength: number }) => {
+  console.log(`[DIAGNOSTIC #80] recording:diagnostic: ${stats.chunks} chunks, ${stats.byteLength} bytes`);
+  const pill = getRecordingPillWindow();
+  if (pill && !pill.isDestroyed()) {
+    pill.webContents.send('recording:diagnostic', stats);
   }
 });
 

@@ -166,7 +166,11 @@ export function stopRecording(): Uint8Array {
   isRecording = false;
 
   const wavData = encodeWAV(audioBuffer, inputSampleRate, inputChannels);
-  console.log(`Recording stopped with ${audioBuffer.length} audio chunks and ${wavData.byteLength} WAV bytes`);
+  console.log(`[DIAGNOSTIC #80] audio-capture stopRecording: ${audioBuffer.length} chunks, ${wavData.byteLength} WAV bytes`);
+  window.electronAPI?.send('recording:diagnostic', {
+    chunks: audioBuffer.length,
+    byteLength: wavData.byteLength,
+  });
   audioBuffer = [];
 
   return wavData;
