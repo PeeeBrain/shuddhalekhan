@@ -237,12 +237,14 @@ describe('main process IPC orchestration', () => {
       'audio-devices',
       'audio-duration-changed',
       'audio-level-changed',
+      'audio-stream-ready',
       'audio-window-ready',
     ]);
   });
 
-  it('starts recording immediately when the audio window is ready', () => {
+  it('starts recording immediately when the audio stream is ready', () => {
     ipcListeners.get('audio-window-ready')?.({});
+    ipcListeners.get('audio-stream-ready')?.({});
     ipcHandlers.get('audio:start-recording')?.({});
 
     expect(createAudioWindow).toHaveBeenCalled();
@@ -250,19 +252,18 @@ describe('main process IPC orchestration', () => {
     expect(showRecordingPill).toHaveBeenCalled();
   });
 
-  it('queues start until the hidden audio window reports readiness', () => {
-    isLoading.mockReturnValue(true);
-
+  it('queues start until the audio stream reports readiness', () => {
     ipcHandlers.get('audio:start-recording')?.({});
     expect(send).not.toHaveBeenCalledWith('audio:start-recording');
 
-    isLoading.mockReturnValue(false);
     ipcListeners.get('audio-window-ready')?.({});
+    ipcListeners.get('audio-stream-ready')?.({});
     expect(send).toHaveBeenCalledWith('audio:start-recording');
   });
 
   it('stops recording and asks the audio window for buffered audio', async () => {
     ipcListeners.get('audio-window-ready')?.({});
+    ipcListeners.get('audio-stream-ready')?.({});
     ipcHandlers.get('audio:start-recording')?.({});
 
     await ipcHandlers.get('audio:stop-recording')?.({});
@@ -273,6 +274,7 @@ describe('main process IPC orchestration', () => {
 
   it('transcribes completed audio and restores the clipboard after paste', async () => {
     ipcListeners.get('audio-window-ready')?.({});
+    ipcListeners.get('audio-stream-ready')?.({});
     ipcHandlers.get('audio:start-recording')?.({});
     await ipcHandlers.get('audio:stop-recording')?.({});
 
@@ -308,6 +310,7 @@ describe('main process IPC orchestration', () => {
     };
     getConfig.mockReturnValue(config);
     ipcListeners.get('audio-window-ready')?.({});
+    ipcListeners.get('audio-stream-ready')?.({});
     const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
     onStart('agent');
     onStop();
@@ -322,6 +325,7 @@ describe('main process IPC orchestration', () => {
 
   it('routes dictation recordings through clipboard injection and not the agent sidecar', async () => {
     ipcListeners.get('audio-window-ready')?.({});
+    ipcListeners.get('audio-stream-ready')?.({});
     const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
     onStart('dictation');
     onStop();
@@ -424,7 +428,7 @@ describe('main process IPC orchestration', () => {
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
     expect(hideAgentToast).toHaveBeenCalled();
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
-    expect(send).toHaveBeenCalledWith('audio:select-device', 'mic-1');
+    expect(send).toHaveBeenCalledWith('audio:recreate-stream', 'mic-1');
     expect(checkForUpdates).toHaveBeenCalled();
     expect(updateAudioDevices).toHaveBeenCalledWith([{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
     expect(send).toHaveBeenCalledWith('audio:level-changed', 0.75);

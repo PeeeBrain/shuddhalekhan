@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { startRecording, stopRecording, enumerateDevices, setSelectedDeviceId } from './audio-capture';
+import { prepareStream, recreateStream, startRecording, stopRecording, enumerateDevices, setSelectedDeviceId } from './audio-capture';
 import { RecordingPopup } from './RecordingPopup';
 import { SettingsWindow } from './SettingsWindow';
 import { AgentToast } from './AgentToast';
@@ -16,15 +16,13 @@ function AudioWindow() {
 
     window.electronAPI?.invoke('config:get').then((config) => {
       setSelectedDeviceId(config.selectedDeviceId);
+      return prepareStream();
+    }).then(() => {
+      void sendAudioDevices().catch((err) => {
+        console.error('Failed to enumerate audio devices:', err);
+      });
     }).catch((err) => {
-      console.error('Failed to load audio config:', err);
-    });
-
-    // Enumerate devices on mount and send to main process
-    sendAudioDevices().then(() => {
-      console.log('Audio devices sent to main process');
-    }).catch((err) => {
-      console.error('Failed to enumerate audio devices:', err);
+      console.error('Failed to prepare audio stream:', err);
     });
 
     // Listen for commands from main process
@@ -54,8 +52,10 @@ function AudioWindow() {
       }
     });
 
-    const removeSelect = window.electronAPI?.on('audio:select-device', (deviceId: string) => {
-      setSelectedDeviceId(deviceId);
+    const removeRecreate = window.electronAPI?.on('audio:recreate-stream', (deviceId: string | null) => {
+      recreateStream(deviceId).catch((err) => {
+        console.error('Failed to recreate audio stream for device change:', err);
+      });
     });
 
     window.electronAPI?.send('audio-window-ready');
@@ -63,7 +63,7 @@ function AudioWindow() {
     return () => {
       removeStart?.();
       removeStop?.();
-      removeSelect?.();
+      removeRecreate?.();
     };
   }, []);
 

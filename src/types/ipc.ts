@@ -40,6 +40,7 @@ export interface McpServerConfig {
 
 export interface RendererToMainSendChannels {
   'audio-window-ready': () => void;
+  'audio-stream-ready': () => void;
   'audio-data-ready': (audioData: ArrayBuffer) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
@@ -92,7 +93,7 @@ export interface RendererToMainInvokeChannels {
 export interface MainToRendererChannels {
   'audio:start-recording': () => void;
   'audio:stop-recording': () => void;
-  'audio:select-device': (deviceId: string) => void;
+  'audio:recreate-stream': (deviceId: string | null) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;
   'recording:pill-show': () => void;
   'recording:pill-hide': () => void;

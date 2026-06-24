@@ -2,7 +2,6 @@ import { Tray, Menu, nativeImage, app } from 'electron';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { getConfig, setConfig } from './config';
-import { getAudioWindow } from './audio-window';
 import type { AudioDevice, UpdateStatus } from '../types/ipc';
 
 let tray: Tray | null = null;
@@ -10,6 +9,7 @@ let openSettingsHandler: (() => void) | null = null;
 let pasteLastTranscriptHandler: (() => void) | null = null;
 let copyLastTranscriptHandler: (() => void) | null = null;
 let checkForUpdatesHandler: (() => void) | null = null;
+let selectDeviceHandler: ((deviceId: string) => void) | null = null;
 let audioDevices: AudioDevice[] = [];
 let updateStatus: UpdateStatus = {
   state: 'idle',
@@ -23,6 +23,7 @@ export interface TrayHandlers {
   onPasteLastTranscript?: () => void;
   onCopyLastTranscript?: () => void;
   onCheckForUpdates?: () => void;
+  onSelectDevice?: (deviceId: string) => void;
 }
 
 export function createTray(handlers: TrayHandlers): Tray {
@@ -30,6 +31,7 @@ export function createTray(handlers: TrayHandlers): Tray {
   pasteLastTranscriptHandler = handlers.onPasteLastTranscript ?? null;
   copyLastTranscriptHandler = handlers.onCopyLastTranscript ?? null;
   checkForUpdatesHandler = handlers.onCheckForUpdates ?? null;
+  selectDeviceHandler = handlers.onSelectDevice ?? null;
 
   const icon = loadTrayIcon();
   
@@ -122,10 +124,7 @@ function buildDeviceSubmenu(
     checked: device.deviceId === currentDeviceId || (!currentDeviceId && device.deviceId === 'default'),
     click: () => {
       setConfig('selectedDeviceId', device.deviceId);
-      const audioWin = getAudioWindow();
-      if (audioWin && !audioWin.isDestroyed()) {
-        audioWin.webContents.send('audio:select-device', device.deviceId);
-      }
+      selectDeviceHandler?.(device.deviceId);
       updateTrayMenu();
     },
   }));

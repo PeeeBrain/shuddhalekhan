@@ -63,13 +63,13 @@ describe('preload API', () => {
     const api = electronMock.contextBridge.exposeInMainWorld.mock.calls[0]?.[1];
     const callback = vi.fn();
 
-    const unsubscribe = api.on('audio:select-device', callback);
+    const unsubscribe = api.on('audio:recreate-stream', callback);
     const wrapper = electronMock.ipcRenderer.on.mock.calls[0]?.[1];
     wrapper({ sender: 'ignored' }, 'mic-1');
     unsubscribe();
 
-    expect(electronMock.ipcRenderer.on).toHaveBeenCalledWith('audio:select-device', expect.any(Function));
+    expect(electronMock.ipcRenderer.on).toHaveBeenCalledWith('audio:recreate-stream', expect.any(Function));
     expect(callback).toHaveBeenCalledWith('mic-1');
-    expect(electronMock.ipcRenderer.removeListener).toHaveBeenCalledWith('audio:select-device', wrapper);
+    expect(electronMock.ipcRenderer.removeListener).toHaveBeenCalledWith('audio:recreate-stream', wrapper);
   });
 });

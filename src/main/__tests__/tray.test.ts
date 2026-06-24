@@ -108,10 +108,10 @@ describe('tray', () => {
     expect(createFromPath).toHaveBeenCalledWith(normalize('/resources/icons/tray-icon.ico'));
   });
 
-  it('filters audio inputs and sends device selections to the audio window', async () => {
-    audioWindow = { isDestroyed: () => false, webContents: { send } };
+  it('filters audio inputs and routes device selections through the onSelectDevice handler', async () => {
+    const onSelectDevice = vi.fn();
     const { createTray, updateAudioDevices } = await import(`../tray?test=${Date.now()}-3`);
-    createTray({ onOpenSettings: vi.fn() });
+    createTray({ onOpenSettings: vi.fn(), onSelectDevice });
 
     updateAudioDevices([
       { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
@@ -125,7 +125,7 @@ describe('tray', () => {
     deviceItems[1].click();
 
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'speaker');
-    expect(send).toHaveBeenCalledWith('audio:select-device', 'speaker');
+    expect(onSelectDevice).toHaveBeenCalledWith('speaker');
   });
 
   it('keeps settings-owned actions out of the tray and handles exit', async () => {

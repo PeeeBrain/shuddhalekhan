@@ -78,7 +78,7 @@ describe('enumerateDevices', () => {
 });
 
 describe('recording lifecycle', () => {
-  it('opens the selected microphone, emits levels, and returns audio data when stopped', async () => {
+  it('opens the selected microphone, emits levels, and returns audio data when stopped without closing the warm stream', async () => {
     const stopTrack = vi.fn();
     const disconnect = vi.fn();
     const close = vi.fn();
@@ -135,11 +135,112 @@ describe('recording lifecycle', () => {
       }) as MediaTrackConstraints,
     });
     const sendCalls = (window.electronAPI?.send as ReturnType<typeof mock>).mock.calls;
-    expect(sendCalls[0]?.[0]).toBe('audio-level-changed');
-    expect(sendCalls[0]?.[1]).toBeCloseTo(1);
-    expect(stopTrack).toHaveBeenCalled();
-    expect(disconnect).toHaveBeenCalled();
-    expect(close).toHaveBeenCalled();
+    const levelCall = sendCalls.find(([channel]: [string, ...unknown[]]) => channel === 'audio-level-changed');
+    expect(levelCall?.[1]).toBeCloseTo(1);
+    expect(stopTrack).not.toHaveBeenCalled();
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
     expect(wav.byteLength).toBe(50);
+  });
+});
+
+describe('warm audio stream', () => {
+  let stopTrack: ReturnType<typeof vi.fn>;
+  let disconnect: ReturnType<typeof vi.fn>;
+  let close: ReturnType<typeof vi.fn>;
+  let getUserMedia: ReturnType<typeof vi.fn>;
+  let audioProcess: ((event: AudioProcessingEvent) => void) | null;
+  let send: ReturnType<typeof vi.fn>;
+
+  async function importWarm() {
+    return import(`../audio-capture?warm=${Date.now()}-${Math.random()}`);
+  }
+
+  function installAudioMocks() {
+    stopTrack = vi.fn();
+    disconnect = vi.fn();
+    close = vi.fn();
+    audioProcess = null;
+    send = vi.fn();
+    getUserMedia = vi.fn(async () => ({
+      getTracks: () => [{ stop: stopTrack }],
+    }));
+
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      writable: true,
+      value: { send },
+    });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      writable: true,
+      value: { getUserMedia, enumerateDevices: vi.fn(async () => []) },
+    });
+    Object.defineProperty(globalThis, 'AudioContext', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(function AudioContext() {
+        return {
+          sampleRate: 16000,
+          destination: {},
+          createMediaStreamSource: vi.fn(() => ({ connect: vi.fn(), disconnect })),
+          createScriptProcessor: vi.fn(() => ({
+            connect: vi.fn(),
+            disconnect,
+            set onaudioprocess(handler: (event: AudioProcessingEvent) => void) {
+              audioProcess = handler;
+            },
+          })),
+          close,
+        };
+      }),
+    });
+  }
+
+  it('prepares the microphone once and reuses the warm stream across recordings without re-opening it', async () => {
+    installAudioMocks();
+    const mod = await importWarm();
+    mod.setSelectedDeviceId('mic-123');
+
+    await mod.prepareStream();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(audioProcess).toBeTypeOf('function');
+
+    await mod.startRecording();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    (audioProcess as unknown as (event: AudioProcessingEvent) => void)({
+      inputBuffer: { getChannelData: () => new Float32Array([0.2, -0.4, 0.6]) },
+    } as unknown as AudioProcessingEvent);
+
+    const wav = mod.stopRecording();
+    expect(wav.byteLength).toBe(50);
+
+    await mod.startRecording();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    mod.stopRecording();
+    expect(stopTrack).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('recreates the stream with the new device on device change, tearing down the previous stream', async () => {
+    installAudioMocks();
+    const mod = await importWarm();
+    mod.setSelectedDeviceId('mic-1');
+
+    await mod.prepareStream();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+
+    await mod.recreateStream('mic-2');
+
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(getUserMedia).toHaveBeenCalledTimes(2);
+    expect(getUserMedia).toHaveBeenNthCalledWith(2, {
+      audio: expect.objectContaining({
+        deviceId: { exact: 'mic-2' },
+        sampleRate: 16000,
+      }) as MediaTrackConstraints,
+    });
   });
 });
