@@ -255,6 +255,13 @@ ipcMain.on('audio-level-changed', (_event, level: number) => {
   }
 });
 
+ipcMain.on('audio-duration-changed', (_event, seconds: number) => {
+  const pill = getRecordingPillWindow();
+  if (pill && !pill.isDestroyed()) {
+    pill.webContents.send('audio:duration-changed', seconds);
+  }
+});
+
 ipcMain.on('agent-toast:content-size', (_event, height: number) => {
   handleAgentToastContentSize(height);
 });

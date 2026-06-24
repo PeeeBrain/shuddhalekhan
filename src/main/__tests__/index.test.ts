@@ -235,6 +235,7 @@ describe('main process IPC orchestration', () => {
       'agent-toast:dismiss',
       'audio-data-ready',
       'audio-devices',
+      'audio-duration-changed',
       'audio-level-changed',
       'audio-stream-ready',
       'audio-window-ready',
@@ -416,6 +417,7 @@ describe('main process IPC orchestration', () => {
     ipcHandlers.get('updater:check')?.({});
     ipcListeners.get('audio-devices')?.({}, [{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
     ipcListeners.get('audio-level-changed')?.({}, 0.75);
+    ipcListeners.get('audio-duration-changed')?.({}, 12);
     ipcListeners.get('agent-toast:content-size')?.({}, 280);
     ipcListeners.get('agent-toast:dismiss')?.({});
 
@@ -430,6 +432,7 @@ describe('main process IPC orchestration', () => {
     expect(checkForUpdates).toHaveBeenCalled();
     expect(updateAudioDevices).toHaveBeenCalledWith([{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
     expect(send).toHaveBeenCalledWith('audio:level-changed', 0.75);
+    expect(send).toHaveBeenCalledWith('audio:duration-changed', 12);
     expect(handleAgentToastContentSize).toHaveBeenCalledWith(280);
   });
 
