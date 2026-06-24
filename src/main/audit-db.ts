@@ -1,18 +1,18 @@
 import Database from 'better-sqlite3';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
+import { spawnSync } from 'child_process';
 import { app } from 'electron';
 import fs from 'fs';
 import type { AuditRunSummary, AuditEventDetail } from '../types/ipc';
 import { AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
-
-const INTERRUPTED_RUN_GRACE_MS = 5 * 60 * 1000;
-const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interrupted', 'run_cancelled', 'cancelled']);
+import { summarizeAuditEvents, type AuditSummaryEventRow } from './audit-summary';
 
 function getAuditDbPath(): string {
   return resolveAuditDbPath(app.getPath('userData'));
 }
 
 let dbInstance: Database.Database | null = null;
+let preferBunAuditReader = false;
 
 function getDb(): Database.Database {
   if (!dbInstance) {
@@ -30,6 +30,10 @@ function getDb(): Database.Database {
 
 export function getAuditRuns(): AuditRunSummary[] {
   try {
+    if (preferBunAuditReader) {
+      return queryAuditRunsWithBunFallback() ?? [];
+    }
+
     const db = getDb();
     
     // 1. Get the latest 100 unique run IDs by their start time
@@ -53,118 +57,26 @@ export function getAuditRuns(): AuditRunSummary[] {
       ORDER BY created_at ASC
     `);
     
-    const events = eventsQuery.all(runIds.map(r => r.agent_run_id)) as {
-      agent_run_id: string;
-      event_type: string;
-      payload_json: string;
-      created_at: string;
-    }[];
-    
-    // Group events by run ID
-    const eventsByRunId = new Map<string, typeof events>();
-    for (const event of events) {
-      if (!eventsByRunId.has(event.agent_run_id)) {
-        eventsByRunId.set(event.agent_run_id, []);
-      }
-      eventsByRunId.get(event.agent_run_id)!.push(event);
-    }
-    
-    // 3. Process events chronologically for each run
-    const summaries: AuditRunSummary[] = [];
-    
-    for (const run of runIds) {
-      const runEvents = eventsByRunId.get(run.agent_run_id) || [];
-      if (runEvents.length === 0) continue;
-      
-      const summary: AuditRunSummary = {
-        agentRunId: run.agent_run_id,
-        startedAt: runEvents[0].created_at,
-        transcript: '',
-        status: 'running',
-        tools: [],
-      };
-      
-      const toolsSet = new Set<string>();
-      let latestEventAt = runEvents[0].created_at;
-      let hasTerminalEvent = false;
-      
-      for (const event of runEvents) {
-        latestEventAt = event.created_at;
-        if (TERMINAL_EVENT_TYPES.has(event.event_type)) {
-          hasTerminalEvent = true;
-        }
-
-        let payload: any = {};
-        try {
-          payload = JSON.parse(event.payload_json);
-        } catch {
-          // ignore parsing errors
-        }
-        
-        switch (event.event_type) {
-          case 'run_started':
-            summary.transcript = payload.transcript || '';
-            break;
-          case 'run_completed':
-            summary.status = 'completed';
-            summary.response = payload.response;
-            break;
-          case 'run_failed':
-            summary.status = 'failed';
-            summary.error = payload.error;
-            break;
-          case 'run_interrupted':
-            summary.status = 'interrupted';
-            break;
-          case 'run_cancelled':
-          case 'cancelled':
-            summary.status = 'cancelled';
-            break;
-          case 'approval_requested':
-          case 'mcp_tool_execute_started':
-            if (payload.serverId && payload.toolName) {
-              toolsSet.add(`${payload.serverId}.${payload.toolName}`);
-            }
-            break;
-          case 'tool_requests':
-            if (Array.isArray(payload.toolCalls)) {
-              for (const tc of payload.toolCalls) {
-                if (tc && tc.toolName) {
-                  const parts = tc.toolName.split('__');
-                  if (parts.length > 1) {
-                    toolsSet.add(`${parts[0]}.${parts.slice(1).join('__')}`);
-                  } else {
-                    toolsSet.add(tc.toolName);
-                  }
-                }
-              }
-            }
-            break;
-        }
-      }
-      
-      if (!hasTerminalEvent && isStaleInterruptedRun(latestEventAt)) {
-        summary.status = 'interrupted';
-      }
-
-      summary.tools = Array.from(toolsSet);
-      summaries.push(summary);
-    }
-    
-    return summaries;
+    const events = eventsQuery.all(runIds.map(r => r.agent_run_id)) as AuditSummaryEventRow[];
+    return summarizeAuditEvents(events);
   } catch (err) {
+    const fallbackRuns = queryAuditRunsWithBunFallback();
+    if (fallbackRuns) {
+      preferBunAuditReader = true;
+      return fallbackRuns;
+    }
+
     console.error('Failed to query audit runs:', err);
     return [];
   }
 }
 
-function isStaleInterruptedRun(latestEventAt: string, now = Date.now()): boolean {
-  const latestTime = new Date(latestEventAt).getTime();
-  return Number.isFinite(latestTime) && now - latestTime > INTERRUPTED_RUN_GRACE_MS;
-}
-
 export function getAuditRunDetail(agentRunId: string): AuditEventDetail[] {
   try {
+    if (preferBunAuditReader) {
+      return queryAuditRunDetailWithBunFallback(agentRunId) ?? [];
+    }
+
     const db = getDb();
     const query = db.prepare(`
       SELECT id, agent_run_id, event_type, payload_json, created_at 
@@ -197,9 +109,47 @@ export function getAuditRunDetail(agentRunId: string): AuditEventDetail[] {
       };
     });
   } catch (err) {
+    const fallbackDetail = queryAuditRunDetailWithBunFallback(agentRunId);
+    if (fallbackDetail) {
+      preferBunAuditReader = true;
+      return fallbackDetail;
+    }
+
     console.error(`Failed to query run detail for ${agentRunId}:`, err);
     return [];
   }
+}
+
+function queryAuditRunsWithBunFallback(): AuditRunSummary[] | null {
+  return runBunAuditQuery<AuditRunSummary[]>({ mode: 'runs', dbPath: getAuditDbPath() });
+}
+
+function queryAuditRunDetailWithBunFallback(agentRunId: string): AuditEventDetail[] | null {
+  return runBunAuditQuery<AuditEventDetail[]>({ mode: 'detail', dbPath: getAuditDbPath(), agentRunId });
+}
+
+function runBunAuditQuery<T>(request: { dbPath: string; mode: 'runs' | 'detail'; agentRunId?: string }): T | null {
+  if (app.isPackaged) return null;
+
+  const scriptPath = join(app.getAppPath(), 'src', 'main', 'audit-query-fallback.ts');
+  const result = spawnSync(getBunCommand(), [scriptPath, JSON.stringify(request)], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+
+  if (result.status !== 0) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(result.stdout) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getBunCommand(): string {
+  return process.platform === 'win32' ? 'bun.exe' : 'bun';
 }
 
 export function closeDb(): void {
@@ -207,4 +157,5 @@ export function closeDb(): void {
     dbInstance.close();
     dbInstance = null;
   }
+  preferBunAuditReader = false;
 }

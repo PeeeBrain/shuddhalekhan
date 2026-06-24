@@ -22,6 +22,7 @@ const require = createRequire(import.meta.url);
 export class AgentAuditStore {
   private readonly db: SqliteDatabase;
   private readonly insertEvent: SqliteStatement;
+  private readonly lastStatusByRunId = new Map<string, string>();
   private isClosed = false;
 
   constructor(dbPath = getDefaultAuditDbPath()) {
@@ -38,7 +39,14 @@ export class AgentAuditStore {
 
     try {
       const sanitized = sanitizeAuditPayload(payload);
-      this.insertEvent.run(agentRunId, eventType, JSON.stringify(sanitized), new Date().toISOString());
+      const payloadJson = JSON.stringify(sanitized);
+      if (eventType === 'status') {
+        const previousStatus = this.lastStatusByRunId.get(agentRunId);
+        if (previousStatus === payloadJson) return;
+        this.lastStatusByRunId.set(agentRunId, payloadJson);
+      }
+
+      this.insertEvent.run(agentRunId, eventType, payloadJson, new Date().toISOString());
     } catch (err) {
       console.error('[agent-audit] failed to record audit event', eventType, err);
     }
