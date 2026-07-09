@@ -1,15 +1,13 @@
 import { randomUUID } from 'crypto';
 import { app, ipcMain, dialog, session, shell, Notification } from 'electron';
-import { createAudioWindow, destroyAudioWindow, getAudioWindow } from './audio-window';
-import { AudioStream } from './audio-stream';
-import { getRecordingPillWindow } from './recording-pill';
+
 import { getSettingsWindow, openSettingsWindow } from './settings-window';
 import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
 import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './agent-toast-window';
 import { getConfig, setConfig } from './config';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
-import { createRecordingSession } from './recording-session';
+import { RecordingSession } from './recording-session';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
@@ -31,8 +29,13 @@ const sidecarEventRouter = createSidecarEventRouter({
   openExternal: shell.openExternal,
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
-const audioStream = new AudioStream({ createAudioWindow, getAudioWindow, destroyAudioWindow });
-const recordingSession = createRecordingSession(() => cachedAgentEnabled, audioStream);
+const recordingSession = new RecordingSession({
+  isAgentModeEnabled: () => cachedAgentEnabled,
+  getSelectedDeviceId: () => getConfig().selectedDeviceId,
+  getWhisperUrl: () => getConfig().whisperUrl,
+  onResult: routeRecordingResult,
+  onError: showTranscriptionError,
+});
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
@@ -97,7 +100,7 @@ function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste
 }
 
 function finishRecording(): void {
-  void recordingSession.end().then(routeRecordingResult).catch(showTranscriptionError);
+  void recordingSession.end();
 }
 
 function showTranscriptionError(err: unknown): void {
@@ -143,8 +146,8 @@ ipcMain.handle('audio:stop-recording', async () => {
 });
 
 ipcMain.handle('audio:get-devices', async () => {
-  const audioWin = getAudioWindow();
-  if (!audioWin) return [];
+  const webContents = recordingSession.getAudioWebContents();
+  if (!webContents) return [];
   // Devices will be enumerated by the renderer and sent back via a different IPC
   // For now, return empty and let the tray update happen from the renderer
   return [];
@@ -152,7 +155,7 @@ ipcMain.handle('audio:get-devices', async () => {
 
 ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
   setConfig('selectedDeviceId', deviceId);
-  audioStream.setSelectedDevice(deviceId);
+  recordingSession.updateDevice(deviceId);
 });
 
 ipcMain.handle('config:get', () => {
@@ -230,29 +233,8 @@ ipcMain.handle('audit:get-run-detail', async (_event, agentRunId: string) => {
 });
 
 // Renderer -> Main events
-ipcMain.on('audio-window-ready', () => {
-  audioStream.prepare();
-});
-
-ipcMain.on('audio-stream-ready', () => {
-  audioStream.markReady();
-});
-
-ipcMain.on('audio-data-ready', async (_event, audioData: ArrayBuffer) => {
-  const data = new Uint8Array(audioData);
-  console.log(`Audio data ready: ${data.byteLength} bytes`);
-  await recordingSession.complete(data);
-});
-
 ipcMain.on('audio-devices', (_event, devices: AudioDevice[]) => {
   updateAudioDevices(devices);
-});
-
-ipcMain.on('audio-level-changed', (_event, level: number) => {
-  const pill = getRecordingPillWindow();
-  if (pill && !pill.isDestroyed()) {
-    pill.webContents.send('audio:level-changed', level);
-  }
 });
 
 ipcMain.on('agent-toast:content-size', (_event, height: number) => {
@@ -272,15 +254,7 @@ if (!gotSingleInstanceLock) {
       callback(permission === 'media');
     });
 
-    const audioWin = createAudioWindow();
-    audioWin.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-      console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
-    });
-    audioWin.webContents.on('render-process-gone', (_event, details) => {
-      audioStream.markCrashed(details.reason);
-    });
-
-    recordingSession.startKeyboardHook(routeRecordingResult);
+    recordingSession.start();
 
     createTray({
       onOpenSettings: () => openSettingsWindow(),
@@ -289,7 +263,7 @@ if (!gotSingleInstanceLock) {
       onCheckForUpdates: () => void checkForUpdates(),
       onSelectDevice: (deviceId: string) => {
         setConfig('selectedDeviceId', deviceId);
-        audioStream.setSelectedDevice(deviceId);
+        recordingSession.updateDevice(deviceId);
       },
     });
 
@@ -312,9 +286,8 @@ if (!gotSingleInstanceLock) {
   });
 
   app.on('before-quit', () => {
-    recordingSession.stopKeyboardHook();
+    recordingSession.stop();
     agentSidecar.stop();
-    audioStream.destroy();
     closeDb();
   });
 }
