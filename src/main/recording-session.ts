@@ -48,6 +48,9 @@ export class ProductionAudioCapture implements AudioCapture {
         },
       },
       onCreated: (win) => {
+        win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+          console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
+        });
         win.webContents.on('render-process-gone', (_event, details) => {
           console.error(`Audio window render process gone: ${details.reason}`);
           this.handleCrash(details.reason);
@@ -180,6 +183,8 @@ export class RecordingSession {
   private hideRecordingPillFn: () => void;
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
+  private getSelectedDeviceId?: () => string | null;
+  private getWhisperUrl?: () => string;
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
@@ -193,12 +198,18 @@ export class RecordingSession {
     this.hideRecordingPillFn = options.hideRecordingPill ?? hideRecordingPill;
     this.onResultCallback = options.onResult;
     this.onErrorCallback = options.onError;
+    this.getSelectedDeviceId = options.getSelectedDeviceId;
+    this.getWhisperUrl = options.getWhisperUrl;
   }
 
   begin(intent: RecordingIntent = 'dictation'): void {
     if (this.activeIntent) return;
     this.activeIntent = intent;
     this.targetSnapshot = this.captureTarget();
+
+    const deviceId = this.getSelectedDeviceId?.();
+    const whisperUrl = this.getWhisperUrl?.();
+    console.log(`Starting recording session. Device: ${deviceId ?? 'default'}, Whisper URL: ${whisperUrl ?? 'default'}`);
 
     this.audioCapture.prepare();
     this.audioCapture.beginCapture();
@@ -279,11 +290,15 @@ export class RecordingSession {
     }
   }
 
-  startKeyboardHook(onResult: (result: RecordingResult | null) => void | Promise<void>): void {
+  startKeyboardHook(onResult?: (result: RecordingResult | null) => void | Promise<void>): void {
     this.keyboardHook.start(
       (intent) => this.begin(intent),
       () => {
-        void this.end().then(onResult);
+        void this.end().then((result) => {
+          if (onResult && !this.onResultCallback) {
+            void onResult(result);
+          }
+        });
       },
       this.isAgentModeEnabled
     );
@@ -299,11 +314,7 @@ export class RecordingSession {
     ipcMain.on('audio-data-ready', this.handleAudioDataReady);
     ipcMain.on('audio-level-changed', this.handleAudioLevelChanged);
 
-    this.startKeyboardHook((result) => {
-      if (this.onResultCallback) {
-        void this.onResultCallback(result);
-      }
-    });
+    this.startKeyboardHook();
   }
 
   stop(): void {

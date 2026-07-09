@@ -288,4 +288,39 @@ describe('RecordingSession', () => {
     expect(onResult).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
+
+  it('does not double-invoke onResult when triggered via keyboard hook', async () => {
+    const onResult = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      whisperClient: transcribe,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onResult,
+    });
+
+    session.start();
+    session.begin('dictation');
+
+    // Trigger keyboard-stop callback
+    const onStop = keyboardStart.mock.calls[0][1] as () => void;
+    onStop();
+
+    // Trigger audio-data-ready
+    const audioDataReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'audio-data-ready'
+    );
+    const listener = audioDataReadyCall[1];
+    
+    const fakeAudioData = new Uint8Array(64);
+    await listener({}, fakeAudioData.buffer);
+
+    // Wait a brief moment
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(onResult).toHaveBeenCalledTimes(1);
+  });
 });
