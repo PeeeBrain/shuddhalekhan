@@ -47,4 +47,4 @@ Use `bun` exclusively. `pnpm` is only a fallback if `koffi` causes resolution is
 
 ## Pre-PR Opening Checklist
 - [ ] Make sure `@package.json` version is updated, ensuring propery version number upgrade to reflect the severity of the changes being made.
-- [ ] Make sure `@release-notes.md` is updated to reflect the changes being made.
+- [ ] Make sure `@CHANGELOG.md` is updated to reflect the changes being made.

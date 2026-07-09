@@ -1,4 +1,14 @@
-# Shuddhalekhan 4.5.1
+# Changelog
+
+User-visible changes to Shuddhalekhan are tracked here. Releases use semantic
+version tags such as `v4.5.1`; keep new entries under **Unreleased** until a
+human-approved release is created.
+
+## Unreleased
+
+No unreleased changes.
+
+## v4.5.1
 
 This patch release fixes recording pill regressions introduced during the 4.5.0 UX polish.
 
@@ -11,7 +21,7 @@ This patch release fixes recording pill regressions introduced during the 4.5.0 
 
 ---
 
-# Shuddhalekhan 4.5.0
+## v4.5.0
 
 This minor release brings a comprehensive UX and accessibility polish pass across the recording pill, Settings window, Agent Mode toasts, and tray.
 
@@ -51,7 +61,7 @@ This minor release brings a comprehensive UX and accessibility polish pass acros
 
 ---
 
-# Shuddhalekhan 4.4.1
+## v4.4.1
 
 This patch release improves the recording pill waveform so it is easier to see and actually reacts to the microphone.
 
@@ -67,7 +77,7 @@ This patch release improves the recording pill waveform so it is easier to see a
 
 ---
 
-# Shuddhalekhan 4.4.0
+## v4.4.0
 
 This minor release protects clipboard contents during automatic paste by capturing a bounded multi-format snapshot before dictation and restoring it afterward.
 
@@ -85,7 +95,7 @@ This minor release protects clipboard contents during automatic paste by capturi
 
 ---
 
-# Shuddhalekhan 4.3.2
+## v4.3.2
 
 This patch release makes successful dictations recoverable when automatic clipboard paste fails or is blocked.
 
@@ -111,7 +121,7 @@ This patch release makes successful dictations recoverable when automatic clipbo
 
 ---
 
-# Shuddhalekhan 4.3.1
+## v4.3.1
 
 This patch release improves Agent Mode sidecar architecture and run-event routing reliability.
 
@@ -125,7 +135,7 @@ This patch release improves Agent Mode sidecar architecture and run-event routin
 
 ---
 
-# Shuddhalekhan 4.3.0
+## v4.3.0
 
 This minor release introduces an Agent Run Inspector & Audit Log Viewer, a Personal Dictionary for dictation, generic MCP OAuth support, multilingual Whisper controls, and agent toast refinements.
 
@@ -157,7 +167,7 @@ This minor release introduces an Agent Run Inspector & Audit Log Viewer, a Perso
 
 ---
 
-# Shuddhalekhan 4.2.1
+## v4.2.1
 
 This patch release restores generic OAuth support for protected hosted MCP servers.
 
@@ -171,7 +181,7 @@ This patch release restores generic OAuth support for protected hosted MCP serve
 
 ---
 
-# Shuddhalekhan 4.2.0
+## v4.2.0
 
 This minor release adds multilingual Whisper controls for dictation and Agent Mode.
 
@@ -185,7 +195,7 @@ This minor release adds multilingual Whisper controls for dictation and Agent Mo
 
 ---
 
-# Shuddhalekhan 4.1.1
+## v4.1.1
 
 This patch release focuses on internal architecture cleanup for the Electron main process, MCP configuration, and Settings UI. User-facing behavior is intended to remain unchanged.
 
@@ -203,7 +213,7 @@ No breaking changes. This release preserves existing configuration and workflows
 
 ---
 
-# Shuddhalekhan 4.1.0
+## v4.1.0
 
 This release delivers a comprehensive UI/UX polish pass with a new cohesive color theme, cleaner settings window, and native-feeling agent toasts.
 

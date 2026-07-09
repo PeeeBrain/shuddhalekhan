@@ -1,15 +1,12 @@
 name: Release Windows App
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: blacksmith-4vcpu-windows-2025
     permissions:
       contents: write
@@ -21,60 +18,50 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Verify release tag and changelog
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $expectedTag = "v$version"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Release tag $env:GITHUB_REF_NAME does not match package.json version $version."
+          }
+
+          if (-not (Select-String -Path CHANGELOG.md -Pattern "^## $([regex]::Escape($expectedTag))(?:\s|$)" -Quiet)) {
+            throw "CHANGELOG.md does not contain a section for $expectedTag."
+          }
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun test
 
       - name: Build
         run: bun run build
 
-      - name: Check release publish state
-        id: release_state
-        shell: pwsh
-        run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $tag = "v$version"
-          $releaseJson = gh release view $tag --json isDraft 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            "tag=$tag" >> $env:GITHUB_OUTPUT
-            "should_publish=true" >> $env:GITHUB_OUTPUT
-            Write-Host "Release $tag does not exist. Packaging and publishing will run."
-            exit 0
-          }
-
-          $release = $releaseJson | ConvertFrom-Json
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          if ($release.isDraft) {
-            "should_publish=true" >> $env:GITHUB_OUTPUT
-            Write-Host "Release $tag exists as a draft. Packaging and publishing will run."
-          } else {
-            "should_publish=false" >> $env:GITHUB_OUTPUT
-            Write-Host "Release $tag is already published. Skipping artifact publish to avoid duplicate release assets."
-          }
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Package and publish Electron app
-        if: steps.release_state.outputs.should_publish == 'true'
         run: bun run dist -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update GitHub release notes
-        if: steps.release_state.outputs.should_publish == 'true'
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
           $tag = "v$version"
-          $release = gh release view $tag --json id 2>$null
-          if ($LASTEXITCODE -eq 0) {
-            gh release edit $tag --notes-file release-notes.md
-          } else {
-            Write-Host "Release $tag not found. Creating..."
-            gh release create $tag --notes-file release-notes.md --title "Shuddhalekhan $version"
-          }
+          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          bun scripts/extract-release-notes.ts $version | Set-Content -Path $notesFile -NoNewline
+          gh release edit $tag --title "Shuddhalekhan $version" --notes-file $notesFile
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

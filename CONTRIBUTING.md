@@ -89,7 +89,7 @@ For a release PR:
 
 1. Update `version` in `package.json`.
 2. Run `bun install` so `bun.lock` reflects the package version change if Bun updates lockfile metadata.
-3. Update `release-notes.md` with the matching version heading and release summary.
+3. Move the finalized user-visible changes from `## Unreleased` into a matching `## vX.Y.Z` section in `CHANGELOG.md`.
 4. Make sure README or other user-facing docs describe any new major behavior.
 5. Run the PR checks:
 
@@ -99,11 +99,13 @@ bun run typecheck
 bun test
 ```
 
-The release workflow reads `package.json` and publishes against tag `v<version>`. For example, `4.0.0` maps to `v4.0.0`. If that release does not exist, or exists as a draft, the workflow packages and publishes the Windows app and updates the GitHub release notes from `release-notes.md`.
+After the release PR has merged and CI is green, a human explicitly creates and pushes the matching tag. For example, package version `4.0.0` maps to `v4.0.0`. That tag is the only release trigger; ordinary pushes to `main` never publish a release.
+
+Follow [docs/releasing.md](docs/releasing.md) for the complete runbook. Creating, moving, deleting, or pushing release tags is a human-in-the-loop action and requires explicit approval.
 
 ## Build and Packaging
 
-Packaging is handled by GitHub Actions on Windows. The release workflow runs:
+Packaging is handled by GitHub Actions on Windows after a release tag is pushed. The release workflow runs:
 
 ```bash
 bun run build

@@ -77,9 +77,9 @@ Build production app artifacts locally:
 bun run dist
 ```
 
-The GitHub release workflow runs lint, typecheck, tests, build, and Electron Builder packaging on `windows-latest`.
+The GitHub release workflow runs lint, typecheck, tests, build, and Electron Builder packaging on Windows when a semantic version tag (for example, `v4.5.1`) is pushed.
 
-For contribution guidelines, feature workflow, PR checks, and release version bump steps, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For contribution guidelines and PR checks, see [CONTRIBUTING.md](CONTRIBUTING.md). The human-approved release runbook is in [docs/releasing.md](docs/releasing.md).
 
 ## Whisper Server Setup
 
