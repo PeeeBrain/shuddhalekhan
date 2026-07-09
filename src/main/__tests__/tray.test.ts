@@ -32,16 +32,12 @@ const setConfig = vi.fn((key: keyof typeof config, value: never) => {
   config[key] = value;
 });
 const send = vi.fn();
-let audioWindow: { isDestroyed: () => boolean; webContents: { send: typeof send } } | null = null;
 
 installElectronMock();
 mock.module('fs', () => ({ existsSync }));
 mock.module('../config', () => ({
   getConfig: () => config,
   setConfig,
-}));
-mock.module('../audio-window', () => ({
-  getAudioWindow: () => audioWindow,
 }));
 
 describe('tray', () => {
@@ -71,7 +67,6 @@ describe('tray', () => {
     existsSync.mockReturnValue(true);
     config.selectedDeviceId = null;
     config.removeFillerWords = true;
-    audioWindow = null;
   });
 
   it('creates a tray with tooltip, icon, and context menu', async () => {

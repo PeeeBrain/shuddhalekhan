@@ -18,6 +18,8 @@ export const electronMock = {
   ipcMain: {
     handle: mock(),
     on: mock(),
+    off: mock(),
+    removeListener: mock(),
   },
   clipboard: {
     availableFormats: mock(() => []),
@@ -94,6 +96,8 @@ export function resetElectronMock(): void {
   electronMock.BrowserWindow.getAllWindows.mockReturnValue([]);
   electronMock.ipcMain.handle.mockReset();
   electronMock.ipcMain.on.mockReset();
+  electronMock.ipcMain.off.mockReset();
+  electronMock.ipcMain.removeListener.mockReset();
   electronMock.clipboard.availableFormats.mockReset();
   electronMock.clipboard.availableFormats.mockReturnValue([]);
   electronMock.clipboard.readText.mockReset();

@@ -9,17 +9,7 @@ const ipcListeners = new Map<string, (...args: any[]) => unknown>();
 const appListeners = new Map<string, (...args: any[]) => unknown>();
 const clipboardText = { value: 'original' };
 const send = vi.fn();
-const isLoading = vi.fn(() => false);
 const isDestroyed = vi.fn(() => false);
-const createAudioWindow = vi.fn(() => ({
-  webContents: { send, isLoading, on: vi.fn() },
-  isDestroyed,
-}));
-const getAudioWindow = vi.fn(() => ({
-  webContents: { send, isLoading },
-  isDestroyed,
-}));
-const destroyAudioWindow = vi.fn();
 const showRecordingPill = vi.fn();
 const hideRecordingPill = vi.fn();
 const getRecordingPillWindow = vi.fn(() => ({
@@ -64,13 +54,14 @@ const getUpdateStatus = vi.fn(() => ({
 }));
 const updateAudioDevices = vi.fn();
 const updateUpdaterStatus = vi.fn();
-let trayHandlers: { onOpenSettings?: () => void; onPasteLastTranscript?: () => void; onCopyLastTranscript?: () => void } = {};
+let trayHandlers: { onOpenSettings?: () => void; onPasteLastTranscript?: () => void; onCopyLastTranscript?: () => void; onSelectDevice?: (deviceId: string) => void } = {};
 let notificationShow: ReturnType<typeof vi.fn>;
 const openSettingsWindow = vi.fn();
 const getSettingsWindow = vi.fn(() => ({
   webContents: { send },
   isDestroyed: vi.fn(() => false),
 }));
+
 const keyboardStart = vi.fn();
 const keyboardStop = vi.fn();
 const agentStartRun = vi.fn();
@@ -83,6 +74,15 @@ const hideAgentToast = vi.fn();
 const handleAgentToastContentSize = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
 
+// Mock RecordingSession
+const recordingSessionStart = vi.fn();
+const recordingSessionStop = vi.fn();
+const recordingSessionBegin = vi.fn();
+const recordingSessionEnd = vi.fn(() => Promise.resolve({ text: 'transcribed text', intent: 'dictation', targetSnapshot: null }));
+const recordingSessionUpdateDevice = vi.fn();
+const recordingSessionGetAudioWebContents = vi.fn();
+let sessionOptions: any = null;
+
 installElectronMock();
 mock.module('../native/keyboard', () => ({
   keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -92,7 +92,6 @@ mock.module('../native/clipboard', () => ({
   getClipboardSequenceNumber,
 }));
 mock.module('../native/target', () => ({ captureForegroundTarget }));
-mock.module('../audio-window', () => ({ createAudioWindow, getAudioWindow, destroyAudioWindow }));
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
 mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow }));
 mock.module('../tray', () => ({
@@ -116,6 +115,19 @@ mock.module('../agent-sidecar', () => ({
     cancelRun = agentCancelRun;
     sendApprovalDecision = agentSendApprovalDecision;
   },
+}));
+mock.module('../recording-session', () => ({
+  RecordingSession: class {
+    constructor(options: any) {
+      sessionOptions = options;
+    }
+    start = recordingSessionStart;
+    stop = recordingSessionStop;
+    begin = recordingSessionBegin;
+    end = recordingSessionEnd;
+    updateDevice = recordingSessionUpdateDevice;
+    getAudioWebContents = recordingSessionGetAudioWebContents;
+  }
 }));
 
 describe('main process IPC orchestration', () => {
@@ -171,20 +183,12 @@ describe('main process IPC orchestration', () => {
       clipboardText.value = text;
     });
     send.mockClear();
-    isLoading.mockReturnValue(false);
     isDestroyed.mockReturnValue(false);
-    createAudioWindow.mockClear();
-    getAudioWindow.mockClear();
-    destroyAudioWindow.mockClear();
     showRecordingPill.mockClear();
     hideRecordingPill.mockClear();
     setConfig.mockClear();
     getConfig.mockClear();
     mergeDiscoveredTools.mockClear();
-    globalThis.fetch = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ text: 'transcribed text' }),
-    })) as unknown as typeof fetch;
     simulatePaste.mockReset();
     simulatePaste.mockReturnValue({ acceptedEvents: 4 });
     getClipboardSequenceNumber.mockReset();
@@ -209,6 +213,15 @@ describe('main process IPC orchestration', () => {
     handleAgentToastContentSize.mockClear();
     agentEventHandler = null;
     getConfig.mockReturnValue(baseConfig);
+
+    recordingSessionStart.mockClear();
+    recordingSessionStop.mockClear();
+    recordingSessionBegin.mockClear();
+    recordingSessionEnd.mockClear();
+    recordingSessionUpdateDevice.mockClear();
+    recordingSessionGetAudioWebContents.mockClear();
+    sessionOptions = null;
+
     await import(`../index?test=${Date.now()}-${Math.random()}`);
   });
 
@@ -233,60 +246,31 @@ describe('main process IPC orchestration', () => {
     expect([...ipcListeners.keys()].sort()).toEqual([
       'agent-toast:content-size',
       'agent-toast:dismiss',
-      'audio-data-ready',
       'audio-devices',
-      'audio-level-changed',
-      'audio-stream-ready',
-      'audio-window-ready',
     ]);
   });
 
-  it('starts recording immediately when the audio stream is ready', () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    ipcListeners.get('audio-stream-ready')?.({});
+  it('starts recording when audio:start-recording is invoked', () => {
     ipcHandlers.get('audio:start-recording')?.({});
-
-    expect(createAudioWindow).toHaveBeenCalled();
-    expect(send).toHaveBeenCalledWith('audio:start-recording');
-    expect(showRecordingPill).toHaveBeenCalled();
+    expect(recordingSessionBegin).toHaveBeenCalledWith('dictation');
   });
 
-  it('queues start until the audio stream reports readiness', () => {
-    ipcHandlers.get('audio:start-recording')?.({});
-    expect(send).not.toHaveBeenCalledWith('audio:start-recording');
-
-    ipcListeners.get('audio-window-ready')?.({});
-    ipcListeners.get('audio-stream-ready')?.({});
-    expect(send).toHaveBeenCalledWith('audio:start-recording');
-  });
-
-  it('stops recording and asks the audio window for buffered audio', async () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    ipcListeners.get('audio-stream-ready')?.({});
-    ipcHandlers.get('audio:start-recording')?.({});
-
+  it('stops recording when audio:stop-recording is invoked', async () => {
     await ipcHandlers.get('audio:stop-recording')?.({});
-
-    expect(hideRecordingPill).toHaveBeenCalled();
-    expect(send).toHaveBeenCalledWith('audio:stop-recording');
+    expect(recordingSessionEnd).toHaveBeenCalled();
   });
 
   it('transcribes completed audio and restores the clipboard after paste', async () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    ipcListeners.get('audio-stream-ready')?.({});
-    ipcHandlers.get('audio:start-recording')?.({});
-    await ipcHandlers.get('audio:stop-recording')?.({});
-
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await new Promise((resolve) => setTimeout(resolve, 70));
-    expect(simulatePaste).toHaveBeenCalled();
-    await listenerPromise;
+    // Simulate successful result callback
+    const result = {
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
     await new Promise((resolve) => setTimeout(resolve, 120));
 
-    expect(fetch).toHaveBeenCalledWith('http://localhost:8080/inference', expect.objectContaining({
-      method: 'POST',
-      body: expect.any(FormData),
-    }));
+    expect(simulatePaste).toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
     expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('original');
   });
@@ -308,44 +292,41 @@ describe('main process IPC orchestration', () => {
       },
     };
     getConfig.mockReturnValue(config);
-    ipcListeners.get('audio-window-ready')?.({});
-    ipcListeners.get('audio-stream-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('agent');
-    onStop();
 
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await listenerPromise;
+    // Re-import index to pick up agent enabled configuration
+    await import(`../index?test=${Date.now()}-agent-routes`);
+    
+    const result = {
+      text: 'transcribed text',
+      intent: 'agent' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
 
-    expect(showRecordingPill).toHaveBeenCalledWith('agent');
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config);
     expect(simulatePaste).not.toHaveBeenCalled();
   });
 
   it('routes dictation recordings through clipboard injection and not the agent sidecar', async () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    ipcListeners.get('audio-stream-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('dictation');
-    onStop();
+    const result = {
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
+    await new Promise((resolve) => setTimeout(resolve, 120));
 
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await new Promise((resolve) => setTimeout(resolve, 70));
-    expect(simulatePaste).toHaveBeenCalled();
-    await listenerPromise;
-
-    expect(showRecordingPill).toHaveBeenCalledWith('dictation');
     expect(agentStartRun).not.toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('transcribed text');
   });
 
   it('shows a config toast instead of starting the sidecar when Agent Mode is disabled', async () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('agent');
-    onStop();
-
-    await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer);
+    const result = {
+      text: 'transcribed text',
+      intent: 'agent' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
 
     expect(agentStartRun).not.toHaveBeenCalled();
     expect(showAgentToast).toHaveBeenCalledWith({
@@ -357,11 +338,16 @@ describe('main process IPC orchestration', () => {
   it('shows explicit approval status and approval toast when a tool asks for HITL', async () => {
     const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
     getConfig.mockReturnValue(config);
-    ipcListeners.get('audio-window-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('agent');
-    onStop();
-    await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer);
+
+    // Re-import to pick up config change
+    await import(`../index?test=${Date.now()}-hitl-toast`);
+
+    const result = {
+      text: 'transcribed text',
+      intent: 'agent' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
     const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
     showAgentToast.mockClear();
 
@@ -393,14 +379,9 @@ describe('main process IPC orchestration', () => {
     });
   });
 
-  it('skips empty WAV payloads', async () => {
-    await ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(44).buffer);
-
-    expect(fetch).not.toHaveBeenCalled();
-    expect(simulatePaste).not.toHaveBeenCalled();
-  });
-
   it('proxies config, device, update, and recording pill events without restarting sidecar for audio config', async () => {
+    recordingSessionGetAudioWebContents.mockReturnValue({ send: vi.fn() });
+    
     expect(ipcHandlers.get('config:get')?.({})).toEqual(getConfig());
     await expect(ipcHandlers.get('app:get-info')?.({})).resolves.toEqual({
       name: 'Shuddhalekhan',
@@ -415,7 +396,6 @@ describe('main process IPC orchestration', () => {
     ipcHandlers.get('audio:select-device')?.({}, 'mic-1');
     ipcHandlers.get('updater:check')?.({});
     ipcListeners.get('audio-devices')?.({}, [{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
-    ipcListeners.get('audio-level-changed')?.({}, 0.75);
     ipcListeners.get('agent-toast:content-size')?.({}, 280);
     ipcListeners.get('agent-toast:dismiss')?.({});
 
@@ -426,11 +406,9 @@ describe('main process IPC orchestration', () => {
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
     expect(hideAgentToast).toHaveBeenCalled();
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
-    expect(send).toHaveBeenCalledWith('audio:recreate-stream', 'mic-1');
+    expect(recordingSessionUpdateDevice).toHaveBeenCalledWith('mic-1');
     expect(checkForUpdates).toHaveBeenCalled();
     expect(updateAudioDevices).toHaveBeenCalledWith([{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
-    expect(send).toHaveBeenCalledWith('audio:level-changed', 0.75);
-    expect(send).not.toHaveBeenCalledWith('audio:duration-changed', expect.any(Number));
     expect(handleAgentToastContentSize).toHaveBeenCalledWith(280);
   });
 
@@ -452,13 +430,11 @@ describe('main process IPC orchestration', () => {
     expect(agentStop).toHaveBeenCalled();
   });
 
-  it('stops native hooks and destroys the audio window before quit', () => {
+  it('stops recording session before quit', () => {
     appListeners.get('before-quit')?.();
-    appListeners.get('quit')?.();
 
-    expect(keyboardStop).toHaveBeenCalledTimes(1);
+    expect(recordingSessionStop).toHaveBeenCalledTimes(1);
     expect(agentStop).toHaveBeenCalledTimes(1);
-    expect(destroyAudioWindow).toHaveBeenCalled();
   });
 
   it('starts the agent sidecar on app ready when persisted Agent Mode is enabled', async () => {
@@ -522,13 +498,12 @@ describe('main process IPC orchestration', () => {
   it('stores the last transcript before injection so it survives paste failures', async () => {
     simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
 
-    ipcListeners.get('audio-window-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('dictation');
-    onStop();
-
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await listenerPromise;
+    const result = {
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
@@ -541,13 +516,12 @@ describe('main process IPC orchestration', () => {
   });
 
   it('does not show a recovery notification when automatic paste succeeds', async () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('dictation');
-    onStop();
-
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await listenerPromise;
+    const result = {
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(notificationShow).not.toHaveBeenCalled();
@@ -555,13 +529,12 @@ describe('main process IPC orchestration', () => {
   });
 
   it('copies the last transcript from the tray without sending synthetic input', async () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('dictation');
-    onStop();
-
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await listenerPromise;
+    const result = {
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     simulatePaste.mockClear();
@@ -572,13 +545,12 @@ describe('main process IPC orchestration', () => {
   });
 
   it('notifies when tray paste-last-transcript fails again', async () => {
-    ipcListeners.get('audio-window-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('dictation');
-    onStop();
-
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await listenerPromise;
+    const result = {
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     notificationShow.mockClear();
@@ -591,13 +563,12 @@ describe('main process IPC orchestration', () => {
   it('shows a distinct recovery notification when the clipboard changes during dictation', async () => {
     getClipboardSequenceNumber.mockReturnValueOnce(1).mockReturnValueOnce(2);
 
-    ipcListeners.get('audio-window-ready')?.({});
-    const [onStart, onStop] = keyboardStart.mock.calls[0] as [(intent: 'dictation' | 'agent') => void, () => void];
-    onStart('dictation');
-    onStop();
-
-    const listenerPromise = ipcListeners.get('audio-data-ready')?.({}, new Uint8Array(64).buffer) as Promise<void>;
-    await listenerPromise;
+    const result = {
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(notificationShow).toHaveBeenCalledTimes(1);
