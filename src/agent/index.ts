@@ -7,6 +7,11 @@ import type { ApprovalDecisionMessage } from './protocol';
 import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
 import { AgentAuditStore } from './audit';
 import { McpRegistry } from './mcp-registry';
+import {
+  AisdkMcpClientFactory,
+  SidecarOAuthRedirectFactory,
+  StdoutSidecarMessageTransporter,
+} from './mcp-registry-adapters';
 
 let config: AppConfig | null = null;
 let activeAgentRunId: string | null = null;
@@ -15,7 +20,12 @@ let pendingApproval: PendingApproval | null = null;
 let approvalQueue: Promise<void> = Promise.resolve();
 let configUpdateQueue: Promise<void> = Promise.resolve();
 const auditStore = new AgentAuditStore();
-const mcpRegistry = new McpRegistry();
+const oauthRedirectFactory = new SidecarOAuthRedirectFactory();
+const mcpRegistry = new McpRegistry({
+  mcpClientFactory: new AisdkMcpClientFactory(oauthRedirectFactory),
+  oauthFactory: oauthRedirectFactory,
+  transporter: new StdoutSidecarMessageTransporter(),
+});
 
 const APPROVAL_TIMEOUT_MS = 30_000;
 const APPROVAL_TIMEOUT_MESSAGE = 'Tool approval window expired.';
