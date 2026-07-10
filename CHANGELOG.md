@@ -6,7 +6,10 @@ human-approved release is created.
 
 ## Unreleased
 
-No unreleased changes.
+### Clipboard Transactions
+- Refactored clipboard injection behind a serialized transaction manager and production adapters, keeping native dependencies outside the testable coordinator.
+- Copying the last transcript now waits for any active clipboard transaction to finish before reporting completion.
+- Added regression coverage ensuring the original clipboard is restored when native paste dispatch throws.
 
 ## v4.5.1
 

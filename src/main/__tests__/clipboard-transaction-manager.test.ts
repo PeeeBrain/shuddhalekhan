@@ -220,6 +220,23 @@ describe('ClipboardTransactionManager', () => {
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it('restores the clipboard when paste dispatch throws', async () => {
+    mockInputSimulator.simulatePaste = mock(() => {
+      throw new Error('SendInput failed');
+    });
+
+    const manager = createManager();
+    const result = await manager.inject('hello');
+
+    expect(result).toEqual({
+      kind: 'error',
+      message: 'Paste dispatch failed: SendInput failed',
+    });
+    expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledWith(
+      createClipboardSnapshot()
+    );
+  });
+
   it('returns target-changed when inspecting the current foreground target fails/throws', async () => {
     mockForegroundInspector.captureTarget = mock(() => {
       throw new Error('user32 read failed');
