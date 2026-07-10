@@ -91,7 +91,7 @@
       "provider": "github",
       "owner": "PeeeBrain",
       "repo": "shuddhalekhan",
-      "releaseType": "release",
+      "releaseType": "draft",
       "publishAutoUpdate": true
     }
   }

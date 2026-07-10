@@ -58,9 +58,24 @@ jobs:
         run: |
           $tag = '${{ steps.release_version.outputs.tag }}'
           $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          gh api --method POST "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" `
-            -f "tag_name=$tag" `
-            --jq '.body' | Set-Content -Path $notesFile -Encoding utf8
+          $previousTag = git tag --merged "$tag^" --sort=-version:refname |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+            Select-Object -First 1
+
+          $noteArgs = @(
+            '--method', 'POST',
+            "repos/$env:GITHUB_REPOSITORY/releases/generate-notes",
+            '-f', "tag_name=$tag"
+          )
+          if ($previousTag) {
+            $noteArgs += @('-f', "previous_tag_name=$previousTag")
+            Write-Host "Generating release notes from $previousTag to $tag."
+          } else {
+            Write-Host "No previous stable release tag found; generating initial release notes."
+          }
+
+          gh api @noteArgs --jq '.body' |
+            Set-Content -Path $notesFile -Encoding utf8
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -75,6 +90,9 @@ jobs:
           $tag = '${{ steps.release_version.outputs.tag }}'
           $version = '${{ steps.release_version.outputs.version }}'
           $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          gh release edit $tag --title "Shuddhalekhan $version" --notes-file $notesFile
+          gh release edit $tag `
+            --title "Shuddhalekhan $version" `
+            --notes-file $notesFile `
+            --draft=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

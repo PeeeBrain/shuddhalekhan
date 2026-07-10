@@ -28,10 +28,10 @@ GitHub Actions validates the semantic version tag
 The runner injects 4.5.2 into package.json
         |
         v
-Electron Builder packages and publishes the Windows app
+Electron Builder packages the Windows app into a draft release
         |
         v
-GitHub Release notes are generated from Git history
+Metadata is finalized and the GitHub Release is published
 ```
 
 `package.json` is changed only on the disposable Actions runner. Release
@@ -73,9 +73,10 @@ git push origin vX.Y.Z
 
 Pushing the tag triggers `.github/workflows/release.yml`. The workflow derives
 `X.Y.Z` from the tag, injects it into the application metadata, reruns all
-checks, builds the app, publishes Electron Builder artifacts and auto-update
-metadata, and generates the GitHub Release body from commits since the previous
-release tag.
+checks, builds the app, generates the GitHub Release body from the explicitly
+selected previous reachable release tag, and uploads Electron Builder artifacts
+and auto-update metadata to a draft. The release becomes public only after its
+title and notes are finalized.
 
 ## Verify the release
 
