@@ -26,6 +26,7 @@ mock.module('../oauth-provider', () => ({ SidecarOAuthProvider: FakeOAuthProvide
 
 import {
   AisdkMcpClientFactory,
+  type McpOAuthProviderResolver,
   SidecarOAuthRedirectFactory,
   StdoutSidecarMessageTransporter,
 } from '../mcp-registry-adapters';
@@ -54,6 +55,29 @@ describe('MCP registry production adapters', () => {
         type: 'http',
         url: 'http://localhost:3000/mcp',
         authProvider: expect.any(FakeOAuthProvider),
+      },
+    });
+  });
+
+  it('obtains HTTP OAuth providers through an interface and forwards the registry token', async () => {
+    let receivedTokens: { access_token: string } | undefined;
+    const provider = new FakeOAuthProvider();
+    const oauthProviderResolver: McpOAuthProviderResolver = {
+      resolve: (_server: unknown, tokens?: { access_token: string }) => {
+        receivedTokens = tokens;
+        return provider as never;
+      },
+    };
+    createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
+
+    await new AisdkMcpClientFactory(oauthProviderResolver).connect(httpServer as never, { access_token: 'token-1' });
+
+    expect(receivedTokens).toEqual({ access_token: 'token-1' });
+    expect(createMCPClient).toHaveBeenLastCalledWith({
+      transport: {
+        type: 'http',
+        url: 'http://localhost:3000/mcp',
+        authProvider: provider,
       },
     });
   });

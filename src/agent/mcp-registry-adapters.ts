@@ -1,5 +1,6 @@
 import { createMCPClient } from '@ai-sdk/mcp';
 import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
+import type { OAuthClientProvider } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
 import type { McpServerConfig } from '../types/ipc';
 import type {
@@ -12,7 +13,11 @@ import type {
 import { SidecarOAuthProvider } from './oauth-provider';
 import { logSidecar, writeJsonLine } from './protocol';
 
-export class SidecarOAuthRedirectFactory implements OAuthRedirectServerFactory {
+export interface McpOAuthProviderResolver {
+  resolve(server: McpServerConfig, oauthTokens?: { access_token: string }): OAuthClientProvider | undefined;
+}
+
+export class SidecarOAuthRedirectFactory implements OAuthRedirectServerFactory, McpOAuthProviderResolver {
   private providers = new Map<string, SidecarOAuthProvider>();
 
   create(server: McpServerConfig): OAuthRedirectServer {
@@ -33,17 +38,30 @@ export class SidecarOAuthRedirectFactory implements OAuthRedirectServerFactory {
     };
   }
 
-  getProvider(serverId: string): SidecarOAuthProvider | undefined {
-    return this.providers.get(serverId);
+  resolve(server: McpServerConfig, oauthTokens?: { access_token: string }): OAuthClientProvider | undefined {
+    const provider = this.providers.get(server.id);
+    if (!provider || !oauthTokens) return provider;
+
+    if (provider.tokens()?.access_token !== oauthTokens.access_token) {
+      provider.saveTokens({
+        ...(provider.tokens() ?? {}),
+        access_token: oauthTokens.access_token,
+        token_type: provider.tokens()?.token_type ?? 'Bearer',
+      });
+    }
+    return provider;
   }
 }
 
 export class AisdkMcpClientFactory implements McpClientFactory {
-  constructor(private readonly oauthFactory: SidecarOAuthRedirectFactory) {}
+  constructor(private readonly oauthProviderResolver: McpOAuthProviderResolver) {}
 
-  async connect(server: McpServerConfig, _oauthTokens?: { access_token: string }): Promise<McpClientConnection> {
+  async connect(server: McpServerConfig, oauthTokens?: { access_token: string }): Promise<McpClientConnection> {
     const client = await createMCPClient({
-      transport: createTransport(server, this.oauthFactory.getProvider(server.id)),
+      transport: createTransport(
+        server,
+        server.transport.type === 'http' ? this.oauthProviderResolver.resolve(server, oauthTokens) : undefined
+      ),
     });
 
     return {
@@ -76,7 +94,7 @@ export class StdoutSidecarMessageTransporter implements SidecarMessageTransporte
   }
 }
 
-function createTransport(server: McpServerConfig, oauthProvider?: SidecarOAuthProvider) {
+function createTransport(server: McpServerConfig, oauthProvider?: OAuthClientProvider) {
   if (server.transport.type === 'stdio') {
     const env: Record<string, string> = {};
     for (const name of server.transport.envVarNames) {
