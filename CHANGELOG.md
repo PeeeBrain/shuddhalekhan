@@ -7,6 +7,11 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Agent Mode MCP Registry
+- Refactored the MCP server registry behind injectable client, OAuth redirect, and sidecar message ports, making connection lifecycle and hot-reload behavior testable without native subprocesses or network listeners.
+- Added production adapters for AI SDK stdio/HTTP clients, OAuth redirect handling, and sidecar stdout protocol events.
+- Expanded in-memory regression coverage for connection changes, failures, OAuth retry cleanup, namespaced tools, policy updates, and server-status reporting.
+
 ### Clipboard Transactions
 - Refactored clipboard injection behind a serialized transaction manager and production adapters, keeping native dependencies outside the testable coordinator.
 - Copying the last transcript now waits for any active clipboard transaction to finish before reporting completion.

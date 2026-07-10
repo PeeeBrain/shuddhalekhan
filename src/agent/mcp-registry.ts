@@ -1,28 +1,62 @@
-import { createMCPClient } from '@ai-sdk/mcp';
-import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
-import type { MCPClient } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
 import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../types/ipc';
-import { logSidecar, writeJsonLine } from './protocol';
 import type { AgentRuntimeCallbacks } from './runtime';
-
 import { getMcpServerConnectionKey } from './mcp-server-config';
-import { SidecarOAuthProvider } from './oauth-provider';
 
 type RequestToolApproval = AgentRuntimeCallbacks['requestToolApproval'];
 type AuditCallback = NonNullable<AgentRuntimeCallbacks['onAudit']>;
 type ToolStartedCallback = NonNullable<AgentRuntimeCallbacks['onToolStarted']>;
 
+export interface McpClientConnection {
+  tools(): Promise<Record<string, Tool>>;
+  close(): Promise<void>;
+}
+
+export interface McpClientFactory {
+  connect(server: McpServerConfig, oauthTokens?: { access_token: string }): Promise<McpClientConnection>;
+}
+
+export interface OAuthRedirectServer {
+  start(): Promise<void>;
+  close(): Promise<void>;
+  tokens(): { access_token: string } | null;
+}
+
+export interface OAuthRedirectServerFactory {
+  create(server: McpServerConfig): OAuthRedirectServer;
+}
+
+export interface SidecarMessageTransporter {
+  sendStatus(
+    serverId: string,
+    status: 'connecting' | 'connected' | 'failed' | 'disconnected',
+    message?: string
+  ): void;
+  sendDiscoveredTools(
+    serverId: string,
+    tools: Array<{ name: string; description: string; inputSchema?: unknown }>
+  ): void;
+  log(message: string, error?: unknown): void;
+}
+
+export type McpRegistryPorts = {
+  mcpClientFactory: McpClientFactory;
+  oauthFactory: OAuthRedirectServerFactory;
+  transporter: SidecarMessageTransporter;
+};
+
 type ManagedServer = {
   config: McpServerConfig;
-  client: MCPClient;
+  client: McpClientConnection;
   rawTools: Record<string, Tool>;
-  oauthProvider?: SidecarOAuthProvider;
+  oauthRedirectServer?: OAuthRedirectServer;
 };
 
 export class McpRegistry {
   private servers = new Map<string, ManagedServer>();
   private toolPolicies = new Map<string, AgentToolApprovalPolicy>();
+
+  constructor(private readonly ports: McpRegistryPorts) {}
 
   async updateConfig(config: AppConfig): Promise<void> {
     const enabledServers = new Map(config.agent.mcpServers.filter((server) => server.enabled).map((server) => [server.id, server]));
@@ -74,10 +108,7 @@ export class McpRegistry {
       }
     }
 
-    return {
-      tools,
-      close: async () => undefined,
-    };
+    return { tools, close: async () => undefined };
   }
 
   async close(): Promise<void> {
@@ -85,33 +116,58 @@ export class McpRegistry {
   }
 
   private async connect(server: McpServerConfig): Promise<void> {
-    writeJsonLine({ type: 'mcp:server-status', serverId: server.id, status: 'connecting' });
+    this.ports.transporter.sendStatus(server.id, 'connecting');
 
-    let oauthProvider: SidecarOAuthProvider | undefined;
+    let oauthRedirectServer: OAuthRedirectServer | undefined;
+    let client: McpClientConnection | undefined;
     try {
-      oauthProvider = await createOAuthProvider(server);
-      const { client, rawTools } = await connectMcpClient(server, oauthProvider);
-      this.servers.set(server.id, { config: server, client, rawTools, oauthProvider });
-      writeJsonLine({
-        type: 'mcp:tools-discovered',
-        serverId: server.id,
-        tools: Object.entries(rawTools).map(([name, tool]) => ({
+      if (server.transport.type === 'http') {
+        oauthRedirectServer = this.ports.oauthFactory.create(server);
+        await oauthRedirectServer.start();
+      }
+
+      client = await this.ports.mcpClientFactory.connect(server, oauthRedirectServer?.tokens() ?? undefined);
+      const discovered = await this.discoverTools(server, client, oauthRedirectServer);
+      client = discovered.client;
+      const { rawTools } = discovered;
+      this.servers.set(server.id, { config: server, client, rawTools, oauthRedirectServer });
+      this.ports.transporter.sendDiscoveredTools(
+        server.id,
+        Object.entries(rawTools).map(([name, tool]) => ({
           name,
           description: typeof tool.description === 'string' ? tool.description : '',
           inputSchema: 'inputSchema' in tool ? tool.inputSchema : undefined,
-        })),
-      });
-      writeJsonLine({ type: 'mcp:server-status', serverId: server.id, status: 'connected' });
-      logSidecar(`MCP server connected: ${server.id} (${server.displayName})`);
+        }))
+      );
+      this.ports.transporter.sendStatus(server.id, 'connected');
+      this.ports.transporter.log(`MCP server connected: ${server.id} (${server.displayName})`);
     } catch (err) {
-      writeJsonLine({
-        type: 'mcp:server-status',
-        serverId: server.id,
-        status: 'failed',
-        message: err instanceof Error ? err.message : String(err),
-      });
-      logSidecar(`MCP server failed: ${server.id}`, err);
-      oauthProvider?.close();
+      await client?.close().catch(() => undefined);
+      await oauthRedirectServer?.close().catch(() => undefined);
+      this.ports.transporter.sendStatus(server.id, 'failed', formatErrorMessage(err));
+      this.ports.transporter.log(`MCP server failed: ${server.id}`, err);
+    }
+  }
+
+  private async discoverTools(
+    server: McpServerConfig,
+    client: McpClientConnection,
+    oauthRedirectServer?: OAuthRedirectServer
+  ): Promise<{ client: McpClientConnection; rawTools: Record<string, Tool> }> {
+    try {
+      return { client, rawTools: await client.tools() };
+    } catch (err) {
+      const oauthTokens = oauthRedirectServer?.tokens();
+      if (!oauthTokens?.access_token) throw err;
+
+      await client.close().catch(() => undefined);
+      const retriedClient = await this.ports.mcpClientFactory.connect(server, oauthTokens);
+      try {
+        return { client: retriedClient, rawTools: await retriedClient.tools() };
+      } catch (retryError) {
+        await retriedClient.close().catch(() => undefined);
+        throw retryError;
+      }
     }
   }
 
@@ -121,62 +177,8 @@ export class McpRegistry {
 
     this.servers.delete(serverId);
     await server.client.close().catch(() => undefined);
-    server.oauthProvider?.close();
-    writeJsonLine({ type: 'mcp:server-status', serverId, status: 'disconnected' });
-  }
-}
-
-function createTransport(server: McpServerConfig, oauthProvider?: SidecarOAuthProvider) {
-  if (server.transport.type === 'stdio') {
-    const env: Record<string, string> = {};
-    for (const name of server.transport.envVarNames) {
-      const value = process.env[name];
-      if (value !== undefined) env[name] = value;
-    }
-    return new Experimental_StdioMCPTransport({
-      command: server.transport.command,
-      args: server.transport.args,
-      env,
-    });
-  }
-
-  return {
-    type: 'http' as const,
-    url: server.transport.url,
-    authProvider: oauthProvider,
-  };
-}
-
-async function createOAuthProvider(server: McpServerConfig): Promise<SidecarOAuthProvider | undefined> {
-  if (server.transport.type !== 'http') return undefined;
-  const provider = new SidecarOAuthProvider(server);
-  await provider.start();
-  return provider;
-}
-
-async function connectMcpClient(
-  server: McpServerConfig,
-  oauthProvider?: SidecarOAuthProvider
-): Promise<{ client: MCPClient; rawTools: Record<string, Tool> }> {
-  try {
-    return await createConnectedClient(server, oauthProvider);
-  } catch (err) {
-    if (!oauthProvider?.tokens()?.access_token) throw err;
-    return await createConnectedClient(server, oauthProvider);
-  }
-}
-
-async function createConnectedClient(
-  server: McpServerConfig,
-  oauthProvider?: SidecarOAuthProvider
-): Promise<{ client: MCPClient; rawTools: Record<string, Tool> }> {
-  const client = await createMCPClient({ transport: createTransport(server, oauthProvider) });
-  try {
-    const rawTools = (await client.tools()) as Record<string, Tool>;
-    return { client, rawTools };
-  } catch (err) {
-    await client.close().catch(() => undefined);
-    throw err;
+    await server.oauthRedirectServer?.close().catch(() => undefined);
+    this.ports.transporter.sendStatus(serverId, 'disconnected');
   }
 }
 
@@ -194,18 +196,11 @@ function wrapToolWithPolicy(
     ...toolDef,
     needsApproval: policy === 'alwaysAsk' ? true : undefined,
     execute: async (args, options) => {
-      if (!toolDef.execute) {
-        throw new Error(`MCP tool ${serverId}:${toolName} is missing an execute handler.`);
-      }
+      if (!toolDef.execute) throw new Error(`MCP tool ${serverId}:${toolName} is missing an execute handler.`);
 
       const startedAt = Date.now();
       onToolStarted?.({ serverId, toolName, modelToolName });
-      onAudit?.('mcp_tool_execute_started', {
-        serverId,
-        toolName,
-        modelToolName,
-        arguments: args,
-      });
+      onAudit?.('mcp_tool_execute_started', { serverId, toolName, modelToolName, arguments: args });
 
       try {
         const result = await toolDef.execute(args, options);
@@ -231,21 +226,17 @@ function wrapToolWithPolicy(
   };
 }
 
+function formatErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function formatToolError(err: unknown): Record<string, unknown> {
   if (err instanceof Error) {
     const record = err as Error & { cause?: unknown };
-    return {
-      name: err.name,
-      message: err.message,
-      stack: err.stack,
-      cause: formatUnknownErrorValue(record.cause),
-    };
+    return { name: err.name, message: err.message, stack: err.stack, cause: formatUnknownErrorValue(record.cause) };
   }
 
-  return {
-    message: String(err),
-    value: formatUnknownErrorValue(err),
-  };
+  return { message: String(err), value: formatUnknownErrorValue(err) };
 }
 
 function formatUnknownErrorValue(value: unknown): unknown {
@@ -262,9 +253,7 @@ function formatUnknownErrorValue(value: unknown): unknown {
 function collectToolPolicies(config: AppConfig): Map<string, AgentToolApprovalPolicy> {
   const policies = new Map<string, AgentToolApprovalPolicy>();
   for (const server of config.agent.mcpServers) {
-    for (const [key, policy] of Object.entries(server.toolPolicies)) {
-      policies.set(key, policy);
-    }
+    for (const [key, policy] of Object.entries(server.toolPolicies)) policies.set(key, policy);
   }
   return policies;
 }
