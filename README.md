@@ -77,7 +77,11 @@ Build production app artifacts locally:
 bun run dist
 ```
 
-The GitHub release workflow runs lint, typecheck, tests, build, and Electron Builder packaging on Windows when a semantic version tag (for example, `v4.5.1`) is pushed.
+The GitHub release workflow treats a pushed semantic version tag (for example,
+`v4.5.2`) as the sole release-version authority. It injects that version into
+the Windows app, runs lint, typecheck, tests, build, and Electron Builder
+packaging, then publishes artifacts with release notes generated from Git
+history.
 
 For contribution guidelines and PR checks, see [CONTRIBUTING.md](CONTRIBUTING.md). The human-approved release runbook is in [docs/releasing.md](docs/releasing.md).
 

@@ -1,18 +1,56 @@
 # Releasing Shuddhalekhan
 
-Releases are explicit, human-approved actions. A version tag is the release
-trigger: pushing `vX.Y.Z` starts the GitHub Actions workflow that validates,
-packages, and publishes the Windows app to GitHub Releases.
+This document is the release runbook for Shuddhalekhan. Releases are built from
+Git tags by GitHub Actions and Electron Builder. The tag is the only authority
+for the release version; the committed `package.json` deliberately carries a
+neutral development version.
 
-Do not create, move, delete, or push a release tag unless a human explicitly
-approves the release.
+## Human approval requirement
 
-## Prepare the release
+Creating a release is a human-in-the-loop process. Do not create, move, delete,
+or push a version tag unless the user explicitly requests a release or approves
+a specific recommended release version.
 
-1. Create a release PR that updates the version in `package.json` and adds the
-   final user-visible changes to `CHANGELOG.md` under `## vX.Y.Z`. Remove those
-   entries from `## Unreleased` (leave `No unreleased changes.` when empty).
-2. Run the release checks:
+Feature work, documentation work, CI work, or a version-looking changelog entry
+does not imply permission to create a release. Stop before tag creation and ask
+for approval.
+
+## Release model
+
+```text
+git tag v4.5.2
+git push origin v4.5.2
+        |
+        v
+GitHub Actions validates the semantic version tag
+        |
+        v
+The runner injects 4.5.2 into package.json
+        |
+        v
+Electron Builder packages and publishes the Windows app
+        |
+        v
+GitHub Release notes are generated from Git history
+```
+
+`package.json` is changed only on the disposable Actions runner. Release
+version bumps are never committed to the repository.
+
+## Before tagging
+
+1. Confirm the user explicitly requested the release or approved the exact
+   semantic version.
+2. Confirm the intended release commit is on `main` and the working tree only
+   contains intended changes:
+
+   ```powershell
+   git checkout main
+   git pull --ff-only
+   git status --short
+   ```
+
+3. Run the release checks:
 
    ```powershell
    bun run lint
@@ -20,29 +58,37 @@ approves the release.
    bun test
    ```
 
-3. Merge the release PR into `main` and confirm the `CI` workflow passed.
+4. Review `CHANGELOG.md` for useful human-facing project history. Changelog
+   organization is not a release gate, and GitHub release notes do not come
+   from this file.
 
 ## Create the release
 
-From the merged `main` commit, after explicit approval:
+Only after explicit approval, choose the semantic version and push its tag:
 
 ```powershell
-git checkout main
-git pull --ff-only
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-The tag must exactly match `package.json`'s version. The release workflow also
-requires a matching `## vX.Y.Z` section in `CHANGELOG.md`; it fails before
-packaging when either check does not pass.
+Pushing the tag triggers `.github/workflows/release.yml`. The workflow derives
+`X.Y.Z` from the tag, injects it into the application metadata, reruns all
+checks, builds the app, publishes Electron Builder artifacts and auto-update
+metadata, and generates the GitHub Release body from commits since the previous
+release tag.
 
-The workflow reruns typecheck, lint, and tests, builds the app, uploads the
-Electron Builder artifacts, and sets the GitHub Release body to that version's
-changelog section. Monitor the workflow and verify the published release and
-Windows installer before announcing it.
+## Verify the release
 
-## Correcting a release
+After the workflow completes:
 
-Do not retag a published release. Create a new patch release (for example,
-`vX.Y.(Z+1)`) with a changelog entry that explains the correction.
+1. Confirm the `Release Windows App` workflow succeeded for the tag.
+2. Confirm the GitHub Release is published under the same tag.
+3. Confirm the Windows installer and `latest.yml` are attached.
+4. Install or update the app and confirm its displayed version matches the tag.
+
+## If a release fails
+
+Do not delete or move a pushed tag without explicit human approval. Report the
+tag, failed workflow run, failed step, and proposed correction. Ask whether to
+move the existing tag or create a new patch release before changing release
+state.
