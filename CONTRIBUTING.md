@@ -83,29 +83,23 @@ A good PR should include:
 
 ## Version and Release Updates
 
-Only bump versions when preparing a release.
+Git tags are the only authority for release versions. Keep the committed
+`package.json` version at its neutral development value; the release workflow
+derives `X.Y.Z` from a human-approved `vX.Y.Z` tag and injects it into the
+packaged application on the Actions runner.
 
-For a release PR:
+Normal PRs should add user-visible changes under `## Unreleased` in
+`CHANGELOG.md` when appropriate. The changelog remains useful project history,
+but it does not control publishing and is not the source of GitHub release
+notes. Those notes are generated from Git history between release tags.
 
-1. Update `version` in `package.json`.
-2. Run `bun install` so `bun.lock` reflects the package version change if Bun updates lockfile metadata.
-3. Move the finalized user-visible changes from `## Unreleased` into a matching `## vX.Y.Z` section in `CHANGELOG.md`.
-4. Make sure README or other user-facing docs describe any new major behavior.
-5. Run the PR checks:
-
-```bash
-bun run lint
-bun run typecheck
-bun test
-```
-
-After the release PR has merged and CI is green, a human explicitly creates and pushes the matching tag. For example, package version `4.0.0` maps to `v4.0.0`. That tag is the only release trigger; ordinary pushes to `main` never publish a release.
-
-Follow [docs/releasing.md](docs/releasing.md) for the complete runbook. Creating, moving, deleting, or pushing release tags is a human-in-the-loop action and requires explicit approval.
+Follow [docs/releasing.md](docs/releasing.md) for the complete runbook. Creating,
+moving, deleting, or pushing release tags is a human-in-the-loop action and
+requires explicit approval. Ordinary pushes to `main` never publish a release.
 
 ## Build and Packaging
 
-Packaging is handled by GitHub Actions on Windows after a release tag is pushed. The release workflow runs:
+Packaging is handled by GitHub Actions on Windows after a release tag is pushed. The workflow injects the tag-derived version, then runs:
 
 ```bash
 bun run build

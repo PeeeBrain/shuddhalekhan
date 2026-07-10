@@ -46,5 +46,6 @@ Use `bun` exclusively. `pnpm` is only a fallback if `koffi` causes resolution is
 - Run lint, typecheck, and `bun test` as pre-commit verification.
 
 ## Pre-PR Opening Checklist
-- [ ] Make sure `@package.json` version is updated, ensuring propery version number upgrade to reflect the severity of the changes being made.
-- [ ] Make sure `@CHANGELOG.md` is updated to reflect the changes being made.
+- [ ] Add user-visible changes to `@CHANGELOG.md` under `Unreleased` when appropriate.
+- [ ] Do not change the neutral development version in `@package.json`; release versions come exclusively from human-approved Git tags.
+- [ ] Do not create, move, delete, or push release tags without explicit user approval.

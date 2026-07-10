@@ -25,18 +25,21 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify release tag and changelog
+      - name: Derive application version from release tag
+        id: release_version
         shell: pwsh
         run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $expectedTag = "v$version"
-          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
-            throw "Release tag $env:GITHUB_REF_NAME does not match package.json version $version."
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
+            throw "Invalid semantic version release tag: $tag"
           }
 
-          if (-not (Select-String -Path CHANGELOG.md -Pattern "^## $([regex]::Escape($expectedTag))(?:\s|$)" -Quiet)) {
-            throw "CHANGELOG.md does not contain a section for $expectedTag."
-          }
+          $version = $Matches[1]
+          bun pm pkg set "version=$version"
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Building Shuddhalekhan $version from tag $tag."
 
       - name: Typecheck
         run: bun run typecheck
@@ -50,18 +53,46 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Generate release notes from Git history
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.release_version.outputs.tag }}'
+          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
+          $previousTag = git tag --merged "$tag^" --sort=-version:refname |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+            Select-Object -First 1
+
+          $noteArgs = @(
+            '--method', 'POST',
+            "repos/$env:GITHUB_REPOSITORY/releases/generate-notes",
+            '-f', "tag_name=$tag"
+          )
+          if ($previousTag) {
+            $noteArgs += @('-f', "previous_tag_name=$previousTag")
+            Write-Host "Generating release notes from $previousTag to $tag."
+          } else {
+            Write-Host "No previous stable release tag found; generating initial release notes."
+          }
+
+          gh api @noteArgs --jq '.body' |
+            Set-Content -Path $notesFile -Encoding utf8
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Package and publish Electron app
         run: bun run dist -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update GitHub release notes
+      - name: Finalize GitHub release metadata
         shell: pwsh
         run: |
-          $version = (Get-Content package.json | ConvertFrom-Json).version
-          $tag = "v$version"
+          $tag = '${{ steps.release_version.outputs.tag }}'
+          $version = '${{ steps.release_version.outputs.version }}'
           $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          bun scripts/extract-release-notes.ts $version | Set-Content -Path $notesFile -NoNewline
-          gh release edit $tag --title "Shuddhalekhan $version" --notes-file $notesFile
+          gh release edit $tag `
+            --title "Shuddhalekhan $version" `
+            --notes-file $notesFile `
+            --draft=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

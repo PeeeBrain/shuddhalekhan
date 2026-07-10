@@ -1,8 +1,9 @@
 # Changelog
 
-User-visible changes to Shuddhalekhan are tracked here. Releases use semantic
-version tags such as `v4.5.1`; keep new entries under **Unreleased** until a
-human-approved release is created.
+User-visible changes to Shuddhalekhan are tracked here as a human-maintained
+project history. Release versions and GitHub release notes are derived from Git
+tags and commit history, not from this file. Keep new entries under
+**Unreleased** until a human-approved release is created.
 
 ## Unreleased
 

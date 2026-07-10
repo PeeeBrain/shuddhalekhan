@@ -1,7 +1,7 @@
 {
   "name": "shuddhalekhan",
   "private": true,
-  "version": "4.5.1",
+  "version": "0.0.0-development",
   "description": "Shuddhalekhan — speech-to-text dictation app",
   "type": "module",
   "main": "./out/main/index.cjs",
@@ -89,9 +89,9 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "parthashirolkar",
+      "owner": "PeeeBrain",
       "repo": "shuddhalekhan",
-      "releaseType": "release",
+      "releaseType": "draft",
       "publishAutoUpdate": true
     }
   }
