@@ -538,7 +538,7 @@ describe('main process IPC orchestration', () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     simulatePaste.mockClear();
-    trayHandlers.onCopyLastTranscript?.();
+    await trayHandlers.onCopyLastTranscript?.();
 
     expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('transcribed text');
     expect(simulatePaste).not.toHaveBeenCalled();
