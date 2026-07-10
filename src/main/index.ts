@@ -68,10 +68,10 @@ async function pasteLastTranscript(): Promise<void> {
   }
 }
 
-function copyLastTranscript(): void {
+async function copyLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
   if (!transcript) return;
-  copyLastTranscriptToClipboard(transcript.text);
+  await copyLastTranscriptToClipboard(transcript.text);
 }
 
 function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste Failed'): void {
