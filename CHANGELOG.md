@@ -7,6 +7,12 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Toolchain Modernization
+- Upgraded to Electron 43, electron-builder 26, electron-vite 5, and Vite 7.
+- Replaced the deprecated `externalizeDepsPlugin` with the supported `build.externalizeDeps` configuration in `electron.vite.config.ts`.
+- Pinned the Node engine and CI/local development environments to Node 22.12.0 or newer, the minimum required by Electron 43, electron-vite 5, and Vite 7.
+- Updated `better-sqlite3` to a version compatible with Electron 43's native ABI so the native dependency rebuild succeeds.
+
 ### Agent Mode MCP Registry
 - Refactored the MCP server registry behind injectable client, OAuth redirect, and sidecar message ports, making connection lifecycle and hot-reload behavior testable without native subprocesses or network listeners.
 - Added production adapters for AI SDK stdio/HTTP clients, OAuth redirect handling, and sidecar stdout protocol events.
