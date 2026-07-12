@@ -22,8 +22,6 @@ class FakeOAuthProvider {
 mock.module('@ai-sdk/mcp', () => ({ createMCPClient }));
 mock.module('@ai-sdk/mcp/mcp-stdio', () => ({ Experimental_StdioMCPTransport: class {} }));
 mock.module('../protocol', () => ({ writeJsonLine, logSidecar }));
-mock.module('../oauth-provider', () => ({ SidecarOAuthProvider: FakeOAuthProvider }));
-
 import {
   AisdkMcpClientFactory,
   type McpOAuthProviderResolver,
@@ -54,9 +52,11 @@ describe('MCP registry production adapters', () => {
       transport: {
         type: 'http',
         url: 'http://localhost:3000/mcp',
-        authProvider: expect.any(FakeOAuthProvider),
+        authProvider: expect.anything(),
+        redirect: 'error',
       },
     });
+    await redirectServer.close();
   });
 
   it('obtains HTTP OAuth providers through an interface and forwards the registry token', async () => {
@@ -78,6 +78,7 @@ describe('MCP registry production adapters', () => {
         type: 'http',
         url: 'http://localhost:3000/mcp',
         authProvider: provider,
+        redirect: 'error',
       },
     });
   });

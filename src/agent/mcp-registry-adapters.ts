@@ -108,5 +108,10 @@ function createTransport(server: McpServerConfig, oauthProvider?: OAuthClientPro
     });
   }
 
-  return { type: 'http' as const, url: server.transport.url, authProvider: oauthProvider };
+  return {
+    type: 'http' as const,
+    url: server.transport.url,
+    authProvider: oauthProvider,
+    redirect: 'error' as const,
+  };
 }
