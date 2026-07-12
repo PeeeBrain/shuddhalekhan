@@ -9,6 +9,9 @@ tags and commit history, not from this file. Keep new entries under
 
 ### Toolchain Modernization
 - Upgraded to Electron 43, electron-builder 26, electron-vite 5, and Vite 7.
+- Upgraded Tailwind CSS and `@tailwindcss/vite` to 4.3.2.
+- Upgraded `typescript-eslint` to 8.63.0.
+- Kept `better-sqlite3` at 12.11.1 for Electron 43 native ABI compatibility; verified audit database creation, writes, queries, and reopening.
 - Replaced the deprecated `externalizeDepsPlugin` with the supported `build.externalizeDeps` configuration in `electron.vite.config.ts`.
 - Pinned the Node engine and CI/local development environments to Node 22.12.0 or newer, the minimum required by Electron 43, electron-vite 5, and Vite 7.
 - Updated `better-sqlite3` to a version compatible with Electron 43's native ABI so the native dependency rebuild succeeds.
