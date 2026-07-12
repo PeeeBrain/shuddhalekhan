@@ -10,7 +10,7 @@ import type {
   OAuthRedirectServerFactory,
   SidecarMessageTransporter,
 } from './mcp-registry';
-import { SidecarOAuthProvider } from './oauth-provider';
+import { createRedirectAwareFetch, SidecarOAuthProvider } from './oauth-provider';
 import { logSidecar, writeJsonLine } from './protocol';
 
 export interface McpOAuthProviderResolver {
@@ -20,10 +20,12 @@ export interface McpOAuthProviderResolver {
 export class SidecarOAuthRedirectFactory implements OAuthRedirectServerFactory, McpOAuthProviderResolver {
   private providers = new Map<string, SidecarOAuthProvider>();
 
+  constructor(private readonly fetchFn: typeof globalThis.fetch = globalThis.fetch) {}
+
   create(server: McpServerConfig): OAuthRedirectServer {
     if (server.transport.type !== 'http') throw new Error('OAuth redirect servers require an HTTP MCP server.');
 
-    const provider = new SidecarOAuthProvider(server);
+    const provider = new SidecarOAuthProvider(server, this.fetchFn);
     this.providers.set(server.id, provider);
     return {
       start: () => provider.start(),
@@ -124,11 +126,4 @@ function createTransport(
     redirect: server.transport.redirect,
     fetch: createRedirectAwareFetch(fetchFn, server.transport.redirect),
   };
-}
-
-function createRedirectAwareFetch(
-  fetchFn: typeof globalThis.fetch,
-  redirect: 'error' | 'follow',
-): typeof globalThis.fetch {
-  return (input, init) => fetchFn(input, { ...init, redirect });
 }

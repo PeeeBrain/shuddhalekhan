@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -52,5 +52,36 @@ describe('SidecarOAuthProvider', () => {
       token_type: 'Bearer',
       ...authorizationServerPin,
     });
+  });
+
+  it('enforces the server redirect policy during provider-owned OAuth requests', async () => {
+    const baseFetch = mock(async () => new Response(null, { status: 204 }));
+    const authFn = mock(async (_provider: unknown, options: { fetchFn?: typeof globalThis.fetch }) => {
+      await options.fetchFn?.('https://auth.example.test/.well-known/oauth-authorization-server', {
+        redirect: 'follow',
+      });
+      return 'AUTHORIZED' as const;
+    });
+    const provider = new SidecarOAuthProvider({
+      id: 'secure-http',
+      displayName: 'Secure HTTP',
+      enabled: true,
+      transport: {
+        type: 'http',
+        url: 'https://mcp.example.test/mcp',
+        redirect: 'error',
+      },
+      discoveredTools: [],
+      toolPolicies: {},
+    }, baseFetch as never, authFn as never);
+
+    await provider.ensureAuthenticated();
+
+    expect(authFn).toHaveBeenCalledTimes(1);
+    expect(baseFetch).toHaveBeenCalledWith(
+      'https://auth.example.test/.well-known/oauth-authorization-server',
+      { redirect: 'error' },
+    );
+    provider.close();
   });
 });
