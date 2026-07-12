@@ -21,16 +21,22 @@ type TokenFile = {
 
 export class SidecarOAuthProvider implements OAuthClientProvider {
   private readonly tokenPath: string;
+  private readonly fetchFn: typeof globalThis.fetch;
   private callbackServer: Server | null = null;
   private callbackUrl: string | null = null;
   private lastRedirectUrl: string | null = null;
 
-  constructor(private readonly server: McpServerConfig) {
+  constructor(
+    private readonly server: McpServerConfig,
+    fetchFn: typeof globalThis.fetch = globalThis.fetch,
+    private readonly authenticate: typeof auth = auth,
+  ) {
     if (server.transport.type !== 'http') {
       throw new Error('OAuth provider requires an HTTP MCP server.');
     }
 
     this.tokenPath = join(getAgentDataDir(), 'oauth', `${sanitizeFileName(server.id)}.json`);
+    this.fetchFn = createRedirectAwareFetch(fetchFn, server.transport.redirect);
   }
 
   get redirectUrl(): string {
@@ -59,8 +65,9 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
     if (this.tokens()?.access_token) return;
 
     await this.startCallbackServer();
-    const result = await auth(this, {
+    const result = await this.authenticate(this, {
       serverUrl: this.server.transport.type === 'http' ? this.server.transport.url : '',
+      fetchFn: this.fetchFn,
     });
 
     if (result !== 'AUTHORIZED' && !this.tokens()?.access_token) {
@@ -95,10 +102,11 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
     });
 
     const callback = await this.waitForCallback();
-    await auth(this, {
+    await this.authenticate(this, {
       serverUrl: this.server.transport.type === 'http' ? this.server.transport.url : '',
       authorizationCode: callback.code,
       callbackState: callback.state,
+      fetchFn: this.fetchFn,
     });
   }
 
@@ -238,6 +246,13 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
       });
     });
   }
+}
+
+export function createRedirectAwareFetch(
+  fetchFn: typeof globalThis.fetch,
+  redirect: 'error' | 'follow',
+): typeof globalThis.fetch {
+  return (input, init) => fetchFn(input, { ...init, redirect });
 }
 
 function getAgentDataDir(): string {

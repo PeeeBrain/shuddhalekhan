@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { stepCountIs, streamText, type JSONValue, type ModelMessage, type Tool } from "ai";
+import { isStepCount, streamText, type JSONValue, type ModelMessage, type Tool } from "ai";
 import type { AppConfig } from "../types/ipc";
 import { logSidecar } from "./protocol";
 
@@ -207,16 +207,15 @@ type StreamPart =
 async function consumeGenerationStream(
   result: {
     text: PromiseLike<string>;
-    textStream?: AsyncIterable<string>;
-    fullStream?: AsyncIterable<StreamPart>;
+    stream?: AsyncIterable<StreamPart>;
   },
   callbacks: AgentRuntimeCallbacks,
 ): Promise<{ text: string; approvalRequests: ApprovalRequestPart[] }> {
   let streamedResponse = "";
   const approvalRequests: ApprovalRequestPart[] = [];
 
-  if (result.fullStream) {
-    for await (const part of result.fullStream) {
+  if (result.stream) {
+    for await (const part of result.stream) {
       if (isApprovalRequestPart(part)) {
         approvalRequests.push(part);
         continue;
@@ -224,12 +223,6 @@ async function consumeGenerationStream(
 
       if (part.type !== "text-delta") continue;
       const text = typeof part.text === "string" ? part.text : typeof part.textDelta === "string" ? part.textDelta : "";
-      if (!streamedResponse && !text.trim()) continue;
-      streamedResponse += text;
-      callbacks.onResponseDelta(text, streamedResponse);
-    }
-  } else if (result.textStream) {
-    for await (const text of result.textStream) {
       if (!streamedResponse && !text.trim()) continue;
       streamedResponse += text;
       callbacks.onResponseDelta(text, streamedResponse);
@@ -368,13 +361,13 @@ export async function runAgent(
       callbacks.onStatus("Thinking...");
       const result = streamText({
         model,
-        system: systemPrompt,
+        instructions: systemPrompt,
         messages,
         tools,
         providerOptions: getDefaultProviderOptions(),
-        stopWhen: stepCountIs(5),
+        stopWhen: isStepCount(5),
         abortSignal: signal,
-        onStepFinish: ({ toolCalls }) => {
+        onStepEnd: ({ toolCalls }) => {
           if (toolCalls.length > 0) {
             const names = toolCalls.map((t) => String(t.toolName)).join(", ");
             callbacks.onAudit?.("tool_requests", { toolCalls });
@@ -387,8 +380,8 @@ export async function runAgent(
 
       const consumed = await consumeGenerationStream(result, callbacks);
       finalResponse = consumed.text;
-      if ("response" in result && result.response) {
-        messages.push(...((await result.response).messages as ModelMessage[]));
+      if (result.responseMessages) {
+        messages.push(...((await result.responseMessages) as ModelMessage[]));
       }
 
       steps = await result.steps;
@@ -432,7 +425,7 @@ export async function runAgent(
       callbacks.onStatus("Step limit reached. Summarizing...");
       const fallback = streamText({
         model,
-        system: systemPrompt,
+        instructions: systemPrompt,
         messages: [
           { role: "user", content: transcript },
           {

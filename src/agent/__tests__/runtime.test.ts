@@ -6,7 +6,7 @@ const streamTextMock = mock();
 const createOpenAICompatibleMock = mock(() => ({
   chatModel: mock(() => 'mock-model'),
 }));
-const stepCountIsMock = mock((n: number) => ({ stepCount: n }));
+const isStepCountMock = mock((n: number) => ({ stepCount: n }));
 const createMCPClientMock = mock();
 const closeMock = mock(() => Promise.resolve());
 const Experimental_StdioMCPTransportMock = mock();
@@ -17,7 +17,7 @@ mock.module('@ai-sdk/openai-compatible', () => ({
 
 mock.module('ai', () => ({
   streamText: streamTextMock,
-  stepCountIs: stepCountIsMock,
+  isStepCount: isStepCountMock,
 }));
 
 mock.module('@ai-sdk/mcp', () => ({
@@ -48,7 +48,7 @@ describe('runAgent', () => {
   beforeEach(() => {
     streamTextMock.mockClear();
     createOpenAICompatibleMock.mockClear();
-    stepCountIsMock.mockClear();
+    isStepCountMock.mockClear();
     createMCPClientMock.mockClear();
     closeMock.mockClear();
     Experimental_StdioMCPTransportMock.mockClear();
@@ -110,7 +110,33 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Done', []);
-    expect(stepCountIsMock).toHaveBeenCalledWith(5);
+    expect(isStepCountMock).toHaveBeenCalledWith(5);
+  });
+
+  it('uses the stable AI SDK v7 runtime request names', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [{ toolCalls: [], toolResults: [] }],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    await runAgent(
+      'run-1',
+      'hello',
+      baseConfig as never,
+      {},
+      new AbortController().signal,
+      makeCallbacks(),
+    );
+
+    const request = streamTextMock.mock.calls[0]?.[0];
+    expect(request.instructions).toContain('<identity>');
+    expect(request.onStepEnd).toBeFunction();
+    expect(request.system).toBeUndefined();
+    expect(request.onStepFinish).toBeUndefined();
+    expect(isStepCountMock).toHaveBeenCalledWith(5);
   });
 
   it('uses a GPT-5-style structured system prompt with explicit agent controls', async () => {
@@ -126,7 +152,7 @@ describe('runAgent', () => {
 
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    const systemPrompt = streamTextMock.mock.calls[0]?.[0].system;
+    const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions;
     expect(systemPrompt).toContain('<identity>');
     expect(systemPrompt).toContain('<persistence>');
     expect(systemPrompt).toContain('<context_gathering>');
@@ -148,7 +174,7 @@ describe('runAgent', () => {
 
     await runAgent('run-1', 'what happened today?', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    const systemPrompt = streamTextMock.mock.calls[0]?.[0].system;
+    const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions;
     expect(systemPrompt).toContain('<runtime_context>');
     expect(systemPrompt).toContain(`- Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
     expect(systemPrompt).toMatch(/- Current local datetime: .+/);
@@ -188,8 +214,8 @@ describe('runAgent', () => {
 
   it('emits status during tool calls', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
-    streamTextMock.mockImplementation((options: { onStepFinish?: (args: unknown) => void }) => {
-      options.onStepFinish?.({
+    streamTextMock.mockImplementation((options: { onStepEnd?: (args: unknown) => void }) => {
+      options.onStepEnd?.({
         toolCalls: [{ toolName: 'weather' }],
         toolResults: [{ toolName: 'weather', result: 'sunny' }],
         text: 'Weather is sunny',
@@ -218,10 +244,10 @@ describe('runAgent', () => {
   it('performs fallback when max steps reached with pending tool calls', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     let callCount = 0;
-    streamTextMock.mockImplementation((options: { onStepFinish?: (args: unknown) => void }) => {
+    streamTextMock.mockImplementation((options: { onStepEnd?: (args: unknown) => void }) => {
       callCount++;
       if (callCount === 1) {
-        options.onStepFinish?.({
+        options.onStepEnd?.({
           toolCalls: [{ toolName: 'search' }],
           toolResults: [],
           text: '',
@@ -266,7 +292,7 @@ describe('runAgent', () => {
         steps: [],
         toolCalls: [],
         toolResults: [],
-        fullStreamParts: [makeApprovalRequest('approval-1', 'call-1', 'srv1__send', { to: 'a@example.com' })],
+        streamParts: [makeApprovalRequest('approval-1', 'call-1', 'srv1__send', { to: 'a@example.com' })],
         responseMessages: [
           {
             role: 'assistant',
@@ -331,7 +357,7 @@ describe('runAgent', () => {
         steps: [],
         toolCalls: [],
         toolResults: [],
-        fullStreamParts: [
+        streamParts: [
           makeApprovalRequest('approval-1', 'call-1', 'srv1__send', { to: 'a@example.com' }),
           makeApprovalRequest('approval-2', 'call-2', 'srv1__delete', { id: 'msg-1' }),
         ],
@@ -405,6 +431,28 @@ describe('runAgent', () => {
 
     const callbacks = makeCallbacks();
 
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(1, 'Hello', 'Hello');
+    expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(2, ' world', 'Hello world');
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Hello world', []);
+  });
+
+  it('consumes response deltas from the stable v7 stream result', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockReturnValue({
+      text: Promise.resolve('Hello world'),
+      stream: toAsyncIterable([
+        { type: 'text-delta', text: 'Hello' },
+        { type: 'text-delta', text: ' world' },
+      ]),
+      responseMessages: Promise.resolve([]),
+      steps: Promise.resolve([]),
+      toolCalls: Promise.resolve([]),
+      toolResults: Promise.resolve([]),
+    });
+
+    const callbacks = makeCallbacks();
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(1, 'Hello', 'Hello');
@@ -600,15 +648,14 @@ function makeStreamResult(result: {
   toolCalls: unknown[];
   toolResults: unknown[];
   streamChunks?: string[];
-  fullStreamParts?: Array<{ type: string; text?: string; approvalId?: string; toolCall?: { toolName: string; input: unknown } }>;
+  streamParts?: Array<{ type: string; text?: string; approvalId?: string; toolCall?: { toolName: string; input: unknown } }>;
   responseMessages?: unknown[];
 }) {
-  const fullStreamParts = result.fullStreamParts ?? result.streamChunks?.map((text) => ({ type: 'text-delta', text })) ?? undefined;
+  const streamParts = result.streamParts ?? result.streamChunks?.map((text) => ({ type: 'text-delta', text })) ?? undefined;
   return {
     text: Promise.resolve(result.text),
-    textStream: result.streamChunks ? toAsyncIterable(result.streamChunks) : undefined,
-    fullStream: fullStreamParts ? toAsyncIterable(fullStreamParts) : undefined,
-    response: Promise.resolve({ messages: result.responseMessages ?? [] }),
+    stream: streamParts ? toAsyncIterable(streamParts) : undefined,
+    responseMessages: Promise.resolve(result.responseMessages ?? []),
     steps: Promise.resolve(result.steps),
     toolCalls: Promise.resolve(result.toolCalls),
     toolResults: Promise.resolve(result.toolResults),

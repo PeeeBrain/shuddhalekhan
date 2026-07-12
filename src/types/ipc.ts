@@ -20,6 +20,7 @@ export type McpServerTransport =
   | {
       type: 'http';
       url: string;
+      redirect: 'error' | 'follow';
     };
 
 export interface McpDiscoveredTool {

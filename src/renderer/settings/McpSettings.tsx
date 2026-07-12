@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select';
 import {
   createBlankMcpServer,
+  createHttpMcpTransport,
   formatTransport,
   normalizeDraftServer,
   splitCommaList,
@@ -178,7 +179,7 @@ function McpServerForm({
                 ...server,
                 transport:
                   type === 'http'
-                    ? { type: 'http', url: '' }
+                    ? createHttpMcpTransport()
                     : { type: 'stdio', command: '', args: [], envVarNames: [] },
               });
             }}
@@ -194,14 +195,34 @@ function McpServerForm({
         </div>
 
         {transport.type === 'http' ? (
-          <div className="col-span-full space-y-2">
-            <Label className="text-xs font-semibold text-muted-foreground">URL</Label>
-            <Input
-              value={transport.url}
-              placeholder="http://localhost:3000/mcp"
-              onChange={(event) => onChange({ ...server, transport: { ...transport, url: event.target.value } })}
-            />
-          </div>
+          <>
+            <div className="col-span-full space-y-2">
+              <Label className="text-xs font-semibold text-muted-foreground">URL</Label>
+              <Input
+                value={transport.url}
+                placeholder="http://localhost:3000/mcp"
+                onChange={(event) => onChange({ ...server, transport: { ...transport, url: event.target.value } })}
+              />
+            </div>
+            <div className="col-span-full rounded-md border border-border/70 bg-muted/20 px-3 py-3">
+              <div className="flex items-center justify-between gap-4">
+                <Label htmlFor="mcp-follow-redirects" className="text-sm font-medium">
+                  Follow HTTP redirects
+                </Label>
+                <Switch
+                  id="mcp-follow-redirects"
+                  checked={transport.redirect === 'follow'}
+                  onCheckedChange={(checked) => onChange({
+                    ...server,
+                    transport: { ...transport, redirect: checked ? 'follow' : 'error' },
+                  })}
+                />
+              </div>
+              <p className="mt-1.5 max-w-prose text-xs leading-relaxed text-muted-foreground">
+                Off by default. Enable only when this server requires redirects and you trust its destination.
+              </p>
+            </div>
+          </>
         ) : (
           <>
             <div className="space-y-2">

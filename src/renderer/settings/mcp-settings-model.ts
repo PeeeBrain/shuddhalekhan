@@ -2,6 +2,14 @@ import type { McpServerConfig } from '../../types/ipc';
 
 type IdFactory = () => string;
 
+export function createHttpMcpTransport(): Extract<McpServerConfig['transport'], { type: 'http' }> {
+  return {
+    type: 'http',
+    url: '',
+    redirect: 'error',
+  };
+}
+
 export function createBlankMcpServer(makeId: IdFactory = () => makeServerId('mcp')): McpServerConfig {
   return {
     id: makeId(),

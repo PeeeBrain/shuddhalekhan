@@ -8,3 +8,11 @@ declare module 'bun:test' {
   export const mock: any;
   export const spyOn: any;
 }
+
+declare const Bun: {
+  file(path: string): { text(): Promise<string> };
+};
+
+interface ImportMeta {
+  dir: string;
+}
