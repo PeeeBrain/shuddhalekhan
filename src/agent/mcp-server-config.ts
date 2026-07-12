@@ -13,6 +13,9 @@ export function makeMcpToolPolicyKey(serverId: string, toolName: string): McpToo
 export function normalizeMcpServer(server: McpServerConfig): McpServerConfig {
   const discoveredTools = Array.isArray(server.discoveredTools) ? server.discoveredTools : [];
   const toolPolicies = { ...(server.toolPolicies ?? {}) };
+  const transport = server.transport.type === 'http'
+    ? { ...server.transport, redirect: server.transport.redirect ?? 'error' as const }
+    : server.transport;
 
   for (const tool of discoveredTools) {
     const key = makeMcpToolPolicyKey(server.id, tool.name);
@@ -24,6 +27,7 @@ export function normalizeMcpServer(server: McpServerConfig): McpServerConfig {
   return {
     ...server,
     enabled: server.enabled ?? false,
+    transport,
     discoveredTools,
     toolPolicies,
   };

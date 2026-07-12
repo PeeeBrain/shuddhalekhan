@@ -24,7 +24,7 @@ const baseConfig: AppConfig = {
         id: 'mail',
         displayName: 'Hosted Mail',
         enabled: true,
-        transport: { type: 'http', url: 'https://mail.example.com/mcp' },
+        transport: { type: 'http', url: 'https://mail.example.com/mcp', redirect: 'error' },
         discoveredTools: [],
         toolPolicies: {},
       },

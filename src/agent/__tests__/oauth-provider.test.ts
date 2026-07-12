@@ -24,7 +24,7 @@ describe('SidecarOAuthProvider', () => {
       id: 'secure-http',
       displayName: 'Secure HTTP',
       enabled: true,
-      transport: { type: 'http', url: 'https://mcp.example.test/mcp' },
+      transport: { type: 'http', url: 'https://mcp.example.test/mcp', redirect: 'error' },
       discoveredTools: [],
       toolPolicies: {},
     });

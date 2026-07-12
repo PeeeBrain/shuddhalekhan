@@ -54,13 +54,18 @@ export class SidecarOAuthRedirectFactory implements OAuthRedirectServerFactory, 
 }
 
 export class AisdkMcpClientFactory implements McpClientFactory {
-  constructor(private readonly oauthProviderResolver: McpOAuthProviderResolver) {}
+  constructor(
+    private readonly oauthProviderResolver: McpOAuthProviderResolver,
+    private readonly createClient: typeof createMCPClient = createMCPClient,
+    private readonly fetchFn: typeof globalThis.fetch = globalThis.fetch,
+  ) {}
 
   async connect(server: McpServerConfig, oauthTokens?: { access_token: string }): Promise<McpClientConnection> {
-    const client = await createMCPClient({
+    const client = await this.createClient({
       transport: createTransport(
         server,
-        server.transport.type === 'http' ? this.oauthProviderResolver.resolve(server, oauthTokens) : undefined
+        server.transport.type === 'http' ? this.oauthProviderResolver.resolve(server, oauthTokens) : undefined,
+        this.fetchFn,
       ),
     });
 
@@ -94,7 +99,11 @@ export class StdoutSidecarMessageTransporter implements SidecarMessageTransporte
   }
 }
 
-function createTransport(server: McpServerConfig, oauthProvider?: OAuthClientProvider) {
+function createTransport(
+  server: McpServerConfig,
+  oauthProvider: OAuthClientProvider | undefined,
+  fetchFn: typeof globalThis.fetch,
+) {
   if (server.transport.type === 'stdio') {
     const env: Record<string, string> = {};
     for (const name of server.transport.envVarNames) {
@@ -112,6 +121,14 @@ function createTransport(server: McpServerConfig, oauthProvider?: OAuthClientPro
     type: 'http' as const,
     url: server.transport.url,
     authProvider: oauthProvider,
-    redirect: 'error' as const,
+    redirect: server.transport.redirect,
+    fetch: createRedirectAwareFetch(fetchFn, server.transport.redirect),
   };
+}
+
+function createRedirectAwareFetch(
+  fetchFn: typeof globalThis.fetch,
+  redirect: 'error' | 'follow',
+): typeof globalThis.fetch {
+  return (input, init) => fetchFn(input, { ...init, redirect });
 }

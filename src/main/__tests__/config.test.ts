@@ -216,6 +216,7 @@ describe('config store', () => {
         transport: {
           type: 'http',
           url: 'https://mail.example.com/mcp',
+          redirect: 'error',
         },
         discoveredTools: [
           {
@@ -235,6 +236,7 @@ describe('config store', () => {
         transport: {
           type: 'http',
           url: 'https://mail2.example.com/mcp',
+          redirect: 'error',
         },
         discoveredTools: [],
         toolPolicies: {},

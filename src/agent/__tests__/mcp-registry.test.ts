@@ -28,7 +28,7 @@ const baseConfig = {
         id: 'srv1',
         displayName: 'Test Server',
         enabled: true,
-        transport: { type: 'http', url: 'http://localhost:3000/mcp' },
+        transport: { type: 'http', url: 'http://localhost:3000/mcp', redirect: 'error' },
         discoveredTools: [],
         toolPolicies: {},
       },
@@ -85,11 +85,31 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
-    await registry.updateConfig(withServer({ transport: { type: 'http', url: 'http://localhost:4000/mcp' } }) as never);
+    await registry.updateConfig(withServer({
+      transport: { type: 'http', url: 'http://localhost:4000/mcp', redirect: 'error' },
+    }) as never);
 
     expect(firstConnection.closed).toBe(true);
     expect(ports.oauthFactory.servers[0]?.closed).toBe(true);
     expect(ports.transporter.events).toContainEqual(['status', 'srv1', 'disconnected']);
+
+    await registry.close();
+  });
+
+  it('recreates the affected connection when its redirect policy changes', async () => {
+    const firstConnection = new FakeConnection({ search: makeTool('search') });
+    const replacementConnection = new FakeConnection({ search: makeTool('search') });
+    const ports = makePorts({ srv1: [firstConnection, replacementConnection] });
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+    await registry.updateConfig(withServer({
+      transport: { type: 'http', url: 'http://localhost:3000/mcp', redirect: 'follow' },
+    }) as never);
+
+    expect(firstConnection.closed).toBe(true);
+    expect(ports.oauthFactory.servers[0]?.closed).toBe(true);
+    expect(replacementConnection.closed).toBe(false);
 
     await registry.close();
   });

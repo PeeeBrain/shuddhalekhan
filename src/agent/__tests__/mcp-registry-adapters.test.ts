@@ -19,7 +19,6 @@ class FakeOAuthProvider {
   }
 }
 
-mock.module('@ai-sdk/mcp', () => ({ createMCPClient }));
 mock.module('@ai-sdk/mcp/mcp-stdio', () => ({ Experimental_StdioMCPTransport: class {} }));
 mock.module('../protocol', () => ({ writeJsonLine, logSidecar }));
 import {
@@ -33,19 +32,38 @@ const httpServer = {
   id: 'srv1',
   displayName: 'Test Server',
   enabled: true,
-  transport: { type: 'http', url: 'http://localhost:3000/mcp' },
+  transport: { type: 'http', url: 'http://localhost:3000/mcp', redirect: 'error' },
   discoveredTools: [],
   toolPolicies: {},
 };
 
 describe('MCP registry production adapters', () => {
+  it('denies redirects for a direct HTTP MCP connection without OAuth', async () => {
+    const oauthProviderResolver: McpOAuthProviderResolver = {
+      resolve: () => undefined,
+    };
+    createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
+
+    await new AisdkMcpClientFactory(oauthProviderResolver, createMCPClient as never).connect(httpServer as never);
+
+    expect(createMCPClient).toHaveBeenLastCalledWith({
+      transport: {
+        type: 'http',
+        url: 'http://localhost:3000/mcp',
+        authProvider: undefined,
+        redirect: 'error',
+        fetch: expect.any(Function),
+      },
+    });
+  });
+
   it('connects HTTP MCP clients with the redirect provider created for that server', async () => {
     const oauthFactory = new SidecarOAuthRedirectFactory();
     const redirectServer = oauthFactory.create(httpServer as never);
     await redirectServer.start();
     createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
 
-    const client = await new AisdkMcpClientFactory(oauthFactory).connect(httpServer as never);
+    const client = await new AisdkMcpClientFactory(oauthFactory, createMCPClient as never).connect(httpServer as never);
 
     expect(await client.tools()).toEqual({});
     expect(createMCPClient).toHaveBeenCalledWith({
@@ -54,6 +72,7 @@ describe('MCP registry production adapters', () => {
         url: 'http://localhost:3000/mcp',
         authProvider: expect.anything(),
         redirect: 'error',
+        fetch: expect.any(Function),
       },
     });
     await redirectServer.close();
@@ -70,7 +89,10 @@ describe('MCP registry production adapters', () => {
     };
     createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
 
-    await new AisdkMcpClientFactory(oauthProviderResolver).connect(httpServer as never, { access_token: 'token-1' });
+    await new AisdkMcpClientFactory(oauthProviderResolver, createMCPClient as never).connect(
+      httpServer as never,
+      { access_token: 'token-1' },
+    );
 
     expect(receivedTokens).toEqual({ access_token: 'token-1' });
     expect(createMCPClient).toHaveBeenLastCalledWith({
@@ -79,8 +101,60 @@ describe('MCP registry production adapters', () => {
         url: 'http://localhost:3000/mcp',
         authProvider: provider,
         redirect: 'error',
+        fetch: expect.any(Function),
       },
     });
+  });
+
+  it('follows HTTP redirects only for an opted-in server', async () => {
+    const provider = new FakeOAuthProvider();
+    const oauthProviderResolver: McpOAuthProviderResolver = {
+      resolve: () => provider as never,
+    };
+    createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
+
+    await new AisdkMcpClientFactory(oauthProviderResolver, createMCPClient as never).connect({
+      ...httpServer,
+      transport: { ...httpServer.transport, redirect: 'follow' },
+    } as never);
+
+    expect(createMCPClient).toHaveBeenLastCalledWith({
+      transport: {
+        type: 'http',
+        url: 'http://localhost:3000/mcp',
+        authProvider: provider,
+        redirect: 'follow',
+        fetch: expect.any(Function),
+      },
+    });
+  });
+
+  it('applies the server redirect policy to OAuth discovery and token fetches', async () => {
+    const provider = new FakeOAuthProvider();
+    const baseFetch = mock(async () => new Response(null, { status: 204 }));
+    const oauthProviderResolver: McpOAuthProviderResolver = {
+      resolve: () => provider as never,
+    };
+    createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
+
+    await new AisdkMcpClientFactory(
+      oauthProviderResolver,
+      createMCPClient as never,
+      baseFetch as never,
+    ).connect({
+      ...httpServer,
+      transport: { ...httpServer.transport, redirect: 'follow' },
+    } as never);
+
+    const transport = createMCPClient.mock.calls.at(-1)?.[0].transport;
+    await transport.fetch('https://auth.example.test/.well-known/oauth-authorization-server', {
+      headers: { Accept: 'application/json' },
+    });
+
+    expect(baseFetch).toHaveBeenCalledWith(
+      'https://auth.example.test/.well-known/oauth-authorization-server',
+      { headers: { Accept: 'application/json' }, redirect: 'follow' },
+    );
   });
 
   it('serializes registry status and discovery events through the sidecar protocol', () => {

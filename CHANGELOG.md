@@ -17,6 +17,7 @@ tags and commit history, not from this file. Keep new entries under
 - Updated `better-sqlite3` to a version compatible with Electron 43's native ABI so the native dependency rebuild succeeds.
 
 ### Agent Mode MCP Registry
+- Added a per-server HTTP redirect control in Settings. Redirects remain blocked by default and can be enabled only for individual trusted MCP servers that require them.
 - Upgraded the Agent runtime to AI SDK 7, MCP client 2, and the OpenAI-compatible provider 3, including the stable streaming and step lifecycle APIs and secure redirect denial for HTTP MCP connections.
 - Refactored the MCP server registry behind injectable client, OAuth redirect, and sidecar message ports, making connection lifecycle and hot-reload behavior testable without native subprocesses or network listeners.
 - Added production adapters for AI SDK stdio/HTTP clients, OAuth redirect handling, and sidecar stdout protocol events.

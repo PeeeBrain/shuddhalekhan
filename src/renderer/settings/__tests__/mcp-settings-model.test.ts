@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { McpServerConfig } from '../../../types/ipc';
 import {
   createBlankMcpServer,
+  createHttpMcpTransport,
   formatTransport,
   normalizeDraftServer,
   splitCommaList,
@@ -27,12 +28,20 @@ describe('MCP settings model helpers', () => {
     });
   });
 
+  it('creates new HTTP transports with redirects denied', () => {
+    expect(createHttpMcpTransport()).toEqual({
+      type: 'http',
+      url: '',
+      redirect: 'error',
+    });
+  });
+
   it('normalizes draft names and preserves existing IDs while editing', () => {
     const server: McpServerConfig = {
       id: 'draft-id',
       displayName: '   ',
       enabled: false,
-      transport: { type: 'http', url: 'http://localhost:3000/mcp' },
+      transport: { type: 'http', url: 'http://localhost:3000/mcp', redirect: 'error' },
       discoveredTools: [],
       toolPolicies: {},
     };
@@ -54,7 +63,7 @@ describe('MCP settings model helpers', () => {
       id: 'http',
       displayName: 'HTTP',
       enabled: true,
-      transport: { type: 'http', url: '' },
+      transport: { type: 'http', url: '', redirect: 'error' },
       discoveredTools: [],
       toolPolicies: {},
     })).toBe('HTTP endpoint not set');
