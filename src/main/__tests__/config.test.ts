@@ -55,6 +55,7 @@ describe('config store', () => {
       providers: {
         localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        azureSpeech: { endpoint: '', region: '' },
         customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
       },
     });
@@ -137,6 +138,7 @@ describe('config store', () => {
       providers: {
         localWhisperCpp: { endpoint: 'http://existing.test/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        azureSpeech: { endpoint: '', region: '' },
         customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
       },
     });
@@ -151,6 +153,7 @@ describe('config store', () => {
       providers: {
         localWhisperCpp: { endpoint: 'https://private.test/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        azureSpeech: { endpoint: '', region: '' },
         customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
       },
     });
@@ -158,6 +161,33 @@ describe('config store', () => {
     expect(getConfig().transcription.providers.localWhisperCpp.endpoint).toBe(
       'https://private.test/inference',
     );
+  });
+
+  it('retains inactive Microsoft Azure Speech configuration', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-azure-retention`);
+    const transcription = getConfig().transcription;
+
+    setConfig('transcription', {
+      ...transcription,
+      activeProvider: 'azure-speech',
+      providers: {
+        ...transcription.providers,
+        azureSpeech: {
+          endpoint: 'https://speech-resource.cognitiveservices.azure.com',
+          region: 'centralindia',
+        },
+      },
+    });
+    setConfig('transcription', {
+      ...getConfig().transcription,
+      activeProvider: 'local-whisper-cpp',
+    });
+
+    expect(getConfig().transcription.providers.azureSpeech).toEqual({
+      endpoint: 'https://speech-resource.cognitiveservices.azure.com',
+      region: 'centralindia',
+    });
   });
 
   it('migrates and deletes the legacy config once', async () => {

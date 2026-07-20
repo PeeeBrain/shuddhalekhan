@@ -21,11 +21,14 @@ const FIELD_ID_OPENAI_BASE_URL = 'openai-base-url';
 const FIELD_ID_OPENAI_MODEL = 'openai-model';
 const FIELD_ID_CUSTOM_ENDPOINT = 'custom-endpoint';
 const FIELD_ID_CUSTOM_HEADER_NAME = 'custom-header-name';
+const FIELD_ID_AZURE_ENDPOINT = 'azure-endpoint';
+const FIELD_ID_AZURE_REGION = 'azure-region';
 const FIELD_ID_PROVIDER = 'provider';
 
 const PROVIDER_OPTIONS: Array<{ value: TranscriptionProviderId; label: string }> = [
   { value: 'local-whisper-cpp', label: 'Local whisper.cpp' },
   { value: 'openai', label: 'OpenAI' },
+  { value: 'azure-speech', label: 'Microsoft Azure Speech' },
   { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible' },
 ];
 
@@ -44,11 +47,15 @@ export function TranscriptionSettings({
   const { commit, fieldErrors } = persistence;
   const provider = config.transcription.activeProvider;
 
-  const handleProviderChange = (value: string) => {
-    commit('transcription', {
+  const handleProviderChange = async (value: string) => {
+    const nextProvider = value as TranscriptionProviderId;
+    await commit('transcription', {
       ...config.transcription,
-      activeProvider: value as TranscriptionProviderId,
+      activeProvider: nextProvider,
     }, FIELD_ID_PROVIDER);
+    if (nextProvider === 'azure-speech' && config.task === 'translate') {
+      await commit('task', 'transcribe', FIELD_ID_TASK);
+    }
   };
 
   return (
@@ -77,6 +84,10 @@ export function TranscriptionSettings({
           <OpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
         ) : null}
 
+        {provider === 'azure-speech' ? (
+          <AzureSpeechSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+        ) : null}
+
         {provider === 'custom-open-ai-compatible' ? (
           <CustomOpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
         ) : null}
@@ -94,8 +105,17 @@ export function TranscriptionSettings({
           value={config.task}
           options={[
             { value: 'transcribe', label: 'Transcribe spoken language' },
-            { value: 'translate', label: 'Translate speech to English' },
+            {
+              value: 'translate',
+              label: provider === 'azure-speech'
+                ? 'Translate speech to English (not supported by Azure Fast Transcription)'
+                : 'Translate speech to English',
+              disabled: provider === 'azure-speech',
+            },
           ]}
+          description={provider === 'azure-speech'
+            ? 'Azure Fast Transcription supports transcription only. Translation is not sent to another service.'
+            : undefined}
           errorId={useId()}
           error={fieldErrors[FIELD_ID_TASK]}
           onChange={(value) => commit('task', value as AppConfig['task'], FIELD_ID_TASK)}
@@ -308,6 +328,80 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
   );
 }
 
+function AzureSpeechSection({ config, persistence, settingsIpc }: Props) {
+  const { commit, fieldErrors } = persistence;
+  const azure = config.transcription.providers.azureSpeech;
+
+  const validateEndpoint = (value: string): string | null => {
+    if (!value.trim()) {
+      return azure.region.trim() ? null : 'Enter a resource endpoint or region.';
+    }
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'https:' ? null : 'Azure resource endpoint must use HTTPS.';
+    } catch {
+      return 'Enter a valid endpoint, e.g. https://my-resource.cognitiveservices.azure.com.';
+    }
+  };
+
+  const validateRegion = (value: string): string | null => {
+    const trimmed = value.trim();
+    if (!trimmed) return azure.endpoint.trim() ? null : 'Enter a resource endpoint or region.';
+    return /^[a-z0-9-]{2,64}$/i.test(trimmed)
+      ? null
+      : 'Region may contain only letters, numbers, and hyphens.';
+  };
+
+  return (
+    <>
+      <DraftTextRow
+        label="Resource endpoint"
+        value={azure.endpoint}
+        placeholder="https://my-resource.cognitiveservices.azure.com"
+        description="Paste the Endpoint value from your Azure Speech resource. If set, it takes precedence over region."
+        errorId={useId()}
+        error={fieldErrors[FIELD_ID_AZURE_ENDPOINT]}
+        validate={validateEndpoint}
+        onCommit={(value) => commit('transcription', {
+          ...config.transcription,
+          providers: {
+            ...config.transcription.providers,
+            azureSpeech: { ...azure, endpoint: value.trim() },
+          },
+        }, FIELD_ID_AZURE_ENDPOINT)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_AZURE_ENDPOINT)}
+      />
+      <DraftTextRow
+        label="Region"
+        value={azure.region}
+        placeholder="eastus"
+        description="Alternatively, enter the Azure resource region to use its regional Cognitive Services endpoint."
+        errorId={useId()}
+        error={fieldErrors[FIELD_ID_AZURE_REGION]}
+        validate={validateRegion}
+        onCommit={(value) => commit('transcription', {
+          ...config.transcription,
+          providers: {
+            ...config.transcription.providers,
+            azureSpeech: { ...azure, region: value.trim().toLowerCase() },
+          },
+        }, FIELD_ID_AZURE_REGION)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_AZURE_REGION)}
+      />
+      <div className="border-b border-border/70 py-5">
+        <CredentialControl
+          credential="azure-speech-key"
+          label="Azure Speech key"
+          settingsIpc={settingsIpc}
+        />
+      </div>
+      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+        Settings are checked locally. Shuddhalekhan does not send test audio or make a billable Azure request.
+      </p>
+    </>
+  );
+}
+
 function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
   const { commit, fieldErrors } = persistence;
   const custom = config.transcription.providers.customOpenAiCompatible;
@@ -480,6 +574,7 @@ function PrivacyNote({ provider }: { provider: TranscriptionProviderId }) {
   const messages: Record<TranscriptionProviderId, string> = {
     'local-whisper-cpp': 'Recorded audio is sent to the configured local endpoint for transcription.',
     'openai': 'Recorded audio is sent to OpenAI for transcription. Review OpenAI\'s data handling policies.',
+    'azure-speech': 'Recorded audio is sent to Microsoft Azure Speech for transcription. Review Microsoft\'s data handling policies.',
     'custom-open-ai-compatible': 'Recorded audio is sent to the configured custom endpoint for transcription.',
   };
 

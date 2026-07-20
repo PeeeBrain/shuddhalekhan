@@ -1,13 +1,15 @@
 import {
   buildOpenAiEndpoint,
+  cleanFillerWords,
+  failureForHttpStatus,
   isValidHttpFieldName,
   type RecognitionSettings,
   type Transcriber,
   type TranscriptionCapabilities,
-  type TranscriptionFailureCategory,
   TranscriptionFailure,
 } from './transcription';
 import { localWhisperCppTranscriber } from './whisper';
+import { createAzureSpeechTranscriber } from './azure-speech';
 import type { AppConfig } from '../types/ipc';
 
 type CredentialReader = { read: (id: string) => string | null };
@@ -36,6 +38,13 @@ export function getTranscriber(
 
   if (provider === 'openai') {
     return createOpenAiTranscriber(config, vault);
+  }
+
+  if (provider === 'azure-speech') {
+    return createAzureSpeechTranscriber(
+      config.transcription.providers.azureSpeech,
+      vault.read('azure-speech-key'),
+    );
   }
 
   if (provider === 'custom-open-ai-compatible') {
@@ -248,43 +257,4 @@ async function transcribeOpenAiLike(
   }
 
   return text;
-}
-
-function failureForHttpStatus(status: number): TranscriptionFailure {
-  let category: TranscriptionFailureCategory = 'unknown';
-  let message = 'The transcription provider could not complete the request.';
-
-  if (status === 401 || status === 403) {
-    category = 'authentication';
-    message = 'The transcription provider rejected authentication.';
-  } else if (status === 429) {
-    category = 'rate-limit';
-    message = 'The transcription provider rate limit was reached. Try again later.';
-  } else if (status === 404) {
-    category = 'endpoint';
-    message = 'The transcription endpoint was not found. Check provider settings.';
-  } else if (status === 400 || status === 422) {
-    category = 'model';
-    message = 'The transcription provider rejected the model or recognition settings.';
-  }
-
-  return new TranscriptionFailure(category, message, status);
-}
-
-const FILLER_WORDS_PATTERN = /\b(um|uh|ah|er|hmm)\b([.,!?;])?/gi;
-const DOUBLE_SPACE = /\s+/g;
-const LEADING_TRAILING_SPACE = /^\s+|\s+$/g;
-const PUNCTUATION_FIX = /\s+([.,!?;])/g;
-const LEADING_FILLER_PUNCTUATION = /^[,\s]+/;
-
-function cleanFillerWords(text: string): string {
-  let cleaned = text.replace(FILLER_WORDS_PATTERN, (_match, _word, punctuation: string | undefined) => {
-    if (!punctuation || punctuation === ',') return '';
-    return punctuation;
-  });
-  cleaned = cleaned.replace(DOUBLE_SPACE, ' ');
-  cleaned = cleaned.replace(LEADING_TRAILING_SPACE, '');
-  cleaned = cleaned.replace(PUNCTUATION_FIX, '$1');
-  cleaned = cleaned.replace(LEADING_FILLER_PUNCTUATION, '');
-  return cleaned;
 }

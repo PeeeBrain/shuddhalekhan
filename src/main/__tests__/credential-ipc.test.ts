@@ -19,6 +19,19 @@ describe('credential IPC', () => {
     expect(JSON.stringify(result)).not.toContain('new-agent-secret');
   });
 
+  it('accepts the Microsoft Azure Speech credential kind without exposing the key', () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const vault = {
+      status: () => ({ available: true, exists: true }) as const,
+      save: () => ({ available: true, exists: true }) as const,
+      remove: () => ({ available: true, exists: false }) as const,
+    };
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault);
+
+    const result = handlers.get('credential:get-status')?.({}, 'azure-speech-key');
+    expect(result).toEqual({ available: true, exists: true });
+  });
+
   it('redacts vault save failures from the renderer', () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const vault = {

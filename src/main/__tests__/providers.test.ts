@@ -3,6 +3,7 @@ import {
   buildOpenAiEndpoint,
   validateOpenAiModel,
   validateOpenAiSettings,
+  validateAzureSpeechSettings,
   validateCustomOpenAiSettings,
   validateProviderReadiness,
 } from '../transcription';
@@ -24,6 +25,7 @@ const BASE_CONFIG: AppConfig = {
     providers: {
       localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: 'whisper-1' },
+      azureSpeech: { endpoint: '', region: '' },
       customOpenAiCompatible: { endpoint: 'http://localhost:8000/v1/audio/transcriptions', model: 'whisper-1', auth: 'none', headerName: '' },
     },
   },
@@ -387,6 +389,153 @@ describe('Custom OpenAI transcriber provider', () => {
   });
 });
 
+describe('Microsoft Azure Speech provider', () => {
+  beforeEach(() => {
+    resetElectronMock();
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+  });
+
+  function azureConfig(overrides: Partial<AppConfig['transcription']['providers']['azureSpeech']> = {}): AppConfig {
+    return {
+      ...BASE_CONFIG,
+      language: 'en',
+      transcription: {
+        activeProvider: 'azure-speech',
+        providers: {
+          ...BASE_CONFIG.transcription.providers,
+          azureSpeech: {
+            endpoint: 'https://speech-resource.cognitiveservices.azure.com',
+            region: '',
+            ...overrides,
+          },
+        },
+      },
+    };
+  }
+
+  it('uses the synchronous Fast Transcription request contract with key auth', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ combinedPhrases: [{ text: 'Azure transcript' }], phrases: [] }),
+    } as Response);
+    const { getTranscriber } = await import('../providers');
+    const transcriber = getTranscriber(azureConfig(), createVault({ 'azure-speech-key': 'azure-secret' }));
+
+    await expect(transcriber.transcribe({
+      audio: new Uint8Array([1, 2, 3]),
+      recognition: {
+        language: 'hi',
+        task: 'transcribe',
+        dictionary: ['Shuddhalekhan', 'Contoso'],
+        removeFillerWords: false,
+      },
+    })).resolves.toBe('Azure transcript');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://speech-resource.cognitiveservices.azure.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Ocp-Apim-Subscription-Key': 'azure-secret' },
+      }),
+    );
+    const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(body.get('audio')).toBeInstanceOf(Blob);
+    expect(JSON.parse(String(body.get('definition')))).toEqual({
+      locales: ['hi-IN'],
+      phraseList: { phrases: ['Shuddhalekhan', 'Contoso'] },
+    });
+    expect(body.has('model')).toBe(false);
+  });
+
+  it('constructs a regional endpoint and omits locales for automatic detection', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ combinedPhrases: [{ text: 'Detected speech' }] }),
+    } as Response);
+    const { getTranscriber } = await import('../providers');
+    const transcriber = getTranscriber(
+      azureConfig({ endpoint: '', region: 'CentralIndia' }),
+      createVault({ 'azure-speech-key': 'key' }),
+    );
+
+    await transcriber.transcribe({
+      audio: new Uint8Array([1]),
+      recognition: { language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false },
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://centralindia.api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15',
+    );
+    const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(JSON.parse(String(body.get('definition')))).toEqual({});
+  });
+
+  it('rejects translation locally without making a request', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const { getTranscriber } = await import('../providers');
+    const transcriber = getTranscriber(azureConfig(), createVault({ 'azure-speech-key': 'key' }));
+
+    await expect(transcriber.transcribe({
+      audio: new Uint8Array([1]),
+      recognition: { language: 'en', task: 'translate', dictionary: [], removeFillerWords: false },
+    })).rejects.toMatchObject({ category: 'model', message: expect.stringContaining('not supported') });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('normalizes authentication, quota, endpoint, malformed response, and network failures', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const { getTranscriber } = await import('../providers');
+    const transcriber = getTranscriber(azureConfig(), createVault({ 'azure-speech-key': 'key' }));
+    const request = {
+      audio: new Uint8Array([1]),
+      recognition: { language: 'en', task: 'transcribe' as const, dictionary: [], removeFillerWords: false },
+    };
+
+    for (const [status, category] of [[401, 'authentication'], [429, 'rate-limit'], [404, 'endpoint']] as const) {
+      fetchMock.mockResolvedValueOnce({ ok: false, status } as Response);
+      await expect(transcriber.transcribe(request)).rejects.toMatchObject({ category, status });
+    }
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ unexpected: 'secret' }) } as Response);
+    await expect(transcriber.transcribe(request)).rejects.toMatchObject({ category: 'malformed-response' });
+    fetchMock.mockRejectedValueOnce(new Error('network includes secret'));
+    await expect(transcriber.transcribe(request)).rejects.toMatchObject({
+      category: 'network',
+      message: expect.not.stringContaining('secret'),
+    });
+  });
+
+  it('validates provider-native fields and saved credentials locally', () => {
+    expect(validateAzureSpeechSettings({ endpoint: '', region: '' })).toEqual([
+      'Enter a Microsoft Azure Speech resource endpoint or region.',
+    ]);
+    expect(validateAzureSpeechSettings({ endpoint: 'http://unsafe.test', region: '' })).toEqual([
+      'Azure resource endpoint must use HTTPS.',
+    ]);
+    expect(validateAzureSpeechSettings({ endpoint: '', region: 'centralindia' })).toEqual([]);
+
+    const missingKey = validateProviderReadiness('azure-speech', azureConfig(), createVault());
+    expect(missingKey).toContain('Microsoft Azure Speech key is not configured. Save one in Settings.');
+    expect(validateProviderReadiness(
+      'azure-speech',
+      azureConfig(),
+      createVault({ 'azure-speech-key': 'key' }),
+    )).toEqual([]);
+  });
+
+  it('declares Fast Transcription capabilities', async () => {
+    const { AZURE_SPEECH_CAPABILITIES } = await import('../azure-speech');
+    expect(AZURE_SPEECH_CAPABILITIES).toEqual({
+      translation: false,
+      automaticLanguageDetection: true,
+      dictionaryHints: true,
+      authentication: 'required',
+      maxDurationSeconds: null,
+    });
+  });
+});
+
 describe('getTranscriber provider selection', () => {
   it('returns the local whisper transcriber for local-whisper-cpp', async () => {
     const { getTranscriber } = await import('../providers');
@@ -410,6 +559,15 @@ describe('getTranscriber provider selection', () => {
 
     const transcriber = getTranscriber(config, vault);
     expect(transcriber.id).toBe('openai');
+  });
+
+  it('returns the Microsoft Azure Speech transcriber for azure-speech', async () => {
+    const { getTranscriber } = await import('../providers');
+    const config: AppConfig = {
+      ...BASE_CONFIG,
+      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'azure-speech' },
+    };
+    expect(getTranscriber(config, createVault({})).id).toBe('azure-speech');
   });
 
   it('returns the custom OpenAI transcriber for custom-open-ai-compatible', async () => {

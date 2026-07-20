@@ -125,7 +125,7 @@ interface SelectRowProps {
   label: string;
   description?: string;
   value: string;
-  options: Array<{ value: string; label: string }>;
+  options: Array<{ value: string; label: string; disabled?: boolean }>;
   errorId: string;
   error?: string;
   onChange: (value: string) => void;
@@ -164,6 +164,7 @@ export function SelectRow({
             <SelectItem
               key={option.value || '__auto__'}
               value={option.value}
+              disabled={option.disabled}
             >
               {option.label}
             </SelectItem>

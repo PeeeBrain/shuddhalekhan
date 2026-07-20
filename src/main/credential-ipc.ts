@@ -13,6 +13,7 @@ const CREDENTIAL_KINDS: CredentialKind[] = [
   'openai-api-key',
   'custom-open-ai-compatible-bearer',
   'custom-open-ai-compatible-header',
+  'azure-speech-key',
 ];
 
 export function registerCredentialIpcHandlers(

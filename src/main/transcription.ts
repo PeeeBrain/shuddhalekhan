@@ -1,4 +1,8 @@
-export type TranscriptionProviderId = 'local-whisper-cpp' | 'openai' | 'custom-open-ai-compatible';
+export type TranscriptionProviderId =
+  | 'local-whisper-cpp'
+  | 'openai'
+  | 'azure-speech'
+  | 'custom-open-ai-compatible';
 
 export interface TranscriptionCapabilities {
   translation: boolean;
@@ -87,6 +91,28 @@ export function validateOpenAiSettings(settings: { baseUrl: string; model: strin
   return errors;
 }
 
+export function validateAzureSpeechSettings(settings: { endpoint: string; region: string }): string[] {
+  const endpoint = settings.endpoint.trim();
+  const region = settings.region.trim();
+  if (!endpoint && !region) {
+    return ['Enter a Microsoft Azure Speech resource endpoint or region.'];
+  }
+
+  const errors: string[] = [];
+  if (endpoint) {
+    try {
+      const url = new URL(endpoint);
+      if (url.protocol !== 'https:') errors.push('Azure resource endpoint must use HTTPS.');
+    } catch {
+      errors.push('Enter a valid Azure resource endpoint URL.');
+    }
+  }
+  if (region && !/^[a-z0-9-]{2,64}$/i.test(region)) {
+    errors.push('Azure region may contain only letters, numbers, and hyphens.');
+  }
+  return errors;
+}
+
 export function validateCustomOpenAiSettings(settings: { endpoint: string; model: string; auth: string; headerName?: string }): string[] {
   const errors: string[] = [];
   try {
@@ -133,6 +159,17 @@ export function validateProviderReadiness(
     if (!apiKey) errors.push('OpenAI API key is not configured. Save one in Settings.');
   }
 
+  if (providerId === 'azure-speech') {
+    const azure = config.transcription.providers.azureSpeech;
+    errors.push(...validateAzureSpeechSettings(azure));
+    if (!vault.read('azure-speech-key')) {
+      errors.push('Microsoft Azure Speech key is not configured. Save one in Settings.');
+    }
+    if (config.task === 'translate') {
+      errors.push('Translation is not supported by Microsoft Azure Speech Fast Transcription.');
+    }
+  }
+
   if (providerId === 'custom-open-ai-compatible') {
     const { endpoint, model, auth, headerName } = config.transcription.providers.customOpenAiCompatible;
     if (!endpoint.trim()) errors.push('Custom endpoint is not configured.');
@@ -162,6 +199,44 @@ export function validateLocalWhisperSettings(settings: { endpoint: string }): st
   return url.protocol === 'http:' || url.protocol === 'https:'
     ? []
     : ['Endpoint must use HTTP or HTTPS.'];
+}
+
+export function failureForHttpStatus(
+  status: number,
+  providerName = 'The transcription provider',
+): TranscriptionFailure {
+  let category: TranscriptionFailureCategory = 'unknown';
+  let message = `${providerName} could not complete the request.`;
+
+  if (status === 401 || status === 403) {
+    category = 'authentication';
+    message = `${providerName} rejected authentication.`;
+  } else if (status === 429) {
+    category = 'rate-limit';
+    message = `${providerName} rate limit was reached. Try again later.`;
+  } else if (status === 404) {
+    category = 'endpoint';
+    message = `${providerName} endpoint was not found. Check provider settings.`;
+  } else if (status === 400 || status === 422) {
+    category = 'model';
+    message = `${providerName} rejected the model or recognition settings.`;
+  }
+
+  return new TranscriptionFailure(category, message, status);
+}
+
+const FILLER_WORDS_PATTERN = /\b(um|uh|ah|er|hmm)\b([.,!?;])?/gi;
+
+export function cleanFillerWords(text: string): string {
+  let cleaned = text.replace(FILLER_WORDS_PATTERN, (_match, _word, punctuation: string | undefined) => {
+    if (!punctuation || punctuation === ',') return '';
+    return punctuation;
+  });
+  cleaned = cleaned.replace(/\s+/g, ' ');
+  cleaned = cleaned.trim();
+  cleaned = cleaned.replace(/\s+([.,!?;])/g, '$1');
+  cleaned = cleaned.replace(/^[,\s]+/, '');
+  return cleaned;
 }
 
 export function getSafeTranscriptionFailureMessage(error: unknown): string {

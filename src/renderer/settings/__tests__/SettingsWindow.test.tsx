@@ -32,6 +32,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       providers: {
       localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      azureSpeech: { endpoint: '', region: '' },
       customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
     },
@@ -229,6 +230,37 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('combobox', { name: 'Mode' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Spoken language' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeInTheDocument();
+  });
+
+  it('shows provider-native Microsoft Azure Speech setup without a model field', async () => {
+    const config = baseConfig();
+    const { settingsIpc } = renderSettings({
+      config: {
+        ...config,
+        transcription: {
+          activeProvider: 'azure-speech',
+          providers: {
+            ...config.transcription.providers,
+            azureSpeech: { endpoint: '', region: 'centralindia' },
+          },
+        },
+      },
+    });
+    await waitForLoaded();
+
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('Microsoft Azure Speech');
+    expect(screen.getByRole('textbox', { name: 'Resource endpoint' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Region' })).toHaveValue('centralindia');
+    expect(screen.getByLabelText('Azure Speech key')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Model' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Check/ })).toBeNull();
+    expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Microsoft Azure');
+    expect(screen.getByText(/does not send test audio or make a billable Azure request/i)).toBeInTheDocument();
+
+    const mode = screen.getByRole('combobox', { name: 'Mode' });
+    fireEvent.click(mode);
+    expect(await screen.findByRole('option', { name: /Translate speech to English/ })).toHaveAttribute('data-disabled');
+    expect(settingsIpc.checkTranscriptionServer).not.toHaveBeenCalled();
   });
 
   it('shows recording activation and device rows on the Audio section', async () => {
@@ -553,6 +585,7 @@ describe('Settings validation', () => {
           providers: {
             localWhisperCpp: { endpoint: 'http://127.0.0.1:9090/inference' },
             openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+            azureSpeech: { endpoint: '', region: '' },
             customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
           },
         },

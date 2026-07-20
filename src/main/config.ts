@@ -18,6 +18,7 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
   providers: {
     localWhisperCpp: { endpoint: DEFAULT_LOCAL_ENDPOINT },
     openai: { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+    azureSpeech: { endpoint: '', region: '' },
     customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
   },
 };
@@ -97,6 +98,7 @@ function maybeMigrateTranscriptionConfig(): void {
     providers: {
       localWhisperCpp: { endpoint },
       openai: transcription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+      azureSpeech: transcription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
       customOpenAiCompatible: transcription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
   });
@@ -121,6 +123,7 @@ export function getConfig(): AppConfig {
     providers: {
       localWhisperCpp: { endpoint: localEndpoint },
       openai: storedTranscription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+      azureSpeech: storedTranscription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
       customOpenAiCompatible: storedTranscription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
   };
@@ -161,6 +164,7 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
       providers: {
         localWhisperCpp: { endpoint: value as string },
         openai: existing?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+        azureSpeech: existing?.providers?.azureSpeech ?? { endpoint: '', region: '' },
         customOpenAiCompatible: existing?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
       },
     });

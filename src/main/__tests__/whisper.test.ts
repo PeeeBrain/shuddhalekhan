@@ -12,6 +12,7 @@ const config: AppConfig = {
     providers: {
       localWhisperCpp: { endpoint: 'http://whisper.test/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      azureSpeech: { endpoint: '', region: '' },
       customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
   },

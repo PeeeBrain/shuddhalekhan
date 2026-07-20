@@ -8,6 +8,8 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Transcription Providers
+- Added Microsoft Azure Speech as a first-class provider using the synchronous Fast Transcription API, secure key storage, locale mapping, and personal-dictionary phrase hints.
+- Azure Speech accepts a resource endpoint or region, validates setup without cloud requests, disables unsupported translation, and clearly discloses that audio is sent to Microsoft Azure.
 - Added OpenAI and Custom OpenAI-compatible batch transcription providers alongside local whisper.cpp.
 - OpenAI Cloud and authenticated custom providers use only local validation; reachability checks are limited to local whisper.cpp and auth=none custom endpoints.
 - Model names default to empty and never auto-fill; validation trims input, enforces length bounds, and rejects control characters while accepting punctuation and free-form slugs.

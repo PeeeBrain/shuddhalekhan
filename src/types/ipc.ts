@@ -19,7 +19,8 @@ export type CredentialKind =
   | 'google-service-account'
   | 'openai-api-key'
   | 'custom-open-ai-compatible-bearer'
-  | 'custom-open-ai-compatible-header';
+  | 'custom-open-ai-compatible-header'
+  | 'azure-speech-key';
 
 export type CredentialStatus =
   | { available: true; exists: boolean }
@@ -184,7 +185,11 @@ export interface PasteStrategyConfig {
   overrides: Record<string, PasteStrategy>;
 }
 
-export type TranscriptionProviderId = 'local-whisper-cpp' | 'openai' | 'custom-open-ai-compatible';
+export type TranscriptionProviderId =
+  | 'local-whisper-cpp'
+  | 'openai'
+  | 'azure-speech'
+  | 'custom-open-ai-compatible';
 
 export interface LocalWhisperCppProviderConfig {
   endpoint: string;
@@ -202,11 +207,19 @@ export interface CustomOpenAiProviderConfig {
   headerName: string;
 }
 
+export interface AzureSpeechProviderConfig {
+  /** Full Speech or Cognitive Services resource endpoint. Takes precedence over region. */
+  endpoint: string;
+  /** Azure resource region, used to construct the regional Cognitive Services endpoint. */
+  region: string;
+}
+
 export interface TranscriptionConfig {
   activeProvider: TranscriptionProviderId;
   providers: {
     localWhisperCpp: LocalWhisperCppProviderConfig;
     openai: OpenAiProviderConfig;
+    azureSpeech: AzureSpeechProviderConfig;
     customOpenAiCompatible: CustomOpenAiProviderConfig;
   };
 }
