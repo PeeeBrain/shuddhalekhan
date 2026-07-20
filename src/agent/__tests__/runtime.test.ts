@@ -76,6 +76,37 @@ describe('runAgent', () => {
     );
   });
 
+  it('uses a stored API key received from the main process', async () => {
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+    const callbacks = makeCallbacks();
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        provider: { ...baseConfig.agent.provider, apiKeySource: 'stored' as const },
+      },
+    };
+
+    await runAgent(
+      'run-1',
+      'hello',
+      config as never,
+      {},
+      new AbortController().signal,
+      callbacks,
+      'stored-agent-secret',
+    );
+
+    expect(createOpenAICompatibleMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'stored-agent-secret',
+    }));
+  });
+
   it('fails clearly when a raw API key is entered instead of an environment variable name', async () => {
     const callbacks = makeCallbacks();
     const config = {

@@ -5,6 +5,9 @@ import { getSettingsWindow, openSettingsWindow } from './settings-window';
 import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
 import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './agent-toast-window';
 import { getConfig, setConfig } from './config';
+import { credentialVault } from './credential-vault';
+import { registerCredentialIpcHandlers } from './credential-ipc';
+import { getAgentSidecarApiKey } from './agent-credential';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
 import { RecordingSession } from './recording-session';
@@ -123,7 +126,12 @@ function handleAgentTranscript(text: string): void {
   }
 
   activeAgentRunId = randomUUID();
-  agentSidecar.startRun(activeAgentRunId, text, config);
+  agentSidecar.startRun(
+    activeAgentRunId,
+    text,
+    config,
+    getAgentSidecarApiKey(config, credentialVault),
+  );
   console.log(`Started Agent Mode run ${activeAgentRunId}`);
   getSettingsWindow()?.webContents.send('audit:run-updated', activeAgentRunId);
 }
@@ -137,6 +145,8 @@ function publishUpdateStatus(status: UpdateStatus): void {
 }
 
 // IPC handlers
+registerCredentialIpcHandlers(ipcMain, credentialVault);
+
 ipcMain.handle('audio:start-recording', () => {
   recordingSession.begin('dictation');
 });
@@ -172,7 +182,7 @@ ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[key
   if (sidecarAction === 'stop') {
     agentSidecar.stop();
   } else if (sidecarAction === 'start') {
-    agentSidecar.start(config);
+    agentSidecar.start(config, getAgentSidecarApiKey(config, credentialVault));
   }
 });
 
@@ -181,7 +191,7 @@ ipcMain.handle('mcp:test-server', (_event, serverId: string) => {
   const server = config.agent.mcpServers.find((item) => item.id === serverId);
   if (!server) return;
 
-  agentSidecar.start({
+  const sidecarConfig = {
     ...config,
     agent: {
       ...config.agent,
@@ -191,7 +201,8 @@ ipcMain.handle('mcp:test-server', (_event, serverId: string) => {
         enabled: item.id === serverId ? true : item.enabled,
       })),
     },
-  });
+  };
+  agentSidecar.start(sidecarConfig, getAgentSidecarApiKey(sidecarConfig, credentialVault));
 });
 
 ipcMain.handle('settings:open', () => {

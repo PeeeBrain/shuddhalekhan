@@ -16,6 +16,7 @@ import type {
   AuditRunSummary,
   McpServerRuntimeStatus,
   UpdateStatus,
+  CredentialStatus,
 } from '../../../types/ipc';
 import { SettingsWindow } from '../../SettingsWindow';
 
@@ -67,6 +68,7 @@ interface MockSettingsIpcOptions {
   failSetConfig?: boolean;
   auditRuns?: AuditRunSummary[];
   auditRunDetail?: AuditEventDetail[];
+  credentialStatus?: CredentialStatus;
 }
 
 function createMockSettingsIpc(
@@ -95,6 +97,9 @@ function createMockSettingsIpc(
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
     getAuditRunDetail: mock(() => Promise.resolve(options.auditRunDetail ?? [])),
     onAuditRunUpdated: mock((_callback: (runId: string) => void) => undefined),
+    getCredentialStatus: mock(() => Promise.resolve(options.credentialStatus ?? { available: true, exists: false })),
+    saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
+    removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
   };
 }
 
@@ -251,6 +256,29 @@ describe('Settings section reachability', () => {
     expect(
       screen.getByRole('textbox', { name: 'API key env var name' }),
     ).toBeInTheDocument();
+  });
+
+  it('shows a saved credential as replaceable without repopulating its value', async () => {
+    const config = baseConfig();
+    renderSettings({
+      config: {
+        ...config,
+        agent: {
+          ...config.agent,
+          provider: { ...config.agent.provider, apiKeySource: 'stored' },
+        },
+      },
+      credentialStatus: { available: true, exists: true },
+    });
+    await waitForLoaded();
+
+    fireEvent.click(tabByLabel('Agent'));
+
+    const input = await screen.findByLabelText('Saved API key');
+    expect(input).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Replace key' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove key' })).toBeInTheDocument();
+    expect(screen.getByText('Saved securely')).toBeInTheDocument();
   });
 
   it('shows update controls on the About section', async () => {

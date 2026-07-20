@@ -6,6 +6,8 @@ import type {
   UpdateStatus,
   AuditRunSummary,
   AuditEventDetail,
+  CredentialKind,
+  CredentialStatus,
 } from '../../types/ipc';
 
 type Unsubscribe = () => void;
@@ -22,6 +24,9 @@ export interface SettingsIpc {
   getAuditRuns: () => Promise<AuditRunSummary[]>;
   getAuditRunDetail: (agentRunId: string) => Promise<AuditEventDetail[]>;
   onAuditRunUpdated: (callback: (agentRunId: string) => void) => Unsubscribe | undefined;
+  getCredentialStatus: (credential: CredentialKind) => Promise<CredentialStatus>;
+  saveCredential: (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
+  removeCredential: (credential: CredentialKind) => Promise<CredentialStatus>;
 }
 
 export function createSettingsIpc(electronAPI: ElectronAPI | undefined): SettingsIpc {
@@ -41,6 +46,9 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),
     onAuditRunUpdated: (callback) => electronAPI?.on('audit:run-updated', callback),
+    getCredentialStatus: (credential) => requireElectronApi(electronAPI).invoke('credential:get-status', credential),
+    saveCredential: (credential, value) => requireElectronApi(electronAPI).invoke('credential:save', credential, value),
+    removeCredential: (credential) => requireElectronApi(electronAPI).invoke('credential:remove', credential),
   };
 }
 

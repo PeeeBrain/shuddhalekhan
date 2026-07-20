@@ -1,7 +1,8 @@
 import { useId, useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { SectionHeader } from './ui/SectionHeader';
-import { ToggleRow, DraftTextRow } from './ui/rows';
+import { ToggleRow, DraftTextRow, SelectRow } from './ui/rows';
+import { CredentialControl } from './ui/CredentialControl';
 import { isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
 import type { AppConfig } from '../../types/ipc';
@@ -12,10 +13,17 @@ const FIELD_ID_MODEL = 'agent-model';
 const FIELD_ID_THINKING = 'agent-thinking';
 const FIELD_ID_APIKEY = 'agent-api-key';
 
-export function AgentSettings({ config, persistence }: SettingsSectionProps) {
+export function AgentSettings({ config, persistence, settingsIpc }: SettingsSectionProps) {
   const { commit, fieldErrors, clearFieldError } = persistence;
   const agent = config.agent;
   const [pendingDisable, setPendingDisable] = useState(false);
+  const apiKeySource = agent.provider.apiKeySource ?? 'environment';
+  const enabledErrorId = useId();
+  const baseUrlErrorId = useId();
+  const modelErrorId = useId();
+  const thinkingErrorId = useId();
+  const apiKeySourceErrorId = useId();
+  const apiKeyEnvVarErrorId = useId();
 
   const apiKeyWarning = looksLikeRawApiKey(agent.provider.apiKeyEnvVar)
     ? 'Enter the environment variable name here, not the API key value. Example: OPENROUTER_API_KEY.'
@@ -46,7 +54,7 @@ export function AgentSettings({ config, persistence }: SettingsSectionProps) {
           description="Activates the Alt + Win recording intent. Sidecar execution arrives in later phases."
           checked={agent.enabled}
           tone="agent"
-          errorId={useId()}
+          errorId={enabledErrorId}
           error={fieldErrors[FIELD_ID_ENABLED]}
           onChange={toggleEnabled}
         />
@@ -54,7 +62,7 @@ export function AgentSettings({ config, persistence }: SettingsSectionProps) {
           label="Provider base URL"
           value={agent.provider.baseUrl}
           placeholder="https://openrouter.ai/api/v1"
-          errorId={useId()}
+          errorId={baseUrlErrorId}
           error={fieldErrors[FIELD_ID_BASE_URL]}
           onCommit={(baseUrl) =>
             commit(
@@ -69,7 +77,7 @@ export function AgentSettings({ config, persistence }: SettingsSectionProps) {
           label="Model"
           value={agent.provider.model}
           placeholder="openai/gpt-4.1-mini"
-          errorId={useId()}
+          errorId={modelErrorId}
           error={fieldErrors[FIELD_ID_MODEL]}
           onCommit={(model) =>
             commit(
@@ -85,7 +93,7 @@ export function AgentSettings({ config, persistence }: SettingsSectionProps) {
           description="Allows models that support thinking to spend extra reasoning before tool calls."
           checked={agent.provider.thinkingEnabled}
           tone="agent"
-          errorId={useId()}
+          errorId={thinkingErrorId}
           error={fieldErrors[FIELD_ID_THINKING]}
           onChange={(thinkingEnabled) =>
             commit(
@@ -95,26 +103,52 @@ export function AgentSettings({ config, persistence }: SettingsSectionProps) {
             )
           }
         />
-        <DraftTextRow
-          label="API key env var name"
-          value={agent.provider.apiKeyEnvVar}
-          placeholder={
-            isLocalProviderUrl(agent.provider.baseUrl)
-              ? 'Optional for local providers'
-              : 'OPENROUTER_API_KEY'
-          }
-          warning={apiKeyWarning}
-          errorId={useId()}
+        <SelectRow
+          label="API key source"
+          description="Choose a securely saved key or an environment variable for advanced setups."
+          value={apiKeySource}
+          options={[
+            { value: 'environment', label: 'Environment variable' },
+            { value: 'stored', label: 'Securely saved key' },
+          ]}
+          errorId={apiKeySourceErrorId}
           error={fieldErrors[FIELD_ID_APIKEY]}
-          onCommit={(apiKeyEnvVar) =>
+          onChange={(next) =>
             commit(
               'agent',
-              { ...agent, provider: { ...agent.provider, apiKeyEnvVar } },
+              { ...agent, provider: { ...agent.provider, apiKeySource: next as 'environment' | 'stored' } },
               FIELD_ID_APIKEY,
             )
           }
-          clearError={() => clearFieldError(FIELD_ID_APIKEY)}
         />
+        {apiKeySource === 'environment' ? (
+          <DraftTextRow
+            label="API key env var name"
+            value={agent.provider.apiKeyEnvVar}
+            placeholder={
+              isLocalProviderUrl(agent.provider.baseUrl)
+                ? 'Optional for local providers'
+                : 'OPENROUTER_API_KEY'
+            }
+            warning={apiKeyWarning}
+            errorId={apiKeyEnvVarErrorId}
+            error={fieldErrors[FIELD_ID_APIKEY]}
+            onCommit={(apiKeyEnvVar) =>
+              commit(
+                'agent',
+                { ...agent, provider: { ...agent.provider, apiKeyEnvVar } },
+                FIELD_ID_APIKEY,
+              )
+            }
+            clearError={() => clearFieldError(FIELD_ID_APIKEY)}
+          />
+        ) : (
+          <CredentialControl
+            credential="agent-api-key"
+            label="Saved API key"
+            settingsIpc={settingsIpc}
+          />
+        )}
       </div>
 
       <ConfirmDialog

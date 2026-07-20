@@ -39,6 +39,9 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       testMcpServer: mock(() => Promise.resolve()),
       onUpdateStatusChanged: mock(() => undefined),
       onMcpServerStatus: mock(() => undefined),
+      getCredentialStatus: mock(() => Promise.resolve({ available: true, exists: false })),
+      saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
+      removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
     };
 
     render(<AuditHistorySettings settingsIpc={settingsIpc} />);
@@ -100,6 +103,9 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       testMcpServer: mock(() => Promise.resolve()),
       onUpdateStatusChanged: mock(() => undefined),
       onMcpServerStatus: mock(() => undefined),
+      getCredentialStatus: mock(() => Promise.resolve({ available: true, exists: false })),
+      saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
+      removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
     };
 
     const { container } = render(<AuditHistorySettings settingsIpc={settingsIpc} />);

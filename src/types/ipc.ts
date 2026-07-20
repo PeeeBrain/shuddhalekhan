@@ -12,6 +12,18 @@ export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
 
 export type McpToolPolicyKey = `${string}:${string}`;
 
+export type CredentialKind =
+  | 'agent-api-key'
+  | 'transcription-api-key'
+  | 'custom-secret-header'
+  | 'google-service-account';
+
+export type CredentialStatus =
+  | { available: true; exists: boolean }
+  | { available: false; exists: false; message: string };
+
+export type AgentApiKeySource = 'environment' | 'stored';
+
 export type McpServerTransport =
   | {
       type: 'stdio';
@@ -90,6 +102,9 @@ export interface RendererToMainInvokeChannels {
   'updater:check': () => Promise<UpdateStatus>;
   'audit:get-runs': () => Promise<AuditRunSummary[]>;
   'audit:get-run-detail': (agentRunId: string) => Promise<AuditEventDetail[]>;
+  'credential:get-status': (credential: CredentialKind) => Promise<CredentialStatus>;
+  'credential:save': (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
+  'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
 }
 
 export interface MainToRendererChannels {
@@ -177,6 +192,7 @@ export interface AppConfig {
       baseUrl: string;
       model: string;
       apiKeyEnvVar: string;
+      apiKeySource?: AgentApiKeySource;
       thinkingEnabled: boolean;
     };
     mcpServers: McpServerConfig[];

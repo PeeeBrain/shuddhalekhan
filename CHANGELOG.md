@@ -7,6 +7,10 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Credential Vault
+- Added Windows DPAPI-backed secure storage for Agent Mode API keys, with saved, replace, and remove controls in Settings.
+- Agent Mode now supports securely stored API keys alongside existing environment-variable credentials.
+
 ### Settings Redesign
 - Reorganized Settings into Dictation, Agent, and System groups, with Transcription as the initial destination.
 - Added a darker content canvas, cohesive settings controls, accessible vertical navigation, and restrained status tags across MCP and History.

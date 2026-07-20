@@ -69,6 +69,8 @@ const agentStart = vi.fn();
 const agentStop = vi.fn();
 const agentCancelRun = vi.fn();
 const agentSendApprovalDecision = vi.fn();
+const credentialVault = { read: vi.fn(() => null) };
+const registerCredentialIpcHandlers = vi.fn();
 const showAgentToast = vi.fn();
 const hideAgentToast = vi.fn();
 const handleAgentToastContentSize = vi.fn();
@@ -102,6 +104,8 @@ mock.module('../tray', () => ({
   updateUpdaterStatus,
 }));
 mock.module('../config', () => ({ getConfig, setConfig, mergeDiscoveredTools }));
+mock.module('../credential-vault', () => ({ credentialVault }));
+mock.module('../credential-ipc', () => ({ registerCredentialIpcHandlers }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
 mock.module('../agent-toast-window', () => ({ showAgentToast, hideAgentToast, handleAgentToastContentSize }));
 mock.module('../agent-sidecar', () => ({
@@ -303,7 +307,7 @@ describe('main process IPC orchestration', () => {
     };
     await sessionOptions.onResult(result);
 
-    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config);
+    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined);
     expect(simulatePaste).not.toHaveBeenCalled();
   });
 
@@ -423,7 +427,7 @@ describe('main process IPC orchestration', () => {
 
     getConfig.mockReturnValueOnce(baseConfig).mockReturnValueOnce(enabledConfig);
     ipcHandlers.get('config:set')?.({}, 'agent', enabledConfig.agent);
-    expect(agentStart).toHaveBeenCalledWith(enabledConfig);
+    expect(agentStart).toHaveBeenCalledWith(enabledConfig, undefined);
 
     getConfig.mockReturnValueOnce(enabledConfig).mockReturnValueOnce(baseConfig);
     ipcHandlers.get('config:set')?.({}, 'agent', baseConfig.agent);

@@ -91,6 +91,19 @@ describe('AgentSidecarManager', () => {
     expect(events).toEqual([{ type: 'sidecar:ready', protocolVersion: 1 }]);
   });
 
+  it('delivers a stored API key only in the main-to-sidecar config update', async () => {
+    const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-stored-key`);
+    const manager = new AgentSidecarManager(() => undefined);
+
+    manager.startRun('run-1', 'check mail', config, 'stored-agent-secret');
+
+    expect(JSON.parse(stdinWrite.mock.calls[0]?.[0] as string)).toEqual({
+      type: 'config:update',
+      config,
+      agentApiKey: 'stored-agent-secret',
+    });
+  });
+
   it('runs the packaged sidecar under Electron node mode instead of launching another app instance', async () => {
     electronMock.app.isPackaged = true;
     const originalResourcesPath = process.resourcesPath;

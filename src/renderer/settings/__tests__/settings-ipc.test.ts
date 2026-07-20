@@ -72,6 +72,16 @@ describe('settings IPC adapter', () => {
     expect(invoke).toHaveBeenCalledWith('updater:check');
   });
 
+  it('exposes credential status and mutation methods without returning saved values', async () => {
+    await ipc.getCredentialStatus('agent-api-key');
+    await ipc.saveCredential('agent-api-key', 'entered-once-secret');
+    await ipc.removeCredential('agent-api-key');
+
+    expect(invoke).toHaveBeenCalledWith('credential:get-status', 'agent-api-key');
+    expect(invoke).toHaveBeenCalledWith('credential:save', 'agent-api-key', 'entered-once-secret');
+    expect(invoke).toHaveBeenCalledWith('credential:remove', 'agent-api-key');
+  });
+
   it('subscribes to updater and MCP status events', () => {
     const onUpdate = vi.fn();
     const onMcpStatus = vi.fn();

@@ -71,6 +71,11 @@ export const electronMock = {
     on: mock(),
     removeListener: mock(),
   },
+  safeStorage: {
+    isEncryptionAvailable: mock(() => true),
+    encryptString: mock((value: string) => Buffer.from(value)),
+    decryptString: mock((value: Buffer) => value.toString()),
+  },
 };
 
 export function installElectronMock(): void {
@@ -141,4 +146,10 @@ export function resetElectronMock(): void {
   electronMock.ipcRenderer.send.mockReset();
   electronMock.ipcRenderer.on.mockReset();
   electronMock.ipcRenderer.removeListener.mockReset();
+  electronMock.safeStorage.isEncryptionAvailable.mockReset();
+  electronMock.safeStorage.isEncryptionAvailable.mockReturnValue(true);
+  electronMock.safeStorage.encryptString.mockReset();
+  electronMock.safeStorage.encryptString.mockImplementation((value: string) => Buffer.from(value));
+  electronMock.safeStorage.decryptString.mockReset();
+  electronMock.safeStorage.decryptString.mockImplementation((value: Buffer) => value.toString());
 }
