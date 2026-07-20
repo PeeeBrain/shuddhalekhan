@@ -20,7 +20,7 @@ export class AgentSidecarManager {
     });
   }
 
-  start(config: AppConfig): void {
+  start(config: AppConfig, agentApiKey?: string): void {
     if (!this.process.isRunning) {
       this.process.start(this.getSidecarLaunch());
     }
@@ -28,11 +28,12 @@ export class AgentSidecarManager {
     this.send({
       type: 'config:update',
       config,
+      ...(agentApiKey ? { agentApiKey } : {}),
     });
   }
 
-  startRun(agentRunId: string, transcript: string, config: AppConfig): void {
-    this.start(config);
+  startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string): void {
+    this.start(config, agentApiKey);
     this.send({
       type: 'agent:start',
       agentRunId,

@@ -85,6 +85,7 @@ export type SidecarEvent =
 export type ConfigUpdateMessage = {
   type: 'config:update';
   config: AppConfig;
+  agentApiKey?: string;
 };
 
 export type AgentStartMessage = {

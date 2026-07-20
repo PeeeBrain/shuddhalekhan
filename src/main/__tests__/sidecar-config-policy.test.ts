@@ -4,6 +4,17 @@ import { getSidecarConfigAction } from '../sidecar-config-policy';
 
 const baseConfig: AppConfig = {
   whisperUrl: 'http://localhost:8080/inference',
+  transcription: {
+    activeProvider: 'local-whisper-cpp',
+    providers: {
+      localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+      openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      azureSpeech: { endpoint: '', region: '' },
+      googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+      nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
+      customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    },
+  },
   selectedDeviceId: null,
   removeFillerWords: true,
   language: 'auto',
@@ -11,6 +22,11 @@ const baseConfig: AppConfig = {
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
+  recordingActivationMode: 'push-to-talk',
+  shortcuts: {
+    dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+    agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+  },
   agent: {
     enabled: true,
     provider: {

@@ -10,6 +10,9 @@ let pasteLastTranscriptHandler: (() => void) | null = null;
 let copyLastTranscriptHandler: (() => void) | null = null;
 let checkForUpdatesHandler: (() => void) | null = null;
 let selectDeviceHandler: ((deviceId: string) => void) | null = null;
+let isShortcutsPausedHandler: (() => boolean) | null = null;
+let toggleShortcutsPauseHandler: ((paused: boolean) => void) | null = null;
+let shortcutsPaused = false;
 let audioDevices: AudioDevice[] = [];
 let updateStatus: UpdateStatus = {
   state: 'idle',
@@ -24,6 +27,8 @@ export interface TrayHandlers {
   onCopyLastTranscript?: () => void;
   onCheckForUpdates?: () => void;
   onSelectDevice?: (deviceId: string) => void;
+  isShortcutsPaused?: () => boolean;
+  onTogglePause?: (paused: boolean) => void;
 }
 
 export function createTray(handlers: TrayHandlers): Tray {
@@ -32,6 +37,9 @@ export function createTray(handlers: TrayHandlers): Tray {
   copyLastTranscriptHandler = handlers.onCopyLastTranscript ?? null;
   checkForUpdatesHandler = handlers.onCheckForUpdates ?? null;
   selectDeviceHandler = handlers.onSelectDevice ?? null;
+  isShortcutsPausedHandler = handlers.isShortcutsPaused ?? null;
+  toggleShortcutsPauseHandler = handlers.onTogglePause ?? null;
+  shortcutsPaused = isShortcutsPausedHandler?.() ?? false;
 
   const icon = loadTrayIcon();
   
@@ -79,6 +87,14 @@ export function updateTrayMenu(): void {
       enabled: false,
     },
     {
+      label: 'Pause Global Shortcuts',
+      type: 'checkbox',
+      checked: shortcutsPaused,
+      click: () => {
+        toggleShortcutsPauseHandler?.(!shortcutsPaused);
+      },
+    },
+    {
       label: 'Settings...',
       click: () => openSettingsHandler?.(),
     },
@@ -111,6 +127,11 @@ export function updateAudioDevices(devices: AudioDevice[]): void {
 
 export function updateUpdaterStatus(status: UpdateStatus): void {
   updateStatus = status;
+  updateTrayMenu();
+}
+
+export function updateShortcutPauseState(paused: boolean): void {
+  shortcutsPaused = paused;
   updateTrayMenu();
 }
 

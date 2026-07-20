@@ -7,6 +7,43 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Transcription Providers
+- Added Google Cloud Speech-to-Text v2 synchronous recognition with secure service-account import, Advanced Application Default Credentials, model and location configuration, language mapping, and inline phrase hints.
+- Google Cloud recordings now show a restrained final-ten-second warning and stop automatically at 55 seconds for safe synchronous submission in both recording activation modes.
+- Added NVIDIA Speech NIM as a self-hosted OpenAI-compatible offline provider with free-form models, optional Bearer or custom-header authentication, deployment-specific capability controls, and unauthenticated connectivity checks.
+- Added Microsoft Azure Speech as a first-class provider using the synchronous Fast Transcription API, secure key storage, locale mapping, and personal-dictionary phrase hints.
+- Azure Speech accepts a resource endpoint or region, validates setup without cloud requests, disables unsupported translation, and clearly discloses that audio is sent to Microsoft Azure.
+- Added OpenAI and Custom OpenAI-compatible batch transcription providers alongside local whisper.cpp.
+- OpenAI Cloud and authenticated custom providers use only local validation; reachability checks are limited to local whisper.cpp and auth=none custom endpoints.
+- Model names default to empty and never auto-fill; validation trims input, enforces length bounds, and rejects control characters while accepting punctuation and free-form slugs.
+- Custom OpenAI-compatible provider (ID `custom-open-ai-compatible`) includes required free-form model in config, UI, and multipart requests.
+- Translation routing uses `/audio/translations` for OpenAI API compatibility; translation support declared where supported.
+- Custom header names validated as legal HTTP field-name tokens before use.
+- Recording readiness validates endpoint, model, and credential before beginning; missing configuration shows a transcription-failed toast with Open Settings recovery.
+- Removed `temperature` parameter from OpenAI-compatible multipart requests.
+- Config migration preserves all inactive provider configs; legacy `whisperUrl` updates only the local provider without clobbering cloud settings.
+
+### Credential Vault
+- Added Windows DPAPI-backed secure storage for Agent Mode API keys, with saved, replace, and remove controls in Settings.
+- Agent Mode now supports securely stored API keys alongside existing environment-variable credentials.
+
+### Settings Redesign
+- Grouped all six transcription providers into Local, Cloud, and Custom choices with concise descriptions and configuration-readiness feedback.
+- Reorganized Settings into Dictation, Agent, and System groups, with Transcription as the initial destination.
+- Added a darker content canvas, cohesive settings controls, accessible vertical navigation, and restrained status tags across MCP and History.
+- Text fields now save on blur while toggles and selections save immediately; successful saves use a brief in-window notification and failures remain inline.
+- Increased the default Settings window to 1040x720 while preserving the 820x560 minimum size.
+
+### Recording Controls
+- Prewarmed the hidden recording-pill renderer at startup, removing the first-recording visual delay without delaying audio capture or global shortcut installation.
+- Added persistent, independently configurable Dictation and Agent Mode shortcuts with per-intent Push to Talk or Toggle behavior; existing Ctrl+Win and Alt+Win chords remain the defaults.
+- Added inline keyboard capture for letters, numbers, punctuation, function/navigation keys, ordinary modifier chords, and modifier-only combinations, including accessible cancellation, clear, conflict, and disruptive-binding confirmation states.
+- Configured triggers now suppress their down, repeat, and release behavior while unrelated keys pass through; left/right modifiers normalize to shared Ctrl, Alt, Shift, and Win identities.
+- Added a session-only Pause Global Shortcuts control to Settings and the tray. Pausing blocks only new sessions and resets when the app restarts.
+
+### Deferred Scope
+- Live microphone streaming, partial transcripts, progressive paste, and provider SDK realtime integrations remain deferred to v2.
+
 ### Toolchain Modernization
 - Upgraded to Electron 43, electron-builder 26, electron-vite 5, and Vite 7.
 - Upgraded Tailwind CSS and `@tailwindcss/vite` to 4.3.2.

@@ -130,7 +130,7 @@ describe('tray', () => {
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
     expect(menu.some((item: { label?: string }) => item.label === 'Clean Transcription')).toBe(false);
-    menu[12].click();
+    menu[13].click();
 
     expect(quit).toHaveBeenCalled();
   });
@@ -143,8 +143,30 @@ describe('tray', () => {
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
     expect(menu[6].label).toBe('Agent Mode: Disabled');
-    menu[7].click();
+    menu[8].click();
     expect(settingsHandler).toHaveBeenCalled();
+  });
+
+  it('shows and toggles the session-only shortcut pause action', async () => {
+    const togglePause = vi.fn();
+    const { createTray, updateShortcutPauseState } = await import(`../tray?test=${Date.now()}-pause`);
+
+    createTray({
+      onOpenSettings: vi.fn(),
+      isShortcutsPaused: () => false,
+      onTogglePause: togglePause,
+    });
+    let menu = buildFromTemplate.mock.calls.at(-1)?.[0];
+
+    expect(menu[7]).toMatchObject({ label: 'Pause Global Shortcuts', type: 'checkbox', checked: false });
+    menu[7].click();
+    expect(togglePause).toHaveBeenCalledWith(true);
+
+    updateShortcutPauseState(true);
+    menu = buildFromTemplate.mock.calls.at(-1)?.[0];
+    expect(menu[7].checked).toBe(true);
+    menu[7].click();
+    expect(togglePause).toHaveBeenLastCalledWith(false);
   });
 
   it('shows update status in the tray menu', async () => {
@@ -201,14 +223,14 @@ describe('tray', () => {
     createTray({ onOpenSettings: vi.fn(), onPasteLastTranscript: pasteHandler, onCopyLastTranscript: copyHandler });
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[9].label).toBe('Paste Last Transcript');
-    expect(menu[9].enabled).toBe(true);
-    menu[9].click();
-    expect(pasteHandler).toHaveBeenCalled();
-
-    expect(menu[10].label).toBe('Copy Last Transcript');
+    expect(menu[10].label).toBe('Paste Last Transcript');
     expect(menu[10].enabled).toBe(true);
     menu[10].click();
+    expect(pasteHandler).toHaveBeenCalled();
+
+    expect(menu[11].label).toBe('Copy Last Transcript');
+    expect(menu[11].enabled).toBe(true);
+    menu[11].click();
     expect(copyHandler).toHaveBeenCalled();
   });
 
@@ -218,9 +240,9 @@ describe('tray', () => {
     createTray({ onOpenSettings: vi.fn() });
     const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[9].label).toBe('Paste Last Transcript');
-    expect(menu[9].enabled).toBe(false);
-    expect(menu[10].label).toBe('Copy Last Transcript');
+    expect(menu[10].label).toBe('Paste Last Transcript');
     expect(menu[10].enabled).toBe(false);
+    expect(menu[11].label).toBe('Copy Last Transcript');
+    expect(menu[11].enabled).toBe(false);
   });
 });

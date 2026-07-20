@@ -1,13 +1,24 @@
 import { randomUUID } from 'crypto';
-import { app, ipcMain, dialog, session, shell, Notification } from 'electron';
+import { app, ipcMain, session, shell, Notification } from 'electron';
 
-import { getSettingsWindow, openSettingsWindow } from './settings-window';
-import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
+import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
+import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
 import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './agent-toast-window';
 import { getConfig, setConfig } from './config';
+import { credentialVault } from './credential-vault';
+import { registerCredentialIpcHandlers } from './credential-ipc';
+import { getAgentSidecarApiKey } from './agent-credential';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
 import { RecordingSession } from './recording-session';
+import { keyboardHook } from './native/keyboard';
+import {
+  checkServerReachability,
+  getSafeTranscriptionFailureMessage,
+  TranscriptionFailure,
+  validateProviderReadiness,
+} from './transcription';
+import { getTranscriber } from './providers';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
@@ -31,8 +42,28 @@ const sidecarEventRouter = createSidecarEventRouter({
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
 const recordingSession = new RecordingSession({
   isAgentModeEnabled: () => cachedAgentEnabled,
+  getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
+  getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
-  getWhisperUrl: () => getConfig().whisperUrl,
+  getRecognitionSettings: () => {
+    const config = getConfig();
+    return {
+      language: config.language,
+      task: config.task,
+      dictionary: config.dictionary,
+      removeFillerWords: config.removeFillerWords,
+    };
+  },
+  getTranscriber: () => getTranscriber(getConfig(), credentialVault),
+  getReadinessError: () => {
+    const config = getConfig();
+    const errors = validateProviderReadiness(
+      config.transcription.activeProvider,
+      config,
+      credentialVault,
+    );
+    return errors[0] ? new TranscriptionFailure('endpoint', errors[0]) : null;
+  },
   onResult: routeRecordingResult,
   onError: showTranscriptionError,
 });
@@ -103,9 +134,24 @@ function finishRecording(): void {
   void recordingSession.end();
 }
 
+// Never leave global shortcut activation suspended after capture ends.
+setSettingsWindowClosedHandler(() => keyboardHook.setCaptureSuspended(false));
+
+function setShortcutsPaused(paused: boolean): void {
+  keyboardHook.setPaused(paused);
+  updateShortcutPauseState(paused);
+  const settingsWin = getSettingsWindow();
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('shortcuts:paused-changed', paused);
+  }
+}
+
 function showTranscriptionError(err: unknown): void {
-  console.error('Transcription failed:', err);
-  dialog.showErrorBox('Transcription Error', err instanceof Error ? err.message : String(err));
+  console.error('Transcription failed:', err instanceof Error ? err.name : 'Unknown failure');
+  showAgentToast({
+    kind: 'transcription-failed',
+    message: getSafeTranscriptionFailureMessage(err),
+  });
 }
 
 function handleAgentTranscript(text: string): void {
@@ -122,7 +168,12 @@ function handleAgentTranscript(text: string): void {
   }
 
   activeAgentRunId = randomUUID();
-  agentSidecar.startRun(activeAgentRunId, text, config);
+  agentSidecar.startRun(
+    activeAgentRunId,
+    text,
+    config,
+    getAgentSidecarApiKey(config, credentialVault),
+  );
   console.log(`Started Agent Mode run ${activeAgentRunId}`);
   getSettingsWindow()?.webContents.send('audit:run-updated', activeAgentRunId);
 }
@@ -136,6 +187,8 @@ function publishUpdateStatus(status: UpdateStatus): void {
 }
 
 // IPC handlers
+registerCredentialIpcHandlers(ipcMain, credentialVault);
+
 ipcMain.handle('audio:start-recording', () => {
   recordingSession.begin('dictation');
 });
@@ -162,6 +215,52 @@ ipcMain.handle('config:get', () => {
   return getConfig();
 });
 
+ipcMain.handle('shortcuts:get-paused', () => {
+  return keyboardHook.isPaused();
+});
+
+ipcMain.handle('shortcuts:set-paused', (_event, paused: boolean) => {
+  setShortcutsPaused(Boolean(paused));
+  return keyboardHook.isPaused();
+});
+
+ipcMain.handle('shortcuts:begin-capture', () => {
+  keyboardHook.setCaptureSuspended(true);
+});
+
+ipcMain.handle('shortcuts:end-capture', () => {
+  keyboardHook.setCaptureSuspended(false);
+});
+
+ipcMain.handle('transcription:check-server', async () => {
+  const config = getConfig();
+  const provider = config.transcription.activeProvider;
+
+  if (provider === 'local-whisper-cpp') {
+    return checkServerReachability(config.transcription.providers.localWhisperCpp.endpoint);
+  }
+
+  // OpenAI Cloud: local-only, zero fetches
+  if (provider === 'openai') {
+    return false;
+  }
+
+  if (provider === 'nvidia-speech-nim') {
+    const { endpoint, auth } = config.transcription.providers.nvidiaSpeechNim;
+    if (auth !== 'none') return false;
+    return checkServerReachability(endpoint);
+  }
+
+  // Custom with auth: local-only, zero fetches
+  if (provider === 'custom-open-ai-compatible') {
+    const { endpoint, auth } = config.transcription.providers.customOpenAiCompatible;
+    if (auth !== 'none') return false;
+    return checkServerReachability(endpoint);
+  }
+
+  return false;
+});
+
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   const previousConfig = getConfig();
   setConfig(key, value);
@@ -171,7 +270,7 @@ ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[key
   if (sidecarAction === 'stop') {
     agentSidecar.stop();
   } else if (sidecarAction === 'start') {
-    agentSidecar.start(config);
+    agentSidecar.start(config, getAgentSidecarApiKey(config, credentialVault));
   }
 });
 
@@ -180,7 +279,7 @@ ipcMain.handle('mcp:test-server', (_event, serverId: string) => {
   const server = config.agent.mcpServers.find((item) => item.id === serverId);
   if (!server) return;
 
-  agentSidecar.start({
+  const sidecarConfig = {
     ...config,
     agent: {
       ...config.agent,
@@ -190,7 +289,8 @@ ipcMain.handle('mcp:test-server', (_event, serverId: string) => {
         enabled: item.id === serverId ? true : item.enabled,
       })),
     },
-  });
+  };
+  agentSidecar.start(sidecarConfig, getAgentSidecarApiKey(sidecarConfig, credentialVault));
 });
 
 ipcMain.handle('settings:open', () => {
@@ -261,6 +361,8 @@ if (!gotSingleInstanceLock) {
       onPasteLastTranscript: () => pasteLastTranscript(),
       onCopyLastTranscript: () => copyLastTranscript(),
       onCheckForUpdates: () => void checkForUpdates(),
+      isShortcutsPaused: () => keyboardHook.isPaused(),
+      onTogglePause: (paused: boolean) => setShortcutsPaused(paused),
       onSelectDevice: (deviceId: string) => {
         setConfig('selectedDeviceId', deviceId);
         recordingSession.updateDevice(deviceId);

@@ -40,10 +40,10 @@ The small floating UI window displayed at the bottom-center of the screen while 
 A deep module that owns the complete audio-capture lifecycle: keyboard hook, hidden audio window, recording pill visibility, and transcription. Callers use three verbs — `begin(intent)`, `end()`, `cancel()` — and receive `{ text, intent }` on completion. The session hides the audio-window readiness race (`pendingStartRecording`), modifier-state tracking, and process-crash recovery behind its seam. Dictation/Agent routing (clipboard paste vs. sidecar dispatch) stays in the Electron main orchestrator, not inside the session.
 
 ### Dictation
-The act of converting captured audio into text and injecting it into the currently focused application. Triggered by holding the `Ctrl + Win` hotkey chord. Synonymous with "transcription mode" in user-facing language.
+The act of converting captured audio into text and injecting it into the currently focused application. Its global shortcut and Push to Talk or Toggle behavior are configurable; `Ctrl + Win` is the default binding. Synonymous with "transcription mode" in user-facing language.
 
 ### Agent (Jarvis)
-The local AI assistant that receives transcribed prompts, interprets them, and can execute tools. Triggered by holding the `Alt + Win` hotkey chord, separate from `Ctrl + Win` Dictation.
+The local AI assistant that receives transcribed prompts, interprets them, and can execute tools. Its global shortcut and activation behavior are configured independently from Dictation; `Alt + Win` is the default binding.
 
 The agent runtime runs in a separate local sidecar process managed by Electron. Electron owns hotkeys, recording state, windows, configuration, and user approval surfaces; the sidecar owns the agent SDK, model client, MCP client sessions, and tool execution loop. Cross-process communication must use explicit request IDs and cancellation/timeout handling so stale agent responses cannot affect the current recording session.
 
@@ -147,7 +147,7 @@ The agent sidecar starts lazily only when Agent Mode is enabled and needed, such
 
 The first MCP lifecycle repair should prioritize the user-visible contract over a broad lifecycle rewrite: hydrate persisted Agent Mode configuration on app startup, connect/discover enabled MCP servers automatically, keep the manual server action diagnostic, and guard against empty final responses. A fuller sidecar lifecycle state machine can follow only if these narrower fixes expose unresolved cancellation, crash recovery, or reconnect semantics.
 
-Hotkeys are hardcoded in v4: `Ctrl + Win` for Dictation and `Alt + Win` for Agent Mode. Implementation should still model them as named recording intents so both hotkeys can become user-configurable in a future version without rewriting the recording state machine.
+Global shortcuts are data-driven named recording intents. Dictation defaults to `Ctrl + Win`, Agent Mode defaults to `Alt + Win`, and each binding and activation mode is independently configurable. Unassigned intents reserve no key, and a disabled Agent Mode keeps its saved binding dormant.
 
 Agent Mode reuses the existing Whisper transcription path and configuration. Dictation and Agent Mode share audio capture and transcription; after transcription, Dictation injects text into the focused application while Agent Mode sends the transcript to the sidecar as a one-off agent command.
 

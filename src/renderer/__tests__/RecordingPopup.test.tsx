@@ -40,6 +40,20 @@ describe('RecordingPopup timer reset', () => {
     rafSpy = null;
   });
 
+  it('shows an accessible restrained duration warning from provider orchestration', async () => {
+    rafSpy = spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0 as unknown as number);
+    mockElectronAPI();
+    render(<RecordingPopup initialMode="dictation" />);
+
+    act(() => {
+      emit('recording:pill-show');
+      emit('recording:duration-warning', 10);
+    });
+
+    expect(await screen.findByText('10s left')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAttribute('aria-label', expect.stringContaining('Recording stops in 10 seconds'));
+  });
+
   it('resets the elapsed timer to 00:00 each time recording:pill-show fires', async () => {
     let currentTime = 1000000;
     const intervalCallbacks: Array<() => void> = [];

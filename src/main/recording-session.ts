@@ -1,9 +1,22 @@
 import { ipcMain } from 'electron';
-import type { DictationTargetSnapshot, RecordingIntent } from '../types/ipc';
+import type {
+  DictationTargetSnapshot,
+  RecordingActivationMode,
+  RecordingIntent,
+  ShortcutBinding,
+} from '../types/ipc';
 import { keyboardHook } from './native/keyboard';
+import { DEFAULT_SHORTCUTS } from '../shared/shortcut-bindings';
 import { captureForegroundTarget } from './native/target';
-import { getRecordingPillWindow, hideRecordingPill, showRecordingPill } from './recording-pill';
-import { transcribe } from './whisper';
+import {
+  getRecordingPillWindow,
+  hideRecordingPill,
+  prepareRecordingPillWindow,
+  showRecordingPill,
+  updateRecordingDurationWarning,
+} from './recording-pill';
+import { localWhisperCppTranscriber } from './whisper';
+import type { RecognitionSettings, Transcriber } from './transcription';
 import { createSingletonWindow } from './window-factory';
 
 export interface RecordingResult {
@@ -138,29 +151,37 @@ export class ProductionAudioCapture implements AudioCapture {
 }
 
 export interface KeyboardHook {
-  start(
-    onStart: (intent: RecordingIntent) => void,
-    onStop: () => void,
-    isAgentModeEnabled?: () => boolean
-  ): void;
+  start(options: {
+    onStart: (intent: RecordingIntent) => void;
+    onStop: () => void;
+    isAgentModeEnabled?: () => boolean;
+    getBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
+    getActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
+  }): void;
   stop(): void;
+  recordingEndedExternally?(): void;
 }
-
-export type WhisperClient = (audioData: Uint8Array) => Promise<string>;
 
 export interface RecordingSessionOptions {
   isAgentModeEnabled: () => boolean;
+  getRecordingActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
+  getShortcutBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
   getSelectedDeviceId?: () => string | null;
-  getWhisperUrl?: () => string;
+  getRecognitionSettings?: () => RecognitionSettings;
+  getReadinessError?: () => Error | null;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
   onError?: (error: Error) => void;
 
   audioCapture?: AudioCapture;
   keyboardHook?: KeyboardHook;
-  whisperClient?: WhisperClient;
+  transcriber?: Transcriber;
+  getTranscriber?: () => Transcriber;
   captureTarget?: () => DictationTargetSnapshot | null;
   showRecordingPill?: (intent: RecordingIntent) => void;
   hideRecordingPill?: () => void;
+  updateDurationWarning?: (remainingSeconds: number | null) => void;
+  setTimeoutFn?: typeof setTimeout;
+  clearTimeoutFn?: typeof clearTimeout;
 }
 
 export class RecordingSession {
@@ -175,50 +196,75 @@ export class RecordingSession {
     | null = null;
 
   private isAgentModeEnabled: () => boolean;
+  private getRecordingActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
+  private getShortcutBinding: (intent: RecordingIntent) => ShortcutBinding | null;
   private audioCapture: AudioCapture;
   private keyboardHook: KeyboardHook;
-  private whisperClient: WhisperClient;
+  private getTranscriber: () => Transcriber;
+  private getRecognitionSettings: () => RecognitionSettings;
+  private getReadinessError: () => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
   private showRecordingPillFn: (intent: RecordingIntent) => void;
   private hideRecordingPillFn: () => void;
+  private updateDurationWarningFn: (remainingSeconds: number | null) => void;
+  private setTimeoutFn: typeof setTimeout;
+  private clearTimeoutFn: typeof clearTimeout;
+  private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
   private getSelectedDeviceId?: () => string | null;
-  private getWhisperUrl?: () => string;
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
+    this.getRecordingActivationMode = options.getRecordingActivationMode ?? (() => 'push-to-talk');
+    this.getShortcutBinding = options.getShortcutBinding ?? ((intent) => DEFAULT_SHORTCUTS[intent].binding);
     this.audioCapture = options.audioCapture ?? new ProductionAudioCapture(
       (reason) => this.markAudioWindowCrashed(reason)
     );
     this.keyboardHook = options.keyboardHook ?? keyboardHook;
-    this.whisperClient = options.whisperClient ?? transcribe;
+    const defaultTranscriber = options.transcriber ?? localWhisperCppTranscriber;
+    this.getTranscriber = options.getTranscriber ?? (() => defaultTranscriber);
+    this.getRecognitionSettings = options.getRecognitionSettings ?? (() => ({
+      language: 'auto',
+      task: 'transcribe',
+      dictionary: [],
+      removeFillerWords: false,
+    }));
+    this.getReadinessError = options.getReadinessError ?? (() => null);
     this.captureTarget = options.captureTarget ?? captureForegroundTarget;
     this.showRecordingPillFn = options.showRecordingPill ?? showRecordingPill;
     this.hideRecordingPillFn = options.hideRecordingPill ?? hideRecordingPill;
+    this.updateDurationWarningFn = options.updateDurationWarning ?? updateRecordingDurationWarning;
+    this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
+    this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
     this.onResultCallback = options.onResult;
     this.onErrorCallback = options.onError;
     this.getSelectedDeviceId = options.getSelectedDeviceId;
-    this.getWhisperUrl = options.getWhisperUrl;
   }
 
   begin(intent: RecordingIntent = 'dictation'): void {
-    if (this.activeIntent) return;
+    if (this.activeIntent || this.pendingEnd) return;
+    const readinessError = this.getReadinessError();
+    if (readinessError) {
+      this.onErrorCallback?.(readinessError);
+      return;
+    }
     this.activeIntent = intent;
     this.targetSnapshot = this.captureTarget();
 
     const deviceId = this.getSelectedDeviceId?.();
-    const whisperUrl = this.getWhisperUrl?.();
-    console.log(`Starting recording session. Device: ${deviceId ?? 'default'}, Whisper URL: ${whisperUrl ?? 'default'}`);
+    console.log(`Starting recording session. Device: ${deviceId ?? 'default'}`);
 
     this.audioCapture.prepare();
     this.audioCapture.beginCapture();
     this.showRecordingPillFn(intent);
+    this.scheduleDurationLimit(this.getTranscriber().capabilities.maxDurationSeconds);
   }
 
   async end(): Promise<RecordingResult | null> {
     if (!this.activeIntent) return null;
 
+    this.clearDurationTimers();
     const intent = this.activeIntent;
     this.activeIntent = null;
     this.hideRecordingPillFn();
@@ -230,6 +276,7 @@ export class RecordingSession {
   }
 
   async cancel(): Promise<void> {
+    this.clearDurationTimers();
     this.activeIntent = null;
     this.targetSnapshot = null;
     this.hideRecordingPillFn();
@@ -264,13 +311,17 @@ export class RecordingSession {
 
     if (audioData.byteLength <= 44) {
       console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
+      audioData.fill(0);
       this.targetSnapshot = null;
       pendingEnd?.resolve(null);
       return null;
     }
 
     try {
-      const text = await this.whisperClient(audioData);
+      const text = await this.getTranscriber().transcribe({
+        audio: audioData,
+        recognition: this.getRecognitionSettings(),
+      });
       const snapshot = this.targetSnapshot;
       this.targetSnapshot = null;
       const result = text ? { text, intent, targetSnapshot: snapshot } : null;
@@ -287,21 +338,26 @@ export class RecordingSession {
         throw err;
       }
       return null;
+    } finally {
+      audioData.fill(0);
+      this.targetSnapshot = null;
     }
   }
 
   startKeyboardHook(onResult?: (result: RecordingResult | null) => void | Promise<void>): void {
-    this.keyboardHook.start(
-      (intent) => this.begin(intent),
-      () => {
+    this.keyboardHook.start({
+      onStart: (intent) => this.begin(intent),
+      onStop: () => {
         void this.end().then((result) => {
           if (onResult && !this.onResultCallback) {
             void onResult(result);
           }
         });
       },
-      this.isAgentModeEnabled
-    );
+      isAgentModeEnabled: this.isAgentModeEnabled,
+      getBinding: this.getShortcutBinding,
+      getActivationMode: this.getRecordingActivationMode,
+    });
   }
 
   stopKeyboardHook(): void {
@@ -309,6 +365,10 @@ export class RecordingSession {
   }
 
   start(): void {
+    // Prewarm the hidden renderer before installing the global hook. Audio can
+    // still start immediately if the user invokes a shortcut during loading.
+    prepareRecordingPillWindow();
+
     ipcMain.on('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.on('audio-data-ready', this.handleAudioDataReady);
@@ -318,6 +378,7 @@ export class RecordingSession {
   }
 
   stop(): void {
+    this.clearDurationTimers();
     ipcMain.off('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.off('audio-data-ready', this.handleAudioDataReady);
@@ -333,6 +394,30 @@ export class RecordingSession {
 
   getAudioWebContents(): import('electron').WebContents | null {
     return this.audioCapture.getWebContents?.() ?? null;
+  }
+
+  private scheduleDurationLimit(maxDurationSeconds: number | null): void {
+    this.clearDurationTimers();
+    if (!maxDurationSeconds) return;
+    const warningSeconds = Math.min(10, maxDurationSeconds);
+    const warningStart = maxDurationSeconds - warningSeconds;
+    for (let elapsed = warningStart; elapsed < maxDurationSeconds; elapsed++) {
+      const remaining = maxDurationSeconds - elapsed;
+      this.durationTimers.push(this.setTimeoutFn(() => {
+        if (this.activeIntent) this.updateDurationWarningFn(remaining);
+      }, elapsed * 1000));
+    }
+    this.durationTimers.push(this.setTimeoutFn(() => {
+      if (!this.activeIntent) return;
+      this.keyboardHook.recordingEndedExternally?.();
+      void this.end().catch(() => undefined);
+    }, maxDurationSeconds * 1000));
+  }
+
+  private clearDurationTimers(): void {
+    for (const timer of this.durationTimers) this.clearTimeoutFn(timer);
+    this.durationTimers = [];
+    this.updateDurationWarningFn(null);
   }
 
   private handleAudioWindowReady = (): void => {

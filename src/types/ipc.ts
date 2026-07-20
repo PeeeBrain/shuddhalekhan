@@ -6,9 +6,49 @@ export type AudioDevice = {
 
 export type RecordingIntent = 'dictation' | 'agent';
 
+export type RecordingActivationMode = 'push-to-talk' | 'toggle';
+
+export type ShortcutModifier = 'ctrl' | 'alt' | 'shift' | 'win';
+
+export interface ShortcutBinding {
+  /** Windows virtual-key code of the ordinary key, or null for a modifier-only binding. */
+  keyCode: number | null;
+  /** Logical modifiers that must be held; left/right variants normalize to one identity. */
+  modifiers: ShortcutModifier[];
+}
+
+export interface IntentShortcutConfig {
+  /** Normalized binding, or null when the intent is unassigned and reserves no key. */
+  binding: ShortcutBinding | null;
+  activationMode: RecordingActivationMode;
+}
+
+export interface ShortcutsConfig {
+  dictation: IntentShortcutConfig;
+  agent: IntentShortcutConfig;
+}
+
 export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
 
 export type McpToolPolicyKey = `${string}:${string}`;
+
+export type CredentialKind =
+  | 'agent-api-key'
+  | 'transcription-api-key'
+  | 'custom-secret-header'
+  | 'google-service-account'
+  | 'openai-api-key'
+  | 'custom-open-ai-compatible-bearer'
+  | 'custom-open-ai-compatible-header'
+  | 'azure-speech-key'
+  | 'nvidia-nim-bearer'
+  | 'nvidia-nim-header';
+
+export type CredentialStatus =
+  | { available: true; exists: boolean }
+  | { available: false; exists: false; message: string };
+
+export type AgentApiKeySource = 'environment' | 'stored';
 
 export type McpServerTransport =
   | {
@@ -74,6 +114,7 @@ export interface RendererToMainInvokeChannels {
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
   'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
+  'transcription:check-server': () => Promise<boolean>;
   'settings:open': () => void;
   'clipboard:inject-text': (text: string) => Promise<InjectResult>;
   'agent:approval-decision': (
@@ -88,6 +129,13 @@ export interface RendererToMainInvokeChannels {
   'updater:check': () => Promise<UpdateStatus>;
   'audit:get-runs': () => Promise<AuditRunSummary[]>;
   'audit:get-run-detail': (agentRunId: string) => Promise<AuditEventDetail[]>;
+  'shortcuts:get-paused': () => Promise<boolean>;
+  'shortcuts:set-paused': (paused: boolean) => Promise<boolean>;
+  'shortcuts:begin-capture': () => void;
+  'shortcuts:end-capture': () => void;
+  'credential:get-status': (credential: CredentialKind) => Promise<CredentialStatus>;
+  'credential:save': (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
+  'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
 }
 
 export interface MainToRendererChannels {
@@ -97,6 +145,7 @@ export interface MainToRendererChannels {
   'recording:mode-changed': (intent: RecordingIntent) => void;
   'recording:pill-show': () => void;
   'recording:pill-hide': () => void;
+  'recording:duration-warning': (remainingSeconds: number | null) => void;
   'recording:started': () => void;
   'recording:stopped': () => void;
   'audio:level-changed': (level: number) => void;
@@ -104,6 +153,7 @@ export interface MainToRendererChannels {
   'mcp:server-status': (status: McpServerRuntimeStatus) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
   'audit:run-updated': (agentRunId: string) => void;
+  'shortcuts:paused-changed': (paused: boolean) => void;
 }
 
 export type McpServerRuntimeStatus = {
@@ -152,6 +202,10 @@ export type AgentToastState =
   | {
       kind: 'config';
       message: string;
+    }
+  | {
+      kind: 'transcription-failed';
+      message: string;
     };
 
 export interface PasteStrategyConfig {
@@ -159,8 +213,70 @@ export interface PasteStrategyConfig {
   overrides: Record<string, PasteStrategy>;
 }
 
+export type TranscriptionProviderId =
+  | 'local-whisper-cpp'
+  | 'openai'
+  | 'azure-speech'
+  | 'google-cloud-speech-v2'
+  | 'nvidia-speech-nim'
+  | 'custom-open-ai-compatible';
+
+export interface LocalWhisperCppProviderConfig {
+  endpoint: string;
+}
+
+export interface OpenAiProviderConfig {
+  baseUrl: string;
+  model: string;
+}
+
+export interface CustomOpenAiProviderConfig {
+  endpoint: string;
+  model: string;
+  auth: 'none' | 'bearer' | 'header';
+  headerName: string;
+}
+
+export interface AzureSpeechProviderConfig {
+  /** Full Speech or Cognitive Services resource endpoint. Takes precedence over region. */
+  endpoint: string;
+  /** Azure resource region, used to construct the regional Cognitive Services endpoint. */
+  region: string;
+}
+
+export interface GoogleCloudSpeechProviderConfig {
+  project: string;
+  location: string;
+  model: string;
+  credentialSource: 'service-account' | 'adc';
+}
+
+export interface NvidiaSpeechNimProviderConfig {
+  endpoint: string;
+  model: string;
+  auth: 'none' | 'bearer' | 'header';
+  headerName: string;
+  supportsAutomaticLanguageDetection: boolean;
+  supportsTranslation: boolean;
+  supportsDictionaryHints: boolean;
+}
+
+export interface TranscriptionConfig {
+  activeProvider: TranscriptionProviderId;
+  providers: {
+    localWhisperCpp: LocalWhisperCppProviderConfig;
+    openai: OpenAiProviderConfig;
+    azureSpeech: AzureSpeechProviderConfig;
+    googleCloudSpeech: GoogleCloudSpeechProviderConfig;
+    nvidiaSpeechNim: NvidiaSpeechNimProviderConfig;
+    customOpenAiCompatible: CustomOpenAiProviderConfig;
+  };
+}
+
 export interface AppConfig {
+  /** @deprecated Read the local provider endpoint from transcription instead. */
   whisperUrl: string;
+  transcription: TranscriptionConfig;
   selectedDeviceId: string | null;
   removeFillerWords: boolean;
   language: string;
@@ -168,12 +284,16 @@ export interface AppConfig {
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
   setupChecklistDismissed: boolean;
+  /** @deprecated Seed value for per-intent activation modes; read shortcuts instead. */
+  recordingActivationMode: RecordingActivationMode;
+  shortcuts: ShortcutsConfig;
   agent: {
     enabled: boolean;
     provider: {
       baseUrl: string;
       model: string;
       apiKeyEnvVar: string;
+      apiKeySource?: AgentApiKeySource;
       thinkingEnabled: boolean;
     };
     mcpServers: McpServerConfig[];

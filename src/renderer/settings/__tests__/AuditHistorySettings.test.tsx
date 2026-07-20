@@ -31,14 +31,23 @@ describe('AuditHistorySettings live refresh backpressure', () => {
         listener = callback;
         return () => {};
       }),
+      getShortcutsPaused: mock(() => Promise.resolve(false)),
+      setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
+      beginShortcutCapture: mock(() => Promise.resolve()),
+      endShortcutCapture: mock(() => Promise.resolve()),
+      onShortcutsPausedChanged: mock(() => undefined),
       getConfig: mock(() => Promise.resolve({} as any)),
       setConfig: mock(() => Promise.resolve()),
       getAppInfo: mock(() => Promise.resolve({} as any)),
       getUpdateStatus: mock(() => Promise.resolve({} as any)),
       checkForUpdates: mock(() => Promise.resolve({} as any)),
       testMcpServer: mock(() => Promise.resolve()),
+      checkTranscriptionServer: mock(() => Promise.resolve(true)),
       onUpdateStatusChanged: mock(() => undefined),
       onMcpServerStatus: mock(() => undefined),
+      getCredentialStatus: mock(() => Promise.resolve({ available: true, exists: false })),
+      saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
+      removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
     };
 
     render(<AuditHistorySettings settingsIpc={settingsIpc} />);
@@ -92,14 +101,23 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       getAuditRuns: mock(() => Promise.resolve(runs)),
       getAuditRunDetail: mock(() => Promise.resolve([])),
       onAuditRunUpdated: mock(() => undefined),
+      getShortcutsPaused: mock(() => Promise.resolve(false)),
+      setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
+      beginShortcutCapture: mock(() => Promise.resolve()),
+      endShortcutCapture: mock(() => Promise.resolve()),
+      onShortcutsPausedChanged: mock(() => undefined),
       getConfig: mock(() => Promise.resolve({} as any)),
       setConfig: mock(() => Promise.resolve()),
       getAppInfo: mock(() => Promise.resolve({} as any)),
       getUpdateStatus: mock(() => Promise.resolve({} as any)),
       checkForUpdates: mock(() => Promise.resolve({} as any)),
       testMcpServer: mock(() => Promise.resolve()),
+      checkTranscriptionServer: mock(() => Promise.resolve(true)),
       onUpdateStatusChanged: mock(() => undefined),
       onMcpServerStatus: mock(() => undefined),
+      getCredentialStatus: mock(() => Promise.resolve({ available: true, exists: false })),
+      saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
+      removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
     };
 
     const { container } = render(<AuditHistorySettings settingsIpc={settingsIpc} />);

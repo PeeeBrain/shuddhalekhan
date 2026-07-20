@@ -166,7 +166,7 @@ export function AgentToast() {
         <Badge variant="outline" className="border-transparent bg-transparent px-0 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           {getTitle(state)}
         </Badge>
-        {state.kind === 'completed' || state.kind === 'failed' || state.kind === 'cancelled' || state.kind === 'config' ? (
+        {state.kind === 'completed' || state.kind === 'failed' || state.kind === 'cancelled' || state.kind === 'config' || state.kind === 'transcription-failed' ? (
           <Button
             type="button"
             variant="ghost"
@@ -197,7 +197,7 @@ export function AgentToast() {
         </ul>
       ) : null}
 
-      {state.kind === 'config' ? (
+      {state.kind === 'config' || state.kind === 'transcription-failed' ? (
         <div className="mt-3 flex-shrink-0">
           <Button
             type="button"
@@ -241,6 +241,7 @@ function getAccentColor(kind: AgentToastState['kind']): string {
       return 'border-l-success';
     case 'failed':
     case 'cancelled':
+    case 'transcription-failed':
       return 'border-l-destructive';
     case 'config':
       return 'border-l-muted-foreground';
@@ -255,6 +256,7 @@ function getLiveAttributes(kind: AgentToastState['kind']): { role?: 'alert'; 'ar
     case 'failed':
     case 'cancelled':
     case 'config':
+    case 'transcription-failed':
       return { role: 'alert' };
     case 'status':
     case 'streaming':
@@ -283,6 +285,8 @@ function getTitle(state: AgentToastState): string {
       return 'Cancelled';
     case 'config':
       return 'Agent Setup';
+    case 'transcription-failed':
+      return 'Transcription failed';
     case 'approval':
       return 'Approval';
   }
@@ -301,6 +305,7 @@ function getBody(state: Exclude<AgentToastState, { kind: 'approval' }>): string 
     case 'cancelled':
       return 'Agent run cancelled.';
     case 'config':
+    case 'transcription-failed':
       return state.message;
   }
 }

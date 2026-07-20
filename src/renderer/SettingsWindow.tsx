@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfig,
   AppInfo,
@@ -6,72 +6,66 @@ import type {
   McpServerRuntimeStatus,
   UpdateStatus,
 } from '../types/ipc';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Check, X as XIcon, Settings, Mic, Bot, Plug, History, Info } from 'lucide-react';
-import { McpSettings } from './settings/McpSettings';
+  Bot,
+  FileText,
+  History as HistoryIcon,
+  Info,
+  Keyboard,
+  Mic,
+  Plug,
+} from 'lucide-react';
 import { createSettingsIpc } from './settings/settings-ipc';
+import {
+  DEFAULT_SETTINGS_SECTION,
+  SETTINGS_NAV_GROUPS,
+  SETTINGS_NAV_SECTIONS,
+  getNavSectionIndex,
+  type SettingsNavGroupId,
+  type SettingsSectionId,
+} from './settings/settings-nav';
+import { isListboxNavKey, getNextListboxIndex } from './settings/audit-history-nav';
+import { useSettingsPersistence } from './settings/use-settings-persistence';
+import { SaveToast } from './settings/SaveToast';
+import { TranscriptionSettings } from './settings/TranscriptionSettings';
+import { AudioSettings } from './settings/AudioSettings';
+import { ShortcutsSettings } from './settings/ShortcutsSettings';
+import { AgentSettings } from './settings/AgentSettings';
+import { AboutSettings } from './settings/AboutSettings';
+import { McpSettings } from './settings/McpSettings';
 import { AuditHistorySettings } from './settings/AuditHistorySettings';
+import type { SettingsIpc } from './settings/settings-ipc';
 
-type SettingsSection = 'general' | 'audio' | 'agent' | 'mcp' | 'history' | 'about';
+interface SettingsWindowProps {
+  settingsIpc?: SettingsIpc;
+}
 
-const sections: Array<{ id: SettingsSection; label: string; icon: React.ElementType }> = [
-  { id: 'general', label: 'General', icon: Settings },
-  { id: 'audio', label: 'Audio', icon: Mic },
-  { id: 'agent', label: 'Agent', icon: Bot },
-  { id: 'mcp', label: 'MCP Servers', icon: Plug },
-  { id: 'history', label: 'History', icon: History },
-  { id: 'about', label: 'About', icon: Info },
-];
+const NAV_ICONS: Record<SettingsSectionId, React.ElementType> = {
+  transcription: FileText,
+  audio: Mic,
+  shortcuts: Keyboard,
+  agent: Bot,
+  mcp: Plug,
+  history: HistoryIcon,
+  about: Info,
+};
 
-const WHISPER_LANGUAGES: Array<{ value: string; label: string }> = [
-  { value: 'auto', label: 'Auto-detect' },
-  { value: 'en', label: 'English' },
-  { value: 'hi', label: 'Hindi (हिन्दी)' },
-  { value: 'mr', label: 'Marathi (मराठी)' },
-  { value: 'gu', label: 'Gujarati (ગુજરાતી)' },
-  { value: 'bn', label: 'Bengali (বাংলা)' },
-  { value: 'ta', label: 'Tamil (தமிழ்)' },
-  { value: 'te', label: 'Telugu (తెలుగు)' },
-  { value: 'kn', label: 'Kannada (ಕನ್ನಡ)' },
-  { value: 'ml', label: 'Malayalam (മലയാളം)' },
-  { value: 'pa', label: 'Punjabi (ਪੰਜਾਬੀ)' },
-  { value: 'ur', label: 'Urdu (اردو)' },
-  { value: 'fr', label: 'French' },
-  { value: 'es', label: 'Spanish' },
-  { value: 'de', label: 'German' },
-  { value: 'ja', label: 'Japanese' },
-  { value: 'zh', label: 'Chinese' },
-  { value: 'ko', label: 'Korean' },
-  { value: 'pt', label: 'Portuguese' },
-  { value: 'ar', label: 'Arabic' },
-  { value: 'ru', label: 'Russian' },
-];
-
-export function SettingsWindow() {
-  const settingsIpc = useMemo(() => createSettingsIpc(window.electronAPI), []);
-  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
+export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = {}) {
+  const settingsIpc = useMemo(
+    () => provided ?? createSettingsIpc(window.electronAPI),
+    [provided],
+  );
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(
+    DEFAULT_SETTINGS_SECTION,
+  );
   const [config, setConfigState] = useState<AppConfig | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpServerRuntimeStatus>>({});
-  const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle');
-  const [whisperUrlError, setWhisperUrlError] = useState<string | null>(null);
-  const [whisperTestState, setWhisperTestState] = useState<'idle' | 'checking' | 'success' | 'failed'>('idle');
-  const [pendingDisableAgent, setPendingDisableAgent] = useState(false);
+  const [mcpStatuses, setMcpStatuses] = useState<
+    Record<string, McpServerRuntimeStatus>
+  >({});
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     settingsIpc.getConfig().then(setConfigState).catch((err) => {
@@ -98,586 +92,229 @@ export function SettingsWindow() {
     };
   }, [settingsIpc]);
 
-  const updateConfig = async <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
-    setConfigState((current) => current ? { ...current, [key]: value } : current);
-    try {
-      await settingsIpc.setConfig(key, value);
-      setSaveState('saved');
-    } catch {
-      setSaveState('error');
-    }
-    window.setTimeout(() => setSaveState('idle'), 1200);
+  const applyOptimistic = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
+    setConfigState((current) => (current ? { ...current, [key]: value } : current));
   };
 
-  const updateAgent = (agent: AppConfig['agent']) => updateConfig('agent', agent);
-
-  const statusText = useMemo(() => {
-    if (!updateStatus) return 'Update status unavailable';
-    return updateStatus.message;
-  }, [updateStatus]);
-
-  const handleWhisperUrlChange = (value: string) => {
-    if (!config) return;
-    if (whisperUrlError) setWhisperUrlError(null);
-    if (whisperTestState !== 'idle') setWhisperTestState('idle');
-    updateConfig('whisperUrl', value);
-  };
-
-  const handleWhisperUrlBlur = () => {
-    if (!config) return;
-    const url = config.whisperUrl;
-    if (!url.trim()) {
-      setWhisperUrlError('Whisper endpoint URL is required.');
-      return;
-    }
-    try {
-      new URL(url);
-      setWhisperUrlError(null);
-    } catch {
-      setWhisperUrlError('Enter a valid URL (e.g. http://localhost:8080/inference).');
-    }
-  };
-
-  const testWhisperConnection = async () => {
-    if (!config) return;
-    try {
-      new URL(config.whisperUrl);
-      setWhisperUrlError(null);
-    } catch {
-      setWhisperUrlError('Enter a valid URL (e.g. http://localhost:8080/inference).');
-      return;
-    }
-
-    setWhisperTestState('checking');
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 5000);
-      await fetch(config.whisperUrl, { method: 'GET', signal: controller.signal });
-      clearTimeout(id);
-      setWhisperTestState('success');
-    } catch {
-      setWhisperTestState('failed');
-    }
-  };
+  const persistence = useSettingsPersistence(settingsIpc, applyOptimistic);
 
   if (!config) {
     return (
-      <main className="flex h-screen items-center justify-center bg-background">
+      <main className="settings-root flex h-screen items-center justify-center bg-background text-foreground">
         <p className="text-muted-foreground">Loading settings...</p>
       </main>
     );
   }
 
-  const updateMcpServers = (mcpServers: McpServerConfig[]) => updateAgent({ ...config.agent, mcpServers });
+  const selectSection = (id: SettingsSectionId) => {
+    setActiveSection(id);
+    const index = getNavSectionIndex(id);
+    requestAnimationFrame(() => {
+      tabRefs.current[index]?.focus();
+    });
+  };
+
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!isListboxNavKey(event.key)) return;
+    event.preventDefault();
+    const currentIndex = getNavSectionIndex(activeSection);
+    const nextIndex = getNextListboxIndex(currentIndex, event.key, SETTINGS_NAV_SECTIONS.length);
+    const next = SETTINGS_NAV_SECTIONS[nextIndex];
+    if (next) selectSection(next.id);
+  };
+
+  const updateMcpServers = (mcpServers: McpServerConfig[]) =>
+    persistence.commit('agent', { ...config.agent, mcpServers }, 'mcp-servers');
+
+  const sectionProps = {
+    config,
+    appInfo,
+    updateStatus,
+    mcpStatuses,
+    settingsIpc,
+    persistence,
+    onNavigate: selectSection,
+    onUpdateStatusChange: setUpdateStatus,
+  };
 
   return (
-    <main className="flex h-screen bg-background text-foreground">
-      <aside className="flex w-56 flex-col border-r border-border bg-background p-5 pt-6" aria-label="Settings sections">
+    <main className="settings-root relative flex h-screen bg-background text-foreground">
+      <aside
+        className="flex w-56 shrink-0 flex-col border-r border-border bg-background p-5 pt-6"
+        aria-label="Settings sections"
+      >
         <div className="mb-6 flex items-center gap-3">
           <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary">
-            <span className="text-primary text-lg font-bold leading-none">S</span>
+            <span className="text-lg font-bold leading-none text-primary">S</span>
           </div>
           <div>
             <h1 className="text-base font-semibold leading-tight">Shuddhalekhan</h1>
-            <p className="text-xs text-muted-foreground">{appInfo?.version ? `v${appInfo.version}` : 'Settings'}</p>
+            <p className="text-xs text-muted-foreground">
+              {appInfo?.version ? `v${appInfo.version}` : 'Settings'}
+            </p>
           </div>
         </div>
 
-        <nav className="flex flex-col gap-0.5">
-          {sections.map((section) => (
-            <button
-              key={section.id}
-              type="button"
-              role="tab"
-              aria-selected={activeSection === section.id}
-              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background focus-visible:outline-none ${
-                activeSection === section.id
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-              }`}
-              onClick={() => setActiveSection(section.id)}
-            >
-              <section.icon className="h-4 w-4 shrink-0" />
-              {section.label}
-            </button>
+        <nav className="flex flex-col gap-4" aria-label="Settings navigation">
+          {SETTINGS_NAV_GROUPS.map((group) => (
+            <NavGroup
+              key={group.id}
+              group={group}
+              activeSection={activeSection}
+              tabRefs={tabRefs}
+              onSelect={selectSection}
+              onKeyDown={handleTabKeyDown}
+            />
           ))}
         </nav>
       </aside>
 
-      <section className="min-w-0 flex-1 bg-background h-screen flex flex-col">
-        <div key={activeSection} className="flex-1 flex flex-col min-h-0 content-enter">
-        {activeSection === 'history' ? (
-          <div className="flex flex-col flex-1 min-h-0">
-            <header className="px-10 pt-8 pb-0 flex items-start justify-between gap-6 shrink-0">
-              <h2 className="text-2xl font-semibold tracking-tight">
-                {sections.find((section) => section.id === activeSection)?.label}
-              </h2>
-              <Badge variant="outline" className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
-                {saveState === 'saved' ? 'Saved' : 'Ready'}
-              </Badge>
-            </header>
-            <div className="flex-1 min-h-0 overflow-hidden px-10 pb-8 flex flex-col">
-              <AuditHistorySettings settingsIpc={settingsIpc} />
+      <section className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-canvas">
+        <div
+          key={activeSection}
+          role="tabpanel"
+          id={`panel-${activeSection}`}
+          aria-labelledby={`tab-${activeSection}`}
+          tabIndex={0}
+          className="content-enter flex min-h-0 flex-1 flex-col overflow-hidden focus:outline-none"
+        >
+          {activeSection === 'history' ? (
+            <div className="flex flex-1 flex-col min-h-0">
+              <SectionFrame
+                sectionId="history"
+                title="History"
+                description="Review past agent runs, tool activity, and responses."
+              />
+              <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-10 pb-8">
+                <AuditHistorySettings settingsIpc={settingsIpc} />
+              </div>
             </div>
-          </div>
-        ) : (
-          <ScrollArea className="h-full flex-1">
-            <div className="px-10 py-8">
-            <header className="mb-8 flex items-start justify-between gap-6">
-              <h2 className="text-2xl font-semibold tracking-tight">
-                {sections.find((section) => section.id === activeSection)?.label}
-              </h2>
-              <Badge variant={saveState === 'error' ? 'destructive' : 'outline'} className={saveState === 'saved' ? 'border-primary/45 text-primary' : ''}>
-                {saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Save failed' : 'Ready'}
-              </Badge>
-            </header>
-
-            {activeSection === 'general' ? (
-              <>
-                {!config.setupChecklistDismissed ? (
-                  <SetupChecklistCard
-                    config={config}
-                    onNavigate={(section) => setActiveSection(section)}
-                    onDismiss={() => updateConfig('setupChecklistDismissed', true)}
+          ) : (
+            <ScrollArea className="h-full min-h-0 flex-1">
+              <div className="px-10 py-8">
+                {activeSection === 'transcription' ? (
+                  <TranscriptionSettings {...sectionProps} />
+                ) : null}
+                {activeSection === 'audio' ? (
+                  <AudioSettings {...sectionProps} />
+                ) : null}
+                {activeSection === 'shortcuts' ? (
+                  <ShortcutsSettings {...sectionProps} />
+                ) : null}
+                {activeSection === 'agent' ? (
+                  <AgentSettings {...sectionProps} />
+                ) : null}
+                {activeSection === 'mcp' ? (
+                  <McpSettings
+                    servers={config.agent.mcpServers}
+                    statuses={mcpStatuses}
+                    saveError={persistence.fieldErrors['mcp-servers']}
+                    onChange={updateMcpServers}
+                    onTest={(serverId) => {
+                      settingsIpc.testMcpServer(serverId);
+                    }}
                   />
                 ) : null}
-                <SettingsPanel>
-                <ToggleRow
-                  title="Clean transcription"
-                  description="Remove common filler words before dictation text is injected."
-                  checked={config.removeFillerWords}
-                  onChange={(checked) => updateConfig('removeFillerWords', checked)}
-                />
-                <KeyRow label="Dictation hotkey" value="Ctrl + Win" />
-                <KeyRow label="Agent hotkey" value="Alt + Win" />
-              </SettingsPanel>
-              </>
-            ) : null}
-
-            {activeSection === 'audio' ? (
-              <SettingsPanel>
-                <div className="space-y-2 border-b border-border py-5">
-                  <Label className="text-sm font-medium">Whisper endpoint</Label>
-                  <Input
-                    value={config.whisperUrl}
-                    placeholder="http://localhost:8080/inference"
-                    onChange={(e) => handleWhisperUrlChange(e.target.value)}
-                    onBlur={handleWhisperUrlBlur}
-                    aria-invalid={!!whisperUrlError}
-                  />
-                  {whisperUrlError && (
-                    <p className="text-xs text-destructive break-words">{whisperUrlError}</p>
-                  )}
-                  <div className="flex items-center gap-3 pt-1">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={whisperTestState === 'checking'}
-                      onClick={testWhisperConnection}
-                    >
-                      {whisperTestState === 'checking' ? 'Checking...' : 'Test connection'}
-                    </Button>
-                    {whisperTestState === 'success' && (
-                      <span className="text-xs text-success">Connected</span>
-                    )}
-                    {whisperTestState === 'failed' && (
-                      <span className="text-xs text-destructive">Could not reach endpoint — is the whisper.cpp server running?</span>
-                    )}
-                  </div>
-                </div>
-                <SelectRow
-                  label="Mode"
-                  value={config.task}
-                  options={[
-                    { value: 'transcribe', label: 'Transcribe spoken language' },
-                    { value: 'translate', label: 'Translate speech to English' },
-                  ]}
-                  onChange={(value) => updateConfig('task', value as AppConfig['task'])}
-                />
-                <SelectRow
-                  label="Spoken language"
-                  value={config.language}
-                  options={WHISPER_LANGUAGES}
-                  onChange={(value) => updateConfig('language', value)}
-                />
-                <ReadOnlyRow label="Selected device" value={config.selectedDeviceId ?? 'Default input device'} />
-                <ReadOnlyRow label="Capture path" value="Shared by Dictation and Agent Mode" />
-                <div className="py-5 space-y-4 border-b border-border">
-                  <div className="space-y-1">
-                    <h3 className="text-sm font-medium">Personal Dictionary</h3>
-                    <p className="text-xs text-muted-foreground">
-                      Add specific names, technical terms, or acronyms to help Whisper spell them correctly. Press Enter to add.
-                    </p>
-                  </div>
-                  <DictionaryInput 
-                    dictionary={config.dictionary} 
-                    onChange={(newDictionary) => updateConfig('dictionary', newDictionary)} 
-                  />
-                </div>
-              </SettingsPanel>
-            ) : null}
-
-            {activeSection === 'agent' ? (
-              <SettingsPanel>
-                <ToggleRow
-                  title="Enable Agent Mode"
-                  description="Activates the Alt + Win recording intent. Sidecar execution arrives in later phases."
-                  checked={config.agent.enabled}
-                  tone="agent"
-                  onChange={(checked) => {
-                    if (!checked && config.agent.enabled) {
-                      setPendingDisableAgent(true);
-                    } else {
-                      updateAgent({ ...config.agent, enabled: checked });
-                    }
-                  }}
-                />
-                <TextRow
-                  label="Provider base URL"
-                  value={config.agent.provider.baseUrl}
-                  placeholder="https://openrouter.ai/api/v1"
-                  onChange={(baseUrl) => updateAgent({
-                    ...config.agent,
-                    provider: { ...config.agent.provider, baseUrl },
-                  })}
-                />
-                <TextRow
-                  label="Model"
-                  value={config.agent.provider.model}
-                  placeholder="openai/gpt-4.1-mini"
-                  onChange={(model) => updateAgent({
-                    ...config.agent,
-                    provider: { ...config.agent.provider, model },
-                  })}
-                />
-                <ToggleRow
-                  title="Thinking"
-                  description="Allows models that support thinking to spend extra reasoning before tool calls."
-                  checked={config.agent.provider.thinkingEnabled}
-                  tone="agent"
-                  onChange={(thinkingEnabled) => updateAgent({
-                    ...config.agent,
-                    provider: { ...config.agent.provider, thinkingEnabled },
-                  })}
-                />
-                <TextRow
-                  label="API key env var name"
-                  value={config.agent.provider.apiKeyEnvVar}
-                  placeholder={isLocalProviderUrl(config.agent.provider.baseUrl) ? 'Optional for local providers' : 'OPENROUTER_API_KEY'}
-                  warning={looksLikeRawApiKey(config.agent.provider.apiKeyEnvVar)
-                    ? 'Enter the environment variable name here, not the API key value. Example: OPENROUTER_API_KEY.'
-                    : isLocalProviderUrl(config.agent.provider.baseUrl)
-                      ? 'Local providers such as Ollama can leave this empty.'
-                      : undefined}
-                  onChange={(apiKeyEnvVar) => updateAgent({
-                    ...config.agent,
-                    provider: { ...config.agent.provider, apiKeyEnvVar },
-                  })}
-                />
-              </SettingsPanel>
-            ) : null}
-
-            {activeSection === 'mcp' ? (
-              <McpSettings
-                servers={config.agent.mcpServers}
-                statuses={mcpStatuses}
-                onChange={updateMcpServers}
-                onTest={(serverId) => {
-                  settingsIpc.testMcpServer(serverId);
-                }}
-              />
-            ) : null}
-
-            {activeSection === 'about' ? (
-              <SettingsPanel>
-                <ReadOnlyRow label="Version" value={appInfo?.version ?? 'Unknown'} />
-                <ReadOnlyRow label="Update status" value={statusText} />
-                <Button
-                  className="mt-4 w-fit min-w-36"
-                  disabled={updateStatus?.state === 'checking'}
-                  onClick={() => {
-                    settingsIpc.checkForUpdates().then(setUpdateStatus).catch((err) => {
-                      console.error('Failed to check for updates:', err);
-                    });
-                  }}
-                >
-                  {updateStatus?.state === 'checking' ? 'Checking...' : 'Check for Updates'}
-                </Button>
-              </SettingsPanel>
-            ) : null}
-            </div>
-          </ScrollArea>
-        )}
+                {activeSection === 'about' ? (
+                  <AboutSettings {...sectionProps} />
+                ) : null}
+              </div>
+            </ScrollArea>
+          )}
         </div>
+        <SaveToast toast={persistence.toast} />
       </section>
-
-      <ConfirmDialog
-        open={pendingDisableAgent}
-        title="Disable Agent Mode?"
-        description="Any active agent run will be cancelled and MCP server connections will be closed."
-        confirmLabel="Disable"
-        onConfirm={() => {
-          updateAgent({ ...config.agent, enabled: false });
-          setPendingDisableAgent(false);
-        }}
-        onCancel={() => setPendingDisableAgent(false)}
-      />
     </main>
   );
 }
 
-function SettingsPanel({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-2xl space-y-0 border-t border-border">{children}</div>;
+interface NavGroupProps {
+  group: {
+    id: SettingsNavGroupId;
+    label: string;
+    sections: Array<{ id: SettingsSectionId; label: string }>;
+  };
+  activeSection: SettingsSectionId;
+  tabRefs: React.MutableRefObject<Array<HTMLButtonElement | null>>;
+  onSelect: (id: SettingsSectionId) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
 }
 
-function ToggleRow({
+function NavGroup({
+  group,
+  activeSection,
+  tabRefs,
+  onSelect,
+  onKeyDown,
+}: NavGroupProps) {
+  return (
+    <div>
+      <p
+        id={`settings-group-${group.id}`}
+        className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+      >
+        {group.label}
+      </p>
+      <div
+        role="tablist"
+        aria-orientation="vertical"
+        aria-label={group.label}
+        className="flex flex-col gap-0.5"
+      >
+        {group.sections.map((section) => {
+          const isActive = activeSection === section.id;
+          const index = getNavSectionIndex(section.id);
+          const Icon = NAV_ICONS[section.id];
+          return (
+            <button
+              key={section.id}
+              ref={(el) => {
+                tabRefs.current[index] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`tab-${section.id}`}
+              aria-selected={isActive}
+              aria-controls={`panel-${section.id}`}
+              tabIndex={isActive ? 0 : -1}
+              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
+                isActive
+                  ? 'bg-secondary text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+              }`}
+              onClick={() => onSelect(section.id)}
+              onKeyDown={onKeyDown}
+            >
+              <Icon className="size-4 shrink-0" aria-hidden="true" />
+              {section.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SectionFrame({
+  sectionId,
   title,
   description,
-  checked,
-  tone = 'default',
-  onChange,
 }: {
+  sectionId: SettingsSectionId;
   title: string;
   description: string;
-  checked: boolean;
-  tone?: 'default' | 'agent';
-  onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex flex-col gap-3 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
-      <div className="space-y-1">
-        <p className="text-sm font-medium">{title}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
+    <header className="flex shrink-0 items-start justify-between gap-6 px-10 pt-8 pb-0">
+      <div>
+        <h2
+          id={`section-heading-${sectionId}`}
+          className="text-xl font-semibold tracking-tight"
+        >
+          {title}
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
-      <Switch
-        checked={checked}
-        onCheckedChange={onChange}
-        className={tone === 'agent' && checked ? 'data-[state=checked]:bg-agent data-[state=checked]:border-agent/70' : ''}
-      />
-    </div>
-  );
-}
-
-function TextRow({
-  label,
-  value,
-  placeholder,
-  warning,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  placeholder: string;
-  warning?: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-2 border-b border-border py-5">
-      <Label className="text-sm font-medium">{label}</Label>
-      <Input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
-      {warning ? <p className="text-xs text-destructive break-words">{warning}</p> : null}
-    </div>
-  );
-}
-
-function ReadOnlyRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-1 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="text-sm font-medium break-words">{value}</span>
-    </div>
-  );
-}
-
-function SelectRow({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-2 border-b border-border py-5">
-      <Label className="text-sm font-medium">{label}</Label>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="w-full max-w-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.value || '__auto__'} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
-import { Windows as WindowsIcon } from '@/components/ui/svgs/windows';
-
-function KeyRow({ label, value }: { label: string; value: string }) {
-  const keys = value.split(' + ');
-  return (
-    <div className="flex flex-col gap-1 border-b border-border py-5 sm:flex-row sm:items-center sm:justify-between">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-1">
-        {keys.map((key, i) => (
-          <span key={key} className="flex items-center gap-1">
-            <kbd className="inline-flex items-center justify-center rounded border border-border bg-gradient-to-b from-muted to-muted/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground shadow-sm">
-              {key === 'Win' ? (
-                <WindowsIcon className="size-3 text-primary" aria-hidden="true" />
-              ) : (
-                key
-              )}
-            </kbd>
-            {i < keys.length - 1 ? (
-              <span className="text-xs text-muted-foreground/60">+</span>
-            ) : null}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function looksLikeRawApiKey(value: string): boolean {
-  return /^sk-[A-Za-z0-9_-]/.test(value.trim());
-}
-
-function isLocalProviderUrl(value: string): boolean {
-  try {
-    const hostname = new URL(value).hostname.toLowerCase();
-    return ['localhost', '127.0.0.1', '::1'].includes(hostname);
-  } catch {
-    return false;
-  }
-}
-
-function DictionaryInput({
-  dictionary,
-  onChange,
-}: {
-  dictionary: string[];
-  onChange: (value: string[]) => void;
-}) {
-  const [inputValue, setInputValue] = useState('');
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && inputValue.trim()) {
-      e.preventDefault();
-      const newWord = inputValue.trim();
-      if (!dictionary.includes(newWord)) {
-        onChange([...dictionary, newWord]);
-      }
-      setInputValue('');
-    }
-  };
-
-  const removeWord = (wordToRemove: string) => {
-    onChange(dictionary.filter(word => word !== wordToRemove));
-  };
-
-  return (
-    <div className="space-y-3">
-      <Input
-        value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        placeholder="Type a word and press Enter..."
-        className="w-full bg-background"
-      />
-      <div className="flex flex-wrap gap-2">
-        {dictionary.map((word) => (
-          <span
-            key={word}
-            className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-2.5 py-1 text-sm font-medium text-secondary-foreground transition-all hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
-          >
-            {word}
-            <button
-              type="button"
-              onClick={() => removeWord(word)}
-              className="rounded-full p-0.5 opacity-60 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-destructive focus:ring-offset-1 focus:ring-offset-background"
-            >
-              <XIcon className="h-3 w-3" />
-            </button>
-          </span>
-        ))}
-        {dictionary.length === 0 && (
-          <span className="text-xs text-muted-foreground italic px-1 py-1.5">No words added yet.</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SetupChecklistCard({
-  config,
-  onNavigate,
-  onDismiss,
-}: {
-  config: AppConfig;
-  onNavigate: (section: SettingsSection) => void;
-  onDismiss: () => void;
-}) {
-  const whisperComplete = config.whisperUrl !== '' && config.whisperUrl !== 'http://localhost:8080/inference';
-  const micComplete = config.selectedDeviceId !== null && config.selectedDeviceId !== '';
-
-  const items: Array<{
-    label: string;
-    done: boolean;
-    action?: () => void;
-  }> = [
-    { label: 'Set Whisper endpoint', done: whisperComplete, action: () => onNavigate('audio') },
-    { label: 'Select microphone', done: micComplete, action: () => onNavigate('audio') },
-    { label: 'Try a dictation (Ctrl + Win)', done: false },
-  ];
-
-  return (
-    <Card className="mb-6 border-primary/20 bg-primary/[0.03]">
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between text-sm font-medium">
-          <span>First-run setup</span>
-          <Button variant="ghost" size="icon-xs" onClick={onDismiss} aria-label="Dismiss setup checklist">
-            <XIcon className="size-3.5" />
-          </Button>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <ul className="space-y-2">
-          {items.map((item) => (
-            <li key={item.label}>
-              <button
-                type="button"
-                disabled={!item.action}
-                onClick={item.action}
-                className={`flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                  item.action
-                    ? 'hover:bg-muted/50 cursor-pointer'
-                    : 'cursor-default'
-                }`}
-              >
-                <span
-                  className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full border text-xs ${
-                    item.done
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-muted-foreground/30 text-muted-foreground'
-                  }`}
-                >
-                  {item.done ? <Check className="size-3" /> : null}
-                </span>
-                <span className={item.done ? 'text-muted-foreground' : ''}>{item.label}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
+    </header>
   );
 }

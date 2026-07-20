@@ -83,6 +83,32 @@ describe('positionPillWindow', () => {
     expect(setPosition).toHaveBeenCalledWith(2474, 660);
   });
 
+  it('prewarms the recording renderer while keeping the pill hidden', async () => {
+    const { prepareRecordingPillWindow } = await import(`../recording-pill?test=${Date.now()}-prewarm`);
+
+    prepareRecordingPillWindow();
+
+    expect(BrowserWindow).toHaveBeenCalledTimes(1);
+    expect(loadURL).toHaveBeenCalledWith('http://localhost:5173/#/recording?mode=dictation');
+    expect(show).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalledWith('recording:pill-show');
+  });
+
+  it('shows a prewarmed renderer immediately on first recording after it finishes loading', async () => {
+    const { prepareRecordingPillWindow, showRecordingPill } = await import(`../recording-pill?test=${Date.now()}-prewarm-ready`);
+
+    isLoading.mockReturnValue(true);
+    prepareRecordingPillWindow();
+    isLoading.mockReturnValue(false);
+    showRecordingPill('agent');
+
+    expect(BrowserWindow).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('recording:pill-show');
+    expect(send).toHaveBeenCalledWith('recording:mode-changed', 'agent');
+    expect(once).not.toHaveBeenCalledWith('ready-to-show', expect.any(Function));
+  });
+
   it('creates the recording pill for the active intent and reuses it while alive', async () => {
     const { createRecordingPillWindow, showRecordingPill } = await import(`../recording-pill?test=${Date.now()}-3`);
 

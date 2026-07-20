@@ -34,6 +34,16 @@ export function createRecordingPillWindow(intent: RecordingIntent = 'dictation')
   return pillWindow.create();
 }
 
+/**
+ * Start loading the hidden recording renderer during app startup so the first
+ * recording never waits for BrowserWindow/React initialization.
+ */
+export function prepareRecordingPillWindow(): BrowserWindow {
+  const win = createRecordingPillWindow('dictation');
+  positionPillWindow(win);
+  return win;
+}
+
 export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
   if (pendingHideTimeout) {
     clearTimeout(pendingHideTimeout);
@@ -64,6 +74,13 @@ export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
     win.once('ready-to-show', showAndSend);
   } else {
     showAndSend();
+  }
+}
+
+export function updateRecordingDurationWarning(remainingSeconds: number | null): void {
+  const win = pillWindow.get();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('recording:duration-warning', remainingSeconds);
   }
 }
 

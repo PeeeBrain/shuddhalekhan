@@ -32,6 +32,17 @@ installElectronMock();
 
 const config: AppConfig = {
   whisperUrl: 'http://localhost:8080/inference',
+  transcription: {
+    activeProvider: 'local-whisper-cpp',
+    providers: {
+      localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+      openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      azureSpeech: { endpoint: '', region: '' },
+      googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+      nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
+      customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    },
+  },
   selectedDeviceId: null,
   removeFillerWords: true,
   language: 'auto',
@@ -39,6 +50,11 @@ const config: AppConfig = {
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
+  recordingActivationMode: 'push-to-talk',
+  shortcuts: {
+    dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+    agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+  },
   agent: {
     enabled: true,
     provider: {
@@ -88,6 +104,19 @@ describe('AgentSidecarManager', () => {
 
     stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));
     expect(events).toEqual([{ type: 'sidecar:ready', protocolVersion: 1 }]);
+  });
+
+  it('delivers a stored API key only in the main-to-sidecar config update', async () => {
+    const { AgentSidecarManager } = await import(`../agent-sidecar?test=${Date.now()}-stored-key`);
+    const manager = new AgentSidecarManager(() => undefined);
+
+    manager.startRun('run-1', 'check mail', config, 'stored-agent-secret');
+
+    expect(JSON.parse(stdinWrite.mock.calls[0]?.[0] as string)).toEqual({
+      type: 'config:update',
+      config,
+      agentApiKey: 'stored-agent-secret',
+    });
   });
 
   it('runs the packaged sidecar under Electron node mode instead of launching another app instance', async () => {

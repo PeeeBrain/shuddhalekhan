@@ -286,6 +286,7 @@ export async function runAgent(
   tools: Record<string, Tool>,
   signal: AbortSignal,
   callbacks: AgentRuntimeCallbacks,
+  storedApiKey?: string,
 ): Promise<void> {
   try {
     callbacks.onAudit?.("run_started", {
@@ -303,7 +304,13 @@ export async function runAgent(
     }
 
     let apiKey = "shuddhalekhan-local-provider";
-    if (requiresApiKey(provider.baseUrl)) {
+    if (provider.apiKeySource === 'stored') {
+      if (!storedApiKey) {
+        callbacks.onFailed('The saved API key is unavailable. Replace it in Settings or use an environment variable.');
+        return;
+      }
+      apiKey = storedApiKey;
+    } else if (requiresApiKey(provider.baseUrl)) {
       if (!provider.apiKeyEnvVar) {
         callbacks.onFailed(
           "Agent provider configuration is incomplete. Remote providers require an API key environment variable in Settings.",

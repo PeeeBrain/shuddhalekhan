@@ -50,7 +50,18 @@ describe('config store', () => {
     existsSync.mockReturnValue(false);
     const { getConfig } = await import(`../config?test=${Date.now()}-1`);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig().transcription).toEqual({
+      activeProvider: 'local-whisper-cpp',
+      providers: {
+        localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        azureSpeech: { endpoint: '', region: '' },
+        googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+        nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
+        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+      },
+    });
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,
@@ -59,6 +70,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -72,6 +84,21 @@ describe('config store', () => {
     });
   });
 
+  it('defaults recording activation to push-to-talk', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig } = await import(`../config?test=${Date.now()}-activation-default`);
+
+    expect(getConfig().recordingActivationMode).toBe('push-to-talk');
+  });
+
+  it('falls back to push-to-talk for an invalid stored activation mode', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig } = await import(`../config?test=${Date.now()}-activation-invalid`);
+    storeData.set('recordingActivationMode', 'unsupported');
+
+    expect(getConfig().recordingActivationMode).toBe('push-to-talk');
+  });
+
   it('sets typed config values', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-2`);
@@ -79,7 +106,7 @@ describe('config store', () => {
     setConfig('selectedDeviceId', 'usb-mic');
     setConfig('removeFillerWords', false);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: 'usb-mic',
       removeFillerWords: false,
@@ -88,6 +115,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -98,6 +126,73 @@ describe('config store', () => {
         },
         mcpServers: [],
       },
+    });
+  });
+
+  it('migrates an existing whisperUrl into the active local provider without setup', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('whisperUrl', 'http://existing.test/inference');
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-provider-migration`);
+
+    expect(getConfig().transcription).toEqual({
+      activeProvider: 'local-whisper-cpp',
+      providers: {
+        localWhisperCpp: { endpoint: 'http://existing.test/inference' },
+        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        azureSpeech: { endpoint: '', region: '' },
+        googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+        nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
+        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+      },
+    });
+  });
+
+  it('retains local provider settings in the provider-specific configuration', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-provider-retention`);
+
+    setConfig('transcription', {
+      activeProvider: 'local-whisper-cpp',
+      providers: {
+        localWhisperCpp: { endpoint: 'https://private.test/inference' },
+        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        azureSpeech: { endpoint: '', region: '' },
+        googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+        nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
+        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+      },
+    });
+
+    expect(getConfig().transcription.providers.localWhisperCpp.endpoint).toBe(
+      'https://private.test/inference',
+    );
+  });
+
+  it('retains inactive Microsoft Azure Speech configuration', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-azure-retention`);
+    const transcription = getConfig().transcription;
+
+    setConfig('transcription', {
+      ...transcription,
+      activeProvider: 'azure-speech',
+      providers: {
+        ...transcription.providers,
+        azureSpeech: {
+          endpoint: 'https://speech-resource.cognitiveservices.azure.com',
+          region: 'centralindia',
+        },
+      },
+    });
+    setConfig('transcription', {
+      ...getConfig().transcription,
+      activeProvider: 'local-whisper-cpp',
+    });
+
+    expect(getConfig().transcription.providers.azureSpeech).toEqual({
+      endpoint: 'https://speech-resource.cognitiveservices.azure.com',
+      region: 'centralindia',
     });
   });
 
@@ -111,7 +206,7 @@ describe('config store', () => {
 
     const { getConfig } = await import(`../config?test=${Date.now()}-3`);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://legacy.test/inference',
       selectedDeviceId: 'legacy-mic',
       removeFillerWords: false,
@@ -120,6 +215,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -141,7 +237,7 @@ describe('config store', () => {
 
     const { getConfig } = await import(`../config?test=${Date.now()}-4`);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,
@@ -150,6 +246,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -301,5 +398,112 @@ describe('config store', () => {
     } as never);
 
     expect(getConfig().agent.provider.thinkingEnabled).toBe(true);
+  });
+
+  it('defaults to the explicit Ctrl+Win and Alt+Win bindings', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-defaults`);
+
+    expect(getConfig().shortcuts).toEqual({
+      dictation: {
+        binding: { keyCode: null, modifiers: ['ctrl', 'win'] },
+        activationMode: 'push-to-talk',
+      },
+      agent: {
+        binding: { keyCode: null, modifiers: ['alt', 'win'] },
+        activationMode: 'push-to-talk',
+      },
+    });
+  });
+
+  it('seeds both intent activation modes from the shared mode during migration', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('recordingActivationMode', 'toggle');
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-migration`);
+
+    expect(getConfig().shortcuts.dictation.activationMode).toBe('toggle');
+    expect(getConfig().shortcuts.agent.activationMode).toBe('toggle');
+    expect(getConfig().shortcuts.dictation.binding).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
+    expect(getConfig().shortcuts.agent.binding).toEqual({ keyCode: null, modifiers: ['alt', 'win'] });
+  });
+
+  it('keeps shortcut migration idempotent across repeated startups', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('recordingActivationMode', 'toggle');
+
+    const first = await import(`../config?test=${Date.now()}-shortcut-idempotent-a`);
+    first.setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x52, modifiers: [] }, activationMode: 'push-to-talk' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    });
+
+    storeData.set('recordingActivationMode', 'push-to-talk');
+    const second = await import(`../config?test=${Date.now()}-shortcut-idempotent-b`);
+
+    expect(second.getConfig().shortcuts.dictation).toEqual({
+      binding: { keyCode: 0x52, modifiers: [] },
+      activationMode: 'push-to-talk',
+    });
+    expect(second.getConfig().shortcuts.agent.binding).toBeNull();
+  });
+
+  it('sanitizes invalid stored shortcut values', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('shortcutsMigrated', true);
+    storeData.set('shortcuts', {
+      dictation: { binding: { keyCode: 0xff, modifiers: ['win', 'ctrl', 'bogus'] }, activationMode: 'unsupported' },
+      agent: { binding: null, activationMode: 'toggle' },
+    });
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-sanitize`);
+
+    expect(getConfig().shortcuts.dictation).toEqual({
+      binding: { keyCode: null, modifiers: ['ctrl', 'win'] },
+      activationMode: 'push-to-talk',
+    });
+    expect(getConfig().shortcuts.agent).toEqual({ binding: null, activationMode: 'toggle' });
+  });
+
+  it('rejects identical Dictation and Agent Mode bindings as ambiguous', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-shortcut-conflict`);
+
+    expect(() => setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x52, modifiers: ['ctrl'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: 0x52, modifiers: ['ctrl'] }, activationMode: 'toggle' },
+    })).toThrow();
+
+    expect(getConfig().shortcuts.dictation.binding).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
+  });
+
+  it('rejects reserved and unhookable bindings', async () => {
+    existsSync.mockReturnValue(false);
+    const { setConfig } = await import(`../config?test=${Date.now()}-shortcut-reserved`);
+
+    expect(() => setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x1b, modifiers: [] }, activationMode: 'push-to-talk' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    })).toThrow();
+
+    expect(() => setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x2e, modifiers: ['ctrl', 'alt'] }, activationMode: 'push-to-talk' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    })).toThrow();
+  });
+
+  it('persists disruptive but capturable bindings and unassigned intents', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-shortcut-persist`);
+
+    setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x52, modifiers: [] }, activationMode: 'toggle' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    });
+
+    expect(getConfig().shortcuts).toEqual({
+      dictation: { binding: { keyCode: 0x52, modifiers: [] }, activationMode: 'toggle' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    });
   });
 });

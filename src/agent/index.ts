@@ -14,6 +14,7 @@ import {
 } from './mcp-registry-adapters';
 
 let config: AppConfig | null = null;
+let agentApiKey: string | undefined;
 let activeAgentRunId: string | null = null;
 let activeAbortController: AbortController | null = null;
 let pendingApproval: PendingApproval | null = null;
@@ -71,6 +72,7 @@ function handleLine(line: string): void {
   switch (message.type) {
     case 'config:update':
       config = message.config;
+      agentApiKey = message.agentApiKey;
       logSidecar('received config update');
       configUpdateQueue = configUpdateQueue.then(() => mcpRegistry.updateConfig(message.config));
       break;
@@ -101,6 +103,7 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
   activeAbortController = new AbortController();
 
   const currentConfig = config;
+  const currentAgentApiKey = agentApiKey;
   if (!currentConfig) {
     writeJsonLine({ type: 'agent:failed', agentRunId, error: 'No config available' });
     activeAgentRunId = null;
@@ -155,7 +158,7 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
         },
         requestToolApproval: (request) => requestToolApproval(agentRunId, request),
         onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
-      });
+      }, currentAgentApiKey);
     } finally {
       await toolSnapshot.close();
     }

@@ -45,10 +45,11 @@ describe('settings window', () => {
     readyToShow();
 
     expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({
-      width: 960,
-      height: 680,
+      width: 1040,
+      height: 720,
       minWidth: 820,
       minHeight: 560,
+      resizable: true,
       show: false,
       title: 'Shuddhalekhan Settings',
       backgroundColor: '#0f1115',

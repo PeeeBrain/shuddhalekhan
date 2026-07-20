@@ -2,10 +2,22 @@ import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
 import { cleanFillerWords, transcribe } from '../whisper';
+import { TranscriptionFailure } from '../transcription';
 import type { AppConfig } from '../../types/ipc';
 
 const config: AppConfig = {
   whisperUrl: 'http://whisper.test/inference',
+  transcription: {
+    activeProvider: 'local-whisper-cpp',
+    providers: {
+      localWhisperCpp: { endpoint: 'http://whisper.test/inference' },
+      openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      azureSpeech: { endpoint: '', region: '' },
+      googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+      nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
+      customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    },
+  },
   selectedDeviceId: null,
   removeFillerWords: true,
   language: 'auto',
@@ -13,6 +25,11 @@ const config: AppConfig = {
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
+  recordingActivationMode: 'push-to-talk',
+  shortcuts: {
+    dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+    agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+  },
   agent: {
     enabled: false,
     provider: {
@@ -76,27 +93,43 @@ describe('transcribe', () => {
     expect(body.has('prompt')).toBe(false);
   });
 
-  it('throws a useful error when Whisper returns a non-2xx response', async () => {
+  it('normalizes HTTP failures without exposing response material', async () => {
     (fetch as unknown as ReturnType<typeof mock>).mockResolvedValue({
       ok: false,
-      status: 503,
-      text: async () => 'model unavailable',
+      status: 401,
+      text: async () => 'api_key=super-secret',
     } as Response);
 
-    await expect(transcribe(new Uint8Array([1]), config)).rejects.toThrow(
-      'Whisper API error: 503 - model unavailable'
-    );
+    const rejection = transcribe(new Uint8Array([1]), config).catch((error) => error);
+    await expect(rejection).resolves.toEqual(expect.objectContaining({
+      name: 'TranscriptionFailure',
+      category: 'authentication',
+      status: 401,
+      message: 'The transcription provider rejected authentication.',
+    }));
+    expect((await rejection).message).not.toContain('super-secret');
   });
 
-  it('returns an empty string for malformed successful responses', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  it('normalizes network, rate-limit, endpoint, model, and unknown failures', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof mock>;
+    fetchMock.mockRejectedValueOnce(new Error('connect ECONNREFUSED token=secret'));
+    await expect(transcribe(new Uint8Array([1]), config)).rejects.toMatchObject({ category: 'network' });
+
+    for (const [status, category] of [[429, 'rate-limit'], [404, 'endpoint'], [422, 'model'], [503, 'unknown']] as const) {
+      fetchMock.mockResolvedValueOnce({ ok: false, status, text: async () => 'sensitive body' } as Response);
+      await expect(transcribe(new Uint8Array([1]), config)).rejects.toMatchObject({ category });
+    }
+  });
+
+  it('rejects malformed successful responses with a normalized failure', async () => {
     (fetch as unknown as ReturnType<typeof mock>).mockResolvedValue({
       ok: true,
-      json: async () => ({ result: 'missing text' }),
+      json: async () => ({ result: 'missing text', secret: 'do-not-log' }),
     } as Response);
 
-    await expect(transcribe(new Uint8Array([1]), config)).resolves.toBe('');
-    expect(warn).toHaveBeenCalledWith('Whisper response did not include text:', { result: 'missing text' });
+    await expect(transcribe(new Uint8Array([1]), config)).rejects.toEqual(
+      new TranscriptionFailure('malformed-response', 'The transcription provider returned an invalid response.'),
+    );
   });
 
   it('appends language and whisper.cpp translate form fields when configured', async () => {

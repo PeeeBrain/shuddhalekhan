@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { RecordingIntent } from '../../types/ipc';
+import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
+import type { Transcriber } from '../transcription';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
 import type { RecordingSession, AudioCapture } from '../recording-session';
 
@@ -11,11 +12,28 @@ mock.module('../native/keyboard', () => ({
   keyboardHook: { start: vi.fn(), stop: vi.fn() },
 }));
 const getRecordingPillWindowMock = vi.fn();
+const prepareRecordingPillWindowMock = vi.fn();
 mock.module('../recording-pill', () => ({
   showRecordingPill: vi.fn(),
   hideRecordingPill: vi.fn(),
   getRecordingPillWindow: getRecordingPillWindowMock,
+  prepareRecordingPillWindow: prepareRecordingPillWindowMock,
+  updateRecordingDurationWarning: vi.fn(),
 }));
+
+function createTranscriber(transcribe: Transcriber['transcribe']): Transcriber {
+  return {
+    id: 'local-whisper-cpp',
+    capabilities: {
+      translation: true,
+      automaticLanguageDetection: true,
+      dictionaryHints: true,
+      authentication: 'none',
+      maxDurationSeconds: null,
+    },
+    transcribe,
+  };
+}
 
 function createAudioCaptureMock(): AudioCapture & {
   [K in keyof AudioCapture]: ReturnType<typeof vi.fn>;
@@ -42,6 +60,7 @@ describe('RecordingSession', () => {
   let keyboardStop: ReturnType<typeof vi.fn>;
   let captureTarget: ReturnType<typeof vi.fn>;
   let isAgentModeEnabled: ReturnType<typeof vi.fn>;
+  let getRecordingActivationMode: ReturnType<typeof vi.fn>;
   let session: RecordingSession;
 
   afterAll(() => {
@@ -50,6 +69,7 @@ describe('RecordingSession', () => {
 
   beforeEach(async () => {
     resetElectronMock();
+    prepareRecordingPillWindowMock.mockClear();
     ({ RecordingSession: RecordingSessionCtor } = await import(`../recording-session?test=${Date.now()}-${Math.random()}`));
     audioStream = createAudioCaptureMock();
     showRecordingPill = vi.fn();
@@ -66,17 +86,19 @@ describe('RecordingSession', () => {
       capturedAt: new Date().toISOString(),
     }));
     isAgentModeEnabled = vi.fn(() => false);
+    getRecordingActivationMode = vi.fn(() => 'toggle' satisfies RecordingActivationMode);
     session = new RecordingSessionCtor({
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: transcribe,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
       },
       captureTarget,
       isAgentModeEnabled,
+      getRecordingActivationMode,
     });
   });
 
@@ -87,6 +109,79 @@ describe('RecordingSession', () => {
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
     expect(showRecordingPill).toHaveBeenCalledWith('dictation');
     expect(session.isActive()).toBe(true);
+  });
+
+  it('prevents keyboard-triggered recording when the active provider is not ready', () => {
+    const readinessError = new Error('OpenAI model is not configured.');
+    const onError = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      getReadinessError: () => readinessError,
+      onError,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.start();
+    const options = keyboardStart.mock.calls[0]?.[0] as {
+      onStart: (intent: RecordingIntent) => void;
+    };
+    options.onStart('agent');
+
+    expect(onError).toHaveBeenCalledWith(readinessError);
+    expect(audioStream.beginCapture).not.toHaveBeenCalled();
+    expect(showRecordingPill).not.toHaveBeenCalled();
+    expect(session.isActive()).toBe(false);
+  });
+
+  it('submits completed audio and recognition settings through the provider-neutral transcriber', async () => {
+    const providerTranscriber: Transcriber = {
+      id: 'local-whisper-cpp',
+      capabilities: {
+        translation: true,
+        automaticLanguageDetection: true,
+        dictionaryHints: true,
+        authentication: 'none',
+        maxDurationSeconds: null,
+      },
+      transcribe: vi.fn(async () => 'provider text'),
+    };
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: providerTranscriber,
+      getRecognitionSettings: () => ({
+        language: 'mr',
+        task: 'translate',
+        dictionary: ['Shuddhalekhan'],
+        removeFillerWords: true,
+      }),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation');
+    const resultPromise = session.end();
+    const audio = new Uint8Array(64).fill(7);
+    await session.complete(audio);
+
+    await expect(resultPromise).resolves.toMatchObject({ text: 'provider text', intent: 'dictation' });
+    expect(providerTranscriber.transcribe).toHaveBeenCalledWith({
+      audio: expect.any(Uint8Array),
+      recognition: {
+        language: 'mr',
+        task: 'translate',
+        dictionary: ['Shuddhalekhan'],
+        removeFillerWords: true,
+      },
+    });
+    expect(audio.every((byte) => byte === 0)).toBe(true);
   });
 
   it('ends recording and resolves with transcribed text and original intent', async () => {
@@ -161,19 +256,65 @@ describe('RecordingSession', () => {
     const onResult = vi.fn();
 
     session.startKeyboardHook(onResult);
-    const [onStart, onStop, enabled] = keyboardStart.mock.calls[0] as [
-      (intent: RecordingIntent) => void,
-      () => void,
-      () => boolean,
+    const options = keyboardStart.mock.calls[0] as unknown as [
+      {
+        onStart: (intent: RecordingIntent) => void;
+        onStop: () => void;
+        isAgentModeEnabled: () => boolean;
+        getBinding: (intent: RecordingIntent) => unknown;
+        getActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
+      },
     ];
+    const { onStart, onStop, isAgentModeEnabled: enabled, getBinding, getActivationMode } = options[0];
 
     expect(enabled()).toBe(false);
+    expect(getActivationMode('dictation')).toBe('toggle');
+    expect(getBinding('dictation')).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
+    expect(getBinding('agent')).toEqual({ keyCode: null, modifiers: ['alt', 'win'] });
     onStart('agent');
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
     onStop();
     session.stopKeyboardHook();
 
     expect(keyboardStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes configured per-intent bindings and activation modes to the keyboard hook', () => {
+    const getShortcutBinding = vi.fn((intent: RecordingIntent) =>
+      intent === 'dictation' ? { keyCode: 0x52, modifiers: [] } : null);
+    const getMode = vi.fn((intent: RecordingIntent) =>
+      (intent === 'dictation' ? 'toggle' : 'push-to-talk') as RecordingActivationMode);
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      getShortcutBinding,
+      getRecordingActivationMode: getMode,
+    });
+
+    session.startKeyboardHook();
+    const options = keyboardStart.mock.calls[0] as unknown as [
+      {
+        getBinding: (intent: RecordingIntent) => unknown;
+        getActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
+      },
+    ];
+
+    expect(options[0].getBinding('dictation')).toEqual({ keyCode: 0x52, modifiers: [] });
+    expect(options[0].getBinding('agent')).toBeNull();
+    expect(options[0].getActivationMode('dictation')).toBe('toggle');
+    expect(options[0].getActivationMode('agent')).toBe('push-to-talk');
+  });
+
+  it('prewarms the hidden recording pill renderer during startup', () => {
+    session.start();
+
+    expect(prepareRecordingPillWindowMock).toHaveBeenCalledTimes(1);
+    expect(keyboardStart).toHaveBeenCalledTimes(1);
   });
 
   it('registers IPC listeners on start() and unregisters them on stop()', () => {
@@ -223,7 +364,7 @@ describe('RecordingSession', () => {
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: transcribe,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
@@ -263,7 +404,7 @@ describe('RecordingSession', () => {
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: failingTranscribe,
+      transcriber: createTranscriber(({ audio }) => failingTranscribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
@@ -281,12 +422,64 @@ describe('RecordingSession', () => {
 
     const endPromise = session.end();
     
-    const fakeAudioData = new Uint8Array(64);
+    const fakeAudioData = new Uint8Array(64).fill(9);
     await listener({}, fakeAudioData.buffer);
 
     await expect(endPromise).rejects.toThrow('Whisper offline');
+    expect(fakeAudioData.every((byte) => byte === 0)).toBe(true);
     expect(onResult).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('warns for the final ten seconds and auto-stops a duration-limited provider exactly once', async () => {
+    const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
+    const updateDurationWarning = vi.fn();
+    const recordingEndedExternally = vi.fn();
+    const limitedTranscriber: Transcriber = {
+      ...createTranscriber(async () => 'limited result'),
+      id: 'google-cloud-speech-v2',
+      capabilities: {
+        translation: false,
+        automaticLanguageDetection: false,
+        dictionaryHints: true,
+        authentication: 'required',
+        maxDurationSeconds: 55,
+      },
+    };
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      updateDurationWarning,
+      transcriber: limitedTranscriber,
+      setTimeoutFn: ((callback: () => void, delay: number) => {
+        timers.push({ callback, delay, cleared: false });
+        return timers.length - 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout,
+      clearTimeoutFn: ((id: number) => { if (timers[id]) timers[id].cleared = true; }) as typeof clearTimeout,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop, recordingEndedExternally },
+      captureTarget,
+      isAgentModeEnabled,
+      getRecordingActivationMode,
+    });
+
+    session.begin('dictation');
+    expect(timers.map((timer) => timer.delay)).toEqual([
+      45000, 46000, 47000, 48000, 49000, 50000, 51000, 52000, 53000, 54000, 55000,
+    ]);
+    timers.find((timer) => timer.delay === 45000)?.callback();
+    expect(updateDurationWarning).toHaveBeenCalledWith(10);
+    timers.find((timer) => timer.delay === 54000)?.callback();
+    expect(updateDurationWarning).toHaveBeenCalledWith(1);
+    timers.find((timer) => timer.delay === 55000)?.callback();
+    timers.find((timer) => timer.delay === 55000)?.callback();
+
+    expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
+    expect(recordingEndedExternally).toHaveBeenCalledTimes(1);
+    expect(hideRecordingPill).toHaveBeenCalledTimes(1);
+    expect(session.isActive()).toBe(false);
+    session.begin('agent');
+    expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
   });
 
   it('does not double-invoke onResult when triggered via keyboard hook', async () => {
@@ -295,7 +488,7 @@ describe('RecordingSession', () => {
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: transcribe,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
@@ -306,7 +499,7 @@ describe('RecordingSession', () => {
     session.begin('dictation');
 
     // Trigger keyboard-stop callback
-    const onStop = keyboardStart.mock.calls[0][1] as () => void;
+    const onStop = (keyboardStart.mock.calls[0][0] as { onStop: () => void }).onStop;
     onStop();
 
     // Trigger audio-data-ready
