@@ -7,6 +7,12 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Settings Redesign
+- Reorganized Settings into Dictation, Agent, and System groups, with Transcription as the initial destination.
+- Added a darker content canvas, cohesive settings controls, accessible vertical navigation, and restrained status tags across MCP and History.
+- Text fields now save on blur while toggles and selections save immediately; successful saves use a brief in-window notification and failures remain inline.
+- Increased the default Settings window to 1040x720 while preserving the 820x560 minimum size.
+
 ### Recording Controls
 - Added an Audio setting to choose between push-to-talk and press-once toggle recording while keeping existing hotkeys unchanged.
 

@@ -9,8 +9,8 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { SectionHeader } from './ui/SectionHeader';
+import { Tag } from './ui/rows';
 import {
   Select,
   SelectContent,
@@ -32,11 +32,13 @@ export function McpSettings({
   statuses,
   onChange,
   onTest,
+  saveError,
 }: {
   servers: McpServerConfig[];
   statuses: Record<string, McpServerRuntimeStatus>;
   onChange: (servers: McpServerConfig[]) => void;
   onTest: (serverId: string) => void;
+  saveError?: string;
 }) {
   const [draft, setDraft] = useState<McpServerConfig>(() => createBlankMcpServer());
   const [editingServerId, setEditingServerId] = useState<string | null>(null);
@@ -62,13 +64,30 @@ export function McpSettings({
   };
 
   return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[0.9fr_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}</CardTitle>
-          <CardDescription>Configure one server, save it, then test discovery from the configured list.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+    <div className="space-y-6">
+      <SectionHeader
+        title="MCP Servers"
+        description="Connect Agent Mode to local or remote Model Context Protocol servers."
+      />
+      {saveError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {saveError}
+        </p>
+      ) : null}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[0.9fr_1fr]">
+        <section
+          aria-label={editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}
+          className="rounded-lg bg-card px-6 py-5"
+        >
+          <div className="mb-5">
+            <h3 className="text-base font-semibold">
+              {editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}
+            </h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Configure one server, save it, then test discovery from the configured list.
+            </p>
+          </div>
+          <div className="space-y-4">
           <McpServerForm server={draft} onChange={setDraft} />
 
           <div className="flex flex-wrap justify-end gap-2 pt-2">
@@ -89,13 +108,13 @@ export function McpSettings({
               {editingServerId ? 'Save Changes' : 'Save Server'}
             </Button>
           </div>
-        </CardContent>
-      </Card>
+          </div>
+        </section>
 
-      <div className="space-y-4">
+        <section className="space-y-4" aria-labelledby="configured-mcp-heading">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-base font-semibold">Configured MCPs</h3>
+            <h3 id="configured-mcp-heading" className="text-base font-semibold">Configured MCPs</h3>
             <p className="mt-1 text-xs text-muted-foreground">
               {servers.length === 0 ? 'No MCP servers configured.' : `${servers.length} server${servers.length === 1 ? '' : 's'} configured.`}
             </p>
@@ -124,6 +143,7 @@ export function McpSettings({
             ))}
           </div>
         )}
+        </section>
       </div>
 
       <ConfirmDialog
@@ -155,6 +175,7 @@ function McpServerForm({
       <div className="space-y-2">
         <Label className="text-xs font-semibold text-muted-foreground">Name</Label>
         <Input
+          aria-label="Name"
           value={server.displayName}
           onChange={(event) => onChange({ ...server, displayName: event.target.value })}
         />
@@ -184,7 +205,7 @@ function McpServerForm({
               });
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger aria-label="Transport">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -199,6 +220,7 @@ function McpServerForm({
             <div className="col-span-full space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground">URL</Label>
               <Input
+                aria-label="URL"
                 value={transport.url}
                 placeholder="http://localhost:3000/mcp"
                 onChange={(event) => onChange({ ...server, transport: { ...transport, url: event.target.value } })}
@@ -228,6 +250,7 @@ function McpServerForm({
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground">Command</Label>
               <Input
+                aria-label="Command"
                 value={transport.command}
                 placeholder="bun"
                 onChange={(event) => onChange({ ...server, transport: { ...transport, command: event.target.value } })}
@@ -236,6 +259,7 @@ function McpServerForm({
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground">Arguments</Label>
               <Input
+                aria-label="Arguments"
                 value={transport.args.join(' ')}
                 placeholder="run path/to/server.ts"
                 onChange={(event) => onChange({ ...server, transport: { ...transport, args: splitList(event.target.value) } })}
@@ -244,6 +268,7 @@ function McpServerForm({
             <div className="col-span-full space-y-2">
               <Label className="text-xs font-semibold text-muted-foreground">Environment variable names</Label>
               <Input
+                aria-label="Environment variable names"
                 value={transport.envVarNames.join(', ')}
                 placeholder="GITHUB_TOKEN, MY_API_KEY"
                 onChange={(event) => onChange({ ...server, transport: { ...transport, envVarNames: splitCommaList(event.target.value) } })}
@@ -274,36 +299,32 @@ function ConfiguredMcpServer({
   onPolicyChange: (server: McpServerConfig) => void;
 }) {
   return (
-    <Card>
-      <CardContent className="space-y-3 pt-6">
+    <article className="space-y-3 rounded-lg bg-card px-5 py-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-sm font-semibold break-words">{server.displayName || 'Unnamed MCP Server'}</p>
             <p className="mt-0.5 text-xs text-muted-foreground break-words">{formatTransport(server)}</p>
           </div>
-          <Badge
-            variant="outline"
-            className={
-              status?.status === 'connected'
-                ? 'border-success/40 text-success'
-                : status?.status === 'connecting'
-                  ? 'border-primary/40 text-primary'
-                  : status?.status === 'failed'
-                    ? 'border-destructive/40 text-destructive'
-                    : ''
-            }
-          >
+          <Tag tone={
+            status?.status === 'connected'
+              ? 'success'
+              : status?.status === 'connecting'
+                ? 'info'
+                : status?.status === 'failed'
+                  ? 'error'
+                  : 'neutral'
+          }>
             {status?.status ?? 'not tested'}
-          </Badge>
+          </Tag>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Badge variant="secondary" className="text-xs">
+          <Tag tone={server.enabled ? 'agent' : 'neutral'}>
             {server.enabled ? 'Enabled for Agent Mode' : 'Disabled'}
-          </Badge>
-          <Badge variant="secondary" className="text-xs">
+          </Tag>
+          <Tag>
             {server.discoveredTools.length} tool{server.discoveredTools.length === 1 ? '' : 's'}
-          </Badge>
+          </Tag>
         </div>
 
         {status?.message ? <p className="text-xs text-destructive break-words">{status.message}</p> : null}
@@ -321,8 +342,7 @@ function ConfiguredMcpServer({
             Remove
           </Button>
         </div>
-      </CardContent>
-    </Card>
+    </article>
   );
 }
 
@@ -364,7 +384,7 @@ function ToolPolicyEditor({
                   });
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger aria-label={`Approval policy for ${tool.name}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

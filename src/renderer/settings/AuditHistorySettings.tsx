@@ -3,8 +3,8 @@ import type { SettingsIpc } from './settings-ipc';
 import type { AuditRunSummary, AuditEventDetail } from '../../types/ipc';
 import { renderMarkdown } from '../markdown';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tag } from './ui/rows';
 import {
   Play,
   CheckCircle2,
@@ -174,6 +174,7 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
           <Button
             variant="ghost"
             size="icon"
+            aria-label="Refresh agent history"
             onClick={fetchRuns}
             disabled={isPending}
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
@@ -197,10 +198,10 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                     aria-selected={isActive}
                     tabIndex={isActive ? 0 : -1}
                     onClick={() => selectRun(run.agentRunId)}
-                    className={`p-3 rounded-lg border text-left cursor-pointer transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+                    className={`cursor-pointer rounded-md border-l-2 px-3 py-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                       isActive
-                        ? 'bg-secondary/40 border-primary/50 shadow-sm'
-                        : 'bg-background hover:bg-muted/30 border-border/60 hover:border-border'
+                        ? 'border-l-primary bg-secondary/40'
+                        : 'border-l-transparent bg-transparent hover:bg-muted/30'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -352,42 +353,38 @@ function StatusBadge({
   status: AuditRunSummary['status'];
   size?: 'sm' | 'lg';
 }) {
-  const isLg = size === 'lg';
-  const baseClass = isLg ? 'px-2.5 py-0.5 text-xs' : 'px-1.5 py-0 text-[10px]';
+  const className = size === 'lg' ? 'text-xs' : 'text-[10px]';
 
   switch (status) {
     case 'completed':
       return (
-        <Badge variant="outline" className={`${baseClass} border-emerald-500/30 bg-emerald-500/10 text-emerald-500`}>
+        <Tag tone="success" className={className}>
           Completed
-        </Badge>
+        </Tag>
       );
     case 'failed':
       return (
-        <Badge variant="outline" className={`${baseClass} border-destructive/30 bg-destructive/10 text-destructive`}>
+        <Tag tone="error" className={className}>
           Failed
-        </Badge>
+        </Tag>
       );
     case 'cancelled':
       return (
-        <Badge variant="outline" className={`${baseClass} border-muted-foreground/30 bg-muted/20 text-muted-foreground`}>
+        <Tag tone="neutral" className={className}>
           Cancelled
-        </Badge>
+        </Tag>
       );
     case 'interrupted':
       return (
-        <Badge variant="outline" className={`${baseClass} border-amber-500/30 bg-amber-500/10 text-amber-500`}>
+        <Tag tone="warning" className={className}>
           Interrupted
-        </Badge>
+        </Tag>
       );
     case 'running':
       return (
-        <Badge
-          variant="outline"
-          className={`${baseClass} border-sky-500/30 bg-sky-500/10 text-sky-500 motion-safe:animate-pulse`}
-        >
+        <Tag tone="info" className={className}>
           Thinking
-        </Badge>
+        </Tag>
       );
     default:
       return null;
