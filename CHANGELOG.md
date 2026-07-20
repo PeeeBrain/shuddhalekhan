@@ -8,10 +8,15 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Transcription Providers
-- Added a provider-neutral batch transcription contract while keeping local whisper.cpp as the active default.
-- Existing Whisper endpoint settings migrate automatically into retained local-provider configuration.
-- Added capability-aware recognition validation, sanitized provider failure categories, and no-audio server checks.
-- Transcription failures now use a non-blocking notification with Settings and dismiss actions, and completed audio is discarded after every result.
+- Added OpenAI and Custom OpenAI-compatible batch transcription providers alongside local whisper.cpp.
+- OpenAI Cloud and authenticated custom providers use only local validation; reachability checks are limited to local whisper.cpp and auth=none custom endpoints.
+- Model names default to empty and never auto-fill; validation trims input, enforces length bounds, and rejects control characters while accepting punctuation and free-form slugs.
+- Custom OpenAI-compatible provider (ID `custom-open-ai-compatible`) includes required free-form model in config, UI, and multipart requests.
+- Translation routing uses `/audio/translations` for OpenAI API compatibility; translation support declared where supported.
+- Custom header names validated as legal HTTP field-name tokens before use.
+- Recording readiness validates endpoint, model, and credential before beginning; missing configuration shows a transcription-failed toast with Open Settings recovery.
+- Removed `temperature` parameter from OpenAI-compatible multipart requests.
+- Config migration preserves all inactive provider configs; legacy `whisperUrl` updates only the local provider without clobbering cloud settings.
 
 ### Credential Vault
 - Added Windows DPAPI-backed secure storage for Agent Mode API keys, with saved, replace, and remove controls in Settings.

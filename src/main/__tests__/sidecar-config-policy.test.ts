@@ -6,7 +6,11 @@ const baseConfig: AppConfig = {
   whisperUrl: 'http://localhost:8080/inference',
   transcription: {
     activeProvider: 'local-whisper-cpp',
-    providers: { localWhisperCpp: { endpoint: 'http://localhost:8080/inference' } },
+    providers: {
+      localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+      openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    },
   },
   selectedDeviceId: null,
   removeFillerWords: true,

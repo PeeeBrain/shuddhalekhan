@@ -157,12 +157,14 @@ export interface RecordingSessionOptions {
   getRecordingActivationMode?: () => RecordingActivationMode;
   getSelectedDeviceId?: () => string | null;
   getRecognitionSettings?: () => RecognitionSettings;
+  getReadinessError?: () => Error | null;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
   onError?: (error: Error) => void;
 
   audioCapture?: AudioCapture;
   keyboardHook?: KeyboardHook;
   transcriber?: Transcriber;
+  getTranscriber?: () => Transcriber;
   captureTarget?: () => DictationTargetSnapshot | null;
   showRecordingPill?: (intent: RecordingIntent) => void;
   hideRecordingPill?: () => void;
@@ -183,8 +185,9 @@ export class RecordingSession {
   private getRecordingActivationMode: () => RecordingActivationMode;
   private audioCapture: AudioCapture;
   private keyboardHook: KeyboardHook;
-  private transcriber: Transcriber;
+  private getTranscriber: () => Transcriber;
   private getRecognitionSettings: () => RecognitionSettings;
+  private getReadinessError: () => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
   private showRecordingPillFn: (intent: RecordingIntent) => void;
   private hideRecordingPillFn: () => void;
@@ -199,13 +202,15 @@ export class RecordingSession {
       (reason) => this.markAudioWindowCrashed(reason)
     );
     this.keyboardHook = options.keyboardHook ?? keyboardHook;
-    this.transcriber = options.transcriber ?? localWhisperCppTranscriber;
+    const defaultTranscriber = options.transcriber ?? localWhisperCppTranscriber;
+    this.getTranscriber = options.getTranscriber ?? (() => defaultTranscriber);
     this.getRecognitionSettings = options.getRecognitionSettings ?? (() => ({
       language: 'auto',
       task: 'transcribe',
       dictionary: [],
       removeFillerWords: false,
     }));
+    this.getReadinessError = options.getReadinessError ?? (() => null);
     this.captureTarget = options.captureTarget ?? captureForegroundTarget;
     this.showRecordingPillFn = options.showRecordingPill ?? showRecordingPill;
     this.hideRecordingPillFn = options.hideRecordingPill ?? hideRecordingPill;
@@ -216,6 +221,11 @@ export class RecordingSession {
 
   begin(intent: RecordingIntent = 'dictation'): void {
     if (this.activeIntent) return;
+    const readinessError = this.getReadinessError();
+    if (readinessError) {
+      this.onErrorCallback?.(readinessError);
+      return;
+    }
     this.activeIntent = intent;
     this.targetSnapshot = this.captureTarget();
 
@@ -282,7 +292,7 @@ export class RecordingSession {
     }
 
     try {
-      const text = await this.transcriber.transcribe({
+      const text = await this.getTranscriber().transcribe({
         audio: audioData,
         recognition: this.getRecognitionSettings(),
       });

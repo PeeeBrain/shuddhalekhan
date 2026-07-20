@@ -107,6 +107,31 @@ describe('RecordingSession', () => {
     expect(session.isActive()).toBe(true);
   });
 
+  it('prevents keyboard-triggered recording when the active provider is not ready', () => {
+    const readinessError = new Error('OpenAI model is not configured.');
+    const onError = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      getReadinessError: () => readinessError,
+      onError,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.start();
+    const onKeyboardStart = keyboardStart.mock.calls[0]?.[0] as (intent: RecordingIntent) => void;
+    onKeyboardStart('agent');
+
+    expect(onError).toHaveBeenCalledWith(readinessError);
+    expect(audioStream.beginCapture).not.toHaveBeenCalled();
+    expect(showRecordingPill).not.toHaveBeenCalled();
+    expect(session.isActive()).toBe(false);
+  });
+
   it('submits completed audio and recognition settings through the provider-neutral transcriber', async () => {
     const providerTranscriber: Transcriber = {
       id: 'local-whisper-cpp',

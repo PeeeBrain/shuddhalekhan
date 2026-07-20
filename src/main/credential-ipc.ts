@@ -10,6 +10,9 @@ const CREDENTIAL_KINDS: CredentialKind[] = [
   'transcription-api-key',
   'custom-secret-header',
   'google-service-account',
+  'openai-api-key',
+  'custom-open-ai-compatible-bearer',
+  'custom-open-ai-compatible-header',
 ];
 
 export function registerCredentialIpcHandlers(

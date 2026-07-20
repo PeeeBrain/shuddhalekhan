@@ -11,7 +11,13 @@ import { getAgentSidecarApiKey } from './agent-credential';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
 import { RecordingSession } from './recording-session';
-import { checkServerReachability, getSafeTranscriptionFailureMessage } from './transcription';
+import {
+  checkServerReachability,
+  getSafeTranscriptionFailureMessage,
+  TranscriptionFailure,
+  validateProviderReadiness,
+} from './transcription';
+import { getTranscriber } from './providers';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
@@ -45,6 +51,16 @@ const recordingSession = new RecordingSession({
       dictionary: config.dictionary,
       removeFillerWords: config.removeFillerWords,
     };
+  },
+  getTranscriber: () => getTranscriber(getConfig(), credentialVault),
+  getReadinessError: () => {
+    const config = getConfig();
+    const errors = validateProviderReadiness(
+      config.transcription.activeProvider,
+      config,
+      credentialVault,
+    );
+    return errors[0] ? new TranscriptionFailure('endpoint', errors[0]) : null;
   },
   onResult: routeRecordingResult,
   onError: showTranscriptionError,
@@ -187,8 +203,25 @@ ipcMain.handle('config:get', () => {
 
 ipcMain.handle('transcription:check-server', async () => {
   const config = getConfig();
-  if (config.transcription.activeProvider !== 'local-whisper-cpp') return false;
-  return checkServerReachability(config.transcription.providers.localWhisperCpp.endpoint);
+  const provider = config.transcription.activeProvider;
+
+  if (provider === 'local-whisper-cpp') {
+    return checkServerReachability(config.transcription.providers.localWhisperCpp.endpoint);
+  }
+
+  // OpenAI Cloud: local-only, zero fetches
+  if (provider === 'openai') {
+    return false;
+  }
+
+  // Custom with auth: local-only, zero fetches
+  if (provider === 'custom-open-ai-compatible') {
+    const { endpoint, auth } = config.transcription.providers.customOpenAiCompatible;
+    if (auth !== 'none') return false;
+    return checkServerReachability(endpoint);
+  }
+
+  return false;
 });
 
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {

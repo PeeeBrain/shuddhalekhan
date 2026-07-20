@@ -16,7 +16,10 @@ export type CredentialKind =
   | 'agent-api-key'
   | 'transcription-api-key'
   | 'custom-secret-header'
-  | 'google-service-account';
+  | 'google-service-account'
+  | 'openai-api-key'
+  | 'custom-open-ai-compatible-bearer'
+  | 'custom-open-ai-compatible-header';
 
 export type CredentialStatus =
   | { available: true; exists: boolean }
@@ -181,14 +184,30 @@ export interface PasteStrategyConfig {
   overrides: Record<string, PasteStrategy>;
 }
 
-export type TranscriptionProviderId = 'local-whisper-cpp';
+export type TranscriptionProviderId = 'local-whisper-cpp' | 'openai' | 'custom-open-ai-compatible';
+
+export interface LocalWhisperCppProviderConfig {
+  endpoint: string;
+}
+
+export interface OpenAiProviderConfig {
+  baseUrl: string;
+  model: string;
+}
+
+export interface CustomOpenAiProviderConfig {
+  endpoint: string;
+  model: string;
+  auth: 'none' | 'bearer' | 'header';
+  headerName: string;
+}
 
 export interface TranscriptionConfig {
   activeProvider: TranscriptionProviderId;
   providers: {
-    localWhisperCpp: {
-      endpoint: string;
-    };
+    localWhisperCpp: LocalWhisperCppProviderConfig;
+    openai: OpenAiProviderConfig;
+    customOpenAiCompatible: CustomOpenAiProviderConfig;
   };
 }
 

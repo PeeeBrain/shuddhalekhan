@@ -11,10 +11,14 @@ type StoreConfig = AppConfig & {
 };
 
 const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:8080/inference';
+const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+const DEFAULT_OPENAI_MODEL = '';
 const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
   activeProvider: 'local-whisper-cpp',
   providers: {
     localWhisperCpp: { endpoint: DEFAULT_LOCAL_ENDPOINT },
+    openai: { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+    customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
   },
 };
 
@@ -92,6 +96,8 @@ function maybeMigrateTranscriptionConfig(): void {
     activeProvider: 'local-whisper-cpp',
     providers: {
       localWhisperCpp: { endpoint },
+      openai: transcription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+      customOpenAiCompatible: transcription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
   });
   store.set('transcriptionMigrated', true);
@@ -111,9 +117,11 @@ export function getConfig(): AppConfig {
     || store.get('whisperUrl')
     || DEFAULT_LOCAL_ENDPOINT;
   const transcription: TranscriptionConfig = {
-    activeProvider: 'local-whisper-cpp',
+    activeProvider: storedTranscription?.activeProvider ?? 'local-whisper-cpp',
     providers: {
       localWhisperCpp: { endpoint: localEndpoint },
+      openai: storedTranscription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+      customOpenAiCompatible: storedTranscription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
   };
 
@@ -146,9 +154,15 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
   if (key === 'transcription') {
     store.set('whisperUrl', (value as TranscriptionConfig).providers.localWhisperCpp.endpoint);
   } else if (key === 'whisperUrl') {
+    // Preserve existing cloud provider configs; only update local
+    const existing = store.get('transcription');
     store.set('transcription', {
-      activeProvider: 'local-whisper-cpp',
-      providers: { localWhisperCpp: { endpoint: value as string } },
+      activeProvider: existing?.activeProvider ?? 'local-whisper-cpp',
+      providers: {
+        localWhisperCpp: { endpoint: value as string },
+        openai: existing?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+        customOpenAiCompatible: existing?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
+      },
     });
   }
 }

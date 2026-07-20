@@ -54,6 +54,8 @@ describe('config store', () => {
       activeProvider: 'local-whisper-cpp',
       providers: {
         localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
       },
     });
     expect(getConfig()).toMatchObject({
@@ -134,6 +136,8 @@ describe('config store', () => {
       activeProvider: 'local-whisper-cpp',
       providers: {
         localWhisperCpp: { endpoint: 'http://existing.test/inference' },
+        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
       },
     });
   });
@@ -144,7 +148,11 @@ describe('config store', () => {
 
     setConfig('transcription', {
       activeProvider: 'local-whisper-cpp',
-      providers: { localWhisperCpp: { endpoint: 'https://private.test/inference' } },
+      providers: {
+        localWhisperCpp: { endpoint: 'https://private.test/inference' },
+        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+      },
     });
 
     expect(getConfig().transcription.providers.localWhisperCpp.endpoint).toBe(

@@ -29,7 +29,11 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     whisperUrl: 'http://localhost:8080/inference',
     transcription: {
       activeProvider: 'local-whisper-cpp',
-      providers: { localWhisperCpp: { endpoint: 'http://localhost:8080/inference' } },
+      providers: {
+      localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+      openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    },
     },
     selectedDeviceId: AUDIO_DEVICES_PLACEHOLDER,
     removeFillerWords: true,
@@ -546,7 +550,11 @@ describe('Settings validation', () => {
         'transcription',
         {
           activeProvider: 'local-whisper-cpp',
-          providers: { localWhisperCpp: { endpoint: 'http://127.0.0.1:9090/inference' } },
+          providers: {
+            localWhisperCpp: { endpoint: 'http://127.0.0.1:9090/inference' },
+            openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+            customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+          },
         },
       );
     });
