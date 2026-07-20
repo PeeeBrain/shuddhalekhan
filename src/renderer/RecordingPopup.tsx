@@ -18,6 +18,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
   const [elapsed, setElapsed] = useState(0);
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const recordingStartRef = useRef<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -33,9 +34,11 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
     const removeLevel = window.electronAPI?.on('audio:level-changed', (l) => {
       targetLevelRef.current = l;
     });
+    const removeWarning = window.electronAPI?.on('recording:duration-warning', setRemainingSeconds);
     return () => {
       removeMode?.();
       removeLevel?.();
+      removeWarning?.();
     };
   }, []);
 
@@ -50,6 +53,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
     const removeShow = window.electronAPI?.on('recording:pill-show', () => {
       recordingStartRef.current = Date.now();
       setElapsed(0);
+      setRemainingSeconds(null);
       setPillState(reducedMotion ? 'visible' : 'entering');
     });
     const removeHide = window.electronAPI?.on('recording:pill-hide', () => {
@@ -128,14 +132,14 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
         }`}
         style={{ background: 'rgba(20, 20, 23, 0.96)' }}
         role="status"
-        aria-label={mode === 'agent' ? 'Agent mode recording in progress' : 'Dictation recording in progress'}
+        aria-label={`${mode === 'agent' ? 'Agent mode' : 'Dictation'} recording in progress${remainingSeconds === null ? '' : `. Recording stops in ${remainingSeconds} seconds`}`}
       >
         {mode === 'agent' ? (
           <Bot className="h-3.5 w-3.5 shrink-0 text-[#ff6a6a]" aria-hidden="true" />
         ) : (
           <Mic className="h-3.5 w-3.5 shrink-0 text-[#8592ff]" aria-hidden="true" />
         )}
-        <div className="flex h-8 items-center gap-1">
+        <div className={`h-8 items-center gap-1 ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
           {bars.map((_, index) => {
             const scale = computeBarScale(level, phase, index);
             return (
@@ -150,6 +154,11 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
         <span className="text-[10px] font-mono tabular-nums text-white/70 select-none">
           {formatted}
         </span>
+        {remainingSeconds !== null ? (
+          <span className="ml-1 whitespace-nowrap text-[10px] font-medium tabular-nums text-amber-300">
+            {remainingSeconds}s left
+          </span>
+        ) : null}
       </div>
     </div>
   );

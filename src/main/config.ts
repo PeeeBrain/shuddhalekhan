@@ -19,6 +19,8 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
     localWhisperCpp: { endpoint: DEFAULT_LOCAL_ENDPOINT },
     openai: { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
     azureSpeech: { endpoint: '', region: '' },
+    googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+    nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
     customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
   },
 };
@@ -99,6 +101,8 @@ function maybeMigrateTranscriptionConfig(): void {
       localWhisperCpp: { endpoint },
       openai: transcription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
       azureSpeech: transcription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
+      googleCloudSpeech: transcription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+      nvidiaSpeechNim: transcription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: transcription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
   });
@@ -124,6 +128,8 @@ export function getConfig(): AppConfig {
       localWhisperCpp: { endpoint: localEndpoint },
       openai: storedTranscription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
       azureSpeech: storedTranscription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
+      googleCloudSpeech: storedTranscription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+      nvidiaSpeechNim: storedTranscription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: storedTranscription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
   };
@@ -165,6 +171,8 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
         localWhisperCpp: { endpoint: value as string },
         openai: existing?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
         azureSpeech: existing?.providers?.azureSpeech ?? { endpoint: '', region: '' },
+        googleCloudSpeech: existing?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+        nvidiaSpeechNim: existing?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
         customOpenAiCompatible: existing?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
       },
     });

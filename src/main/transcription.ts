@@ -1,7 +1,13 @@
+import { existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
+
 export type TranscriptionProviderId =
   | 'local-whisper-cpp'
   | 'openai'
   | 'azure-speech'
+  | 'google-cloud-speech-v2'
+  | 'nvidia-speech-nim'
   | 'custom-open-ai-compatible';
 
 export interface TranscriptionCapabilities {
@@ -113,6 +119,22 @@ export function validateAzureSpeechSettings(settings: { endpoint: string; region
   return errors;
 }
 
+export function validateGoogleCloudSpeechSettings(settings: { project: string; location: string; model: string }): string[] {
+  const errors: string[] = [];
+  if (!/^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(settings.project.trim())) {
+    errors.push('Enter a valid Google Cloud project ID.');
+  }
+  if (!/^[a-z0-9-]{1,63}$/.test(settings.location.trim())) {
+    errors.push('Enter a valid Google Cloud location.');
+  }
+  errors.push(...validateOpenAiModel(settings.model));
+  return errors;
+}
+
+export function validateNvidiaSpeechNimSettings(settings: { endpoint: string; model: string; auth: string; headerName?: string }): string[] {
+  return validateCustomOpenAiSettings(settings).map((error) => error.replace('Custom', 'NVIDIA Speech NIM'));
+}
+
 export function validateCustomOpenAiSettings(settings: { endpoint: string; model: string; auth: string; headerName?: string }): string[] {
   const errors: string[] = [];
   try {
@@ -126,9 +148,7 @@ export function validateCustomOpenAiSettings(settings: { endpoint: string; model
   if (settings.auth === 'header' && !settings.headerName?.trim()) {
     errors.push('Header name is required when auth is set to Header.');
   }
-  if (!settings.model.trim()) {
-    errors.push('Enter a model name.');
-  }
+  errors.push(...validateOpenAiModel(settings.model));
   return errors;
 }
 
@@ -168,6 +188,36 @@ export function validateProviderReadiness(
     if (config.task === 'translate') {
       errors.push('Translation is not supported by Microsoft Azure Speech Fast Transcription.');
     }
+  }
+
+  if (providerId === 'google-cloud-speech-v2') {
+    const google = config.transcription.providers.googleCloudSpeech;
+    errors.push(...validateGoogleCloudSpeechSettings(google));
+    if (google.credentialSource === 'service-account' && !vault.read('google-service-account')) {
+      errors.push('Google service-account credentials are not configured. Import them in Settings.');
+    }
+    if (google.credentialSource === 'adc') {
+      const adcPaths = [
+        process.env.GOOGLE_APPLICATION_CREDENTIALS,
+        join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'gcloud', 'application_default_credentials.json'),
+      ].filter((value): value is string => Boolean(value));
+      if (!adcPaths.some((path) => existsSync(path))) {
+        errors.push('Application Default Credentials could not be found. Configure ADC before recording.');
+      }
+    }
+    if (config.language === 'auto') errors.push('Google Cloud Speech-to-Text requires an explicit spoken language.');
+    if (config.task === 'translate') errors.push('Translation is not supported by Google Cloud Speech-to-Text synchronous recognition.');
+  }
+
+  if (providerId === 'nvidia-speech-nim') {
+    const nim = config.transcription.providers.nvidiaSpeechNim;
+    errors.push(...validateNvidiaSpeechNimSettings(nim));
+    if (nim.auth === 'bearer' && !vault.read('nvidia-nim-bearer')) errors.push('NVIDIA Speech NIM Bearer token is not configured.');
+    if (nim.auth === 'header' && !vault.read('nvidia-nim-header')) errors.push('NVIDIA Speech NIM custom header secret is not configured.');
+    if (nim.auth === 'header' && !isValidHttpFieldName(nim.headerName.trim())) errors.push('NVIDIA Speech NIM header name is invalid.');
+    if (config.language === 'auto' && !nim.supportsAutomaticLanguageDetection) errors.push('Automatic language detection is not enabled for this NIM model.');
+    if (config.task === 'translate' && !nim.supportsTranslation) errors.push('Translation is not enabled for this NIM model.');
+    if (config.dictionary.length && !nim.supportsDictionaryHints) errors.push('Dictionary hints are not enabled for this NIM model.');
   }
 
   if (providerId === 'custom-open-ai-compatible') {

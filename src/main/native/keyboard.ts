@@ -100,6 +100,12 @@ export class KeyboardHook {
     }
   }
 
+  recordingEndedExternally(): void {
+    this.state.recording = false;
+    this.state.intent = null;
+    this.state.activationMode = null;
+  }
+
   stop(): void {
     if (this.hookHandle) {
       UnhookWindowsHookEx(this.hookHandle);

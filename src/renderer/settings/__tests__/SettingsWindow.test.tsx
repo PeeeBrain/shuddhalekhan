@@ -33,6 +33,8 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
       azureSpeech: { endpoint: '', region: '' },
+      googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+      nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
     },
@@ -242,6 +244,8 @@ describe('Settings section reachability', () => {
           providers: {
             ...config.transcription.providers,
             azureSpeech: { endpoint: '', region: 'centralindia' },
+            googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+            nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
           },
         },
       },
@@ -261,6 +265,57 @@ describe('Settings section reachability', () => {
     fireEvent.click(mode);
     expect(await screen.findByRole('option', { name: /Translate speech to English/ })).toHaveAttribute('data-disabled');
     expect(settingsIpc.checkTranscriptionServer).not.toHaveBeenCalled();
+  });
+
+  it('shows Google Cloud setup, secure document import, explicit limitations, and advanced ADC', async () => {
+    const current = baseConfig();
+    renderSettings({ config: {
+      ...current,
+      language: 'en',
+      transcription: {
+        ...current.transcription,
+        activeProvider: 'google-cloud-speech-v2',
+        providers: {
+          ...current.transcription.providers,
+          googleCloudSpeech: { project: 'sample-project-123', location: 'global', model: 'short', credentialSource: 'service-account' },
+        },
+      },
+    } });
+    await waitForLoaded();
+
+    expect(screen.getByRole('textbox', { name: 'Project ID' })).toHaveValue('sample-project-123');
+    expect(screen.getByRole('textbox', { name: 'Location' })).toHaveValue('global');
+    expect(screen.getByRole('textbox', { name: 'Model' })).toHaveValue('short');
+    expect(screen.getByLabelText('Service-account JSON document')).toHaveAttribute('type', 'file');
+    expect(screen.getByText(/stop automatically at 55 seconds/i)).toBeInTheDocument();
+    expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Google Cloud');
+    fireEvent.click(screen.getByText('Advanced'));
+    expect(screen.getByRole('combobox', { name: 'Credential source' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Mode' }));
+    expect(await screen.findByRole('option', { name: /not supported by Google/ })).toHaveAttribute('data-disabled');
+  });
+
+  it('shows self-hosted NVIDIA Speech NIM fields and an unauthenticated connectivity check', async () => {
+    const current = baseConfig();
+    renderSettings({ config: {
+      ...current,
+      language: 'en',
+      transcription: {
+        ...current.transcription,
+        activeProvider: 'nvidia-speech-nim',
+        providers: {
+          ...current.transcription.providers,
+          nvidiaSpeechNim: { ...current.transcription.providers.nvidiaSpeechNim, endpoint: 'http://localhost:9000/v1/audio/transcriptions', model: 'nvidia/parakeet' },
+        },
+      },
+    } });
+    await waitForLoaded();
+
+    expect(screen.getByRole('textbox', { name: 'Endpoint' })).toHaveValue('http://localhost:9000/v1/audio/transcriptions');
+    expect(screen.getByRole('textbox', { name: 'Model' })).toHaveValue('nvidia/parakeet');
+    expect(screen.getByRole('button', { name: 'Check connectivity' })).toBeInTheDocument();
+    expect(screen.getByText(/user-hosted, not an NVIDIA managed cloud service/i)).toBeInTheDocument();
+    expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('configured NVIDIA Speech NIM endpoint');
   });
 
   it('shows recording activation and device rows on the Audio section', async () => {
@@ -586,6 +641,8 @@ describe('Settings validation', () => {
             localWhisperCpp: { endpoint: 'http://127.0.0.1:9090/inference' },
             openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
             azureSpeech: { endpoint: '', region: '' },
+            googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+            nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
             customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
           },
         },

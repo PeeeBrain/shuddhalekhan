@@ -67,6 +67,13 @@ export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
   }
 }
 
+export function updateRecordingDurationWarning(remainingSeconds: number | null): void {
+  const win = pillWindow.get();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('recording:duration-warning', remainingSeconds);
+  }
+}
+
 export function hideRecordingPill(): void {
   const win = pillWindow.get();
   if (win && !win.isDestroyed()) {

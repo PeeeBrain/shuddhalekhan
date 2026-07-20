@@ -16,6 +16,7 @@ mock.module('../recording-pill', () => ({
   showRecordingPill: vi.fn(),
   hideRecordingPill: vi.fn(),
   getRecordingPillWindow: getRecordingPillWindowMock,
+  updateRecordingDurationWarning: vi.fn(),
 }));
 
 function createTranscriber(transcribe: Transcriber['transcribe']): Transcriber {
@@ -379,6 +380,57 @@ describe('RecordingSession', () => {
     expect(fakeAudioData.every((byte) => byte === 0)).toBe(true);
     expect(onResult).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+  });
+
+  it('warns for the final ten seconds and auto-stops a duration-limited provider exactly once', async () => {
+    const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
+    const updateDurationWarning = vi.fn();
+    const recordingEndedExternally = vi.fn();
+    const limitedTranscriber: Transcriber = {
+      ...createTranscriber(async () => 'limited result'),
+      id: 'google-cloud-speech-v2',
+      capabilities: {
+        translation: false,
+        automaticLanguageDetection: false,
+        dictionaryHints: true,
+        authentication: 'required',
+        maxDurationSeconds: 55,
+      },
+    };
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      updateDurationWarning,
+      transcriber: limitedTranscriber,
+      setTimeoutFn: ((callback: () => void, delay: number) => {
+        timers.push({ callback, delay, cleared: false });
+        return timers.length - 1 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout,
+      clearTimeoutFn: ((id: number) => { if (timers[id]) timers[id].cleared = true; }) as typeof clearTimeout,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop, recordingEndedExternally },
+      captureTarget,
+      isAgentModeEnabled,
+      getRecordingActivationMode,
+    });
+
+    session.begin('dictation');
+    expect(timers.map((timer) => timer.delay)).toEqual([
+      45000, 46000, 47000, 48000, 49000, 50000, 51000, 52000, 53000, 54000, 55000,
+    ]);
+    timers.find((timer) => timer.delay === 45000)?.callback();
+    expect(updateDurationWarning).toHaveBeenCalledWith(10);
+    timers.find((timer) => timer.delay === 54000)?.callback();
+    expect(updateDurationWarning).toHaveBeenCalledWith(1);
+    timers.find((timer) => timer.delay === 55000)?.callback();
+    timers.find((timer) => timer.delay === 55000)?.callback();
+
+    expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
+    expect(recordingEndedExternally).toHaveBeenCalledTimes(1);
+    expect(hideRecordingPill).toHaveBeenCalledTimes(1);
+    expect(session.isActive()).toBe(false);
+    session.begin('agent');
+    expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
   });
 
   it('does not double-invoke onResult when triggered via keyboard hook', async () => {

@@ -214,6 +214,12 @@ ipcMain.handle('transcription:check-server', async () => {
     return false;
   }
 
+  if (provider === 'nvidia-speech-nim') {
+    const { endpoint, auth } = config.transcription.providers.nvidiaSpeechNim;
+    if (auth !== 'none') return false;
+    return checkServerReachability(endpoint);
+  }
+
   // Custom with auth: local-only, zero fetches
   if (provider === 'custom-open-ai-compatible') {
     const { endpoint, auth } = config.transcription.providers.customOpenAiCompatible;

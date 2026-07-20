@@ -8,6 +8,9 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Transcription Providers
+- Added Google Cloud Speech-to-Text v2 synchronous recognition with secure service-account import, Advanced Application Default Credentials, model and location configuration, language mapping, and inline phrase hints.
+- Google Cloud recordings now show a restrained final-ten-second warning and stop automatically at 55 seconds for safe synchronous submission in both recording activation modes.
+- Added NVIDIA Speech NIM as a self-hosted OpenAI-compatible offline provider with free-form models, optional Bearer or custom-header authentication, deployment-specific capability controls, and unauthenticated connectivity checks.
 - Added Microsoft Azure Speech as a first-class provider using the synchronous Fast Transcription API, secure key storage, locale mapping, and personal-dictionary phrase hints.
 - Azure Speech accepts a resource endpoint or region, validates setup without cloud requests, disables unsupported translation, and clearly discloses that audio is sent to Microsoft Azure.
 - Added OpenAI and Custom OpenAI-compatible batch transcription providers alongside local whisper.cpp.

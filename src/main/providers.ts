@@ -10,6 +10,7 @@ import {
 } from './transcription';
 import { localWhisperCppTranscriber } from './whisper';
 import { createAzureSpeechTranscriber } from './azure-speech';
+import { createGoogleCloudSpeechTranscriber } from './google-cloud-speech';
 import type { AppConfig } from '../types/ipc';
 
 type CredentialReader = { read: (id: string) => string | null };
@@ -47,6 +48,17 @@ export function getTranscriber(
     );
   }
 
+  if (provider === 'google-cloud-speech-v2') {
+    return createGoogleCloudSpeechTranscriber(
+      config.transcription.providers.googleCloudSpeech,
+      vault.read('google-service-account'),
+    );
+  }
+
+  if (provider === 'nvidia-speech-nim') {
+    return createNvidiaSpeechNimTranscriber(config, vault);
+  }
+
   if (provider === 'custom-open-ai-compatible') {
     return createCustomOpenAiTranscriber(config, vault);
   }
@@ -78,6 +90,49 @@ function createOpenAiTranscriber(
         'bearer',
         apiKey,
         undefined,
+      );
+    },
+  };
+}
+
+function createNvidiaSpeechNimTranscriber(
+  config: AppConfig,
+  vault: CredentialReader,
+): Transcriber {
+  const nim = config.transcription.providers.nvidiaSpeechNim;
+  return {
+    id: 'nvidia-speech-nim',
+    capabilities: {
+      translation: nim.supportsTranslation,
+      automaticLanguageDetection: nim.supportsAutomaticLanguageDetection,
+      dictionaryHints: nim.supportsDictionaryHints,
+      authentication: 'optional',
+      maxDurationSeconds: null,
+    },
+    async transcribe({ audio, recognition }) {
+      let secret: string | null = null;
+      if (nim.auth === 'bearer') secret = vault.read('nvidia-nim-bearer');
+      if (nim.auth === 'header') secret = vault.read('nvidia-nim-header');
+      if (nim.auth !== 'none' && !secret) {
+        throw new TranscriptionFailure('authentication', 'NVIDIA Speech NIM credentials are not configured. Save them in Settings.');
+      }
+      if (nim.auth === 'header' && !isValidHttpFieldName(nim.headerName)) {
+        throw new TranscriptionFailure('authentication', 'NVIDIA Speech NIM header name contains invalid characters.');
+      }
+      const language = recognition.language === 'auto' ? 'auto' : mapNimLanguage(recognition.language);
+      return transcribeOpenAiLike(
+        audio,
+        {
+          ...recognition,
+          language,
+          dictionary: nim.supportsDictionaryHints ? recognition.dictionary : [],
+        },
+        nim.endpoint,
+        nim.model,
+        nim.auth,
+        secret,
+        nim.auth === 'header' ? nim.headerName : undefined,
+        'nvidia-nim',
       );
     },
   };
@@ -161,7 +216,18 @@ function createCustomOpenAiTranscriber(
   };
 }
 
-async function transcribeOpenAiLike(
+const NIM_LANGUAGE_CODES: Record<string, string> = {
+  en: 'en-US', hi: 'hi-IN', mr: 'mr-IN', gu: 'gu-IN', bn: 'bn-IN', ta: 'ta-IN',
+  te: 'te-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', fr: 'fr-FR',
+  es: 'es-US', de: 'de-DE', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR', pt: 'pt-BR',
+  ar: 'ar-SA', ru: 'ru-RU',
+};
+
+function mapNimLanguage(language: string): string {
+  return NIM_LANGUAGE_CODES[language] ?? language;
+}
+
+export async function transcribeOpenAiLike(
   audioData: Uint8Array,
   recognition: RecognitionSettings,
   endpoint: string,
@@ -169,6 +235,7 @@ async function transcribeOpenAiLike(
   auth: 'none' | 'bearer' | 'header',
   apiKey: string | null | undefined,
   headerName: string | undefined,
+  contract: 'openai' | 'nvidia-nim' = 'openai',
 ): Promise<string> {
   const { removeFillerWords, language, task, dictionary } = recognition;
 
@@ -188,7 +255,12 @@ async function transcribeOpenAiLike(
   form.append('response_format', 'json');
 
   if (task === 'translate') {
-    form.append('language', 'en');
+    if (contract === 'nvidia-nim') {
+      if (language && language !== 'auto') form.append('language', language);
+      form.append('target_language', 'en-US');
+    } else {
+      form.append('language', 'en');
+    }
   } else if (language && language !== 'auto') {
     form.append('language', language);
   }

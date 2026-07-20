@@ -32,6 +32,20 @@ describe('credential IPC', () => {
     expect(result).toEqual({ available: true, exists: true });
   });
 
+  it('rejects malformed Google service-account documents before they reach encrypted storage', () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    let saved = false;
+    const vault = {
+      status: () => ({ available: true, exists: false }) as const,
+      save: () => { saved = true; return ({ available: true, exists: true }) as const; },
+      remove: () => ({ available: true, exists: false }) as const,
+    };
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault);
+
+    expect(() => handlers.get('credential:save')?.({}, 'google-service-account', '{"private_key":"secret"}')).toThrow(/must contain/);
+    expect(saved).toBe(false);
+  });
+
   it('redacts vault save failures from the renderer', () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const vault = {

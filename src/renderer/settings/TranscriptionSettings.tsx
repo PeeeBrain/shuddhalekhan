@@ -23,14 +23,29 @@ const FIELD_ID_CUSTOM_ENDPOINT = 'custom-endpoint';
 const FIELD_ID_CUSTOM_HEADER_NAME = 'custom-header-name';
 const FIELD_ID_AZURE_ENDPOINT = 'azure-endpoint';
 const FIELD_ID_AZURE_REGION = 'azure-region';
+const FIELD_ID_GOOGLE_PROJECT = 'google-project';
+const FIELD_ID_GOOGLE_LOCATION = 'google-location';
+const FIELD_ID_GOOGLE_MODEL = 'google-model';
+const FIELD_ID_NVIDIA_ENDPOINT = 'nvidia-endpoint';
+const FIELD_ID_NVIDIA_MODEL = 'nvidia-model';
 const FIELD_ID_PROVIDER = 'provider';
 
 const PROVIDER_OPTIONS: Array<{ value: TranscriptionProviderId; label: string }> = [
   { value: 'local-whisper-cpp', label: 'Local whisper.cpp' },
   { value: 'openai', label: 'OpenAI' },
   { value: 'azure-speech', label: 'Microsoft Azure Speech' },
+  { value: 'google-cloud-speech-v2', label: 'Google Cloud Speech-to-Text v2' },
+  { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM' },
   { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible' },
 ];
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code < 32 || code === 127) return true;
+  }
+  return false;
+}
 
 const AUTH_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'none', label: 'None (no auth)' },
@@ -53,8 +68,11 @@ export function TranscriptionSettings({
       ...config.transcription,
       activeProvider: nextProvider,
     }, FIELD_ID_PROVIDER);
-    if (nextProvider === 'azure-speech' && config.task === 'translate') {
+    if ((nextProvider === 'azure-speech' || nextProvider === 'google-cloud-speech-v2') && config.task === 'translate') {
       await commit('task', 'transcribe', FIELD_ID_TASK);
+    }
+    if (nextProvider === 'google-cloud-speech-v2' && config.language === 'auto') {
+      await commit('language', 'en', FIELD_ID_LANGUAGE);
     }
   };
 
@@ -88,6 +106,14 @@ export function TranscriptionSettings({
           <AzureSpeechSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
         ) : null}
 
+        {provider === 'google-cloud-speech-v2' ? (
+          <GoogleCloudSpeechSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+        ) : null}
+
+        {provider === 'nvidia-speech-nim' ? (
+          <NvidiaSpeechNimSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+        ) : null}
+
         {provider === 'custom-open-ai-compatible' ? (
           <CustomOpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
         ) : null}
@@ -109,13 +135,17 @@ export function TranscriptionSettings({
               value: 'translate',
               label: provider === 'azure-speech'
                 ? 'Translate speech to English (not supported by Azure Fast Transcription)'
-                : 'Translate speech to English',
-              disabled: provider === 'azure-speech',
+                : provider === 'google-cloud-speech-v2'
+                  ? 'Translate speech to English (not supported by Google synchronous recognition)'
+                  : 'Translate speech to English',
+              disabled: provider === 'azure-speech' || provider === 'google-cloud-speech-v2',
             },
           ]}
           description={provider === 'azure-speech'
             ? 'Azure Fast Transcription supports transcription only. Translation is not sent to another service.'
-            : undefined}
+            : provider === 'google-cloud-speech-v2'
+              ? 'Google synchronous recognition transcribes only. Shuddhalekhan does not invoke Google Translate.'
+              : undefined}
           errorId={useId()}
           error={fieldErrors[FIELD_ID_TASK]}
           onChange={(value) => commit('task', value as AppConfig['task'], FIELD_ID_TASK)}
@@ -123,7 +153,14 @@ export function TranscriptionSettings({
         <SelectRow
           label="Spoken language"
           value={config.language}
-          options={WHISPER_LANGUAGES}
+          options={provider === 'google-cloud-speech-v2'
+            ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
+              ? { ...option, label: 'Auto-detect (not supported by Google synchronous recognition)', disabled: true }
+              : option)
+            : WHISPER_LANGUAGES}
+          description={provider === 'google-cloud-speech-v2'
+            ? 'Choose an explicit language. Shuddhalekhan does not substitute the Windows language.'
+            : undefined}
           errorId={useId()}
           error={fieldErrors[FIELD_ID_LANGUAGE]}
           onChange={(value) => commit('language', value, FIELD_ID_LANGUAGE)}
@@ -402,6 +439,119 @@ function AzureSpeechSection({ config, persistence, settingsIpc }: Props) {
   );
 }
 
+function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
+  const { commit, fieldErrors } = persistence;
+  const google = config.transcription.providers.googleCloudSpeech;
+  const save = (next: typeof google, field: string) => commit('transcription', {
+    ...config.transcription,
+    providers: { ...config.transcription.providers, googleCloudSpeech: next },
+  }, field);
+  const validateSlug = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return 'This field is required.';
+    if (trimmed.length > 128) return 'Value is too long (max 128 characters).';
+    return hasControlCharacters(trimmed) ? 'Value contains control characters.' : null;
+  };
+
+  return (
+    <>
+      <DraftTextRow label="Project ID" value={google.project} placeholder="my-google-cloud-project"
+        description="Google Cloud project that owns the Speech-to-Text request."
+        errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_PROJECT]}
+        validate={(value) => /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(value.trim()) ? null : 'Enter a valid Google Cloud project ID.'}
+        onCommit={(value) => save({ ...google, project: value.trim() }, FIELD_ID_GOOGLE_PROJECT)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_PROJECT)} />
+      <DraftTextRow label="Location" value={google.location} placeholder="global"
+        description="Recognizer location, for example global, us, or europe-west4."
+        errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_LOCATION]}
+        validate={(value) => /^[a-z0-9-]{1,63}$/.test(value.trim()) ? null : 'Enter a valid Google Cloud location.'}
+        onCommit={(value) => save({ ...google, location: value.trim() }, FIELD_ID_GOOGLE_LOCATION)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_LOCATION)} />
+      <DraftTextRow label="Model" value={google.model} placeholder="short"
+        description="Free-form Google recognition model slug. No model is selected automatically."
+        errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_MODEL]} validate={validateSlug}
+        onCommit={(value) => save({ ...google, model: value.trim() }, FIELD_ID_GOOGLE_MODEL)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_MODEL)} />
+      {google.credentialSource === 'service-account' ? (
+        <CredentialControl credential="google-service-account" label="Service-account JSON document" settingsIpc={settingsIpc} documentImport />
+      ) : (
+        <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+          Application Default Credentials are read by the main process from GOOGLE_APPLICATION_CREDENTIALS or the gcloud ADC file.
+        </p>
+      )}
+      <details className="border-b border-border/70 py-4 text-sm">
+        <summary className="cursor-pointer font-medium">Advanced</summary>
+        <div className="mt-3">
+          <SelectRow label="Credential source" value={google.credentialSource} errorId={useId()}
+            options={[{ value: 'service-account', label: 'Imported service-account document' }, { value: 'adc', label: 'Application Default Credentials' }]}
+            onChange={(value) => save({ ...google, credentialSource: value as typeof google.credentialSource }, 'google-credential-source')} />
+        </div>
+      </details>
+      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+        Recordings warn at 45 seconds and stop automatically at 55 seconds for Google's synchronous short-audio API. Setup validation makes no billable request.
+      </p>
+    </>
+  );
+}
+
+function NvidiaSpeechNimSection({ config, persistence, settingsIpc }: Props) {
+  const { commit, fieldErrors } = persistence;
+  const nim = config.transcription.providers.nvidiaSpeechNim;
+  const [testState, setTestState] = useState<TestState>('idle');
+  const headerErrorId = useId();
+  const save = (next: typeof nim, field: string) => commit('transcription', {
+    ...config.transcription,
+    providers: { ...config.transcription.providers, nvidiaSpeechNim: next },
+  }, field);
+  const validateModel = (value: string) => !value.trim() ? 'Model name is required.'
+    : value.trim().length > 128 ? 'Model name is too long (max 128 characters).'
+      : hasControlCharacters(value) ? 'Model name contains control characters.' : null;
+  const validateEndpoint = (value: string) => {
+    try { const url = new URL(value); return url.protocol === 'http:' || url.protocol === 'https:' ? null : 'Endpoint must use HTTP or HTTPS.'; }
+    catch { return 'Enter a valid NVIDIA Speech NIM transcription endpoint.'; }
+  };
+
+  return (
+    <>
+      <DraftTextRow label="Endpoint" value={nim.endpoint} placeholder="http://localhost:9000/v1/audio/transcriptions"
+        description="Complete OpenAI-compatible offline transcription endpoint on your NIM deployment."
+        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_ENDPOINT]} validate={validateEndpoint}
+        onCommit={(value) => save({ ...nim, endpoint: value.trim() }, FIELD_ID_NVIDIA_ENDPOINT)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_ENDPOINT)} />
+      <DraftTextRow label="Model" value={nim.model} placeholder="nvidia/parakeet-ctc-1.1b-asr"
+        description="Free-form model slug exposed by your NIM server."
+        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_MODEL]} validate={validateModel}
+        onCommit={(value) => save({ ...nim, model: value.trim() }, FIELD_ID_NVIDIA_MODEL)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_MODEL)} />
+      <SelectRow label="Authentication" value={nim.auth} options={AUTH_OPTIONS} errorId={useId()}
+        onChange={(value) => save({ ...nim, auth: value as typeof nim.auth, headerName: value === 'header' ? nim.headerName : '' }, 'nvidia-auth')} />
+      {nim.auth === 'bearer' ? <CredentialControl credential="nvidia-nim-bearer" label="Bearer token" settingsIpc={settingsIpc} /> : null}
+      {nim.auth === 'header' ? (
+        <>
+          <DraftTextRow label="Header name" value={nim.headerName} placeholder="X-API-Key"
+            description="Secret header used by your reverse proxy." errorId={headerErrorId} error={fieldErrors['nvidia-header-name']}
+            validate={(value) => /^[!#$%&'*+\-.^_`|~\w]+$/.test(value.trim()) ? null : 'Header name contains invalid characters.'}
+            onCommit={(value) => save({ ...nim, headerName: value.trim() }, 'nvidia-header-name')}
+            clearError={() => persistence.clearFieldError('nvidia-header-name')} />
+          <CredentialControl credential="nvidia-nim-header" label="Secret header value" settingsIpc={settingsIpc} />
+        </>
+      ) : null}
+      {nim.auth === 'none' ? <CheckServerTest provider="nvidia-speech-nim" settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} /> : null}
+      <details className="border-b border-border/70 py-4 text-sm">
+        <summary className="cursor-pointer font-medium">Advanced model capabilities</summary>
+        <div className="mt-2">
+          <ToggleRow title="Automatic language detection" description="Enable only if the selected NIM model declares support." checked={nim.supportsAutomaticLanguageDetection} errorId={useId()} onChange={(checked) => save({ ...nim, supportsAutomaticLanguageDetection: checked }, 'nvidia-auto-language')} />
+          <ToggleRow title="Translation" description="Enable only if the selected NIM model and endpoint support translation." checked={nim.supportsTranslation} errorId={useId()} onChange={(checked) => save({ ...nim, supportsTranslation: checked }, 'nvidia-translation')} />
+          <ToggleRow title="Dictionary hints" description="Send personal dictionary terms as an OpenAI-compatible prompt." checked={nim.supportsDictionaryHints} errorId={useId()} onChange={(checked) => save({ ...nim, supportsDictionaryHints: checked }, 'nvidia-dictionary')} />
+        </div>
+      </details>
+      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+        This endpoint is user-hosted, not an NVIDIA managed cloud service. Speech NIM typically requires a supported GPU server or WSL2 deployment.
+      </p>
+    </>
+  );
+}
+
 function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
   const { commit, fieldErrors } = persistence;
   const custom = config.transcription.providers.customOpenAiCompatible;
@@ -575,6 +725,8 @@ function PrivacyNote({ provider }: { provider: TranscriptionProviderId }) {
     'local-whisper-cpp': 'Recorded audio is sent to the configured local endpoint for transcription.',
     'openai': 'Recorded audio is sent to OpenAI for transcription. Review OpenAI\'s data handling policies.',
     'azure-speech': 'Recorded audio is sent to Microsoft Azure Speech for transcription. Review Microsoft\'s data handling policies.',
+    'google-cloud-speech-v2': 'Recorded audio is sent to Google Cloud Speech-to-Text for transcription. Review Google Cloud data handling policies.',
+    'nvidia-speech-nim': 'Recorded audio is sent to the configured NVIDIA Speech NIM endpoint for transcription.',
     'custom-open-ai-compatible': 'Recorded audio is sent to the configured custom endpoint for transcription.',
   };
 

@@ -1,5 +1,6 @@
 import type { CredentialKind, CredentialStatus } from '../types/ipc';
 import type { CredentialVault } from './credential-vault';
+import { parseGoogleServiceAccount } from './google-cloud-speech';
 
 type IpcMainRegistrar = {
   handle(channel: string, listener: (...args: any[]) => unknown): void;
@@ -14,6 +15,8 @@ const CREDENTIAL_KINDS: CredentialKind[] = [
   'custom-open-ai-compatible-bearer',
   'custom-open-ai-compatible-header',
   'azure-speech-key',
+  'nvidia-nim-bearer',
+  'nvidia-nim-header',
 ];
 
 export function registerCredentialIpcHandlers(
@@ -26,8 +29,10 @@ export function registerCredentialIpcHandlers(
 
   ipcMain.handle('credential:save', (_event, credential: CredentialKind, value: string): CredentialStatus => {
     if (!value) throw new Error('Credential value is required.');
+    const kind = requireCredentialKind(credential);
+    if (kind === 'google-service-account') parseGoogleServiceAccount(value);
     try {
-      return vault.save(requireCredentialKind(credential), value);
+      return vault.save(kind, value);
     } catch {
       return {
         available: false,

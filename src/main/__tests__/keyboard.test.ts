@@ -72,6 +72,25 @@ describe('KeyboardHook mode detection', () => {
     expect(stopped).toHaveBeenCalledTimes(1);
   });
 
+  it('starts a clean toggle session on the next press after an external duration stop', async () => {
+    const { KeyboardHook, keyboardTestKeyCodes } = await import(`../native/keyboard?test=${Date.now()}-toggle-external-stop`);
+    const hook = new KeyboardHook();
+    const started = mock();
+    const stopped = mock();
+
+    hook.start(started, stopped, () => true, () => 'toggle');
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftControl, true);
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftWin, true);
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftControl, false);
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftWin, false);
+    hook.recordingEndedExternally();
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftControl, true);
+    hook.handleKeyForTest(keyboardTestKeyCodes.leftWin, true);
+
+    expect(started).toHaveBeenCalledTimes(2);
+    expect(stopped).not.toHaveBeenCalled();
+  });
+
   it('requires a full chord release and ignores repeated key-down events in toggle mode', async () => {
     const { KeyboardHook, keyboardTestKeyCodes } = await import(`../native/keyboard?test=${Date.now()}-toggle-repeat`);
     const hook = new KeyboardHook();

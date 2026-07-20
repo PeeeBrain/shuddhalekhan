@@ -26,6 +26,8 @@ const BASE_CONFIG: AppConfig = {
       localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: 'whisper-1' },
       azureSpeech: { endpoint: '', region: '' },
+      googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
+      nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: { endpoint: 'http://localhost:8000/v1/audio/transcriptions', model: 'whisper-1', auth: 'none', headerName: '' },
     },
   },

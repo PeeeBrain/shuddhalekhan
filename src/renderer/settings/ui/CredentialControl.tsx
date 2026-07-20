@@ -9,9 +9,10 @@ interface CredentialControlProps {
   credential: CredentialKind;
   label: string;
   settingsIpc: SettingsIpc;
+  documentImport?: boolean;
 }
 
-export function CredentialControl({ credential, label, settingsIpc }: CredentialControlProps) {
+export function CredentialControl({ credential, label, settingsIpc, documentImport = false }: CredentialControlProps) {
   const inputId = useId();
   const [status, setStatus] = useState<CredentialStatus | null>(null);
   const [value, setValue] = useState('');
@@ -34,6 +35,20 @@ export function CredentialControl({ credential, label, settingsIpc }: Credential
   const save = async () => {
     if (!value) return;
     setError(null);
+    if (documentImport) {
+      try {
+        const document = JSON.parse(value) as Record<string, unknown>;
+        if (document.type !== 'service_account' || typeof document.client_email !== 'string'
+          || typeof document.private_key !== 'string' || !document.private_key.includes('BEGIN PRIVATE KEY')
+          || typeof document.token_uri !== 'string' || !document.token_uri.startsWith('https://')) {
+          setError('The document must contain a service-account type, client_email, private_key, and HTTPS token_uri.');
+          return;
+        }
+      } catch {
+        setError('Select a valid Google service-account JSON document.');
+        return;
+      }
+    }
     try {
       const next = await settingsIpc.saveCredential(credential, value);
       setValue('');
@@ -59,25 +74,39 @@ export function CredentialControl({ credential, label, settingsIpc }: Credential
   return (
     <div className="space-y-2 border-b border-border/70 py-5">
       <Label htmlFor={inputId} className="text-sm font-medium">{label}</Label>
-      <Input
-        id={inputId}
-        type="password"
-        autoComplete="off"
-        value={value}
-        placeholder={isSaved ? 'Enter a replacement key' : 'Enter API key'}
-        disabled={status?.available === false}
-        onChange={(event) => {
-          setValue(event.target.value);
-          setError(null);
-        }}
-      />
+      {documentImport ? (
+        <Input
+          id={inputId}
+          type="file"
+          accept="application/json,.json"
+          disabled={status?.available === false}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            file.text().then(setValue).catch(() => setError('Unable to read the selected document.'));
+          }}
+        />
+      ) : (
+        <Input
+          id={inputId}
+          type="password"
+          autoComplete="off"
+          value={value}
+          placeholder={isSaved ? 'Enter a replacement credential' : 'Enter credential'}
+          disabled={status?.available === false}
+          onChange={(event) => {
+            setValue(event.target.value);
+            setError(null);
+          }}
+        />
+      )}
       <div className="flex items-center gap-2">
         <Button type="button" size="sm" disabled={!value || status?.available === false} onClick={() => void save()}>
-          {isSaved ? 'Replace key' : 'Save key'}
+          {isSaved ? (documentImport ? 'Replace document' : 'Replace key') : (documentImport ? 'Import document' : 'Save key')}
         </Button>
         {isSaved ? (
           <Button type="button" size="sm" variant="outline" onClick={() => void remove()}>
-            Remove key
+            {documentImport ? 'Remove document' : 'Remove key'}
           </Button>
         ) : null}
         {isSaved ? <span className="text-xs text-muted-foreground">Saved securely</span> : null}

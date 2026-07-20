@@ -20,7 +20,9 @@ export type CredentialKind =
   | 'openai-api-key'
   | 'custom-open-ai-compatible-bearer'
   | 'custom-open-ai-compatible-header'
-  | 'azure-speech-key';
+  | 'azure-speech-key'
+  | 'nvidia-nim-bearer'
+  | 'nvidia-nim-header';
 
 export type CredentialStatus =
   | { available: true; exists: boolean }
@@ -119,6 +121,7 @@ export interface MainToRendererChannels {
   'recording:mode-changed': (intent: RecordingIntent) => void;
   'recording:pill-show': () => void;
   'recording:pill-hide': () => void;
+  'recording:duration-warning': (remainingSeconds: number | null) => void;
   'recording:started': () => void;
   'recording:stopped': () => void;
   'audio:level-changed': (level: number) => void;
@@ -189,6 +192,8 @@ export type TranscriptionProviderId =
   | 'local-whisper-cpp'
   | 'openai'
   | 'azure-speech'
+  | 'google-cloud-speech-v2'
+  | 'nvidia-speech-nim'
   | 'custom-open-ai-compatible';
 
 export interface LocalWhisperCppProviderConfig {
@@ -214,12 +219,31 @@ export interface AzureSpeechProviderConfig {
   region: string;
 }
 
+export interface GoogleCloudSpeechProviderConfig {
+  project: string;
+  location: string;
+  model: string;
+  credentialSource: 'service-account' | 'adc';
+}
+
+export interface NvidiaSpeechNimProviderConfig {
+  endpoint: string;
+  model: string;
+  auth: 'none' | 'bearer' | 'header';
+  headerName: string;
+  supportsAutomaticLanguageDetection: boolean;
+  supportsTranslation: boolean;
+  supportsDictionaryHints: boolean;
+}
+
 export interface TranscriptionConfig {
   activeProvider: TranscriptionProviderId;
   providers: {
     localWhisperCpp: LocalWhisperCppProviderConfig;
     openai: OpenAiProviderConfig;
     azureSpeech: AzureSpeechProviderConfig;
+    googleCloudSpeech: GoogleCloudSpeechProviderConfig;
+    nvidiaSpeechNim: NvidiaSpeechNimProviderConfig;
     customOpenAiCompatible: CustomOpenAiProviderConfig;
   };
 }
