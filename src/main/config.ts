@@ -2,17 +2,27 @@ import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import type { AppConfig, McpDiscoveredTool } from '../types/ipc';
+import type { AppConfig, McpDiscoveredTool, TranscriptionConfig } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 
 type StoreConfig = AppConfig & {
   migrated?: boolean;
+  transcriptionMigrated?: boolean;
+};
+
+const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:8080/inference';
+const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
+  activeProvider: 'local-whisper-cpp',
+  providers: {
+    localWhisperCpp: { endpoint: DEFAULT_LOCAL_ENDPOINT },
+  },
 };
 
 const store = new Store<StoreConfig>({
   name: 'shuddhalekhan-config',
   defaults: {
-    whisperUrl: 'http://localhost:8080/inference',
+    whisperUrl: DEFAULT_LOCAL_ENDPOINT,
+    transcription: DEFAULT_TRANSCRIPTION,
     selectedDeviceId: null,
     removeFillerWords: true,
     language: 'auto',
@@ -68,6 +78,27 @@ function maybeMigrateLegacyConfig(): void {
 
 maybeMigrateLegacyConfig();
 
+function maybeMigrateTranscriptionConfig(): void {
+  if (store.get('transcriptionMigrated')) return;
+
+  const legacyEndpoint = store.get('whisperUrl') || DEFAULT_LOCAL_ENDPOINT;
+  const transcription = store.get('transcription');
+  const currentEndpoint = transcription?.providers?.localWhisperCpp?.endpoint;
+  const endpoint = currentEndpoint && currentEndpoint !== DEFAULT_LOCAL_ENDPOINT
+    ? currentEndpoint
+    : legacyEndpoint;
+
+  store.set('transcription', {
+    activeProvider: 'local-whisper-cpp',
+    providers: {
+      localWhisperCpp: { endpoint },
+    },
+  });
+  store.set('transcriptionMigrated', true);
+}
+
+maybeMigrateTranscriptionConfig();
+
 export function getConfig(): AppConfig {
   const agent = store.get('agent');
   const mcpServers = normalizeMcpServers(agent?.mcpServers);
@@ -75,8 +106,20 @@ export function getConfig(): AppConfig {
     ? 'toggle'
     : 'push-to-talk';
 
+  const storedTranscription = store.get('transcription');
+  const localEndpoint = storedTranscription?.providers?.localWhisperCpp?.endpoint
+    || store.get('whisperUrl')
+    || DEFAULT_LOCAL_ENDPOINT;
+  const transcription: TranscriptionConfig = {
+    activeProvider: 'local-whisper-cpp',
+    providers: {
+      localWhisperCpp: { endpoint: localEndpoint },
+    },
+  };
+
   return {
-    whisperUrl: store.get('whisperUrl'),
+    whisperUrl: localEndpoint,
+    transcription,
     selectedDeviceId: store.get('selectedDeviceId'),
     removeFillerWords: store.get('removeFillerWords'),
     language: store.get('language') ?? 'auto',
@@ -100,6 +143,14 @@ export function getConfig(): AppConfig {
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
   store.set(key, value);
+  if (key === 'transcription') {
+    store.set('whisperUrl', (value as TranscriptionConfig).providers.localWhisperCpp.endpoint);
+  } else if (key === 'whisperUrl') {
+    store.set('transcription', {
+      activeProvider: 'local-whisper-cpp',
+      providers: { localWhisperCpp: { endpoint: value as string } },
+    });
+  }
 }
 
 export function mergeDiscoveredTools(

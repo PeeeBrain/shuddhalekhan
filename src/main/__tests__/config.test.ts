@@ -50,7 +50,13 @@ describe('config store', () => {
     existsSync.mockReturnValue(false);
     const { getConfig } = await import(`../config?test=${Date.now()}-1`);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig().transcription).toEqual({
+      activeProvider: 'local-whisper-cpp',
+      providers: {
+        localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+      },
+    });
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,
@@ -95,7 +101,7 @@ describe('config store', () => {
     setConfig('selectedDeviceId', 'usb-mic');
     setConfig('removeFillerWords', false);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: 'usb-mic',
       removeFillerWords: false,
@@ -118,6 +124,34 @@ describe('config store', () => {
     });
   });
 
+  it('migrates an existing whisperUrl into the active local provider without setup', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('whisperUrl', 'http://existing.test/inference');
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-provider-migration`);
+
+    expect(getConfig().transcription).toEqual({
+      activeProvider: 'local-whisper-cpp',
+      providers: {
+        localWhisperCpp: { endpoint: 'http://existing.test/inference' },
+      },
+    });
+  });
+
+  it('retains local provider settings in the provider-specific configuration', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-provider-retention`);
+
+    setConfig('transcription', {
+      activeProvider: 'local-whisper-cpp',
+      providers: { localWhisperCpp: { endpoint: 'https://private.test/inference' } },
+    });
+
+    expect(getConfig().transcription.providers.localWhisperCpp.endpoint).toBe(
+      'https://private.test/inference',
+    );
+  });
+
   it('migrates and deletes the legacy config once', async () => {
     existsSync.mockReturnValue(true);
     readFileSync.mockReturnValue(JSON.stringify({
@@ -128,7 +162,7 @@ describe('config store', () => {
 
     const { getConfig } = await import(`../config?test=${Date.now()}-3`);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://legacy.test/inference',
       selectedDeviceId: 'legacy-mic',
       removeFillerWords: false,
@@ -159,7 +193,7 @@ describe('config store', () => {
 
     const { getConfig } = await import(`../config?test=${Date.now()}-4`);
 
-    expect(getConfig()).toEqual({
+    expect(getConfig()).toMatchObject({
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
       removeFillerWords: true,

@@ -20,8 +20,15 @@ const setConfig = vi.fn();
 const mergeDiscoveredTools = vi.fn();
 const getConfig = vi.fn(() => ({
   whisperUrl: 'http://localhost:8080/inference',
+  transcription: {
+    activeProvider: 'local-whisper-cpp',
+    providers: { localWhisperCpp: { endpoint: 'http://localhost:8080/inference' } },
+  },
   selectedDeviceId: null,
   removeFillerWords: true,
+  language: 'auto',
+  task: 'transcribe',
+  dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   agent: {
     enabled: false,
@@ -137,8 +144,15 @@ mock.module('../recording-session', () => ({
 describe('main process IPC orchestration', () => {
   const baseConfig = {
     whisperUrl: 'http://localhost:8080/inference',
+    transcription: {
+      activeProvider: 'local-whisper-cpp',
+      providers: { localWhisperCpp: { endpoint: 'http://localhost:8080/inference' } },
+    },
     selectedDeviceId: null,
     removeFillerWords: true,
+    language: 'auto',
+    task: 'transcribe',
+    dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
     agent: {
       enabled: false,
@@ -163,6 +177,7 @@ describe('main process IPC orchestration', () => {
     trayHandlers = {};
     clipboardText.value = 'original';
     resetElectronMock();
+    globalThis.fetch = vi.fn(() => Promise.resolve(new Response(null, { status: 503 }))) as typeof fetch;
     notificationShow = vi.fn();
     electronMock.Notification.mockImplementation(() => ({ show: notificationShow }));
     electronMock.app.on.mockImplementation((event: string, listener: (...args: any[]) => void) => {
@@ -244,6 +259,7 @@ describe('main process IPC orchestration', () => {
       'config:set',
       'mcp:test-server',
       'settings:open',
+      'transcription:check-server',
       'updater:check',
       'updater:get-status',
     ]);
@@ -252,6 +268,21 @@ describe('main process IPC orchestration', () => {
       'agent-toast:dismiss',
       'audio-devices',
     ]);
+  });
+
+  it('shows transcription failures through a sanitized non-blocking toast', () => {
+    sessionOptions.onError(new Error('token=super-secret'));
+
+    expect(showAgentToast).toHaveBeenCalledWith({
+      kind: 'transcription-failed',
+      message: 'Transcription failed unexpectedly. Check provider settings and try again.',
+    });
+    expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
+  });
+
+  it('checks the configured local endpoint without audio', async () => {
+    await expect(ipcHandlers.get('transcription:check-server')?.({})).resolves.toBe(true);
+    expect(fetch).toHaveBeenCalledWith('http://localhost:8080/inference', { method: 'HEAD' });
   });
 
   it('starts recording when audio:start-recording is invoked', () => {

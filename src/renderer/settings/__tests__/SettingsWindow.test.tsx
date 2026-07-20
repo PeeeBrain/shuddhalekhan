@@ -27,6 +27,10 @@ const AUDIO_DEVICES_PLACEHOLDER = null;
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     whisperUrl: 'http://localhost:8080/inference',
+    transcription: {
+      activeProvider: 'local-whisper-cpp',
+      providers: { localWhisperCpp: { endpoint: 'http://localhost:8080/inference' } },
+    },
     selectedDeviceId: AUDIO_DEVICES_PLACEHOLDER,
     removeFillerWords: true,
     language: 'auto',
@@ -90,6 +94,7 @@ function createMockSettingsIpc(
     getUpdateStatus: mock(() => Promise.resolve(UPDATE_STATUS)),
     checkForUpdates: mock(() => Promise.resolve(UPDATE_STATUS)),
     testMcpServer: mock(() => Promise.resolve()),
+    checkTranscriptionServer: mock(() => Promise.resolve(true)),
     onUpdateStatusChanged: mock(() => undefined),
     onMcpServerStatus: mock(
       (_callback: (status: McpServerRuntimeStatus) => void) => undefined,
@@ -207,12 +212,16 @@ describe('Settings navigation', () => {
 });
 
 describe('Settings section reachability', () => {
-  it('shows transcription controls on the Transcription section', async () => {
-    renderSettings();
+  it('shows provider-neutral local transcription controls', async () => {
+    const { settingsIpc } = renderSettings();
     await waitForLoaded();
 
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('Local whisper.cpp');
     expect(screen.getByRole('switch', { name: 'Clean transcription' })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Whisper endpoint' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Endpoint' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Check server' }));
+    await waitFor(() => expect(settingsIpc.checkTranscriptionServer).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Reachable')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Mode' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Spoken language' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeInTheDocument();
@@ -504,10 +513,10 @@ describe('Settings save feedback', () => {
 });
 
 describe('Settings validation', () => {
-  it('validates the Whisper URL on blur without persisting an invalid draft', async () => {
+  it('validates the local endpoint on blur without persisting an invalid draft', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    const endpoint = screen.getByRole('textbox', { name: 'Whisper endpoint' });
+    const endpoint = screen.getByRole('textbox', { name: 'Endpoint' });
 
     fireEvent.change(endpoint, { target: { value: 'not a url' } });
     expect(screen.queryByText(/Enter a valid URL/)).toBeNull();
@@ -522,10 +531,10 @@ describe('Settings validation', () => {
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
   });
 
-  it('commits a valid Whisper URL on blur', async () => {
+  it('commits a valid local provider endpoint on blur', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    const endpoint = screen.getByRole('textbox', { name: 'Whisper endpoint' });
+    const endpoint = screen.getByRole('textbox', { name: 'Endpoint' });
 
     fireEvent.change(endpoint, {
       target: { value: 'http://127.0.0.1:9090/inference' },
@@ -534,8 +543,11 @@ describe('Settings validation', () => {
 
     await waitFor(() => {
       expect(settingsIpc.setConfig).toHaveBeenCalledWith(
-        'whisperUrl',
-        'http://127.0.0.1:9090/inference',
+        'transcription',
+        {
+          activeProvider: 'local-whisper-cpp',
+          providers: { localWhisperCpp: { endpoint: 'http://127.0.0.1:9090/inference' } },
+        },
       );
     });
     expect(screen.queryByText(/Enter a valid URL/)).toBeNull();

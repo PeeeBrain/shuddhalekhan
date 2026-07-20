@@ -88,6 +88,7 @@ export interface RendererToMainInvokeChannels {
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
   'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
+  'transcription:check-server': () => Promise<boolean>;
   'settings:open': () => void;
   'clipboard:inject-text': (text: string) => Promise<InjectResult>;
   'agent:approval-decision': (
@@ -169,6 +170,10 @@ export type AgentToastState =
   | {
       kind: 'config';
       message: string;
+    }
+  | {
+      kind: 'transcription-failed';
+      message: string;
     };
 
 export interface PasteStrategyConfig {
@@ -176,8 +181,21 @@ export interface PasteStrategyConfig {
   overrides: Record<string, PasteStrategy>;
 }
 
+export type TranscriptionProviderId = 'local-whisper-cpp';
+
+export interface TranscriptionConfig {
+  activeProvider: TranscriptionProviderId;
+  providers: {
+    localWhisperCpp: {
+      endpoint: string;
+    };
+  };
+}
+
 export interface AppConfig {
+  /** @deprecated Read the local provider endpoint from transcription instead. */
   whisperUrl: string;
+  transcription: TranscriptionConfig;
   selectedDeviceId: string | null;
   removeFillerWords: boolean;
   language: string;

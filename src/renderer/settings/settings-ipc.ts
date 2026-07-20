@@ -19,6 +19,7 @@ export interface SettingsIpc {
   getUpdateStatus: () => Promise<UpdateStatus>;
   checkForUpdates: () => Promise<UpdateStatus>;
   testMcpServer: (serverId: string) => Promise<void>;
+  checkTranscriptionServer: () => Promise<boolean>;
   onUpdateStatusChanged: (callback: (status: UpdateStatus) => void) => Unsubscribe | undefined;
   onMcpServerStatus: (callback: (status: McpServerRuntimeStatus) => void) => Unsubscribe | undefined;
   getAuditRuns: () => Promise<AuditRunSummary[]>;
@@ -41,6 +42,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     testMcpServer: async (serverId) => {
       await electronAPI?.invoke('mcp:test-server', serverId);
     },
+    checkTranscriptionServer: () => requireElectronApi(electronAPI).invoke('transcription:check-server'),
     onUpdateStatusChanged: (callback) => electronAPI?.on('updater:status-changed', callback),
     onMcpServerStatus: (callback) => electronAPI?.on('mcp:server-status', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),

@@ -7,7 +7,8 @@ import type {
 import { keyboardHook } from './native/keyboard';
 import { captureForegroundTarget } from './native/target';
 import { getRecordingPillWindow, hideRecordingPill, showRecordingPill } from './recording-pill';
-import { transcribe } from './whisper';
+import { localWhisperCppTranscriber } from './whisper';
+import type { RecognitionSettings, Transcriber } from './transcription';
 import { createSingletonWindow } from './window-factory';
 
 export interface RecordingResult {
@@ -151,19 +152,17 @@ export interface KeyboardHook {
   stop(): void;
 }
 
-export type WhisperClient = (audioData: Uint8Array) => Promise<string>;
-
 export interface RecordingSessionOptions {
   isAgentModeEnabled: () => boolean;
   getRecordingActivationMode?: () => RecordingActivationMode;
   getSelectedDeviceId?: () => string | null;
-  getWhisperUrl?: () => string;
+  getRecognitionSettings?: () => RecognitionSettings;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
   onError?: (error: Error) => void;
 
   audioCapture?: AudioCapture;
   keyboardHook?: KeyboardHook;
-  whisperClient?: WhisperClient;
+  transcriber?: Transcriber;
   captureTarget?: () => DictationTargetSnapshot | null;
   showRecordingPill?: (intent: RecordingIntent) => void;
   hideRecordingPill?: () => void;
@@ -184,14 +183,14 @@ export class RecordingSession {
   private getRecordingActivationMode: () => RecordingActivationMode;
   private audioCapture: AudioCapture;
   private keyboardHook: KeyboardHook;
-  private whisperClient: WhisperClient;
+  private transcriber: Transcriber;
+  private getRecognitionSettings: () => RecognitionSettings;
   private captureTarget: () => DictationTargetSnapshot | null;
   private showRecordingPillFn: (intent: RecordingIntent) => void;
   private hideRecordingPillFn: () => void;
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
   private getSelectedDeviceId?: () => string | null;
-  private getWhisperUrl?: () => string;
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
@@ -200,14 +199,19 @@ export class RecordingSession {
       (reason) => this.markAudioWindowCrashed(reason)
     );
     this.keyboardHook = options.keyboardHook ?? keyboardHook;
-    this.whisperClient = options.whisperClient ?? transcribe;
+    this.transcriber = options.transcriber ?? localWhisperCppTranscriber;
+    this.getRecognitionSettings = options.getRecognitionSettings ?? (() => ({
+      language: 'auto',
+      task: 'transcribe',
+      dictionary: [],
+      removeFillerWords: false,
+    }));
     this.captureTarget = options.captureTarget ?? captureForegroundTarget;
     this.showRecordingPillFn = options.showRecordingPill ?? showRecordingPill;
     this.hideRecordingPillFn = options.hideRecordingPill ?? hideRecordingPill;
     this.onResultCallback = options.onResult;
     this.onErrorCallback = options.onError;
     this.getSelectedDeviceId = options.getSelectedDeviceId;
-    this.getWhisperUrl = options.getWhisperUrl;
   }
 
   begin(intent: RecordingIntent = 'dictation'): void {
@@ -216,8 +220,7 @@ export class RecordingSession {
     this.targetSnapshot = this.captureTarget();
 
     const deviceId = this.getSelectedDeviceId?.();
-    const whisperUrl = this.getWhisperUrl?.();
-    console.log(`Starting recording session. Device: ${deviceId ?? 'default'}, Whisper URL: ${whisperUrl ?? 'default'}`);
+    console.log(`Starting recording session. Device: ${deviceId ?? 'default'}`);
 
     this.audioCapture.prepare();
     this.audioCapture.beginCapture();
@@ -272,13 +275,17 @@ export class RecordingSession {
 
     if (audioData.byteLength <= 44) {
       console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
+      audioData.fill(0);
       this.targetSnapshot = null;
       pendingEnd?.resolve(null);
       return null;
     }
 
     try {
-      const text = await this.whisperClient(audioData);
+      const text = await this.transcriber.transcribe({
+        audio: audioData,
+        recognition: this.getRecognitionSettings(),
+      });
       const snapshot = this.targetSnapshot;
       this.targetSnapshot = null;
       const result = text ? { text, intent, targetSnapshot: snapshot } : null;
@@ -295,6 +302,9 @@ export class RecordingSession {
         throw err;
       }
       return null;
+    } finally {
+      audioData.fill(0);
+      this.targetSnapshot = null;
     }
   }
 

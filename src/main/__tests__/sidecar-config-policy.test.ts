@@ -4,6 +4,10 @@ import { getSidecarConfigAction } from '../sidecar-config-policy';
 
 const baseConfig: AppConfig = {
   whisperUrl: 'http://localhost:8080/inference',
+  transcription: {
+    activeProvider: 'local-whisper-cpp',
+    providers: { localWhisperCpp: { endpoint: 'http://localhost:8080/inference' } },
+  },
   selectedDeviceId: null,
   removeFillerWords: true,
   language: 'auto',

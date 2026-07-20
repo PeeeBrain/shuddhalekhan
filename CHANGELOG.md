@@ -7,6 +7,12 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Transcription Providers
+- Added a provider-neutral batch transcription contract while keeping local whisper.cpp as the active default.
+- Existing Whisper endpoint settings migrate automatically into retained local-provider configuration.
+- Added capability-aware recognition validation, sanitized provider failure categories, and no-audio server checks.
+- Transcription failures now use a non-blocking notification with Settings and dismiss actions, and completed audio is discarded after every result.
+
 ### Credential Vault
 - Added Windows DPAPI-backed secure storage for Agent Mode API keys, with saved, replace, and remove controls in Settings.
 - Agent Mode now supports securely stored API keys alongside existing environment-variable credentials.

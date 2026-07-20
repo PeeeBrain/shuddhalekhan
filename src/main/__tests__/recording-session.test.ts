@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
+import type { Transcriber } from '../transcription';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
 import type { RecordingSession, AudioCapture } from '../recording-session';
 
@@ -16,6 +17,20 @@ mock.module('../recording-pill', () => ({
   hideRecordingPill: vi.fn(),
   getRecordingPillWindow: getRecordingPillWindowMock,
 }));
+
+function createTranscriber(transcribe: Transcriber['transcribe']): Transcriber {
+  return {
+    id: 'local-whisper-cpp',
+    capabilities: {
+      translation: true,
+      automaticLanguageDetection: true,
+      dictionaryHints: true,
+      authentication: 'none',
+      maxDurationSeconds: null,
+    },
+    transcribe,
+  };
+}
 
 function createAudioCaptureMock(): AudioCapture & {
   [K in keyof AudioCapture]: ReturnType<typeof vi.fn>;
@@ -72,7 +87,7 @@ describe('RecordingSession', () => {
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: transcribe,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
@@ -90,6 +105,52 @@ describe('RecordingSession', () => {
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
     expect(showRecordingPill).toHaveBeenCalledWith('dictation');
     expect(session.isActive()).toBe(true);
+  });
+
+  it('submits completed audio and recognition settings through the provider-neutral transcriber', async () => {
+    const providerTranscriber: Transcriber = {
+      id: 'local-whisper-cpp',
+      capabilities: {
+        translation: true,
+        automaticLanguageDetection: true,
+        dictionaryHints: true,
+        authentication: 'none',
+        maxDurationSeconds: null,
+      },
+      transcribe: vi.fn(async () => 'provider text'),
+    };
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: providerTranscriber,
+      getRecognitionSettings: () => ({
+        language: 'mr',
+        task: 'translate',
+        dictionary: ['Shuddhalekhan'],
+        removeFillerWords: true,
+      }),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation');
+    const resultPromise = session.end();
+    const audio = new Uint8Array(64).fill(7);
+    await session.complete(audio);
+
+    await expect(resultPromise).resolves.toMatchObject({ text: 'provider text', intent: 'dictation' });
+    expect(providerTranscriber.transcribe).toHaveBeenCalledWith({
+      audio: expect.any(Uint8Array),
+      recognition: {
+        language: 'mr',
+        task: 'translate',
+        dictionary: ['Shuddhalekhan'],
+        removeFillerWords: true,
+      },
+    });
+    expect(audio.every((byte) => byte === 0)).toBe(true);
   });
 
   it('ends recording and resolves with transcribed text and original intent', async () => {
@@ -228,7 +289,7 @@ describe('RecordingSession', () => {
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: transcribe,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
@@ -268,7 +329,7 @@ describe('RecordingSession', () => {
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: failingTranscribe,
+      transcriber: createTranscriber(({ audio }) => failingTranscribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
@@ -286,10 +347,11 @@ describe('RecordingSession', () => {
 
     const endPromise = session.end();
     
-    const fakeAudioData = new Uint8Array(64);
+    const fakeAudioData = new Uint8Array(64).fill(9);
     await listener({}, fakeAudioData.buffer);
 
     await expect(endPromise).rejects.toThrow('Whisper offline');
+    expect(fakeAudioData.every((byte) => byte === 0)).toBe(true);
     expect(onResult).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
@@ -300,7 +362,7 @@ describe('RecordingSession', () => {
       audioCapture: audioStream,
       showRecordingPill,
       hideRecordingPill,
-      whisperClient: transcribe,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,

@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { app, ipcMain, dialog, session, shell, Notification } from 'electron';
+import { app, ipcMain, session, shell, Notification } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow } from './settings-window';
 import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
@@ -11,6 +11,7 @@ import { getAgentSidecarApiKey } from './agent-credential';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
 import { RecordingSession } from './recording-session';
+import { checkServerReachability, getSafeTranscriptionFailureMessage } from './transcription';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
@@ -36,7 +37,15 @@ const recordingSession = new RecordingSession({
   isAgentModeEnabled: () => cachedAgentEnabled,
   getRecordingActivationMode: () => getConfig().recordingActivationMode,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
-  getWhisperUrl: () => getConfig().whisperUrl,
+  getRecognitionSettings: () => {
+    const config = getConfig();
+    return {
+      language: config.language,
+      task: config.task,
+      dictionary: config.dictionary,
+      removeFillerWords: config.removeFillerWords,
+    };
+  },
   onResult: routeRecordingResult,
   onError: showTranscriptionError,
 });
@@ -108,8 +117,11 @@ function finishRecording(): void {
 }
 
 function showTranscriptionError(err: unknown): void {
-  console.error('Transcription failed:', err);
-  dialog.showErrorBox('Transcription Error', err instanceof Error ? err.message : String(err));
+  console.error('Transcription failed:', err instanceof Error ? err.name : 'Unknown failure');
+  showAgentToast({
+    kind: 'transcription-failed',
+    message: getSafeTranscriptionFailureMessage(err),
+  });
 }
 
 function handleAgentTranscript(text: string): void {
@@ -171,6 +183,12 @@ ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
 
 ipcMain.handle('config:get', () => {
   return getConfig();
+});
+
+ipcMain.handle('transcription:check-server', async () => {
+  const config = getConfig();
+  if (config.transcription.activeProvider !== 'local-whisper-cpp') return false;
+  return checkServerReachability(config.transcription.providers.localWhisperCpp.endpoint);
 });
 
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {

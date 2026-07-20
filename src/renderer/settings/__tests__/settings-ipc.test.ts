@@ -6,6 +6,10 @@ const vi = { fn: mock };
 
 const config: AppConfig = {
   whisperUrl: 'http://localhost:8080/inference',
+  transcription: {
+    activeProvider: 'local-whisper-cpp',
+    providers: { localWhisperCpp: { endpoint: 'http://localhost:8080/inference' } },
+  },
   selectedDeviceId: null,
   removeFillerWords: true,
   language: 'auto',
@@ -44,6 +48,7 @@ describe('settings IPC adapter', () => {
       if (channel === 'app:get-info') return Promise.resolve({ name: 'Shuddhalekhan', version: '4.0.0', isPackaged: false });
       if (channel === 'updater:get-status') return Promise.resolve(updateStatus);
       if (channel === 'updater:check') return Promise.resolve(updateStatus);
+      if (channel === 'transcription:check-server') return Promise.resolve(true);
       return Promise.resolve(undefined);
     });
     on = vi.fn(() => vi.fn());
@@ -64,11 +69,13 @@ describe('settings IPC adapter', () => {
     await ipc.setConfig('agent', config.agent);
     await ipc.setConfig('recordingActivationMode', 'toggle');
     await ipc.testMcpServer('mail');
+    await ipc.checkTranscriptionServer();
     await ipc.checkForUpdates();
 
     expect(invoke).toHaveBeenCalledWith('config:set', 'agent', config.agent);
     expect(invoke).toHaveBeenCalledWith('config:set', 'recordingActivationMode', 'toggle');
     expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'mail');
+    expect(invoke).toHaveBeenCalledWith('transcription:check-server');
     expect(invoke).toHaveBeenCalledWith('updater:check');
   });
 

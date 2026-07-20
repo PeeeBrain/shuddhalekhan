@@ -22,9 +22,11 @@ export function TranscriptionSettings({
   config,
   persistence,
   onNavigate,
+  settingsIpc,
 }: SettingsSectionProps) {
   const { commit, fieldErrors, clearFieldError } = persistence;
-  const [whisperDraft, setWhisperDraft] = useState(config.whisperUrl);
+  const localEndpoint = config.transcription.providers.localWhisperCpp.endpoint;
+  const [whisperDraft, setWhisperDraft] = useState(localEndpoint);
   const [whisperValidationError, setWhisperValidationError] = useState<string | null>(null);
   const [whisperTestState, setWhisperTestState] = useState<WhisperTestState>('idle');
   const whisperErrorId = useId();
@@ -32,9 +34,12 @@ export function TranscriptionSettings({
   const whisperInputId = useId();
 
   const whisperValidation = (value: string): string | null => {
-    if (!value.trim()) return 'Whisper endpoint URL is required.';
+    if (!value.trim()) return 'Endpoint URL is required.';
     try {
-      new URL(value);
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return 'Endpoint must use HTTP or HTTPS.';
+      }
       return null;
     } catch {
       return 'Enter a valid URL (e.g. http://localhost:8080/inference).';
@@ -46,19 +51,18 @@ export function TranscriptionSettings({
     const validationError = whisperValidation(candidate);
     setWhisperValidationError(validationError);
     if (validationError) return;
-    if (candidate !== config.whisperUrl) {
-      await commit('whisperUrl', candidate, FIELD_ID_WHISPER);
+    if (candidate !== localEndpoint) {
+      await commit('transcription', {
+        ...config.transcription,
+        providers: {
+          ...config.transcription.providers,
+          localWhisperCpp: { endpoint: candidate },
+        },
+      }, FIELD_ID_WHISPER);
     }
     setWhisperTestState('checking');
-    try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 5000);
-      await fetch(candidate, { method: 'GET', signal: controller.signal });
-      clearTimeout(id);
-      setWhisperTestState('success');
-    } catch {
-      setWhisperTestState('failed');
-    }
+    const reachable = await settingsIpc.checkTranscriptionServer();
+    setWhisperTestState(reachable ? 'success' : 'failed');
   };
 
   const whisperError =
@@ -74,6 +78,13 @@ export function TranscriptionSettings({
         <SetupChecklist config={config} onNavigate={onNavigate} persistence={persistence} />
       ) : null}
       <div className="rounded-lg border border-border/60 bg-card px-6">
+        <SelectRow
+          label="Provider"
+          value={config.transcription.activeProvider}
+          options={[{ value: 'local-whisper-cpp', label: 'Local whisper.cpp' }]}
+          errorId={useId()}
+          onChange={() => undefined}
+        />
         <ToggleRow
           title="Clean transcription"
           description="Remove common filler words before dictation text is injected."
@@ -84,7 +95,7 @@ export function TranscriptionSettings({
         />
         <div className="space-y-2 border-b border-border/70 py-5">
           <Label id={whisperLabelId} htmlFor={whisperInputId} className="text-sm font-medium">
-            Whisper endpoint
+            Endpoint
           </Label>
           <Input
             id={whisperInputId}
@@ -97,11 +108,17 @@ export function TranscriptionSettings({
               setWhisperTestState('idle');
             }}
             onBlur={() => {
-              if (whisperDraft === config.whisperUrl) return;
+              if (whisperDraft === localEndpoint) return;
               const validationError = whisperValidation(whisperDraft);
               setWhisperValidationError(validationError);
               if (!validationError) {
-                commit('whisperUrl', whisperDraft, FIELD_ID_WHISPER);
+                commit('transcription', {
+                  ...config.transcription,
+                  providers: {
+                    ...config.transcription.providers,
+                    localWhisperCpp: { endpoint: whisperDraft },
+                  },
+                }, FIELD_ID_WHISPER);
               }
             }}
             onKeyDown={(e) => {
@@ -124,13 +141,13 @@ export function TranscriptionSettings({
               type="button"
               variant="secondary"
               size="sm"
-              disabled={whisperTestState === 'checking'}
+              disabled={whisperTestState === 'checking' || whisperValidation(whisperDraft) !== null}
               onClick={testWhisperConnection}
             >
-              {whisperTestState === 'checking' ? 'Checking...' : 'Test connection'}
+              {whisperTestState === 'checking' ? 'Checking...' : 'Check server'}
             </Button>
             {whisperTestState === 'success' ? (
-              <Tag tone="success">Connected</Tag>
+              <Tag tone="success">Reachable</Tag>
             ) : null}
             {whisperTestState === 'failed' ? (
               <div className="flex min-w-0 items-center gap-2">
