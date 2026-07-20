@@ -25,6 +25,10 @@ const config: AppConfig = {
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
   recordingActivationMode: 'push-to-talk',
+  shortcuts: {
+    dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+    agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+  },
   agent: {
     enabled: false,
     provider: {
@@ -56,6 +60,8 @@ describe('settings IPC adapter', () => {
       if (channel === 'updater:get-status') return Promise.resolve(updateStatus);
       if (channel === 'updater:check') return Promise.resolve(updateStatus);
       if (channel === 'transcription:check-server') return Promise.resolve(true);
+      if (channel === 'shortcuts:get-paused') return Promise.resolve(false);
+      if (channel === 'shortcuts:set-paused') return Promise.resolve(true);
       return Promise.resolve(undefined);
     });
     on = vi.fn(() => vi.fn());
@@ -84,6 +90,22 @@ describe('settings IPC adapter', () => {
     expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'mail');
     expect(invoke).toHaveBeenCalledWith('transcription:check-server');
     expect(invoke).toHaveBeenCalledWith('updater:check');
+  });
+
+  it('controls capture and session-only pause through named methods', async () => {
+    await expect(ipc.getShortcutsPaused()).resolves.toBe(false);
+    await expect(ipc.setShortcutsPaused(true)).resolves.toBe(true);
+    await ipc.beginShortcutCapture();
+    await ipc.endShortcutCapture();
+
+    expect(invoke).toHaveBeenCalledWith('shortcuts:get-paused');
+    expect(invoke).toHaveBeenCalledWith('shortcuts:set-paused', true);
+    expect(invoke).toHaveBeenCalledWith('shortcuts:begin-capture');
+    expect(invoke).toHaveBeenCalledWith('shortcuts:end-capture');
+
+    const changed = vi.fn();
+    ipc.onShortcutsPausedChanged(changed);
+    expect(on).toHaveBeenLastCalledWith('shortcuts:paused-changed', expect.any(Function));
   });
 
   it('exposes credential status and mutation methods without returning saved values', async () => {

@@ -12,10 +12,12 @@ mock.module('../native/keyboard', () => ({
   keyboardHook: { start: vi.fn(), stop: vi.fn() },
 }));
 const getRecordingPillWindowMock = vi.fn();
+const prepareRecordingPillWindowMock = vi.fn();
 mock.module('../recording-pill', () => ({
   showRecordingPill: vi.fn(),
   hideRecordingPill: vi.fn(),
   getRecordingPillWindow: getRecordingPillWindowMock,
+  prepareRecordingPillWindow: prepareRecordingPillWindowMock,
   updateRecordingDurationWarning: vi.fn(),
 }));
 
@@ -67,6 +69,7 @@ describe('RecordingSession', () => {
 
   beforeEach(async () => {
     resetElectronMock();
+    prepareRecordingPillWindowMock.mockClear();
     ({ RecordingSession: RecordingSessionCtor } = await import(`../recording-session?test=${Date.now()}-${Math.random()}`));
     audioStream = createAudioCaptureMock();
     showRecordingPill = vi.fn();
@@ -124,8 +127,10 @@ describe('RecordingSession', () => {
     });
 
     session.start();
-    const onKeyboardStart = keyboardStart.mock.calls[0]?.[0] as (intent: RecordingIntent) => void;
-    onKeyboardStart('agent');
+    const options = keyboardStart.mock.calls[0]?.[0] as {
+      onStart: (intent: RecordingIntent) => void;
+    };
+    options.onStart('agent');
 
     expect(onError).toHaveBeenCalledWith(readinessError);
     expect(audioStream.beginCapture).not.toHaveBeenCalled();
@@ -251,21 +256,65 @@ describe('RecordingSession', () => {
     const onResult = vi.fn();
 
     session.startKeyboardHook(onResult);
-    const [onStart, onStop, enabled, getActivationMode] = keyboardStart.mock.calls[0] as [
-      (intent: RecordingIntent) => void,
-      () => void,
-      () => boolean,
-      () => RecordingActivationMode,
+    const options = keyboardStart.mock.calls[0] as unknown as [
+      {
+        onStart: (intent: RecordingIntent) => void;
+        onStop: () => void;
+        isAgentModeEnabled: () => boolean;
+        getBinding: (intent: RecordingIntent) => unknown;
+        getActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
+      },
     ];
+    const { onStart, onStop, isAgentModeEnabled: enabled, getBinding, getActivationMode } = options[0];
 
     expect(enabled()).toBe(false);
-    expect(getActivationMode()).toBe('toggle');
+    expect(getActivationMode('dictation')).toBe('toggle');
+    expect(getBinding('dictation')).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
+    expect(getBinding('agent')).toEqual({ keyCode: null, modifiers: ['alt', 'win'] });
     onStart('agent');
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
     onStop();
     session.stopKeyboardHook();
 
     expect(keyboardStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes configured per-intent bindings and activation modes to the keyboard hook', () => {
+    const getShortcutBinding = vi.fn((intent: RecordingIntent) =>
+      intent === 'dictation' ? { keyCode: 0x52, modifiers: [] } : null);
+    const getMode = vi.fn((intent: RecordingIntent) =>
+      (intent === 'dictation' ? 'toggle' : 'push-to-talk') as RecordingActivationMode);
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      getShortcutBinding,
+      getRecordingActivationMode: getMode,
+    });
+
+    session.startKeyboardHook();
+    const options = keyboardStart.mock.calls[0] as unknown as [
+      {
+        getBinding: (intent: RecordingIntent) => unknown;
+        getActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
+      },
+    ];
+
+    expect(options[0].getBinding('dictation')).toEqual({ keyCode: 0x52, modifiers: [] });
+    expect(options[0].getBinding('agent')).toBeNull();
+    expect(options[0].getActivationMode('dictation')).toBe('toggle');
+    expect(options[0].getActivationMode('agent')).toBe('push-to-talk');
+  });
+
+  it('prewarms the hidden recording pill renderer during startup', () => {
+    session.start();
+
+    expect(prepareRecordingPillWindowMock).toHaveBeenCalledTimes(1);
+    expect(keyboardStart).toHaveBeenCalledTimes(1);
   });
 
   it('registers IPC listeners on start() and unregisters them on stop()', () => {
@@ -450,7 +499,7 @@ describe('RecordingSession', () => {
     session.begin('dictation');
 
     // Trigger keyboard-stop callback
-    const onStop = keyboardStart.mock.calls[0][1] as () => void;
+    const onStop = (keyboardStart.mock.calls[0][0] as { onStop: () => void }).onStop;
     onStop();
 
     // Trigger audio-data-ready

@@ -4,6 +4,7 @@ import { Tag } from './ui/rows';
 import type { AppConfig } from '../../types/ipc';
 import type { SettingsSectionId } from './settings-nav';
 import type { SettingsPersistence } from './use-settings-persistence';
+import { formatBinding } from '../../shared/shortcut-bindings';
 
 interface SetupChecklistProps {
   config: AppConfig;
@@ -36,7 +37,13 @@ export function SetupChecklist({
       done: micComplete,
       action: () => onNavigate('audio'),
     },
-    { label: 'Try a dictation (Ctrl + Win)', done: false },
+    {
+      label: config.shortcuts.dictation.binding
+        ? `Try a dictation (${formatBinding(config.shortcuts.dictation.binding)})`
+        : 'Assign a Dictation shortcut',
+      done: false,
+      action: config.shortcuts.dictation.binding ? undefined : () => onNavigate('shortcuts'),
+    },
   ];
 
   return (

@@ -4,8 +4,8 @@ Speech-to-text dictation app with an optional voice-first Agent Mode.
 
 Audio is recorded locally, sent to a Whisper-compatible HTTP endpoint, and then routed by intent:
 
-- Hold `Ctrl+Win` for Dictation. Release the chord to transcribe and paste the transcript into the focused application.
-- Hold `Alt+Win` for Agent Mode. Release the chord to transcribe the command and send it to the local agent runtime.
+- Dictation defaults to `Ctrl+Win`; Agent Mode defaults to `Alt+Win`. Each global shortcut and its Push to Talk or Toggle behavior can be configured independently under Settings → Shortcuts.
+- Configured trigger events are consumed while active. Global shortcuts can be paused for the current app session from Settings or the tray.
 
 Agent Mode is opt-in from Settings. When disabled, the agent sidecar and MCP connections stay inactive.
 
@@ -192,8 +192,8 @@ Agent Mode writes a local SQLite audit database named `agent-audit.sqlite` under
 ## Notes
 
 - The app is **Windows-only** because global keyboard hooks and paste simulation call Windows APIs through `koffi`.
-- Dictation is controlled by the global `Ctrl+Win` chord.
-- Agent Mode is controlled by the global `Alt+Win` chord when enabled.
+- Dictation defaults to the global `Ctrl+Win` chord and can be reassigned or cleared.
+- Agent Mode defaults to `Alt+Win`, can be configured independently, and remains dormant while Agent Mode is disabled.
 - The tray menu supports microphone selection, transcription cleanup toggling, Settings, manual update checks, and exit.
 - Recording popup is bottom-center and pill-shaped, with a distinct Agent Mode visual state.
 - Agent responses and approvals appear as toast windows near the bottom-right of the primary display.

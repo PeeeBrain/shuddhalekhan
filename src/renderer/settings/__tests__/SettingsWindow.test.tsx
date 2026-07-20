@@ -46,6 +46,10 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: true,
     recordingActivationMode: 'push-to-talk',
+    shortcuts: {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    },
     agent: {
       enabled: false,
       provider: {
@@ -102,6 +106,11 @@ function createMockSettingsIpc(
     checkForUpdates: mock(() => Promise.resolve(UPDATE_STATUS)),
     testMcpServer: mock(() => Promise.resolve()),
     checkTranscriptionServer: mock(() => Promise.resolve(true)),
+    getShortcutsPaused: mock(() => Promise.resolve(false)),
+    setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
+    beginShortcutCapture: mock(() => Promise.resolve()),
+    endShortcutCapture: mock(() => Promise.resolve()),
+    onShortcutsPausedChanged: mock(() => undefined),
     onUpdateStatusChanged: mock(() => undefined),
     onMcpServerStatus: mock(
       (_callback: (status: McpServerRuntimeStatus) => void) => undefined,
@@ -234,6 +243,30 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeInTheDocument();
   });
 
+  it('groups all six provider choices with descriptions and readiness', async () => {
+    renderSettings();
+    await waitForLoaded();
+
+    expect(screen.getByText('Configured')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
+
+    const options = await screen.findAllByRole('option');
+    expect(options).toHaveLength(6);
+    for (const name of [
+      'Local whisper.cpp',
+      'OpenAI',
+      'Microsoft Azure Speech',
+      'Google Cloud Speech-to-Text v2',
+      'NVIDIA Speech NIM',
+      'Custom OpenAI-compatible',
+    ]) {
+      expect(options.some((option) => option.textContent?.includes(name))).toBe(true);
+    }
+    expect(screen.getByText('Cloud')).toBeInTheDocument();
+    expect(screen.getByText('Custom')).toBeInTheDocument();
+    expect(screen.getByText('OpenAI batch audio transcription.')).toBeInTheDocument();
+  });
+
   it('shows provider-native Microsoft Azure Speech setup without a model field', async () => {
     const config = baseConfig();
     const { settingsIpc } = renderSettings({
@@ -318,13 +351,13 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('configured NVIDIA Speech NIM endpoint');
   });
 
-  it('shows recording activation and device rows on the Audio section', async () => {
+  it('shows shared device rows without the removed shared activation setting', async () => {
     renderSettings();
     await waitForLoaded();
 
     fireEvent.click(tabByLabel('Audio'));
 
-    expect(screen.getByRole('combobox', { name: 'Recording activation' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Recording activation' })).not.toBeInTheDocument();
     expect(screen.getByText('Selected device')).toBeInTheDocument();
     expect(screen.getByText('Capture path')).toBeInTheDocument();
   });
@@ -337,10 +370,102 @@ describe('Settings section reachability', () => {
 
     const panel = screen.getByRole('tabpanel');
     expect(within(panel).getByText('Dictation')).toBeInTheDocument();
-    expect(within(panel).getByText('Agent')).toBeInTheDocument();
+    expect(within(panel).getByText('Agent Mode')).toBeInTheDocument();
     expect(within(panel).getByText('Ctrl').closest('kbd')).toBeInTheDocument();
     expect(within(panel).getByText('Alt').closest('kbd')).toBeInTheDocument();
     expect(panel.querySelectorAll('kbd')).toHaveLength(4);
+  });
+
+  it('captures and saves a normalized shortcut inline on release', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    expect(settingsIpc.beginShortcutCapture).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(capture, { code: 'ControlRight', key: 'Control' });
+    fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
+    fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
+    fireEvent.keyUp(capture, { code: 'ControlRight', key: 'Control' });
+
+    await waitFor(() => {
+      expect(settingsIpc.setConfig).toHaveBeenCalledWith(
+        'shortcuts',
+        expect.objectContaining({
+          dictation: {
+            binding: { keyCode: 0x52, modifiers: ['ctrl'] },
+            activationMode: 'push-to-talk',
+          },
+        }),
+      );
+    });
+    expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Settings saved')).toBeInTheDocument();
+  });
+
+  it('requires Use anyway before saving a disruptive bare-key shortcut', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
+    fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
+
+    expect(await screen.findByText('This shortcut can disrupt normal typing')).toBeInTheDocument();
+    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Use anyway' }));
+
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith(
+      'shortcuts',
+      expect.objectContaining({
+        dictation: expect.objectContaining({ binding: { keyCode: 0x52, modifiers: [] } }),
+      }),
+    ));
+  });
+
+  it('rejects an ambiguous binding and restores normal hook operation on Escape', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    const change = screen.getAllByRole('button', { name: 'Change' })[0];
+    fireEvent.click(change);
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    fireEvent.keyDown(capture, { code: 'AltLeft', key: 'Alt' });
+    fireEvent.keyDown(capture, { code: 'MetaLeft', key: 'Meta' });
+    fireEvent.keyUp(capture, { code: 'AltLeft', key: 'Alt' });
+    fireEvent.keyUp(capture, { code: 'MetaLeft', key: 'Meta' });
+
+    expect(await screen.findByText(/cannot use the same shortcut/i)).toBeInTheDocument();
+    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    fireEvent.keyDown(capture, { code: 'Escape', key: 'Escape' });
+
+    await waitFor(() => expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/capture cancelled/i)).toBeInTheDocument();
+  });
+
+  it('clears a binding with idle Backspace and toggles session-only pause', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    const pause = screen.getByRole('switch', { name: 'Pause global shortcuts' });
+    fireEvent.click(pause);
+    await waitFor(() => expect(settingsIpc.setShortcutsPaused).toHaveBeenCalledWith(true));
+    expect(await screen.findByText(/Global shortcuts are paused/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    fireEvent.keyDown(capture, { code: 'Backspace', key: 'Backspace' });
+
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith(
+      'shortcuts',
+      expect.objectContaining({ dictation: expect.objectContaining({ binding: null }) }),
+    ));
   });
 
   it('shows agent provider controls on the Agent section', async () => {
@@ -492,18 +617,20 @@ describe('Settings persistence timing', () => {
   it('commits safe selections immediately', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Audio'));
+    fireEvent.click(tabByLabel('Shortcuts'));
 
     const activation = screen.getByRole('combobox', {
-      name: 'Recording activation',
+      name: 'Dictation activation mode',
     });
-    fireEvent.click(activation);
-    fireEvent.click(await screen.findByRole('option', { name: 'Toggle recording' }));
+    fireEvent.change(activation, { target: { value: 'toggle' } });
 
     await waitFor(() => {
       expect(settingsIpc.setConfig).toHaveBeenCalledWith(
-        'recordingActivationMode',
-        'toggle',
+        'shortcuts',
+        expect.objectContaining({
+          dictation: expect.objectContaining({ activationMode: 'toggle' }),
+          agent: expect.objectContaining({ activationMode: 'push-to-talk' }),
+        }),
       );
     });
   });

@@ -26,6 +26,10 @@ const config: AppConfig = {
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
   recordingActivationMode: 'push-to-talk',
+  shortcuts: {
+    dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+    agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+  },
   agent: {
     enabled: false,
     provider: {

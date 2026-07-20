@@ -399,4 +399,111 @@ describe('config store', () => {
 
     expect(getConfig().agent.provider.thinkingEnabled).toBe(true);
   });
+
+  it('defaults to the explicit Ctrl+Win and Alt+Win bindings', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-defaults`);
+
+    expect(getConfig().shortcuts).toEqual({
+      dictation: {
+        binding: { keyCode: null, modifiers: ['ctrl', 'win'] },
+        activationMode: 'push-to-talk',
+      },
+      agent: {
+        binding: { keyCode: null, modifiers: ['alt', 'win'] },
+        activationMode: 'push-to-talk',
+      },
+    });
+  });
+
+  it('seeds both intent activation modes from the shared mode during migration', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('recordingActivationMode', 'toggle');
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-migration`);
+
+    expect(getConfig().shortcuts.dictation.activationMode).toBe('toggle');
+    expect(getConfig().shortcuts.agent.activationMode).toBe('toggle');
+    expect(getConfig().shortcuts.dictation.binding).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
+    expect(getConfig().shortcuts.agent.binding).toEqual({ keyCode: null, modifiers: ['alt', 'win'] });
+  });
+
+  it('keeps shortcut migration idempotent across repeated startups', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('recordingActivationMode', 'toggle');
+
+    const first = await import(`../config?test=${Date.now()}-shortcut-idempotent-a`);
+    first.setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x52, modifiers: [] }, activationMode: 'push-to-talk' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    });
+
+    storeData.set('recordingActivationMode', 'push-to-talk');
+    const second = await import(`../config?test=${Date.now()}-shortcut-idempotent-b`);
+
+    expect(second.getConfig().shortcuts.dictation).toEqual({
+      binding: { keyCode: 0x52, modifiers: [] },
+      activationMode: 'push-to-talk',
+    });
+    expect(second.getConfig().shortcuts.agent.binding).toBeNull();
+  });
+
+  it('sanitizes invalid stored shortcut values', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('shortcutsMigrated', true);
+    storeData.set('shortcuts', {
+      dictation: { binding: { keyCode: 0xff, modifiers: ['win', 'ctrl', 'bogus'] }, activationMode: 'unsupported' },
+      agent: { binding: null, activationMode: 'toggle' },
+    });
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-sanitize`);
+
+    expect(getConfig().shortcuts.dictation).toEqual({
+      binding: { keyCode: null, modifiers: ['ctrl', 'win'] },
+      activationMode: 'push-to-talk',
+    });
+    expect(getConfig().shortcuts.agent).toEqual({ binding: null, activationMode: 'toggle' });
+  });
+
+  it('rejects identical Dictation and Agent Mode bindings as ambiguous', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-shortcut-conflict`);
+
+    expect(() => setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x52, modifiers: ['ctrl'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: 0x52, modifiers: ['ctrl'] }, activationMode: 'toggle' },
+    })).toThrow();
+
+    expect(getConfig().shortcuts.dictation.binding).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
+  });
+
+  it('rejects reserved and unhookable bindings', async () => {
+    existsSync.mockReturnValue(false);
+    const { setConfig } = await import(`../config?test=${Date.now()}-shortcut-reserved`);
+
+    expect(() => setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x1b, modifiers: [] }, activationMode: 'push-to-talk' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    })).toThrow();
+
+    expect(() => setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x2e, modifiers: ['ctrl', 'alt'] }, activationMode: 'push-to-talk' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    })).toThrow();
+  });
+
+  it('persists disruptive but capturable bindings and unassigned intents', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-shortcut-persist`);
+
+    setConfig('shortcuts', {
+      dictation: { binding: { keyCode: 0x52, modifiers: [] }, activationMode: 'toggle' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    });
+
+    expect(getConfig().shortcuts).toEqual({
+      dictation: { binding: { keyCode: 0x52, modifiers: [] }, activationMode: 'toggle' },
+      agent: { binding: null, activationMode: 'push-to-talk' },
+    });
+  });
 });

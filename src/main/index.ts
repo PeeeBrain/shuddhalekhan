@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto';
 import { app, ipcMain, session, shell, Notification } from 'electron';
 
-import { getSettingsWindow, openSettingsWindow } from './settings-window';
-import { createTray, updateAudioDevices, updateUpdaterStatus } from './tray';
+import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
+import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
 import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './agent-toast-window';
 import { getConfig, setConfig } from './config';
 import { credentialVault } from './credential-vault';
@@ -11,6 +11,7 @@ import { getAgentSidecarApiKey } from './agent-credential';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { AgentSidecarManager } from './agent-sidecar';
 import { RecordingSession } from './recording-session';
+import { keyboardHook } from './native/keyboard';
 import {
   checkServerReachability,
   getSafeTranscriptionFailureMessage,
@@ -41,7 +42,8 @@ const sidecarEventRouter = createSidecarEventRouter({
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
 const recordingSession = new RecordingSession({
   isAgentModeEnabled: () => cachedAgentEnabled,
-  getRecordingActivationMode: () => getConfig().recordingActivationMode,
+  getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
+  getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
   getRecognitionSettings: () => {
     const config = getConfig();
@@ -132,6 +134,18 @@ function finishRecording(): void {
   void recordingSession.end();
 }
 
+// Never leave global shortcut activation suspended after capture ends.
+setSettingsWindowClosedHandler(() => keyboardHook.setCaptureSuspended(false));
+
+function setShortcutsPaused(paused: boolean): void {
+  keyboardHook.setPaused(paused);
+  updateShortcutPauseState(paused);
+  const settingsWin = getSettingsWindow();
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('shortcuts:paused-changed', paused);
+  }
+}
+
 function showTranscriptionError(err: unknown): void {
   console.error('Transcription failed:', err instanceof Error ? err.name : 'Unknown failure');
   showAgentToast({
@@ -199,6 +213,23 @@ ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
 
 ipcMain.handle('config:get', () => {
   return getConfig();
+});
+
+ipcMain.handle('shortcuts:get-paused', () => {
+  return keyboardHook.isPaused();
+});
+
+ipcMain.handle('shortcuts:set-paused', (_event, paused: boolean) => {
+  setShortcutsPaused(Boolean(paused));
+  return keyboardHook.isPaused();
+});
+
+ipcMain.handle('shortcuts:begin-capture', () => {
+  keyboardHook.setCaptureSuspended(true);
+});
+
+ipcMain.handle('shortcuts:end-capture', () => {
+  keyboardHook.setCaptureSuspended(false);
 });
 
 ipcMain.handle('transcription:check-server', async () => {
@@ -330,6 +361,8 @@ if (!gotSingleInstanceLock) {
       onPasteLastTranscript: () => pasteLastTranscript(),
       onCopyLastTranscript: () => copyLastTranscript(),
       onCheckForUpdates: () => void checkForUpdates(),
+      isShortcutsPaused: () => keyboardHook.isPaused(),
+      onTogglePause: (paused: boolean) => setShortcutsPaused(paused),
       onSelectDevice: (deviceId: string) => {
         setConfig('selectedDeviceId', deviceId);
         recordingSession.updateDevice(deviceId);

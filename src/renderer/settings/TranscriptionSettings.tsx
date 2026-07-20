@@ -1,7 +1,16 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { X } from 'lucide-react';
 import { SectionHeader } from './ui/SectionHeader';
 import { Tag, ToggleRow, SelectRow, DraftTextRow } from './ui/rows';
@@ -9,7 +18,7 @@ import { SetupChecklist } from './SetupChecklist';
 import { CredentialControl } from './ui/CredentialControl';
 import { WHISPER_LANGUAGES } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
-import type { AppConfig, TranscriptionProviderId } from '../../types/ipc';
+import type { AppConfig, CredentialKind, TranscriptionProviderId } from '../../types/ipc';
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';
 
@@ -30,14 +39,177 @@ const FIELD_ID_NVIDIA_ENDPOINT = 'nvidia-endpoint';
 const FIELD_ID_NVIDIA_MODEL = 'nvidia-model';
 const FIELD_ID_PROVIDER = 'provider';
 
-const PROVIDER_OPTIONS: Array<{ value: TranscriptionProviderId; label: string }> = [
-  { value: 'local-whisper-cpp', label: 'Local whisper.cpp' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'azure-speech', label: 'Microsoft Azure Speech' },
-  { value: 'google-cloud-speech-v2', label: 'Google Cloud Speech-to-Text v2' },
-  { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM' },
-  { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible' },
+interface ProviderOption {
+  value: TranscriptionProviderId;
+  label: string;
+  description: string;
+}
+
+const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: ProviderOption[] }> = [
+  {
+    label: 'Local',
+    options: [
+      { value: 'local-whisper-cpp', label: 'Local whisper.cpp', description: 'Private whisper.cpp-compatible inference endpoint.' },
+    ],
+  },
+  {
+    label: 'Cloud',
+    options: [
+      { value: 'openai', label: 'OpenAI', description: 'OpenAI batch audio transcription.' },
+      { value: 'azure-speech', label: 'Microsoft Azure Speech', description: 'Azure Speech Fast Transcription.' },
+      { value: 'google-cloud-speech-v2', label: 'Google Cloud Speech-to-Text v2', description: 'Google synchronous Speech-to-Text v2.' },
+    ],
+  },
+  {
+    label: 'Custom',
+    options: [
+      { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM', description: 'Self-hosted NVIDIA offline transcription.' },
+      { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible', description: 'A compatible private or local audio endpoint.' },
+    ],
+  },
 ];
+
+const PROVIDER_OPTIONS = PROVIDER_GROUPS.flatMap((group) => group.options);
+
+function ProviderSelector({
+  config,
+  value,
+  settingsIpc,
+  error,
+  onChange,
+}: {
+  config: AppConfig;
+  value: TranscriptionProviderId;
+  settingsIpc: SettingsSectionProps['settingsIpc'];
+  error?: string;
+  onChange: (value: string) => void;
+}) {
+  const labelId = useId();
+  const detailId = useId();
+  const errorId = useId();
+  const credentialKind = providerCredentialKind(config, value);
+  const [credentialResult, setCredentialResult] = useState<{
+    kind: CredentialKind;
+    ready: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    const kind = providerCredentialKind(config, value);
+    if (!kind) return () => { current = false; };
+    settingsIpc.getCredentialStatus(kind)
+      .then((status) => {
+        if (current) setCredentialResult({ kind, ready: status.available && status.exists });
+      })
+      .catch(() => {
+        if (current) setCredentialResult({ kind, ready: false });
+      });
+    return () => { current = false; };
+  }, [config, settingsIpc, value]);
+
+  const credentialReady = credentialKind === null
+    ? true
+    : credentialResult?.kind === credentialKind
+      ? credentialResult.ready
+      : null;
+
+  const selected = PROVIDER_OPTIONS.find((option) => option.value === value)!;
+  const fieldsReady = providerFieldsReady(config, value);
+  const readiness = !fieldsReady
+    ? { label: 'Setup required', tone: 'warning' as const }
+    : credentialReady === null
+      ? { label: 'Checking setup', tone: 'neutral' as const }
+      : credentialReady
+        ? { label: 'Configured', tone: 'success' as const }
+        : { label: 'Credential required', tone: 'warning' as const };
+
+  return (
+    <div className="border-b border-border/70 py-5 space-y-2">
+      <Label id={labelId} className="text-sm font-medium">Provider</Label>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger
+          className="w-full max-w-xl"
+          aria-labelledby={labelId}
+          aria-describedby={`${detailId}${error ? ` ${errorId}` : ''}`}
+          aria-invalid={error ? true : undefined}
+        >
+          <SelectValue>{selected.label}</SelectValue>
+        </SelectTrigger>
+        <SelectContent className="max-w-xl">
+          {PROVIDER_GROUPS.map((group) => (
+            <SelectGroup key={group.label}>
+              <SelectLabel>{group.label}</SelectLabel>
+              {group.options.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="py-2">
+                  <span className="flex flex-col items-start">
+                    <span>{option.label}</span>
+                    <span className="text-xs font-normal text-muted-foreground">{option.description}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          ))}
+        </SelectContent>
+      </Select>
+      <div id={detailId} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <Tag tone={readiness.tone}>{readiness.label}</Tag>
+        <span>{selected.description}</span>
+      </div>
+      {error ? <p id={errorId} role="alert" className="text-xs text-destructive">{error}</p> : null}
+    </div>
+  );
+}
+
+function providerCredentialKind(
+  config: AppConfig,
+  provider: TranscriptionProviderId,
+): CredentialKind | null {
+  if (provider === 'openai') return 'openai-api-key';
+  if (provider === 'azure-speech') return 'azure-speech-key';
+  if (provider === 'google-cloud-speech-v2') {
+    return config.transcription.providers.googleCloudSpeech.credentialSource === 'service-account'
+      ? 'google-service-account'
+      : null;
+  }
+  if (provider === 'nvidia-speech-nim') {
+    const auth = config.transcription.providers.nvidiaSpeechNim.auth;
+    return auth === 'bearer' ? 'nvidia-nim-bearer' : auth === 'header' ? 'nvidia-nim-header' : null;
+  }
+  if (provider === 'custom-open-ai-compatible') {
+    const auth = config.transcription.providers.customOpenAiCompatible.auth;
+    return auth === 'bearer'
+      ? 'custom-open-ai-compatible-bearer'
+      : auth === 'header'
+        ? 'custom-open-ai-compatible-header'
+        : null;
+  }
+  return null;
+}
+
+function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderId): boolean {
+  const providers = config.transcription.providers;
+  switch (provider) {
+    case 'local-whisper-cpp':
+      return Boolean(providers.localWhisperCpp.endpoint.trim());
+    case 'openai':
+      return Boolean(providers.openai.baseUrl.trim() && providers.openai.model.trim());
+    case 'azure-speech':
+      return Boolean(providers.azureSpeech.endpoint.trim() || providers.azureSpeech.region.trim());
+    case 'google-cloud-speech-v2':
+      return Boolean(
+        providers.googleCloudSpeech.project.trim()
+        && providers.googleCloudSpeech.location.trim()
+        && providers.googleCloudSpeech.model.trim(),
+      );
+    case 'nvidia-speech-nim':
+      return Boolean(providers.nvidiaSpeechNim.endpoint.trim() && providers.nvidiaSpeechNim.model.trim());
+    case 'custom-open-ai-compatible':
+      return Boolean(
+        providers.customOpenAiCompatible.endpoint.trim()
+        && providers.customOpenAiCompatible.model.trim(),
+      );
+  }
+}
 
 function hasControlCharacters(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
@@ -86,11 +258,11 @@ export function TranscriptionSettings({
         <SetupChecklist config={config} onNavigate={onNavigate} persistence={persistence} />
       ) : null}
       <div className="rounded-lg border border-border/60 bg-card px-6">
-        <SelectRow
-          label="Provider"
+        <ProviderSelector
+          config={config}
           value={provider}
-          options={PROVIDER_OPTIONS}
-          errorId={useId()}
+          settingsIpc={settingsIpc}
+          error={fieldErrors[FIELD_ID_PROVIDER]}
           onChange={handleProviderChange}
         />
 

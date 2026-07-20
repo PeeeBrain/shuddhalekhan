@@ -52,7 +52,9 @@ is started by the application with the installed Electron runtime in Node mode
 Before a human-approved tagged release, run this checklist against a configured
 provider and both a stdio and direct HTTP MCP server:
 
-- Trigger Dictation with `Ctrl + Win` and Agent Mode with `Alt + Win`.
+- Confirm the default `Ctrl + Win` Dictation and `Alt + Win` Agent Mode bindings, then capture representative single-key, ordinary-chord, and modifier-only replacements in Settings.
+- Verify Push to Talk and Toggle independently for both intents, including repeat suppression, trigger consumption, dormant disabled Agent Mode, live config changes, and Escape/focus-loss capture cleanup.
+- Pause global shortcuts from Settings and the tray. Confirm new sessions are blocked, an active session still finishes normally, configured keys pass through while paused, and pause resets after restart.
 - Dictate into a target Windows text application and verify clipboard-backed
   paste inserts the transcript.
 - Complete an Agent request and verify sidecar startup, streamed response
@@ -60,6 +62,8 @@ provider and both a stdio and direct HTTP MCP server:
   cycle.
 - Verify a direct HTTP MCP server works normally and a redirecting server is
   denied unless that server has explicitly opted in to redirects.
+- Verify Windows DPAPI-backed transcription and Agent credentials survive restart without appearing in renderer config, logs, notifications, errors, or audit output.
+- Verify local whisper.cpp transcription and representative authenticated-provider validation/failure paths without submitting billable test audio.
 
 Local packaging proves package construction and the checks above; it does not
 prove release publication or an end-to-end auto-update. Publishing remains

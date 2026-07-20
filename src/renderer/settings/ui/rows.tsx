@@ -319,8 +319,32 @@ interface KeyRowProps {
   value: string;
 }
 
-export function KeyRow({ label, value }: KeyRowProps) {
+export function Keycaps({ value, label }: { value: string; label?: string }) {
   const keys = value.split(' + ');
+  return (
+    <div className="flex flex-wrap items-center gap-1" aria-label={label ?? value}>
+      {keys.map((key, i) => (
+        <span key={`${key}-${i}`} className="flex items-center gap-1">
+          <kbd className="inline-flex min-h-6 items-center justify-center rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">
+            {key === 'Win' ? (
+              <>
+                <WindowsIcon className="size-3 text-primary" aria-hidden="true" />
+                <span className="sr-only">Win</span>
+              </>
+            ) : (
+              key
+            )}
+          </kbd>
+          {i < keys.length - 1 ? (
+            <span className="text-xs text-muted-foreground/60">+</span>
+          ) : null}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export function KeyRow({ label, value }: KeyRowProps) {
   const labelId = useId();
   return (
     <RowShell>
@@ -330,25 +354,7 @@ export function KeyRow({ label, value }: KeyRowProps) {
         className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
       >
         <span id={labelId} className="text-sm text-muted-foreground">{label}</span>
-        <div className="flex items-center gap-1" aria-label={`${label} shortcut: ${value}`}>
-          {keys.map((key, i) => (
-            <span key={`${key}-${i}`} className="flex items-center gap-1">
-              <kbd className="inline-flex items-center justify-center rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">
-                {key === 'Win' ? (
-                  <>
-                    <WindowsIcon className="size-3 text-primary" aria-hidden="true" />
-                    <span className="sr-only">Win</span>
-                  </>
-                ) : (
-                  key
-                )}
-              </kbd>
-              {i < keys.length - 1 ? (
-                <span className="text-xs text-muted-foreground/60">+</span>
-              ) : null}
-            </span>
-          ))}
-        </div>
+        <Keycaps value={value} label={`${label} shortcut: ${value}`} />
       </div>
     </RowShell>
   );

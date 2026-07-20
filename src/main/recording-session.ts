@@ -3,10 +3,18 @@ import type {
   DictationTargetSnapshot,
   RecordingActivationMode,
   RecordingIntent,
+  ShortcutBinding,
 } from '../types/ipc';
 import { keyboardHook } from './native/keyboard';
+import { DEFAULT_SHORTCUTS } from '../shared/shortcut-bindings';
 import { captureForegroundTarget } from './native/target';
-import { getRecordingPillWindow, hideRecordingPill, showRecordingPill, updateRecordingDurationWarning } from './recording-pill';
+import {
+  getRecordingPillWindow,
+  hideRecordingPill,
+  prepareRecordingPillWindow,
+  showRecordingPill,
+  updateRecordingDurationWarning,
+} from './recording-pill';
 import { localWhisperCppTranscriber } from './whisper';
 import type { RecognitionSettings, Transcriber } from './transcription';
 import { createSingletonWindow } from './window-factory';
@@ -143,19 +151,21 @@ export class ProductionAudioCapture implements AudioCapture {
 }
 
 export interface KeyboardHook {
-  start(
-    onStart: (intent: RecordingIntent) => void,
-    onStop: () => void,
-    isAgentModeEnabled?: () => boolean,
-    getActivationMode?: () => RecordingActivationMode
-  ): void;
+  start(options: {
+    onStart: (intent: RecordingIntent) => void;
+    onStop: () => void;
+    isAgentModeEnabled?: () => boolean;
+    getBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
+    getActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
+  }): void;
   stop(): void;
   recordingEndedExternally?(): void;
 }
 
 export interface RecordingSessionOptions {
   isAgentModeEnabled: () => boolean;
-  getRecordingActivationMode?: () => RecordingActivationMode;
+  getRecordingActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
+  getShortcutBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
   getSelectedDeviceId?: () => string | null;
   getRecognitionSettings?: () => RecognitionSettings;
   getReadinessError?: () => Error | null;
@@ -186,7 +196,8 @@ export class RecordingSession {
     | null = null;
 
   private isAgentModeEnabled: () => boolean;
-  private getRecordingActivationMode: () => RecordingActivationMode;
+  private getRecordingActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
+  private getShortcutBinding: (intent: RecordingIntent) => ShortcutBinding | null;
   private audioCapture: AudioCapture;
   private keyboardHook: KeyboardHook;
   private getTranscriber: () => Transcriber;
@@ -206,6 +217,7 @@ export class RecordingSession {
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
     this.getRecordingActivationMode = options.getRecordingActivationMode ?? (() => 'push-to-talk');
+    this.getShortcutBinding = options.getShortcutBinding ?? ((intent) => DEFAULT_SHORTCUTS[intent].binding);
     this.audioCapture = options.audioCapture ?? new ProductionAudioCapture(
       (reason) => this.markAudioWindowCrashed(reason)
     );
@@ -333,18 +345,19 @@ export class RecordingSession {
   }
 
   startKeyboardHook(onResult?: (result: RecordingResult | null) => void | Promise<void>): void {
-    this.keyboardHook.start(
-      (intent) => this.begin(intent),
-      () => {
+    this.keyboardHook.start({
+      onStart: (intent) => this.begin(intent),
+      onStop: () => {
         void this.end().then((result) => {
           if (onResult && !this.onResultCallback) {
             void onResult(result);
           }
         });
       },
-      this.isAgentModeEnabled,
-      this.getRecordingActivationMode
-    );
+      isAgentModeEnabled: this.isAgentModeEnabled,
+      getBinding: this.getShortcutBinding,
+      getActivationMode: this.getRecordingActivationMode,
+    });
   }
 
   stopKeyboardHook(): void {
@@ -352,6 +365,10 @@ export class RecordingSession {
   }
 
   start(): void {
+    // Prewarm the hidden renderer before installing the global hook. Audio can
+    // still start immediately if the user invokes a shortcut during loading.
+    prepareRecordingPillWindow();
+
     ipcMain.on('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.on('audio-data-ready', this.handleAudioDataReady);

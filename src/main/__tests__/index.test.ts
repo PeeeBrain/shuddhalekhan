@@ -66,7 +66,14 @@ const getUpdateStatus = vi.fn(() => ({
 }));
 const updateAudioDevices = vi.fn();
 const updateUpdaterStatus = vi.fn();
-let trayHandlers: { onOpenSettings?: () => void; onPasteLastTranscript?: () => void; onCopyLastTranscript?: () => void; onSelectDevice?: (deviceId: string) => void } = {};
+let trayHandlers: {
+  onOpenSettings?: () => void;
+  onPasteLastTranscript?: () => void;
+  onCopyLastTranscript?: () => void;
+  onSelectDevice?: (deviceId: string) => void;
+  isShortcutsPaused?: () => boolean;
+  onTogglePause?: (paused: boolean) => void;
+} = {};
 let notificationShow: ReturnType<typeof vi.fn>;
 const openSettingsWindow = vi.fn();
 const getSettingsWindow = vi.fn(() => ({
@@ -98,8 +105,20 @@ const recordingSessionGetAudioWebContents = vi.fn();
 let sessionOptions: any = null;
 
 installElectronMock();
+const keyboardSetPaused = vi.fn();
+const keyboardIsPaused = vi.fn(() => false);
+const keyboardSetCaptureSuspended = vi.fn();
+const setSettingsWindowClosedHandler = vi.fn();
+const updateShortcutPauseState = vi.fn();
+
 mock.module('../native/keyboard', () => ({
-  keyboardHook: { start: keyboardStart, stop: keyboardStop },
+  keyboardHook: {
+    start: keyboardStart,
+    stop: keyboardStop,
+    setPaused: keyboardSetPaused,
+    isPaused: keyboardIsPaused,
+    setCaptureSuspended: keyboardSetCaptureSuspended,
+  },
 }));
 mock.module('../native/clipboard', () => ({
   simulatePaste,
@@ -107,13 +126,14 @@ mock.module('../native/clipboard', () => ({
 }));
 mock.module('../native/target', () => ({ captureForegroundTarget }));
 mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
-mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow }));
+mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler }));
 mock.module('../tray', () => ({
   createTray: vi.fn((handlers: typeof trayHandlers) => {
     trayHandlers = handlers;
   }),
   updateAudioDevices,
   updateUpdaterStatus,
+  updateShortcutPauseState,
 }));
 mock.module('../config', () => ({ getConfig, setConfig, mergeDiscoveredTools }));
 mock.module('../credential-vault', () => ({ credentialVault }));
@@ -164,6 +184,10 @@ describe('main process IPC orchestration', () => {
     task: 'transcribe',
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
+    shortcuts: {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    },
     agent: {
       enabled: false,
       provider: {
@@ -232,6 +256,12 @@ describe('main process IPC orchestration', () => {
     getSettingsWindow.mockClear();
     keyboardStart.mockClear();
     keyboardStop.mockClear();
+    keyboardSetPaused.mockClear();
+    keyboardIsPaused.mockClear();
+    keyboardIsPaused.mockReturnValue(false);
+    keyboardSetCaptureSuspended.mockClear();
+    setSettingsWindowClosedHandler.mockClear();
+    updateShortcutPauseState.mockClear();
     agentStartRun.mockClear();
     agentStart.mockClear();
     agentStop.mockClear();
@@ -269,6 +299,10 @@ describe('main process IPC orchestration', () => {
       'config:set',
       'mcp:test-server',
       'settings:open',
+      'shortcuts:begin-capture',
+      'shortcuts:end-capture',
+      'shortcuts:get-paused',
+      'shortcuts:set-paused',
       'transcription:check-server',
       'updater:check',
       'updater:get-status',
@@ -278,6 +312,20 @@ describe('main process IPC orchestration', () => {
       'agent-toast:dismiss',
       'audio-devices',
     ]);
+  });
+
+  it('pauses shortcuts through IPC and restores capture suspension explicitly', async () => {
+    keyboardIsPaused.mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    expect(await ipcHandlers.get('shortcuts:get-paused')?.({})).toBe(false);
+    expect(await ipcHandlers.get('shortcuts:set-paused')?.({}, true)).toBe(true);
+    expect(keyboardSetPaused).toHaveBeenCalledWith(true);
+    expect(updateShortcutPauseState).toHaveBeenCalledWith(true);
+    expect(send).toHaveBeenCalledWith('shortcuts:paused-changed', true);
+
+    ipcHandlers.get('shortcuts:begin-capture')?.({});
+    ipcHandlers.get('shortcuts:end-capture')?.({});
+    expect(keyboardSetCaptureSuspended.mock.calls).toEqual([[true], [false]]);
   });
 
   it('shows transcription failures through a sanitized non-blocking toast', () => {

@@ -24,6 +24,10 @@ function config(auth: 'none' | 'bearer' | 'header' = 'none'): AppConfig {
     selectedDeviceId: null, removeFillerWords: false, language: 'en', task: 'transcribe', dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} }, setupChecklistDismissed: true,
     recordingActivationMode: 'push-to-talk',
+    shortcuts: {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    },
     agent: { enabled: false, provider: { baseUrl: '', model: '', apiKeyEnvVar: '', thinkingEnabled: true }, mcpServers: [] },
   };
 }

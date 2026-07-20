@@ -20,6 +20,11 @@ export interface SettingsIpc {
   checkForUpdates: () => Promise<UpdateStatus>;
   testMcpServer: (serverId: string) => Promise<void>;
   checkTranscriptionServer: () => Promise<boolean>;
+  getShortcutsPaused: () => Promise<boolean>;
+  setShortcutsPaused: (paused: boolean) => Promise<boolean>;
+  beginShortcutCapture: () => Promise<void>;
+  endShortcutCapture: () => Promise<void>;
+  onShortcutsPausedChanged: (callback: (paused: boolean) => void) => Unsubscribe | undefined;
   onUpdateStatusChanged: (callback: (status: UpdateStatus) => void) => Unsubscribe | undefined;
   onMcpServerStatus: (callback: (status: McpServerRuntimeStatus) => void) => Unsubscribe | undefined;
   getAuditRuns: () => Promise<AuditRunSummary[]>;
@@ -43,6 +48,15 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await electronAPI?.invoke('mcp:test-server', serverId);
     },
     checkTranscriptionServer: () => requireElectronApi(electronAPI).invoke('transcription:check-server'),
+    getShortcutsPaused: () => requireElectronApi(electronAPI).invoke('shortcuts:get-paused'),
+    setShortcutsPaused: (paused) => requireElectronApi(electronAPI).invoke('shortcuts:set-paused', paused),
+    beginShortcutCapture: async () => {
+      await requireElectronApi(electronAPI).invoke('shortcuts:begin-capture');
+    },
+    endShortcutCapture: async () => {
+      await requireElectronApi(electronAPI).invoke('shortcuts:end-capture');
+    },
+    onShortcutsPausedChanged: (callback) => electronAPI?.on('shortcuts:paused-changed', callback),
     onUpdateStatusChanged: (callback) => electronAPI?.on('updater:status-changed', callback),
     onMcpServerStatus: (callback) => electronAPI?.on('mcp:server-status', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),

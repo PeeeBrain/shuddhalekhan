@@ -28,13 +28,21 @@ tags and commit history, not from this file. Keep new entries under
 - Agent Mode now supports securely stored API keys alongside existing environment-variable credentials.
 
 ### Settings Redesign
+- Grouped all six transcription providers into Local, Cloud, and Custom choices with concise descriptions and configuration-readiness feedback.
 - Reorganized Settings into Dictation, Agent, and System groups, with Transcription as the initial destination.
 - Added a darker content canvas, cohesive settings controls, accessible vertical navigation, and restrained status tags across MCP and History.
 - Text fields now save on blur while toggles and selections save immediately; successful saves use a brief in-window notification and failures remain inline.
 - Increased the default Settings window to 1040x720 while preserving the 820x560 minimum size.
 
 ### Recording Controls
-- Added an Audio setting to choose between push-to-talk and press-once toggle recording while keeping existing hotkeys unchanged.
+- Prewarmed the hidden recording-pill renderer at startup, removing the first-recording visual delay without delaying audio capture or global shortcut installation.
+- Added persistent, independently configurable Dictation and Agent Mode shortcuts with per-intent Push to Talk or Toggle behavior; existing Ctrl+Win and Alt+Win chords remain the defaults.
+- Added inline keyboard capture for letters, numbers, punctuation, function/navigation keys, ordinary modifier chords, and modifier-only combinations, including accessible cancellation, clear, conflict, and disruptive-binding confirmation states.
+- Configured triggers now suppress their down, repeat, and release behavior while unrelated keys pass through; left/right modifiers normalize to shared Ctrl, Alt, Shift, and Win identities.
+- Added a session-only Pause Global Shortcuts control to Settings and the tray. Pausing blocks only new sessions and resets when the app restarts.
+
+### Deferred Scope
+- Live microphone streaming, partial transcripts, progressive paste, and provider SDK realtime integrations remain deferred to v2.
 
 ### Toolchain Modernization
 - Upgraded to Electron 43, electron-builder 26, electron-vite 5, and Vite 7.

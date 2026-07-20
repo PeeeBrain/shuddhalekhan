@@ -2,12 +2,14 @@ import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import type { AppConfig, McpDiscoveredTool, TranscriptionConfig } from '../types/ipc';
+import type { AppConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
+import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
 
 type StoreConfig = AppConfig & {
   migrated?: boolean;
   transcriptionMigrated?: boolean;
+  shortcutsMigrated?: boolean;
 };
 
 const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:8080/inference';
@@ -41,6 +43,7 @@ const store = new Store<StoreConfig>({
     },
     setupChecklistDismissed: false,
     recordingActivationMode: 'push-to-talk',
+    shortcuts: DEFAULT_SHORTCUTS,
     agent: {
       enabled: false,
       provider: {
@@ -111,6 +114,51 @@ function maybeMigrateTranscriptionConfig(): void {
 
 maybeMigrateTranscriptionConfig();
 
+function normalizeIntentShortcuts(
+  stored: Partial<IntentShortcutConfig> | undefined,
+  fallback: IntentShortcutConfig,
+): IntentShortcutConfig {
+  if (!stored) return { binding: fallback.binding, activationMode: fallback.activationMode };
+  const binding = stored.binding == null
+    ? (stored.binding === null ? null : fallback.binding)
+    : normalizeBinding(stored.binding);
+  return {
+    binding,
+    activationMode: stored.activationMode === 'toggle' ? 'toggle' : 'push-to-talk',
+  };
+}
+
+function normalizeShortcutsConfig(stored: ShortcutsConfig | undefined): ShortcutsConfig {
+  return {
+    dictation: normalizeIntentShortcuts(stored?.dictation, DEFAULT_SHORTCUTS.dictation),
+    agent: normalizeIntentShortcuts(stored?.agent, DEFAULT_SHORTCUTS.agent),
+  };
+}
+
+function maybeMigrateShortcutsConfig(): void {
+  if (store.get('shortcutsMigrated')) return;
+
+  const sharedMode = store.get('recordingActivationMode') === 'toggle' ? 'toggle' : 'push-to-talk';
+  const stored = store.get('shortcuts');
+  store.set('shortcuts', {
+    dictation: {
+      binding: stored?.dictation?.binding !== undefined
+        ? stored.dictation.binding
+        : DEFAULT_SHORTCUTS.dictation.binding,
+      activationMode: sharedMode,
+    },
+    agent: {
+      binding: stored?.agent?.binding !== undefined
+        ? stored.agent.binding
+        : DEFAULT_SHORTCUTS.agent.binding,
+      activationMode: sharedMode,
+    },
+  });
+  store.set('shortcutsMigrated', true);
+}
+
+maybeMigrateShortcutsConfig();
+
 export function getConfig(): AppConfig {
   const agent = store.get('agent');
   const mcpServers = normalizeMcpServers(agent?.mcpServers);
@@ -145,6 +193,7 @@ export function getConfig(): AppConfig {
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
     recordingActivationMode,
+    shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
     agent: {
       enabled: agent?.enabled ?? false,
       provider: {
@@ -159,6 +208,18 @@ export function getConfig(): AppConfig {
 }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
+  if (key === 'shortcuts') {
+    const shortcuts = normalizeShortcutsConfig(value as ShortcutsConfig);
+    for (const intent of ['dictation', 'agent'] as const) {
+      const other = intent === 'dictation' ? 'agent' : 'dictation';
+      const verdict = assessBinding(shortcuts[intent].binding, shortcuts[other].binding);
+      if (verdict.status === 'error') {
+        throw new Error(verdict.message);
+      }
+    }
+    store.set(key, shortcuts as AppConfig[K]);
+    return;
+  }
   store.set(key, value);
   if (key === 'transcription') {
     store.set('whisperUrl', (value as TranscriptionConfig).providers.localWhisperCpp.endpoint);

@@ -51,7 +51,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
       <div className="rounded-lg border border-border/60 bg-card px-6">
         <ToggleRow
           title="Enable Agent Mode"
-          description="Activates the Alt + Win recording intent. Sidecar execution arrives in later phases."
+          description="Activates the saved Agent Mode shortcut and voice-agent runtime. The shortcut remains dormant while disabled."
           checked={agent.enabled}
           tone="agent"
           errorId={enabledErrorId}

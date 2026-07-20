@@ -1,6 +1,13 @@
 import type { BrowserWindow } from 'electron';
 import { createSingletonWindow } from './window-factory';
 
+let closedHandler: (() => void) | null = null;
+
+/** Register teardown work (e.g. ending shortcut capture) for window close. */
+export function setSettingsWindowClosedHandler(handler: (() => void) | null): void {
+  closedHandler = handler;
+}
+
 const settingsWindow = createSingletonWindow({
   route: 'settings',
   options: {
@@ -17,6 +24,9 @@ const settingsWindow = createSingletonWindow({
     window.once('ready-to-show', () => {
       settingsWindow.get()?.show();
     });
+  },
+  onClosed: () => {
+    closedHandler?.();
   },
 });
 

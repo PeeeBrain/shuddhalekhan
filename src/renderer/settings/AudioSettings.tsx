@@ -1,43 +1,15 @@
-import { useId } from 'react';
 import { SectionHeader } from './ui/SectionHeader';
-import { SelectRow, ReadOnlyRow } from './ui/rows';
+import { ReadOnlyRow } from './ui/rows';
 import type { SettingsSectionProps } from './settings-section-props';
-import type { AppConfig } from '../../types/ipc';
 
-const FIELD_ID_ACTIVATION = 'recording-activation';
-
-export function AudioSettings({ config, persistence }: SettingsSectionProps) {
-  const { commit, fieldErrors } = persistence;
-
+export function AudioSettings({ config }: SettingsSectionProps) {
   return (
     <div className="space-y-6">
       <SectionHeader
         title="Audio"
-        description="Choose how recording starts and which input device is used."
+        description="Review the shared input path used by Dictation and Agent Mode. Recording behavior is configured per intent under Shortcuts."
       />
       <div className="rounded-lg border border-border/60 bg-card px-6">
-        <SelectRow
-          label="Recording activation"
-          description={
-            config.recordingActivationMode === 'push-to-talk'
-              ? 'Hold the hotkey to record. Release it to stop.'
-              : 'Press the hotkey to start recording. Press it again to stop.'
-          }
-          value={config.recordingActivationMode}
-          options={[
-            { value: 'push-to-talk', label: 'Push to talk' },
-            { value: 'toggle', label: 'Toggle recording' },
-          ]}
-          errorId={useId()}
-          error={fieldErrors[FIELD_ID_ACTIVATION]}
-          onChange={(value) =>
-            commit(
-              'recordingActivationMode',
-              value as AppConfig['recordingActivationMode'],
-              FIELD_ID_ACTIVATION,
-            )
-          }
-        />
         <ReadOnlyRow
           label="Selected device"
           value={config.selectedDeviceId ?? 'Default input device'}

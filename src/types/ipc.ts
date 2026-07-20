@@ -8,6 +8,26 @@ export type RecordingIntent = 'dictation' | 'agent';
 
 export type RecordingActivationMode = 'push-to-talk' | 'toggle';
 
+export type ShortcutModifier = 'ctrl' | 'alt' | 'shift' | 'win';
+
+export interface ShortcutBinding {
+  /** Windows virtual-key code of the ordinary key, or null for a modifier-only binding. */
+  keyCode: number | null;
+  /** Logical modifiers that must be held; left/right variants normalize to one identity. */
+  modifiers: ShortcutModifier[];
+}
+
+export interface IntentShortcutConfig {
+  /** Normalized binding, or null when the intent is unassigned and reserves no key. */
+  binding: ShortcutBinding | null;
+  activationMode: RecordingActivationMode;
+}
+
+export interface ShortcutsConfig {
+  dictation: IntentShortcutConfig;
+  agent: IntentShortcutConfig;
+}
+
 export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
 
 export type McpToolPolicyKey = `${string}:${string}`;
@@ -109,6 +129,10 @@ export interface RendererToMainInvokeChannels {
   'updater:check': () => Promise<UpdateStatus>;
   'audit:get-runs': () => Promise<AuditRunSummary[]>;
   'audit:get-run-detail': (agentRunId: string) => Promise<AuditEventDetail[]>;
+  'shortcuts:get-paused': () => Promise<boolean>;
+  'shortcuts:set-paused': (paused: boolean) => Promise<boolean>;
+  'shortcuts:begin-capture': () => void;
+  'shortcuts:end-capture': () => void;
   'credential:get-status': (credential: CredentialKind) => Promise<CredentialStatus>;
   'credential:save': (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
   'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
@@ -129,6 +153,7 @@ export interface MainToRendererChannels {
   'mcp:server-status': (status: McpServerRuntimeStatus) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
   'audit:run-updated': (agentRunId: string) => void;
+  'shortcuts:paused-changed': (paused: boolean) => void;
 }
 
 export type McpServerRuntimeStatus = {
@@ -259,7 +284,9 @@ export interface AppConfig {
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
   setupChecklistDismissed: boolean;
+  /** @deprecated Seed value for per-intent activation modes; read shortcuts instead. */
   recordingActivationMode: RecordingActivationMode;
+  shortcuts: ShortcutsConfig;
   agent: {
     enabled: boolean;
     provider: {

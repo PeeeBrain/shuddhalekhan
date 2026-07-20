@@ -34,6 +34,16 @@ export function createRecordingPillWindow(intent: RecordingIntent = 'dictation')
   return pillWindow.create();
 }
 
+/**
+ * Start loading the hidden recording renderer during app startup so the first
+ * recording never waits for BrowserWindow/React initialization.
+ */
+export function prepareRecordingPillWindow(): BrowserWindow {
+  const win = createRecordingPillWindow('dictation');
+  positionPillWindow(win);
+  return win;
+}
+
 export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
   if (pendingHideTimeout) {
     clearTimeout(pendingHideTimeout);
