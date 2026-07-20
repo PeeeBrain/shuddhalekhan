@@ -1,5 +1,9 @@
 import { ipcMain } from 'electron';
-import type { DictationTargetSnapshot, RecordingIntent } from '../types/ipc';
+import type {
+  DictationTargetSnapshot,
+  RecordingActivationMode,
+  RecordingIntent,
+} from '../types/ipc';
 import { keyboardHook } from './native/keyboard';
 import { captureForegroundTarget } from './native/target';
 import { getRecordingPillWindow, hideRecordingPill, showRecordingPill } from './recording-pill';
@@ -141,7 +145,8 @@ export interface KeyboardHook {
   start(
     onStart: (intent: RecordingIntent) => void,
     onStop: () => void,
-    isAgentModeEnabled?: () => boolean
+    isAgentModeEnabled?: () => boolean,
+    getActivationMode?: () => RecordingActivationMode
   ): void;
   stop(): void;
 }
@@ -150,6 +155,7 @@ export type WhisperClient = (audioData: Uint8Array) => Promise<string>;
 
 export interface RecordingSessionOptions {
   isAgentModeEnabled: () => boolean;
+  getRecordingActivationMode?: () => RecordingActivationMode;
   getSelectedDeviceId?: () => string | null;
   getWhisperUrl?: () => string;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
@@ -175,6 +181,7 @@ export class RecordingSession {
     | null = null;
 
   private isAgentModeEnabled: () => boolean;
+  private getRecordingActivationMode: () => RecordingActivationMode;
   private audioCapture: AudioCapture;
   private keyboardHook: KeyboardHook;
   private whisperClient: WhisperClient;
@@ -188,6 +195,7 @@ export class RecordingSession {
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
+    this.getRecordingActivationMode = options.getRecordingActivationMode ?? (() => 'push-to-talk');
     this.audioCapture = options.audioCapture ?? new ProductionAudioCapture(
       (reason) => this.markAudioWindowCrashed(reason)
     );
@@ -300,7 +308,8 @@ export class RecordingSession {
           }
         });
       },
-      this.isAgentModeEnabled
+      this.isAgentModeEnabled,
+      this.getRecordingActivationMode
     );
   }
 

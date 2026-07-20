@@ -39,6 +39,7 @@ const config: AppConfig = {
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
+  recordingActivationMode: 'push-to-talk',
   agent: {
     enabled: true,
     provider: {

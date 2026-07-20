@@ -7,6 +7,9 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Recording Controls
+- Added an Audio setting to choose between push-to-talk and press-once toggle recording while keeping existing hotkeys unchanged.
+
 ### Toolchain Modernization
 - Upgraded to Electron 43, electron-builder 26, electron-vite 5, and Vite 7.
 - Upgraded Tailwind CSS and `@tailwindcss/vite` to 4.3.2.

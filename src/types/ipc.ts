@@ -6,6 +6,8 @@ export type AudioDevice = {
 
 export type RecordingIntent = 'dictation' | 'agent';
 
+export type RecordingActivationMode = 'push-to-talk' | 'toggle';
+
 export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
 
 export type McpToolPolicyKey = `${string}:${string}`;
@@ -168,6 +170,7 @@ export interface AppConfig {
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
   setupChecklistDismissed: boolean;
+  recordingActivationMode: RecordingActivationMode;
   agent: {
     enabled: boolean;
     provider: {

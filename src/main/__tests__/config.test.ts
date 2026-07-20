@@ -59,6 +59,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -70,6 +71,21 @@ describe('config store', () => {
         mcpServers: [],
       },
     });
+  });
+
+  it('defaults recording activation to push-to-talk', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig } = await import(`../config?test=${Date.now()}-activation-default`);
+
+    expect(getConfig().recordingActivationMode).toBe('push-to-talk');
+  });
+
+  it('falls back to push-to-talk for an invalid stored activation mode', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig } = await import(`../config?test=${Date.now()}-activation-invalid`);
+    storeData.set('recordingActivationMode', 'unsupported');
+
+    expect(getConfig().recordingActivationMode).toBe('push-to-talk');
   });
 
   it('sets typed config values', async () => {
@@ -88,6 +104,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -120,6 +137,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -150,6 +168,7 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
+      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {

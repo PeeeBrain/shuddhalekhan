@@ -256,6 +256,21 @@ export function SettingsWindow() {
 
             {activeSection === 'audio' ? (
               <SettingsPanel>
+                <SelectRow
+                  label="Recording activation"
+                  description={config.recordingActivationMode === 'push-to-talk'
+                    ? 'Hold the hotkey to record. Release it to stop.'
+                    : 'Press the hotkey to start recording. Press it again to stop.'}
+                  value={config.recordingActivationMode}
+                  options={[
+                    { value: 'push-to-talk', label: 'Push to talk' },
+                    { value: 'toggle', label: 'Toggle recording' },
+                  ]}
+                  onChange={(value) => updateConfig(
+                    'recordingActivationMode',
+                    value as AppConfig['recordingActivationMode']
+                  )}
+                />
                 <div className="space-y-2 border-b border-border py-5">
                   <Label className="text-sm font-medium">Whisper endpoint</Label>
                   <Input
@@ -492,11 +507,13 @@ function ReadOnlyRow({ label, value }: { label: string; value: string }) {
 
 function SelectRow({
   label,
+  description,
   value,
   options,
   onChange,
 }: {
   label: string;
+  description?: string;
   value: string;
   options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
@@ -505,7 +522,7 @@ function SelectRow({
     <div className="space-y-2 border-b border-border py-5">
       <Label className="text-sm font-medium">{label}</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="w-full max-w-xs">
+        <SelectTrigger className="w-full max-w-xs" aria-label={label}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -516,6 +533,7 @@ function SelectRow({
           ))}
         </SelectContent>
       </Select>
+      {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
     </div>
   );
 }

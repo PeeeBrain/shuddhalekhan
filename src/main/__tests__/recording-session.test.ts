@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { RecordingIntent } from '../../types/ipc';
+import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
 import type { RecordingSession, AudioCapture } from '../recording-session';
 
@@ -42,6 +42,7 @@ describe('RecordingSession', () => {
   let keyboardStop: ReturnType<typeof vi.fn>;
   let captureTarget: ReturnType<typeof vi.fn>;
   let isAgentModeEnabled: ReturnType<typeof vi.fn>;
+  let getRecordingActivationMode: ReturnType<typeof vi.fn>;
   let session: RecordingSession;
 
   afterAll(() => {
@@ -66,6 +67,7 @@ describe('RecordingSession', () => {
       capturedAt: new Date().toISOString(),
     }));
     isAgentModeEnabled = vi.fn(() => false);
+    getRecordingActivationMode = vi.fn(() => 'toggle' satisfies RecordingActivationMode);
     session = new RecordingSessionCtor({
       audioCapture: audioStream,
       showRecordingPill,
@@ -77,6 +79,7 @@ describe('RecordingSession', () => {
       },
       captureTarget,
       isAgentModeEnabled,
+      getRecordingActivationMode,
     });
   });
 
@@ -161,13 +164,15 @@ describe('RecordingSession', () => {
     const onResult = vi.fn();
 
     session.startKeyboardHook(onResult);
-    const [onStart, onStop, enabled] = keyboardStart.mock.calls[0] as [
+    const [onStart, onStop, enabled, getActivationMode] = keyboardStart.mock.calls[0] as [
       (intent: RecordingIntent) => void,
       () => void,
       () => boolean,
+      () => RecordingActivationMode,
     ];
 
     expect(enabled()).toBe(false);
+    expect(getActivationMode()).toBe('toggle');
     onStart('agent');
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
     onStop();

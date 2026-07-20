@@ -13,6 +13,7 @@ const config: AppConfig = {
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
+  recordingActivationMode: 'push-to-talk',
   agent: {
     enabled: false,
     provider: {
@@ -61,10 +62,12 @@ describe('settings IPC adapter', () => {
 
   it('saves config and forwards actions without exposing channel names to callers', async () => {
     await ipc.setConfig('agent', config.agent);
+    await ipc.setConfig('recordingActivationMode', 'toggle');
     await ipc.testMcpServer('mail');
     await ipc.checkForUpdates();
 
     expect(invoke).toHaveBeenCalledWith('config:set', 'agent', config.agent);
+    expect(invoke).toHaveBeenCalledWith('config:set', 'recordingActivationMode', 'toggle');
     expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'mail');
     expect(invoke).toHaveBeenCalledWith('updater:check');
   });

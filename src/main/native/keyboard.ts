@@ -1,12 +1,14 @@
 import koffi from 'koffi';
-import type { RecordingIntent } from '../../types/ipc';
+import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
 
 const user32 = koffi.load('user32.dll');
 const kernel32 = koffi.load('kernel32.dll');
 
 const WH_KEYBOARD_LL = 13;
 const WM_KEYDOWN = 0x0100;
+const WM_KEYUP = 0x0101;
 const WM_SYSKEYDOWN = 0x0104;
+const WM_SYSKEYUP = 0x0105;
 
 // Virtual key codes
 const VK_LCONTROL = 0xA2;
@@ -42,27 +44,49 @@ interface ModifierState {
   alt: boolean;
   recording: boolean;
   intent: RecordingIntent | null;
+  activationMode: RecordingActivationMode | null;
+  toggleAwaitingReleaseFor: RecordingIntent | null;
 }
+
+const createInitialState = (): ModifierState => ({
+  ctrl: false,
+  win: false,
+  alt: false,
+  recording: false,
+  intent: null,
+  activationMode: null,
+  toggleAwaitingReleaseFor: null,
+});
 
 export class KeyboardHook {
   private hookHandle: number = 0;
   private callback: KoffiRegisteredCallback | null = null;
-  private state: ModifierState = { ctrl: false, win: false, alt: false, recording: false, intent: null };
+  private state: ModifierState = createInitialState();
   private onStartRecording: ((intent: RecordingIntent) => void) | null = null;
   private onStopRecording: (() => void) | null = null;
   private isAgentModeEnabled: (() => boolean) = () => false;
+  private getActivationMode: () => RecordingActivationMode = () => 'push-to-talk';
 
-  start(onStart: (intent: RecordingIntent) => void, onStop: () => void, isAgentModeEnabled: () => boolean = () => false): void {
+  start(
+    onStart: (intent: RecordingIntent) => void,
+    onStop: () => void,
+    isAgentModeEnabled: () => boolean = () => false,
+    getActivationMode: () => RecordingActivationMode = () => 'push-to-talk'
+  ): void {
     this.onStartRecording = onStart;
     this.onStopRecording = onStop;
     this.isAgentModeEnabled = isAgentModeEnabled;
+    this.getActivationMode = getActivationMode;
 
     const proc = (nCode: number, wParam: bigint, lParam: unknown): bigint => {
       if (nCode >= 0) {
         const msg = Number(wParam);
         const isDown = msg === WM_KEYDOWN || msg === WM_SYSKEYDOWN;
-        const struct = koffi.decode(lParam, KbdLlHookStructType);
-        this.handleKey(struct.vkCode as number, isDown);
+        const isUp = msg === WM_KEYUP || msg === WM_SYSKEYUP;
+        if (isDown || isUp) {
+          const struct = koffi.decode(lParam, KbdLlHookStructType);
+          this.handleKey(struct.vkCode as number, isDown);
+        }
       }
       return CallNextHookEx(this.hookHandle, nCode, wParam, lParam);
     };
@@ -91,51 +115,97 @@ export class KeyboardHook {
     const isCtrl = vkCode === VK_LCONTROL || vkCode === VK_RCONTROL;
     const isWin = vkCode === VK_LWIN || vkCode === VK_RWIN;
     const isAlt = vkCode === VK_LMENU || vkCode === VK_RMENU;
+    const isModifier = isCtrl || isWin || isAlt;
+    const wasDown = isCtrl
+      ? this.state.ctrl
+      : isWin
+        ? this.state.win
+        : isAlt
+          ? this.state.alt
+          : false;
 
     if (isCtrl) this.state.ctrl = isDown;
     if (isWin) this.state.win = isDown;
     if (isAlt) this.state.alt = isDown;
 
-    // Reset stale Win key state if non-modifier pressed while Win stuck
-    if (isDown && !isCtrl && !isWin && !isAlt && !this.state.recording && this.state.win) {
+    // Windows emits repeated key-down messages while a key is held. A toggle
+    // may only react to a fresh physical chord press.
+    if (isDown && isModifier && wasDown) return;
+
+    // Reset stale Win key state if non-modifier pressed while Win stuck.
+    if (
+      isDown
+      && !isModifier
+      && !this.state.recording
+      && !this.state.toggleAwaitingReleaseFor
+      && this.state.win
+    ) {
       this.state.win = false;
       return;
     }
 
-    if (this.state.recording) {
-      // Stop conditions
-      if (!isDown) {
-        let shouldStop = false;
-        if (isCtrl && !this.state.ctrl) shouldStop = true;
-        if (isWin && !this.state.win) shouldStop = true;
-        if (this.state.intent === 'agent' && isAlt && !this.state.alt) shouldStop = true;
+    const awaitingRelease = this.state.toggleAwaitingReleaseFor;
+    if (awaitingRelease && this.isBindingReleased(awaitingRelease)) {
+      this.state.toggleAwaitingReleaseFor = null;
+    }
 
-        if (shouldStop) {
-          this.state.recording = false;
-          this.state.intent = null;
-          this.state.ctrl = false;
-          this.state.win = false;
-          this.state.alt = false;
+    if (this.state.recording) {
+      if (this.state.activationMode === 'push-to-talk') {
+        if (!isDown && this.shouldStopPushToTalk(isCtrl, isWin, isAlt)) {
+          this.state = createInitialState();
           this.onStopRecording?.();
         }
+        return;
+      }
+
+      if (
+        isDown
+        && !this.state.toggleAwaitingReleaseFor
+        && this.getChordIntent() === this.state.intent
+      ) {
+        const intent = this.state.intent;
+        this.state.recording = false;
+        this.state.intent = null;
+        this.state.activationMode = null;
+        this.state.toggleAwaitingReleaseFor = intent;
+        this.onStopRecording?.();
       }
       return;
     }
 
-    // Start condition: Ctrl + Win (no Alt)
-    if (isDown && this.state.ctrl && this.state.win && !this.state.alt) {
-      this.state.recording = true;
-      this.state.intent = 'dictation';
-      this.onStartRecording?.('dictation');
-      return;
-    }
+    if (!isDown || this.state.toggleAwaitingReleaseFor) return;
 
-    // Start condition: Alt + Win (no Ctrl), gated by opt-in config.
-    if (isDown && this.state.alt && this.state.win && !this.state.ctrl && this.isAgentModeEnabled()) {
-      this.state.recording = true;
-      this.state.intent = 'agent';
-      this.onStartRecording?.('agent');
+    const intent = this.getChordIntent();
+    if (!intent) return;
+
+    const activationMode = this.getActivationMode();
+    this.state.recording = true;
+    this.state.intent = intent;
+    this.state.activationMode = activationMode;
+    if (activationMode === 'toggle') {
+      this.state.toggleAwaitingReleaseFor = intent;
     }
+    this.onStartRecording?.(intent);
+  }
+
+  private getChordIntent(): RecordingIntent | null {
+    if (this.state.ctrl && this.state.win && !this.state.alt) return 'dictation';
+    if (this.state.alt && this.state.win && !this.state.ctrl && this.isAgentModeEnabled()) {
+      return 'agent';
+    }
+    return null;
+  }
+
+  private isBindingReleased(intent: RecordingIntent): boolean {
+    return intent === 'dictation'
+      ? !this.state.ctrl && !this.state.win
+      : !this.state.alt && !this.state.win;
+  }
+
+  private shouldStopPushToTalk(isCtrl: boolean, isWin: boolean, isAlt: boolean): boolean {
+    if (isCtrl && !this.state.ctrl) return true;
+    if (isWin && !this.state.win) return true;
+    return this.state.intent === 'agent' && isAlt && !this.state.alt;
   }
 
   handleKeyForTest(vkCode: number, isDown: boolean): void {

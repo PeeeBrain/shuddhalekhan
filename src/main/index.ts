@@ -31,6 +31,7 @@ const sidecarEventRouter = createSidecarEventRouter({
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
 const recordingSession = new RecordingSession({
   isAgentModeEnabled: () => cachedAgentEnabled,
+  getRecordingActivationMode: () => getConfig().recordingActivationMode,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
   getWhisperUrl: () => getConfig().whisperUrl,
   onResult: routeRecordingResult,

@@ -23,6 +23,7 @@ const store = new Store<StoreConfig>({
       overrides: {},
     },
     setupChecklistDismissed: false,
+    recordingActivationMode: 'push-to-talk',
     agent: {
       enabled: false,
       provider: {
@@ -70,6 +71,9 @@ maybeMigrateLegacyConfig();
 export function getConfig(): AppConfig {
   const agent = store.get('agent');
   const mcpServers = normalizeMcpServers(agent?.mcpServers);
+  const recordingActivationMode = store.get('recordingActivationMode') === 'toggle'
+    ? 'toggle'
+    : 'push-to-talk';
 
   return {
     whisperUrl: store.get('whisperUrl'),
@@ -80,6 +84,7 @@ export function getConfig(): AppConfig {
     dictionary: store.get('dictionary') ?? [],
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
+    recordingActivationMode,
     agent: {
       enabled: agent?.enabled ?? false,
       provider: {
