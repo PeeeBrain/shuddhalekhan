@@ -7,6 +7,9 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Developer Infrastructure
+- Reorganized the repository as a Bun monorepo with the Windows desktop application under `app/` and a React landing-page workspace under `web/`.
+
 ### Transcription Providers
 - Added Google Cloud Speech-to-Text v2 synchronous recognition with secure service-account import, Advanced Application Default Credentials, model and location configuration, language mapping, and inline phrase hints.
 - Google Cloud recordings now show a restrained final-ten-second warning and stop automatically at 55 seconds for safe synchronous submission in both recording activation modes.

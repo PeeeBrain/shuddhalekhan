@@ -2,9 +2,15 @@ import { describe, expect, it } from 'bun:test';
 import { resolve } from 'path';
 
 const projectRoot = resolve(import.meta.dir, '..', '..', '..');
+const repositoryRoot = resolve(projectRoot, '..');
 
 async function readProjectFile(relativePath: string): Promise<string> {
   const file = Bun.file(resolve(projectRoot, relativePath));
+  return await file.text();
+}
+
+async function readRepositoryFile(relativePath: string): Promise<string> {
+  const file = Bun.file(resolve(repositoryRoot, relativePath));
   return await file.text();
 }
 
@@ -74,7 +80,7 @@ describe('toolchain configuration', () => {
   });
 
   it('pins CI to a compatible Node version', async () => {
-    const ciSource = await readProjectFile('.github/workflows/ci.yml');
+    const ciSource = await readRepositoryFile('.github/workflows/ci.yml');
     expect(ciSource).toMatch(/node-version(?:-file)?:/);
 
     const explicitVersionMatch = ciSource.match(/node-version:\s*(.+)/);
@@ -84,7 +90,7 @@ describe('toolchain configuration', () => {
       expect(isAtLeastNode(explicitVersionMatch[1].trim(), { major: 22, minor: 12, patch: 0 })).toBe(true);
     } else if (versionFileMatch) {
       const versionFile = versionFileMatch[1].trim();
-      const versionFileContents = (await readProjectFile(versionFile)).trim();
+      const versionFileContents = (await readRepositoryFile(versionFile)).trim();
       expect(isAtLeastNode(versionFileContents, { major: 22, minor: 12, patch: 0 })).toBe(true);
     } else {
       throw new Error('CI does not specify a Node version or version file');
@@ -92,7 +98,7 @@ describe('toolchain configuration', () => {
   });
 
   it('pins local development to a compatible Node version via .nvmrc', async () => {
-    const nvmrc = (await readProjectFile('.nvmrc')).trim();
+    const nvmrc = (await readRepositoryFile('.nvmrc')).trim();
     expect(isAtLeastNode(nvmrc, { major: 22, minor: 12, patch: 0 })).toBe(true);
   });
 });

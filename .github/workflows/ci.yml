@@ -48,3 +48,4 @@ jobs:
 
       - name: Verify Electron native dependencies
         run: bun x electron-builder install-app-deps
+        working-directory: app

@@ -33,6 +33,7 @@ jobs:
       - name: Derive application version from release tag
         id: release_version
         shell: pwsh
+        working-directory: app
         run: |
           $tag = $env:GITHUB_REF_NAME
           if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
@@ -56,7 +57,7 @@ jobs:
         run: bun test
 
       - name: Build
-        run: bun run build
+        run: bun run --cwd app build
 
       - name: Generate release notes from Git history
         shell: pwsh
@@ -85,7 +86,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package and publish Electron app
-        run: bun run dist -- --publish always
+        run: bun run --cwd app dist -- --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
