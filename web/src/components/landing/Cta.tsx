@@ -1,4 +1,5 @@
 import { Download } from 'lucide-react';
+import { LatestWindowsDownloadLink } from '@/components/LatestWindowsDownloadLink';
 
 export function Cta() {
   return (
@@ -10,9 +11,9 @@ export function Cta() {
             <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-indigo-300">Your voice. Your computer. Your rules.</div>
             <h2 className="mx-auto mt-4 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-5xl">Stop paying monthly to type with your voice.</h2>
             <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">Download Shuddhalekhan and start dictating across Windows. Free, open source, and yours to configure.</p>
-            <a href="https://github.com/PeeeBrain/shuddhalekhan/releases/latest" target="_blank" rel="noreferrer" className="mx-auto mt-8 flex h-12 w-fit items-center gap-2 rounded-full bg-white px-7 text-sm font-semibold text-zinc-950 transition hover:bg-indigo-100 active:scale-95">
+            <LatestWindowsDownloadLink className="mx-auto mt-8 flex h-12 w-fit items-center gap-2 rounded-full bg-white px-7 text-sm font-semibold text-zinc-950 transition hover:bg-indigo-100 active:scale-95">
               <Download className="size-4" /> Download for Windows
-            </a>
+            </LatestWindowsDownloadLink>
             <div className="mt-4 text-[11px] text-zinc-500">Windows 10/11 · x64</div>
           </div>
         </div>

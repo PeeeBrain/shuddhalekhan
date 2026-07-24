@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowRight, Check } from 'lucide-react';
+import { LatestWindowsDownloadLink } from '@/components/LatestWindowsDownloadLink';
 
 const TYPEWRITER_PHRASES = [
   'Hey Sarah, just pushed the fix for the authentication bug to staging. Can you take a look when you get a chance?',
@@ -72,17 +73,14 @@ export function Hero() {
 
       {/* Single Primary Action Row with Official Windows Logo SVG */}
       <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-        <a
-          href="https://github.com/PeeeBrain/shuddhalekhan/releases/latest"
-          target="_blank"
-          rel="noreferrer"
+        <LatestWindowsDownloadLink
           className="flex h-12 items-center gap-2.5 rounded-full bg-zinc-100 px-7 text-sm font-semibold text-zinc-950 shadow-xl transition hover:bg-white active:scale-95 hover:shadow-indigo-500/20"
         >
           <svg className="size-3.5 fill-current text-zinc-950" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M0 0h7.5v7.5H0V0zm8.5 0H16v7.5H8.5V0zM0 8.5h7.5V16H0V8.5zm8.5 0H16V16H8.5V8.5z" />
           </svg>
           Download for Windows
-        </a>
+        </LatestWindowsDownloadLink>
         <a
           href="#demo"
           className="flex h-12 items-center gap-2 rounded-full border border-zinc-700 bg-zinc-900/60 px-6 text-sm font-semibold text-zinc-200 transition hover:border-zinc-500 hover:bg-zinc-900 hover:text-white"
