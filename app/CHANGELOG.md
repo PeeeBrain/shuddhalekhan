@@ -9,6 +9,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ### Developer Infrastructure
 - Reorganized the repository as a Bun monorepo with the Windows desktop application under `app/` and a React landing-page workspace under `web/`.
+- Development startup now installs Electron's binary on first use, matching Electron 42+'s lazy-download lifecycle.
 
 ### Transcription Providers
 - Added Google Cloud Speech-to-Text v2 synchronous recognition with secure service-account import, Advanced Application Default Credentials, model and location configuration, language mapping, and inline phrase hints.
