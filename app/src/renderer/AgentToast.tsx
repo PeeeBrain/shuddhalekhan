@@ -14,18 +14,17 @@ export function AgentToast() {
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const remove = window.electronAPI?.on('agent-toast:update', (nextState) => {
+    const unsubscribe = window.electronAPI.subscribe('agent-toast:update', (nextState) => {
       setState(nextState);
       setMessage('');
       setApprovalSubmitting(false);
     });
+    return unsubscribe;
+  }, []);
 
+  useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), 500);
-
-    return () => {
-      remove?.();
-      window.clearInterval(interval);
-    };
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {

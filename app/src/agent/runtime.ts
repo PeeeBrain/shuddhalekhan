@@ -76,19 +76,21 @@ Goal: Get enough context fast, then act.
 - Do not claim a tool action succeeded unless a tool result confirms it.
 </response_style>`;
 
+const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const LOCAL_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "full",
+  timeStyle: "long",
+});
+
 function buildSystemPrompt(now = new Date()): string {
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const localDateTime = new Intl.DateTimeFormat(undefined, {
-    dateStyle: "full",
-    timeStyle: "long",
-  }).format(now);
+  const localDateTime = LOCAL_DATE_TIME_FORMATTER.format(now);
 
   return `${SYSTEM_PROMPT}
 
 <runtime_context>
 - Current local datetime: ${localDateTime}
 - Current UTC datetime: ${now.toISOString()}
-- Time zone: ${timeZone}
+- Time zone: ${TIME_ZONE}
 - Use this datetime context when interpreting relative dates like today, tomorrow, yesterday, tonight, this week, current year, or latest.
 </runtime_context>`;
 }
@@ -261,6 +263,32 @@ function toApprovalReason(decision: ToolApprovalDecision): string {
   return decision.message.trim() || "User denied tool execution.";
 }
 
+type ToolApprovalResponsePart = {
+  type: "tool-approval-response";
+  approvalId: string;
+  approved: boolean;
+  reason: string;
+};
+
+async function collectApprovalResponsesSequentially(
+  requests: ApprovalRequestPart[],
+  requestToolApproval: AgentRuntimeCallbacks["requestToolApproval"],
+  index = 0,
+  responses: ToolApprovalResponsePart[] = [],
+): Promise<ToolApprovalResponsePart[]> {
+  const request = requests[index];
+  if (!request) return responses;
+
+  const decision = await requestToolApproval(toApprovalRequest(request));
+  responses.push({
+    type: "tool-approval-response",
+    approvalId: request.approvalId,
+    approved: decision.approved,
+    reason: toApprovalReason(decision),
+  });
+  return collectApprovalResponsesSequentially(requests, requestToolApproval, index + 1, responses);
+}
+
 function normalizeFinalResponse(
   response: string,
   toolSummary: string[],
@@ -409,16 +437,10 @@ export async function runAgent(
       callbacks.onAudit?.("tool_approval_requests", {
         approvalRequests: consumed.approvalRequests,
       });
-      const approvalResponses = [];
-      for (const request of consumed.approvalRequests) {
-        const decision = await callbacks.requestToolApproval(toApprovalRequest(request));
-        approvalResponses.push({
-          type: "tool-approval-response" as const,
-          approvalId: request.approvalId,
-          approved: decision.approved,
-          reason: toApprovalReason(decision),
-        });
-      }
+      const approvalResponses = await collectApprovalResponsesSequentially(
+        consumed.approvalRequests,
+        callbacks.requestToolApproval,
+      );
       callbacks.onAudit?.("tool_approval_responses_sent", {
         approvalResponses,
       });

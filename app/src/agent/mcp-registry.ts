@@ -59,25 +59,32 @@ export class McpRegistry {
   constructor(private readonly ports: McpRegistryPorts) {}
 
   async updateConfig(config: AppConfig): Promise<void> {
-    const enabledServers = new Map(config.agent.mcpServers.filter((server) => server.enabled).map((server) => [server.id, server]));
+    const enabledServers = new Map<string, McpServerConfig>();
+    for (const server of config.agent.mcpServers) {
+      if (server.enabled) enabledServers.set(server.id, server);
+    }
 
+    const disconnects: Promise<void>[] = [];
     for (const [serverId, server] of this.servers) {
       const nextConfig = enabledServers.get(serverId);
       if (!nextConfig || getMcpServerConnectionKey(server.config) !== getMcpServerConnectionKey(nextConfig)) {
-        await this.disconnect(serverId);
+        disconnects.push(this.disconnect(serverId));
       }
     }
+    await Promise.all(disconnects);
 
     this.toolPolicies = collectToolPolicies(config);
 
+    const connections: Promise<void>[] = [];
     for (const server of enabledServers.values()) {
       if (this.servers.has(server.id)) {
         this.servers.get(server.id)!.config = server;
         continue;
       }
 
-      await this.connect(server);
+      connections.push(this.connect(server));
     }
+    await Promise.all(connections);
   }
 
   createRunSnapshot(
@@ -89,14 +96,15 @@ export class McpRegistry {
     const tools: Record<string, Tool> = {};
 
     for (const server of this.servers.values()) {
+      const serverId = server.config.id;
       for (const [originalName, toolDef] of Object.entries(server.rawTools)) {
-        const policyKey = `${server.config.id}:${originalName}` as const;
+        const policyKey = `${serverId}:${originalName}` as const;
         const policy = policies.get(policyKey) ?? 'alwaysAsk';
         if (policy === 'disabled') continue;
 
-        const modelName = `${server.config.id}__${originalName}`;
+        const modelName = `${serverId}__${originalName}`;
         tools[modelName] = wrapToolWithPolicy(
-          server.config.id,
+          serverId,
           originalName,
           modelName,
           toolDef,

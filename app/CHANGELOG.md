@@ -36,6 +36,7 @@ tags and commit history, not from this file. Keep new entries under
 - Added a darker content canvas, cohesive settings controls, accessible vertical navigation, and restrained status tags across MCP and History.
 - Text fields now save on blur while toggles and selections save immediately; successful saves use a brief in-window notification and failures remain inline.
 - Increased the default Settings window to 1040x720 while preserving the 820x560 minimum size.
+- Made confirmation-dialog backdrops accessible as semantic controls for keyboard and assistive-technology users.
 
 ### Recording Controls
 - Prewarmed the hidden recording-pill renderer at startup, removing the first-recording visual delay without delaying audio capture or global shortcut installation.
@@ -62,6 +63,7 @@ tags and commit history, not from this file. Keep new entries under
 - Refactored the MCP server registry behind injectable client, OAuth redirect, and sidecar message ports, making connection lifecycle and hot-reload behavior testable without native subprocesses or network listeners.
 - Added production adapters for AI SDK stdio/HTTP clients, OAuth redirect handling, and sidecar stdout protocol events.
 - Expanded in-memory regression coverage for connection changes, failures, OAuth retry cleanup, namespaced tools, policy updates, and server-status reporting.
+- MCP servers now connect and disconnect concurrently, reducing Agent Mode setup time when several servers are configured.
 
 ### Clipboard Transactions
 - Refactored clipboard injection behind a serialized transaction manager and production adapters, keeping native dependencies outside the testable coordinator.

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { prepareStream, recreateStream, startRecording, stopRecording, enumerateDevices, setSelectedDeviceId } from './audio-capture';
 import { RecordingPopup } from './RecordingPopup';
 import { SettingsWindow } from './SettingsWindow';
@@ -11,9 +11,9 @@ async function sendAudioDevices(): Promise<void> {
 }
 
 function AudioWindow() {
-  useEffect(() => {
-    let startPromise: Promise<void> | null = null;
+  const startPromiseRef = useRef<Promise<void> | null>(null);
 
+  useEffect(() => {
     window.electronAPI?.invoke('config:get').then((config) => {
       setSelectedDeviceId(config.selectedDeviceId);
       return prepareStream();
@@ -24,10 +24,11 @@ function AudioWindow() {
     }).catch((err) => {
       console.error('Failed to prepare audio stream:', err);
     });
+  }, []);
 
-    // Listen for commands from main process
-    const removeStart = window.electronAPI?.on('audio:start-recording', () => {
-      startPromise = startRecording()
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.subscribe('audio:start-recording', () => {
+      startPromiseRef.current = startRecording()
         .then(() => {
           void sendAudioDevices().catch((err) => {
             console.error('Failed to refresh audio devices after recording started:', err);
@@ -38,33 +39,36 @@ function AudioWindow() {
           throw err;
         })
         .finally(() => {
-          startPromise = null;
+          startPromiseRef.current = null;
         });
     });
+    return unsubscribe;
+  }, []);
 
-    const removeStop = window.electronAPI?.on('audio:stop-recording', async () => {
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.subscribe('audio:stop-recording', async () => {
       try {
-        await startPromise;
+        await startPromiseRef.current;
         const audioData = stopRecording();
         window.electronAPI?.send('audio-data-ready', audioData.buffer);
       } catch (err) {
         console.error('Failed to stop recording:', err);
       }
     });
+    return unsubscribe;
+  }, []);
 
-    const removeRecreate = window.electronAPI?.on('audio:recreate-stream', (deviceId: string | null) => {
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.subscribe('audio:recreate-stream', (deviceId: string | null) => {
       recreateStream(deviceId).catch((err) => {
         console.error('Failed to recreate audio stream for device change:', err);
       });
     });
+    return unsubscribe;
+  }, []);
 
+  useEffect(() => {
     window.electronAPI?.send('audio-window-ready');
-
-    return () => {
-      removeStart?.();
-      removeStop?.();
-      removeRecreate?.();
-    };
   }, []);
 
   return null;

@@ -18,7 +18,7 @@ const ipc = {
   ) => {
     ipcRenderer.send(channel, ...args);
   },
-  on: <K extends keyof MainToRendererChannels>(
+  subscribe: <K extends keyof MainToRendererChannels>(
     channel: K,
     callback: (...args: Parameters<MainToRendererChannels[K]>) => void
   ) => {

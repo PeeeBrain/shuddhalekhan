@@ -33,13 +33,14 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-    >
-      <Card className="mx-4 w-full max-w-sm shadow-xl" role="alertdialog" aria-modal="true" aria-label={title}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/50"
+        aria-label="Cancel confirmation"
+        onClick={onCancel}
+      />
+      <Card className="relative z-10 mx-4 w-full max-w-sm shadow-xl" role="alertdialog" aria-modal="true" aria-label={title}>
         <CardHeader>
           <CardTitle>{title}</CardTitle>
           <CardDescription>{description}</CardDescription>

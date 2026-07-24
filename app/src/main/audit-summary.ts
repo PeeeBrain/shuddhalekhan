@@ -13,10 +13,13 @@ const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interr
 export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.now()): AuditRunSummary[] {
   const eventsByRunId = new Map<string, AuditSummaryEventRow[]>();
   for (const event of events) {
-    if (!eventsByRunId.has(event.agent_run_id)) {
-      eventsByRunId.set(event.agent_run_id, []);
+    const runId = event.agent_run_id;
+    let runEvents = eventsByRunId.get(runId);
+    if (!runEvents) {
+      runEvents = [];
+      eventsByRunId.set(runId, runEvents);
     }
-    eventsByRunId.get(event.agent_run_id)!.push(event);
+    runEvents.push(event);
   }
 
   const summaries: AuditRunSummary[] = [];
