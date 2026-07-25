@@ -219,6 +219,92 @@ function hasControlCharacters(value: string): boolean {
   return false;
 }
 
+function validateLocalWhisperEndpoint(value: string): string | null {
+  if (!value.trim()) return 'Endpoint URL is required.';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return 'Endpoint must use HTTP or HTTPS.';
+    }
+    return null;
+  } catch {
+    return 'Enter a valid URL (e.g. http://localhost:8080/inference).';
+  }
+}
+
+function validateOpenAiBaseUrl(value: string): string | null {
+  if (!value.trim()) return 'Base URL is required.';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return 'Base URL must use HTTP or HTTPS.';
+    }
+    return null;
+  } catch {
+    return 'Enter a valid URL (e.g. https://api.openai.com/v1).';
+  }
+}
+
+function validateModelName(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Model name is required.';
+  if (trimmed.length > 128) return 'Model name is too long (max 128 characters).';
+  return hasControlCharacters(trimmed) ? 'Model name contains control characters.' : null;
+}
+
+function validateGoogleModelSlug(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 'This field is required.';
+  if (trimmed.length > 128) return 'Value is too long (max 128 characters).';
+  return hasControlCharacters(trimmed) ? 'Value contains control characters.' : null;
+}
+
+function validateNvidiaModelName(value: string): string | null {
+  if (!value.trim()) return 'Model name is required.';
+  if (value.trim().length > 128) return 'Model name is too long (max 128 characters).';
+  return hasControlCharacters(value) ? 'Model name contains control characters.' : null;
+}
+
+function validateNvidiaEndpoint(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? null
+      : 'Endpoint must use HTTP or HTTPS.';
+  } catch {
+    return 'Enter a valid NVIDIA Speech NIM transcription endpoint.';
+  }
+}
+
+function validateCustomEndpoint(value: string): string | null {
+  if (!value.trim()) return 'Endpoint URL is required.';
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return 'Endpoint must use HTTP or HTTPS.';
+    }
+    return null;
+  } catch {
+    return 'Enter a valid URL (e.g. http://localhost:8000/v1/audio/transcriptions).';
+  }
+}
+
+function validateHeaderName(value: string): string | null {
+  if (!value.trim()) return 'Header name is required.';
+  return /^[!#$%&'*+\-.^_`|~\w]+$/.test(value.trim())
+    ? null
+    : 'Header name contains invalid characters.';
+}
+
+const PRIVACY_MESSAGES: Record<TranscriptionProviderId, string> = {
+  'local-whisper-cpp': 'Recorded audio is sent to the configured local endpoint for transcription.',
+  'openai': 'Recorded audio is sent to OpenAI for transcription. Review OpenAI\'s data handling policies.',
+  'azure-speech': 'Recorded audio is sent to Microsoft Azure Speech for transcription. Review Microsoft\'s data handling policies.',
+  'google-cloud-speech-v2': 'Recorded audio is sent to Google Cloud Speech-to-Text for transcription. Review Google Cloud data handling policies.',
+  'nvidia-speech-nim': 'Recorded audio is sent to the configured NVIDIA Speech NIM endpoint for transcription.',
+  'custom-open-ai-compatible': 'Recorded audio is sent to the configured custom endpoint for transcription.',
+};
+
 const AUTH_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'none', label: 'None (no auth)' },
   { value: 'bearer', label: 'Bearer token' },
@@ -364,22 +450,9 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
   const labelId = useId();
   const inputId = useId();
 
-  const validate = (value: string): string | null => {
-    if (!value.trim()) return 'Endpoint URL is required.';
-    try {
-      const parsed = new URL(value);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return 'Endpoint must use HTTP or HTTPS.';
-      }
-      return null;
-    } catch {
-      return 'Enter a valid URL (e.g. http://localhost:8080/inference).';
-    }
-  };
-
   const testConnection = async () => {
     const candidate = draft;
-    const error = validate(candidate);
+    const error = validateLocalWhisperEndpoint(candidate);
     setValidationError(error);
     if (error) return;
     if (candidate !== localEndpoint) {
@@ -415,7 +488,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
         }}
         onBlur={() => {
           if (draft === localEndpoint) return;
-          const error = validate(draft);
+          const error = validateLocalWhisperEndpoint(draft);
           setValidationError(error);
           if (!error) {
             commit('transcription', {
@@ -447,7 +520,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
           type="button"
           variant="secondary"
           size="sm"
-          disabled={testState === 'checking' || validate(draft) !== null}
+          disabled={testState === 'checking' || validateLocalWhisperEndpoint(draft) !== null}
           onClick={testConnection}
         >
           {testState === 'checking' ? 'Checking...' : 'Check server'}
@@ -472,30 +545,6 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
   const { commit, fieldErrors } = persistence;
   const openai = config.transcription.providers.openai;
 
-  const validateUrl = (value: string): string | null => {
-    if (!value.trim()) return 'Base URL is required.';
-    try {
-      const parsed = new URL(value);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return 'Base URL must use HTTP or HTTPS.';
-      }
-      return null;
-    } catch {
-      return 'Enter a valid URL (e.g. https://api.openai.com/v1).';
-    }
-  };
-
-  const validateModel = (value: string): string | null => {
-    const trimmed = value.trim();
-    if (!trimmed) return 'Model name is required.';
-    if (trimmed.length > 128) return 'Model name is too long (max 128 characters).';
-    for (let i = 0; i < trimmed.length; i++) {
-      const code = trimmed.charCodeAt(i);
-      if (code < 32 || code === 127) return 'Model name contains control characters.';
-    }
-    return null;
-  };
-
   return (
     <>
       <DraftTextRow
@@ -505,7 +554,7 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
         description="The /audio/transcriptions endpoint is appended automatically."
         errorId={useId()}
         error={fieldErrors[FIELD_ID_OPENAI_BASE_URL]}
-        validate={validateUrl}
+        validate={validateOpenAiBaseUrl}
         onCommit={(value) => commit('transcription', {
           ...config.transcription,
           providers: { ...config.transcription.providers, openai: { ...openai, baseUrl: value } },
@@ -519,7 +568,7 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
         description="OpenAI Whisper model name, e.g. whisper-1."
         errorId={useId()}
         error={fieldErrors[FIELD_ID_OPENAI_MODEL]}
-        validate={validateModel}
+        validate={validateModelName}
         onCommit={(value) => commit('transcription', {
           ...config.transcription,
           providers: { ...config.transcription.providers, openai: { ...openai, model: value.trim() } },
@@ -618,13 +667,6 @@ function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
     ...config.transcription,
     providers: { ...config.transcription.providers, googleCloudSpeech: next },
   }, field);
-  const validateSlug = (value: string) => {
-    const trimmed = value.trim();
-    if (!trimmed) return 'This field is required.';
-    if (trimmed.length > 128) return 'Value is too long (max 128 characters).';
-    return hasControlCharacters(trimmed) ? 'Value contains control characters.' : null;
-  };
-
   return (
     <>
       <DraftTextRow label="Project ID" value={google.project} placeholder="my-google-cloud-project"
@@ -641,7 +683,7 @@ function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
         clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_LOCATION)} />
       <DraftTextRow label="Model" value={google.model} placeholder="short"
         description="Free-form Google recognition model slug. No model is selected automatically."
-        errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_MODEL]} validate={validateSlug}
+        errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_MODEL]} validate={validateGoogleModelSlug}
         onCommit={(value) => save({ ...google, model: value.trim() }, FIELD_ID_GOOGLE_MODEL)}
         clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_MODEL)} />
       {google.credentialSource === 'service-account' ? (
@@ -675,24 +717,16 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc }: Props) {
     ...config.transcription,
     providers: { ...config.transcription.providers, nvidiaSpeechNim: next },
   }, field);
-  const validateModel = (value: string) => !value.trim() ? 'Model name is required.'
-    : value.trim().length > 128 ? 'Model name is too long (max 128 characters).'
-      : hasControlCharacters(value) ? 'Model name contains control characters.' : null;
-  const validateEndpoint = (value: string) => {
-    try { const url = new URL(value); return url.protocol === 'http:' || url.protocol === 'https:' ? null : 'Endpoint must use HTTP or HTTPS.'; }
-    catch { return 'Enter a valid NVIDIA Speech NIM transcription endpoint.'; }
-  };
-
   return (
     <>
       <DraftTextRow label="Endpoint" value={nim.endpoint} placeholder="http://localhost:9000/v1/audio/transcriptions"
         description="Complete OpenAI-compatible offline transcription endpoint on your NIM deployment."
-        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_ENDPOINT]} validate={validateEndpoint}
+        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_ENDPOINT]} validate={validateNvidiaEndpoint}
         onCommit={(value) => save({ ...nim, endpoint: value.trim() }, FIELD_ID_NVIDIA_ENDPOINT)}
         clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_ENDPOINT)} />
       <DraftTextRow label="Model" value={nim.model} placeholder="nvidia/parakeet-ctc-1.1b-asr"
         description="Free-form model slug exposed by your NIM server."
-        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_MODEL]} validate={validateModel}
+        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_MODEL]} validate={validateNvidiaModelName}
         onCommit={(value) => save({ ...nim, model: value.trim() }, FIELD_ID_NVIDIA_MODEL)}
         clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_MODEL)} />
       <SelectRow label="Authentication" value={nim.auth} options={AUTH_OPTIONS} errorId={useId()}
@@ -732,19 +766,6 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
   const headerNameErrorId = useId();
   const authErrorId = useId();
 
-  const validateEndpoint = (value: string): string | null => {
-    if (!value.trim()) return 'Endpoint URL is required.';
-    try {
-      const parsed = new URL(value);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return 'Endpoint must use HTTP or HTTPS.';
-      }
-      return null;
-    } catch {
-      return 'Enter a valid URL (e.g. http://localhost:8000/v1/audio/transcriptions).';
-    }
-  };
-
   const handleAuthChange = (value: string) => {
     commit('transcription', {
       ...config.transcription,
@@ -753,23 +774,6 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
         customOpenAiCompatible: { ...custom, auth: value as 'none' | 'bearer' | 'header', headerName: value !== 'header' ? '' : custom.headerName },
       },
     }, 'custom-auth');
-  };
-
-  const validateModel = (value: string): string | null => {
-    const trimmed = value.trim();
-    if (!trimmed) return 'Model name is required.';
-    if (trimmed.length > 128) return 'Model name is too long (max 128 characters).';
-    for (let i = 0; i < trimmed.length; i++) {
-      const code = trimmed.charCodeAt(i);
-      if (code < 32 || code === 127) return 'Model name contains control characters.';
-    }
-    return null;
-  };
-
-  const validateHeaderName = (value: string): string | null => {
-    if (!value.trim()) return 'Header name is required.';
-    if (!/^[!#$%&'*+\-.^_`|~\w]+$/.test(value.trim())) return 'Header name contains invalid characters.';
-    return null;
   };
 
   return (
@@ -781,7 +785,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
         description="Complete endpoint URL for the OpenAI-compatible API."
         errorId={endpointErrorId}
         error={fieldErrors[FIELD_ID_CUSTOM_ENDPOINT]}
-        validate={validateEndpoint}
+        validate={validateCustomEndpoint}
         onCommit={(value) => commit('transcription', {
           ...config.transcription,
           providers: { ...config.transcription.providers, customOpenAiCompatible: { ...custom, endpoint: value } },
@@ -795,7 +799,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
         description="Model name for the OpenAI-compatible API."
         errorId={useId()}
         error={fieldErrors['custom-model']}
-        validate={validateModel}
+        validate={validateModelName}
         onCommit={(value) => commit('transcription', {
           ...config.transcription,
           providers: { ...config.transcription.providers, customOpenAiCompatible: { ...custom, model: value.trim() } },
@@ -893,22 +897,13 @@ function CheckServerTest({ provider, settingsIpc, testState, setTestState }: Che
 }
 
 function PrivacyNote({ provider }: { provider: TranscriptionProviderId }) {
-  const messages: Record<TranscriptionProviderId, string> = {
-    'local-whisper-cpp': 'Recorded audio is sent to the configured local endpoint for transcription.',
-    'openai': 'Recorded audio is sent to OpenAI for transcription. Review OpenAI\'s data handling policies.',
-    'azure-speech': 'Recorded audio is sent to Microsoft Azure Speech for transcription. Review Microsoft\'s data handling policies.',
-    'google-cloud-speech-v2': 'Recorded audio is sent to Google Cloud Speech-to-Text for transcription. Review Google Cloud data handling policies.',
-    'nvidia-speech-nim': 'Recorded audio is sent to the configured NVIDIA Speech NIM endpoint for transcription.',
-    'custom-open-ai-compatible': 'Recorded audio is sent to the configured custom endpoint for transcription.',
-  };
-
   return (
     <p
       role="note"
       aria-label="Transcription privacy note"
       className="px-6 text-xs text-muted-foreground"
     >
-      {messages[provider]}
+      {PRIVACY_MESSAGES[provider]}
     </p>
   );
 }

@@ -19,7 +19,7 @@ afterEach(() => {
 describe('transcription failure toast', () => {
   it('offers Open Settings and Dismiss without exposing a blocking dialog', () => {
     (window as unknown as { electronAPI: unknown }).electronAPI = {
-      on: (channel: string, listener: Listener) => {
+      subscribe: (channel: string, listener: Listener) => {
         listeners.set(channel, listener);
         return () => listeners.delete(channel);
       },

@@ -13,7 +13,7 @@ function mockElectronAPI() {
   for (const key of Object.keys(listeners)) delete listeners[key];
 
   (window as unknown as { electronAPI: unknown }).electronAPI = {
-    on: (channel: string, callback: Listener) => {
+    subscribe: (channel: string, callback: Listener) => {
       if (!listeners[channel]) listeners[channel] = [];
       listeners[channel].push(callback);
       return () => {

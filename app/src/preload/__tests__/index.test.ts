@@ -16,7 +16,7 @@ describe('preload API', () => {
     expect(electronMock.contextBridge.exposeInMainWorld).toHaveBeenCalledWith('electronAPI', {
       invoke: expect.any(Function),
       send: expect.any(Function),
-      on: expect.any(Function),
+      subscribe: expect.any(Function),
     });
   });
 
@@ -63,7 +63,7 @@ describe('preload API', () => {
     const api = electronMock.contextBridge.exposeInMainWorld.mock.calls[0]?.[1];
     const callback = vi.fn();
 
-    const unsubscribe = api.on('audio:recreate-stream', callback);
+    const unsubscribe = api.subscribe('audio:recreate-stream', callback);
     const wrapper = electronMock.ipcRenderer.on.mock.calls[0]?.[1];
     wrapper({ sender: 'ignored' }, 'mic-1');
     unsubscribe();

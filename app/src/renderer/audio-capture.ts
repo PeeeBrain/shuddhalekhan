@@ -50,13 +50,16 @@ export async function enumerateDevices(): Promise<AudioDevice[]> {
   }
 
   const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices
-    .filter((device) => device.kind === 'audioinput')
-    .map((device) => ({
+  const audioDevices: AudioDevice[] = [];
+  for (const device of devices) {
+    if (device.kind !== 'audioinput') continue;
+    audioDevices.push({
       deviceId: device.deviceId,
       label: device.label,
       kind: 'audioinput',
-    }));
+    });
+  }
+  return audioDevices;
 }
 
 function buildConstraints(): MediaStreamConstraints {
@@ -194,13 +197,6 @@ export function stopRecording(): Uint8Array {
   latestAudioLevel = 0;
 
   return wavData;
-}
-
-export function discardRecording(): void {
-  isRecording = false;
-  teardownCapture();
-  audioBuffer = [];
-  latestAudioLevel = 0;
 }
 
 function encodeWAV(

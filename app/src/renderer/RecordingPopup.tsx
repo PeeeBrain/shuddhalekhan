@@ -30,16 +30,20 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   const bars = Array.from({ length: BAR_COUNT });
 
   useEffect(() => {
-    const removeMode = window.electronAPI?.on('recording:mode-changed', setMode);
-    const removeLevel = window.electronAPI?.on('audio:level-changed', (l) => {
-      targetLevelRef.current = l;
+    const unsubscribe = window.electronAPI.subscribe('recording:mode-changed', setMode);
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.subscribe('audio:level-changed', (nextLevel) => {
+      targetLevelRef.current = nextLevel;
     });
-    const removeWarning = window.electronAPI?.on('recording:duration-warning', setRemainingSeconds);
-    return () => {
-      removeMode?.();
-      removeLevel?.();
-      removeWarning?.();
-    };
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.subscribe('recording:duration-warning', setRemainingSeconds);
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -50,19 +54,20 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   }, []);
 
   useEffect(() => {
-    const removeShow = window.electronAPI?.on('recording:pill-show', () => {
+    const unsubscribe = window.electronAPI.subscribe('recording:pill-show', () => {
       recordingStartRef.current = Date.now();
       setElapsed(0);
       setRemainingSeconds(null);
       setPillState(reducedMotion ? 'visible' : 'entering');
     });
-    const removeHide = window.electronAPI?.on('recording:pill-hide', () => {
+    return unsubscribe;
+  }, [reducedMotion]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.subscribe('recording:pill-hide', () => {
       setPillState(reducedMotion ? 'hidden' : 'exiting');
     });
-    return () => {
-      removeShow?.();
-      removeHide?.();
-    };
+    return unsubscribe;
   }, [reducedMotion]);
 
   useEffect(() => {

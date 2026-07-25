@@ -56,12 +56,12 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     endShortcutCapture: async () => {
       await requireElectronApi(electronAPI).invoke('shortcuts:end-capture');
     },
-    onShortcutsPausedChanged: (callback) => electronAPI?.on('shortcuts:paused-changed', callback),
-    onUpdateStatusChanged: (callback) => electronAPI?.on('updater:status-changed', callback),
-    onMcpServerStatus: (callback) => electronAPI?.on('mcp:server-status', callback),
+    onShortcutsPausedChanged: (callback) => electronAPI?.subscribe('shortcuts:paused-changed', callback),
+    onUpdateStatusChanged: (callback) => electronAPI?.subscribe('updater:status-changed', callback),
+    onMcpServerStatus: (callback) => electronAPI?.subscribe('mcp:server-status', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),
-    onAuditRunUpdated: (callback) => electronAPI?.on('audit:run-updated', callback),
+    onAuditRunUpdated: (callback) => electronAPI?.subscribe('audit:run-updated', callback),
     getCredentialStatus: (credential) => requireElectronApi(electronAPI).invoke('credential:get-status', credential),
     saveCredential: (credential, value) => requireElectronApi(electronAPI).invoke('credential:save', credential, value),
     removeCredential: (credential) => requireElectronApi(electronAPI).invoke('credential:remove', credential),

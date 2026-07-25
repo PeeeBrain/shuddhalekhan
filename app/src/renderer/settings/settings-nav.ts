@@ -52,12 +52,6 @@ export const SETTINGS_NAV_SECTIONS: SettingsNavSection[] =
 
 export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'transcription';
 
-export function findNavSection(
-  id: SettingsSectionId,
-): SettingsNavSection | undefined {
-  return SETTINGS_NAV_SECTIONS.find((section) => section.id === id);
-}
-
 export function getNavSectionIndex(id: SettingsSectionId): number {
   const index = SETTINGS_NAV_SECTIONS.findIndex(
     (section) => section.id === id,

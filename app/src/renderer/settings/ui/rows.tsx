@@ -181,6 +181,13 @@ export function SelectRow({
   );
 }
 
+function blurOnEnter(event: React.KeyboardEvent<HTMLInputElement>): void {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    event.currentTarget.blur();
+  }
+}
+
 interface DraftTextRowProps {
   label: string;
   value: string;
@@ -245,13 +252,6 @@ export function DraftTextRow({
     clearError?.();
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      event.currentTarget.blur();
-    }
-  };
-
   const showError = validationError ?? error;
   const describedBy = [
     description ? descriptionId : null,
@@ -270,7 +270,7 @@ export function DraftTextRow({
         placeholder={placeholder}
         onChange={handleChange}
         onBlur={commit}
-        onKeyDown={handleKeyDown}
+        onKeyDown={blurOnEnter}
         aria-labelledby={labelId}
         aria-invalid={showError ? true : undefined}
         aria-describedby={describedBy}
@@ -314,17 +314,12 @@ export function ReadOnlyRow({ label, value }: ReadOnlyRowProps) {
   );
 }
 
-interface KeyRowProps {
-  label: string;
-  value: string;
-}
-
 export function Keycaps({ value, label }: { value: string; label?: string }) {
   const keys = value.split(' + ');
   return (
     <div className="flex flex-wrap items-center gap-1" aria-label={label ?? value}>
       {keys.map((key, i) => (
-        <span key={`${key}-${i}`} className="flex items-center gap-1">
+        <span key={key} className="flex items-center gap-1">
           <kbd className="inline-flex min-h-6 items-center justify-center rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">
             {key === 'Win' ? (
               <>
@@ -341,21 +336,5 @@ export function Keycaps({ value, label }: { value: string; label?: string }) {
         </span>
       ))}
     </div>
-  );
-}
-
-export function KeyRow({ label, value }: KeyRowProps) {
-  const labelId = useId();
-  return (
-    <RowShell>
-      <div
-        role="group"
-        aria-labelledby={labelId}
-        className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
-      >
-        <span id={labelId} className="text-sm text-muted-foreground">{label}</span>
-        <Keycaps value={value} label={`${label} shortcut: ${value}`} />
-      </div>
-    </RowShell>
   );
 }

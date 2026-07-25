@@ -50,7 +50,7 @@ const updateStatus: UpdateStatus = {
 
 describe('settings IPC adapter', () => {
   let invoke: ReturnType<typeof vi.fn>;
-  let on: ReturnType<typeof vi.fn>;
+  let subscribe: ReturnType<typeof vi.fn>;
   let ipc: ReturnType<typeof createSettingsIpc>;
 
   beforeEach(() => {
@@ -64,8 +64,8 @@ describe('settings IPC adapter', () => {
       if (channel === 'shortcuts:set-paused') return Promise.resolve(true);
       return Promise.resolve(undefined);
     });
-    on = vi.fn(() => vi.fn());
-    ipc = createSettingsIpc({ invoke, on } as never);
+    subscribe = vi.fn(() => vi.fn());
+    ipc = createSettingsIpc({ invoke, subscribe } as never);
   });
 
   it('loads initial settings data through named methods', async () => {
@@ -105,7 +105,7 @@ describe('settings IPC adapter', () => {
 
     const changed = vi.fn();
     ipc.onShortcutsPausedChanged(changed);
-    expect(on).toHaveBeenLastCalledWith('shortcuts:paused-changed', expect.any(Function));
+    expect(subscribe).toHaveBeenLastCalledWith('shortcuts:paused-changed', expect.any(Function));
   });
 
   it('exposes credential status and mutation methods without returning saved values', async () => {
@@ -123,19 +123,19 @@ describe('settings IPC adapter', () => {
     const onMcpStatus = vi.fn();
     const offUpdate = vi.fn();
     const offMcp = vi.fn();
-    on.mockReturnValueOnce(offUpdate).mockReturnValueOnce(offMcp);
+    subscribe.mockReturnValueOnce(offUpdate).mockReturnValueOnce(offMcp);
 
     expect(ipc.onUpdateStatusChanged(onUpdate)).toBe(offUpdate);
     expect(ipc.onMcpServerStatus(onMcpStatus)).toBe(offMcp);
 
     const status: McpServerRuntimeStatus = { serverId: 'mail', status: 'connected' };
-    const updateCallback = on.mock.calls[0]?.[1] as (nextStatus: UpdateStatus) => void;
-    const mcpCallback = on.mock.calls[1]?.[1] as (nextStatus: McpServerRuntimeStatus) => void;
+    const updateCallback = subscribe.mock.calls[0]?.[1] as (nextStatus: UpdateStatus) => void;
+    const mcpCallback = subscribe.mock.calls[1]?.[1] as (nextStatus: McpServerRuntimeStatus) => void;
     updateCallback(updateStatus);
     mcpCallback(status);
 
-    expect(on).toHaveBeenNthCalledWith(1, 'updater:status-changed', expect.any(Function));
-    expect(on).toHaveBeenNthCalledWith(2, 'mcp:server-status', expect.any(Function));
+    expect(subscribe).toHaveBeenNthCalledWith(1, 'updater:status-changed', expect.any(Function));
+    expect(subscribe).toHaveBeenNthCalledWith(2, 'mcp:server-status', expect.any(Function));
     expect(onUpdate).toHaveBeenCalledWith(updateStatus);
     expect(onMcpStatus).toHaveBeenCalledWith(status);
   });
@@ -156,12 +156,12 @@ describe('settings IPC adapter', () => {
 
     const onAuditUpdated = vi.fn();
     const offAudit = vi.fn();
-    on.mockReturnValueOnce(offAudit);
+    subscribe.mockReturnValueOnce(offAudit);
 
     expect(ipc.onAuditRunUpdated(onAuditUpdated)).toBe(offAudit);
-    expect(on).toHaveBeenLastCalledWith('audit:run-updated', expect.any(Function));
+    expect(subscribe).toHaveBeenLastCalledWith('audit:run-updated', expect.any(Function));
 
-    const auditCallback = on.mock.calls[on.mock.calls.length - 1]?.[1] as (runId: string) => void;
+    const auditCallback = subscribe.mock.calls[subscribe.mock.calls.length - 1]?.[1] as (runId: string) => void;
     auditCallback('run-1');
     expect(onAuditUpdated).toHaveBeenCalledWith('run-1');
   });

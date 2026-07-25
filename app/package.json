@@ -7,6 +7,7 @@
   "main": "./out/main/index.cjs",
   "author": "parthashirolkar",
   "scripts": {
+    "predev": "install-electron",
     "dev": "electron-vite dev",
     "build": "electron-vite build && bun run build:agent",
     "build:agent": "vite build --config vite.agent.config.ts",
@@ -56,13 +57,21 @@
     "eslint": "^9",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
-    "happy-dom": "^20.10.6",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.63.0",
     "vite": "^7.3.6"
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "knip": {
+    "entry": [
+      "src/main/index.ts",
+      "src/preload/index.ts",
+      "src/renderer/main.tsx",
+      "src/agent/index.ts",
+      "src/test/setup.ts"
+    ]
   },
   "build": {
     "appId": "com.shuddhalekhan.app",
