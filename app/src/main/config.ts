@@ -5,6 +5,7 @@ import { existsSync, readFileSync, unlinkSync } from 'fs';
 import type { AppConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
+import { preparePersistentStoreDirectory } from './store-path';
 
 type StoreConfig = AppConfig & {
   migrated?: boolean;
@@ -29,6 +30,7 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
 
 const store = new Store<StoreConfig>({
   name: 'shuddhalekhan-config',
+  cwd: preparePersistentStoreDirectory(),
   defaults: {
     whisperUrl: DEFAULT_LOCAL_ENDPOINT,
     transcription: DEFAULT_TRANSCRIPTION,

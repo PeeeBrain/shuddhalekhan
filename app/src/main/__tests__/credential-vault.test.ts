@@ -1,9 +1,15 @@
 import { describe, expect, it, mock } from 'bun:test';
-import { installElectronMock } from '../../test/electron-mock';
+import { normalize } from 'path';
+import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
+
+const storeOptions: Array<{ name?: string; cwd?: string }> = [];
 
 installElectronMock();
 mock.module('electron-store', () => ({
   default: class {
+    constructor(options: { name?: string; cwd?: string }) {
+      storeOptions.push(options);
+    }
     get() {
       return {};
     }
@@ -12,6 +18,19 @@ mock.module('electron-store', () => ({
 }));
 
 describe('CredentialVault', () => {
+  it('uses the same stable directory as the main config store', async () => {
+    resetElectronMock();
+    storeOptions.length = 0;
+
+    await import(`../credential-vault?test=${Date.now()}-stable-store-path`);
+
+    expect(storeOptions[0]).toMatchObject({
+      name: 'shuddhalekhan-credentials',
+      cwd: normalize('/home/tester/Shuddhalekhan'),
+    });
+    expect(electronMock.app.getPath).toHaveBeenCalledWith('appData');
+  });
+
   it('encrypts, replaces, and removes an Agent API key without persisting plaintext', async () => {
     const { CredentialVault } = await import('../credential-vault');
     const data = new Map<string, Record<string, string>>();

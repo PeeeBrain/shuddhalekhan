@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { normalize } from 'path';
-import { installElectronMock, resetElectronMock } from '../../test/electron-mock';
+import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
 
@@ -8,9 +8,13 @@ const storeData = new Map<string, unknown>();
 const existsSync = vi.fn();
 const readFileSync = vi.fn();
 const unlinkSync = vi.fn();
+const copyFileSync = vi.fn();
+const mkdirSync = vi.fn();
+const storeOptions: Array<{ name?: string; cwd?: string }> = [];
 
 class MockStore {
-  constructor(options: { defaults: Record<string, unknown> }) {
+  constructor(options: { name?: string; cwd?: string; defaults: Record<string, unknown> }) {
+    storeOptions.push(options);
     for (const [key, value] of Object.entries(options.defaults)) {
       if (!storeData.has(key)) storeData.set(key, value);
     }
@@ -28,7 +32,9 @@ class MockStore {
 mock.module('electron-store', () => ({ default: MockStore }));
 installElectronMock();
 mock.module('fs', () => ({
+  copyFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   unlinkSync,
 }));
@@ -44,6 +50,34 @@ describe('config store', () => {
     existsSync.mockReset();
     readFileSync.mockReset();
     unlinkSync.mockReset();
+    copyFileSync.mockReset();
+    mkdirSync.mockReset();
+    storeOptions.length = 0;
+  });
+
+  it('uses a stable store directory instead of package-derived userData', async () => {
+    existsSync.mockReturnValue(false);
+    await import(`../config?test=${Date.now()}-stable-store-path`);
+
+    expect(storeOptions[0]).toMatchObject({
+      name: 'shuddhalekhan-config',
+      cwd: normalize('/home/tester/Shuddhalekhan'),
+    });
+    expect(electronMock.app.getPath).toHaveBeenCalledWith('appData');
+  });
+
+  it('copies monorepo dev stores only when stable stores do not exist', async () => {
+    const sourceDirectory = normalize('/app-data/@shuddhalekhan/app');
+    existsSync.mockImplementation((path: string) => path.startsWith(sourceDirectory));
+    const { preparePersistentStoreDirectory } = await import(`../store-path?test=${Date.now()}-migration`);
+
+    expect(preparePersistentStoreDirectory('/app-data')).toBe(normalize('/app-data/Shuddhalekhan'));
+    expect(mkdirSync).toHaveBeenCalledWith(normalize('/app-data/Shuddhalekhan'), { recursive: true });
+    expect(copyFileSync).toHaveBeenCalledTimes(2);
+    expect(copyFileSync).toHaveBeenCalledWith(
+      normalize('/app-data/@shuddhalekhan/app/shuddhalekhan-config.json'),
+      normalize('/app-data/Shuddhalekhan/shuddhalekhan-config.json'),
+    );
   });
 
   it('returns defaults when no legacy config exists', async () => {
