@@ -49,6 +49,7 @@ export type CredentialStatus =
   | { available: false; exists: false; message: string };
 
 export type AgentApiKeySource = 'environment' | 'stored';
+export type AgentReasoningEffort = 'low' | 'medium' | 'high';
 
 export type McpServerTransport =
   | {
@@ -297,6 +298,7 @@ export interface AppConfig {
       apiKeyEnvVar: string;
       apiKeySource?: AgentApiKeySource;
       thinkingEnabled: boolean;
+      reasoningEffort?: AgentReasoningEffort;
     };
     mcpServers: McpServerConfig[];
   };

@@ -53,7 +53,9 @@ const store = new Store<StoreConfig>({
         baseUrl: '',
         model: '',
         apiKeyEnvVar: '',
+        apiKeySource: 'environment',
         thinkingEnabled: true,
+        reasoningEffort: 'medium',
       },
       mcpServers: [],
     },
@@ -203,7 +205,12 @@ export function getConfig(): AppConfig {
         baseUrl: agent?.provider?.baseUrl ?? '',
         model: agent?.provider?.model ?? '',
         apiKeyEnvVar: agent?.provider?.apiKeyEnvVar ?? '',
+        apiKeySource: agent?.provider?.apiKeySource === 'stored' ? 'stored' : 'environment',
         thinkingEnabled: agent?.provider?.thinkingEnabled ?? true,
+        reasoningEffort: agent?.provider?.reasoningEffort === 'low'
+          || agent?.provider?.reasoningEffort === 'high'
+          ? agent.provider.reasoningEffort
+          : 'medium',
       },
       mcpServers,
     },

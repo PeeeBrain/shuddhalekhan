@@ -111,7 +111,9 @@ describe('config store', () => {
           baseUrl: '',
           model: '',
           apiKeyEnvVar: '',
+          apiKeySource: 'environment',
           thinkingEnabled: true,
+          reasoningEffort: 'medium',
         },
         mcpServers: [],
       },
@@ -446,6 +448,34 @@ describe('config store', () => {
     } as never);
 
     expect(getConfig().agent.provider.thinkingEnabled).toBe(true);
+    expect(getConfig().agent.provider.reasoningEffort).toBe('medium');
+  });
+
+  it('preserves stored agent credentials and reasoning effort', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-agent-provider-settings`);
+
+    setConfig('agent', {
+      enabled: true,
+      provider: {
+        baseUrl: 'https://openrouter.ai/api/v1',
+        model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        apiKeyEnvVar: '',
+        apiKeySource: 'stored',
+        thinkingEnabled: true,
+        reasoningEffort: 'high',
+      },
+      mcpServers: [],
+    });
+
+    expect(getConfig().agent.provider).toEqual({
+      baseUrl: 'https://openrouter.ai/api/v1',
+      model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      apiKeyEnvVar: '',
+      apiKeySource: 'stored',
+      thinkingEnabled: true,
+      reasoningEffort: 'high',
+    });
   });
 
   it('defaults to the explicit Ctrl+Win and Alt+Win bindings', async () => {

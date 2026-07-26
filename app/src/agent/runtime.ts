@@ -1,6 +1,6 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { isStepCount, streamText, type JSONValue, type ModelMessage, type Tool } from "ai";
-import type { AppConfig } from "../types/ipc";
+import type { AgentReasoningEffort, AppConfig } from "../types/ipc";
 import { logSidecar } from "./protocol";
 
 export interface AgentRuntimeCallbacks {
@@ -123,6 +123,7 @@ function getProviderHeaders(
 function applyDefaultReasoningOptions(
   args: Record<string, unknown>,
   thinkingEnabled: boolean,
+  reasoningEffort: AgentReasoningEffort,
 ): Record<string, unknown> {
   if (!thinkingEnabled) return args;
 
@@ -132,7 +133,7 @@ function applyDefaultReasoningOptions(
       ...(typeof args.reasoning === "object" && args.reasoning !== null
         ? args.reasoning
         : {}),
-      effort: "on",
+      effort: reasoningEffort,
     },
   };
 }
@@ -379,7 +380,11 @@ export async function runAgent(
       apiKey,
       headers: getProviderHeaders(provider.baseUrl),
       transformRequestBody: (args) =>
-        applyDefaultReasoningOptions(args, provider.thinkingEnabled ?? true),
+        applyDefaultReasoningOptions(
+          args,
+          provider.thinkingEnabled ?? true,
+          provider.reasoningEffort ?? "medium",
+        ),
     }).chatModel(provider.model);
 
     callbacks.onStatus("Thinking...");

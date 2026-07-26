@@ -39,6 +39,7 @@ const baseConfig = {
         model: 'openai/gpt-4.1-mini',
         apiKeyEnvVar: 'OPENROUTER_API_KEY',
         thinkingEnabled: true,
+        reasoningEffort: 'high' as const,
       },
     mcpServers: [],
   },
@@ -526,7 +527,7 @@ describe('runAgent', () => {
     const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
     expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
       messages: [],
-      reasoning: { effort: 'on' },
+      reasoning: { effort: 'high' },
     });
   });
 
@@ -575,6 +576,7 @@ describe('runAgent', () => {
           model: 'nvidia/nemotron-3-nano-4b',
           apiKeyEnvVar: '',
           thinkingEnabled: true,
+          reasoningEffort: 'low',
         },
       },
     } as never, {}, new AbortController().signal, callbacks);
@@ -584,7 +586,7 @@ describe('runAgent', () => {
     const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
     expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
       messages: [],
-      reasoning: { effort: 'on' },
+      reasoning: { effort: 'low' },
     });
   });
 

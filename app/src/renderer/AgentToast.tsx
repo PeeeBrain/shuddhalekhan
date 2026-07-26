@@ -29,7 +29,7 @@ export function AgentToast() {
 
   useEffect(() => {
     if (!state) return undefined;
-    if (state.kind === 'approval' || state.kind === 'streaming') return undefined;
+    if (state.kind === 'approval' || state.kind === 'streaming' || state.kind === 'completed') return undefined;
 
     const timer = window.setTimeout(() => {
       window.electronAPI?.send('agent-toast:dismiss');

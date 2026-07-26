@@ -482,9 +482,32 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('textbox', { name: 'Provider base URL' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Model' })).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Thinking' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Reasoning effort' })).not.toBeInTheDocument();
     expect(
       screen.getByRole('textbox', { name: 'API key env var name' }),
     ).toBeInTheDocument();
+  });
+
+  it('shows reasoning effort levels when thinking is enabled', async () => {
+    const config = baseConfig();
+    renderSettings({
+      config: {
+        ...config,
+        agent: {
+          ...config.agent,
+          provider: {
+            ...config.agent.provider,
+            thinkingEnabled: true,
+            reasoningEffort: 'medium',
+          },
+        },
+      },
+    });
+    await waitForLoaded();
+
+    fireEvent.click(tabByLabel('Agent'));
+
+    expect(screen.getByRole('combobox', { name: 'Reasoning effort' })).toHaveTextContent('Medium');
   });
 
   it('shows a saved credential as replaceable without repopulating its value', async () => {
