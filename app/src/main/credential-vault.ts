@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import { safeStorage } from 'electron';
+import { preparePersistentStoreDirectory } from './store-path';
 import type { CredentialStatus } from '../types/ipc';
 
 export type { CredentialStatus } from '../types/ipc';
@@ -75,6 +76,7 @@ export class CredentialVault {
 
 const credentialStore = new Store<Record<string, Record<string, string>>>({
   name: 'shuddhalekhan-credentials',
+  cwd: preparePersistentStoreDirectory(),
   defaults: { [CREDENTIALS_KEY]: {} },
 });
 

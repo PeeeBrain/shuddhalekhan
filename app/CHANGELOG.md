@@ -8,6 +8,7 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Developer Infrastructure
+- Fixed development builds reading a new empty settings directory after the monorepo move; keybindings, LLM settings, MCP servers, and secure credentials now use the same stable location as packaged builds.
 - Reorganized the repository as a Bun monorepo with the Windows desktop application under `app/` and a React landing-page workspace under `web/`.
 - Development startup now installs Electron's binary on first use, matching Electron 42+'s lazy-download lifecycle.
 
