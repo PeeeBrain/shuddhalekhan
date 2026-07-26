@@ -57,6 +57,7 @@ describe('settings IPC adapter', () => {
     invoke = vi.fn((channel: string) => {
       if (channel === 'config:get') return Promise.resolve(config);
       if (channel === 'app:get-info') return Promise.resolve({ name: 'Shuddhalekhan', version: '4.0.0', isPackaged: false });
+      if (channel === 'app:get-release-notes') return Promise.resolve({ version: '4.0.0', notes: '- Added release notes' });
       if (channel === 'updater:get-status') return Promise.resolve(updateStatus);
       if (channel === 'updater:check') return Promise.resolve(updateStatus);
       if (channel === 'transcription:check-server') return Promise.resolve(true);
@@ -71,11 +72,13 @@ describe('settings IPC adapter', () => {
   it('loads initial settings data through named methods', async () => {
     await expect(ipc.getConfig()).resolves.toBe(config);
     await expect(ipc.getAppInfo()).resolves.toEqual({ name: 'Shuddhalekhan', version: '4.0.0', isPackaged: false });
+    await expect(ipc.getReleaseNotes()).resolves.toEqual({ version: '4.0.0', notes: '- Added release notes' });
     await expect(ipc.getUpdateStatus()).resolves.toBe(updateStatus);
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'config:get');
     expect(invoke).toHaveBeenNthCalledWith(2, 'app:get-info');
-    expect(invoke).toHaveBeenNthCalledWith(3, 'updater:get-status');
+    expect(invoke).toHaveBeenNthCalledWith(3, 'app:get-release-notes');
+    expect(invoke).toHaveBeenNthCalledWith(4, 'updater:get-status');
   });
 
   it('saves config and forwards actions without exposing channel names to callers', async () => {
@@ -138,6 +141,19 @@ describe('settings IPC adapter', () => {
     expect(subscribe).toHaveBeenNthCalledWith(2, 'mcp:server-status', expect.any(Function));
     expect(onUpdate).toHaveBeenCalledWith(updateStatus);
     expect(onMcpStatus).toHaveBeenCalledWith(status);
+  });
+
+  it('subscribes to settings navigation requests', () => {
+    const onNavigate = vi.fn();
+    const unsubscribe = vi.fn();
+    subscribe.mockReturnValueOnce(unsubscribe);
+
+    expect(ipc.onNavigateRequested(onNavigate)).toBe(unsubscribe);
+    const callback = subscribe.mock.calls[0]?.[1] as (section: 'about') => void;
+    callback('about');
+
+    expect(subscribe).toHaveBeenCalledWith('settings:navigate', expect.any(Function));
+    expect(onNavigate).toHaveBeenCalledWith('about');
   });
 
   it('handles audit log queries and updates', async () => {

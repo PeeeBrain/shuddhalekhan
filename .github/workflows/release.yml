@@ -56,34 +56,18 @@ jobs:
       - name: Test
         run: bun test
 
-      - name: Build
-        run: bun run --cwd app build
-
-      - name: Generate release notes from Git history
+      - name: Prepare release notes from the changelog
         shell: pwsh
         run: |
-          $tag = '${{ steps.release_version.outputs.tag }}'
+          $version = '${{ steps.release_version.outputs.version }}'
           $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          $previousTag = git tag --merged "$tag^" --sort=-version:refname |
-            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
-            Select-Object -First 1
+          bun run --cwd app release-notes:prepare -- `
+            --version $version `
+            --markdown-output $notesFile `
+            --json-output release-notes.json
 
-          $noteArgs = @(
-            '--method', 'POST',
-            "repos/$env:GITHUB_REPOSITORY/releases/generate-notes",
-            '-f', "tag_name=$tag"
-          )
-          if ($previousTag) {
-            $noteArgs += @('-f', "previous_tag_name=$previousTag")
-            Write-Host "Generating release notes from $previousTag to $tag."
-          } else {
-            Write-Host "No previous stable release tag found; generating initial release notes."
-          }
-
-          gh api @noteArgs --jq '.body' |
-            Set-Content -Path $notesFile -Encoding utf8
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build
+        run: bun run --cwd app build
 
       - name: Package and publish Electron app
         run: bun run --cwd app dist -- --publish always

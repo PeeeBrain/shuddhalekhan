@@ -4,6 +4,7 @@ import type {
   AppInfo,
   McpServerRuntimeStatus,
   UpdateStatus,
+  VersionReleaseNotes,
   AuditRunSummary,
   AuditEventDetail,
   CredentialKind,
@@ -16,6 +17,7 @@ export interface SettingsIpc {
   getConfig: () => Promise<AppConfig>;
   setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => Promise<void>;
   getAppInfo: () => Promise<AppInfo>;
+  getReleaseNotes: () => Promise<VersionReleaseNotes | null>;
   getUpdateStatus: () => Promise<UpdateStatus>;
   checkForUpdates: () => Promise<UpdateStatus>;
   testMcpServer: (serverId: string) => Promise<void>;
@@ -26,6 +28,7 @@ export interface SettingsIpc {
   endShortcutCapture: () => Promise<void>;
   onShortcutsPausedChanged: (callback: (paused: boolean) => void) => Unsubscribe | undefined;
   onUpdateStatusChanged: (callback: (status: UpdateStatus) => void) => Unsubscribe | undefined;
+  onNavigateRequested: (callback: (section: 'about') => void) => Unsubscribe | undefined;
   onMcpServerStatus: (callback: (status: McpServerRuntimeStatus) => void) => Unsubscribe | undefined;
   getAuditRuns: () => Promise<AuditRunSummary[]>;
   getAuditRunDetail: (agentRunId: string) => Promise<AuditEventDetail[]>;
@@ -42,6 +45,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await electronAPI?.invoke('config:set', key, value);
     },
     getAppInfo: () => requireElectronApi(electronAPI).invoke('app:get-info'),
+    getReleaseNotes: () => requireElectronApi(electronAPI).invoke('app:get-release-notes'),
     getUpdateStatus: () => requireElectronApi(electronAPI).invoke('updater:get-status'),
     checkForUpdates: () => requireElectronApi(electronAPI).invoke('updater:check'),
     testMcpServer: async (serverId) => {
@@ -58,6 +62,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     },
     onShortcutsPausedChanged: (callback) => electronAPI?.subscribe('shortcuts:paused-changed', callback),
     onUpdateStatusChanged: (callback) => electronAPI?.subscribe('updater:status-changed', callback),
+    onNavigateRequested: (callback) => electronAPI?.subscribe('settings:navigate', callback),
     onMcpServerStatus: (callback) => electronAPI?.subscribe('mcp:server-status', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),

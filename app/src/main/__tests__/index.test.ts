@@ -17,6 +17,8 @@ const getRecordingPillWindow = vi.fn(() => ({
   isDestroyed,
 }));
 const setConfig = vi.fn();
+const getLastSeenReleaseNotesVersion = vi.fn(() => null);
+const setLastSeenReleaseNotesVersion = vi.fn();
 const mergeDiscoveredTools = vi.fn();
 const getConfig = vi.fn(() => ({
   whisperUrl: 'http://localhost:8080/inference',
@@ -135,7 +137,13 @@ mock.module('../tray', () => ({
   updateUpdaterStatus,
   updateShortcutPauseState,
 }));
-mock.module('../config', () => ({ getConfig, setConfig, mergeDiscoveredTools }));
+mock.module('../config', () => ({
+  getConfig,
+  setConfig,
+  mergeDiscoveredTools,
+  getLastSeenReleaseNotesVersion,
+  setLastSeenReleaseNotesVersion,
+}));
 mock.module('../credential-vault', () => ({ credentialVault }));
 mock.module('../credential-ipc', () => ({ registerCredentialIpcHandlers }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
@@ -240,6 +248,8 @@ describe('main process IPC orchestration', () => {
     showRecordingPill.mockClear();
     hideRecordingPill.mockClear();
     setConfig.mockClear();
+    getLastSeenReleaseNotesVersion.mockClear();
+    setLastSeenReleaseNotesVersion.mockClear();
     getConfig.mockClear();
     mergeDiscoveredTools.mockClear();
     simulatePaste.mockReset();
@@ -288,6 +298,7 @@ describe('main process IPC orchestration', () => {
     expect([...ipcHandlers.keys()].sort()).toEqual([
       'agent:approval-decision',
       'app:get-info',
+      'app:get-release-notes',
       'audio:get-devices',
       'audio:select-device',
       'audio:start-recording',
