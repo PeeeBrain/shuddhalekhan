@@ -31,8 +31,10 @@ tags and commit history, not from this file. Keep new entries under
 ### Credential Vault
 - Added Windows DPAPI-backed secure storage for Agent Mode API keys, with saved, replace, and remove controls in Settings.
 - Agent Mode now supports securely stored API keys alongside existing environment-variable credentials.
+- Fixed stored Agent Mode credentials being misread as environment-variable credentials after settings were normalized or the app restarted.
 
 ### Settings Redesign
+- Added Low, Medium, and High reasoning-effort controls for Agent Mode models that support thinking.
 - Grouped all six transcription providers into Local, Cloud, and Custom choices with concise descriptions and configuration-readiness feedback.
 - Reorganized Settings into Dictation, Agent, and System groups, with Transcription as the initial destination.
 - Added a darker content canvas, cohesive settings controls, accessible vertical navigation, and restrained status tags across MCP and History.

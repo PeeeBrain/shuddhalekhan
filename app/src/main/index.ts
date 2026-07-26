@@ -372,7 +372,10 @@ if (!gotSingleInstanceLock) {
     const startupConfig = getConfig();
     cachedAgentEnabled = startupConfig.agent.enabled;
     if (startupConfig.agent.enabled) {
-      agentSidecar.start(startupConfig);
+      agentSidecar.start(
+        startupConfig,
+        getAgentSidecarApiKey(startupConfig, credentialVault),
+      );
     }
 
     setupUpdater(publishUpdateStatus);

@@ -22,6 +22,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
   const baseUrlErrorId = useId();
   const modelErrorId = useId();
   const thinkingErrorId = useId();
+  const reasoningEffortErrorId = useId();
   const apiKeySourceErrorId = useId();
   const apiKeyEnvVarErrorId = useId();
 
@@ -103,6 +104,33 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
             )
           }
         />
+        {agent.provider.thinkingEnabled ? (
+          <SelectRow
+            label="Reasoning effort"
+            description="Controls how much reasoning the model uses. Supported levels depend on the selected provider and model."
+            value={agent.provider.reasoningEffort ?? 'medium'}
+            options={[
+              { value: 'low', label: 'Low' },
+              { value: 'medium', label: 'Medium' },
+              { value: 'high', label: 'High' },
+            ]}
+            errorId={reasoningEffortErrorId}
+            error={fieldErrors[FIELD_ID_THINKING]}
+            onChange={(reasoningEffort) =>
+              commit(
+                'agent',
+                {
+                  ...agent,
+                  provider: {
+                    ...agent.provider,
+                    reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high',
+                  },
+                },
+                FIELD_ID_THINKING,
+              )
+            }
+          />
+        ) : null}
         <SelectRow
           label="API key source"
           description="Choose a securely saved key or an environment variable for advanced setups."

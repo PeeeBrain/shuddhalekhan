@@ -267,6 +267,8 @@ describe('main process IPC orchestration', () => {
     agentStop.mockClear();
     agentCancelRun.mockClear();
     agentSendApprovalDecision.mockClear();
+    credentialVault.read.mockReset();
+    credentialVault.read.mockReturnValue(null);
     showAgentToast.mockClear();
     hideAgentToast.mockClear();
     handleAgentToastContentSize.mockClear();
@@ -559,7 +561,30 @@ describe('main process IPC orchestration', () => {
     await import(`../index?test=${Date.now()}-agent-startup-enabled`);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(agentStart).toHaveBeenCalledWith(config);
+    expect(agentStart).toHaveBeenCalledWith(config, undefined);
+  });
+
+  it('forwards a persisted stored credential when starting Agent Mode', async () => {
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        enabled: true,
+        provider: {
+          ...baseConfig.agent.provider,
+          baseUrl: 'https://openrouter.ai/api/v1',
+          model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+          apiKeySource: 'stored' as const,
+        },
+      },
+    };
+    getConfig.mockReturnValue(config);
+    credentialVault.read.mockReturnValue('stored-agent-secret');
+
+    await import(`../index?test=${Date.now()}-agent-startup-stored-key`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(agentStart).toHaveBeenCalledWith(config, 'stored-agent-secret');
   });
 
   it('does not start the agent sidecar on app ready when Agent Mode is disabled', async () => {
