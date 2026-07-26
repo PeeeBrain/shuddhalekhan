@@ -7,6 +7,11 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Updates
+- Update prompts now show a preview of the target version's release notes, with the complete notes available in Settings.
+- Newly installed updates include the same version-scoped notes used by the GitHub Release, so the first release containing the viewer can show its changes after installation.
+- Release packaging now uses the `Unreleased` changelog section as the single source for both GitHub Release notes and the copy bundled with the application.
+
 ### Developer Infrastructure
 - Fixed development builds reading a new empty settings directory after the monorepo move; keybindings, LLM settings, MCP servers, and secure credentials now use the same stable location as packaged builds.
 - Reorganized the repository as a Bun monorepo with the Windows desktop application under `app/` and a React landing-page workspace under `web/`.

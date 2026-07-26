@@ -1,14 +1,20 @@
 import { randomUUID } from 'crypto';
-import { app, ipcMain, session, shell, Notification } from 'electron';
+import { app, dialog, ipcMain, session, shell, Notification } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
 import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './agent-toast-window';
-import { getConfig, setConfig } from './config';
+import {
+  getConfig,
+  getLastSeenReleaseNotesVersion,
+  setConfig,
+  setLastSeenReleaseNotesVersion,
+} from './config';
 import { credentialVault } from './credential-vault';
 import { registerCredentialIpcHandlers } from './credential-ipc';
 import { getAgentSidecarApiKey } from './agent-credential';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
+import { getBundledReleaseNotes, getReleaseNotesPreview } from './release-notes';
 import { AgentSidecarManager } from './agent-sidecar';
 import { RecordingSession } from './recording-session';
 import { keyboardHook } from './native/keyboard';
@@ -186,6 +192,34 @@ function publishUpdateStatus(status: UpdateStatus): void {
   }
 }
 
+async function showBundledReleaseNotesAfterInstall(): Promise<void> {
+  const releaseNotes = getBundledReleaseNotes();
+  if (
+    !releaseNotes ||
+    getLastSeenReleaseNotesVersion() === releaseNotes.version
+  ) {
+    return;
+  }
+
+  try {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      title: "What's New",
+      message: `Shuddhalekhan v${releaseNotes.version} is installed.`,
+      detail: getReleaseNotesPreview([releaseNotes]),
+      buttons: ["View What's New", 'Close'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    setLastSeenReleaseNotesVersion(releaseNotes.version);
+    if (response === 0) {
+      openSettingsWindow('about');
+    }
+  } catch {
+    // A failed informational dialog must not prevent app startup.
+  }
+}
+
 // IPC handlers
 registerCredentialIpcHandlers(ipcMain, credentialVault);
 
@@ -316,6 +350,10 @@ ipcMain.handle('app:get-info', async () => {
   };
 });
 
+ipcMain.handle('app:get-release-notes', () => {
+  return getBundledReleaseNotes();
+});
+
 ipcMain.handle('updater:get-status', () => {
   return getUpdateStatus();
 });
@@ -378,8 +416,9 @@ if (!gotSingleInstanceLock) {
       );
     }
 
-    setupUpdater(publishUpdateStatus);
+    setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
     publishUpdateStatus(getUpdateStatus());
+    void showBundledReleaseNotesAfterInstall();
 
     app.on('activate', () => {
       // Keep running in tray; no main window to recreate

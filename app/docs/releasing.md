@@ -58,9 +58,10 @@ version bumps are never committed to the repository.
    bun test
    ```
 
-4. Review `CHANGELOG.md` for useful human-facing project history. Changelog
-   organization is not a release gate, and GitHub release notes do not come
-   from this file.
+4. Review the `Unreleased` section in `CHANGELOG.md`. It must be non-empty and
+   contain only the user-facing changes intended for this release. The release
+   workflow uses that structurally bounded section as the single source for the
+   GitHub Release body and the release-notes payload bundled with the app.
 
 ## Create the release
 
@@ -73,10 +74,17 @@ git push origin vX.Y.Z
 
 Pushing the tag triggers `.github/workflows/release.yml`. The workflow derives
 `X.Y.Z` from the tag, injects it into the application metadata, reruns all
-checks, builds the app, generates the GitHub Release body from the explicitly
-selected previous reachable release tag, and uploads Electron Builder artifacts
-and auto-update metadata to a draft. The release becomes public only after its
+checks, extracts the `Unreleased` changelog section, stamps it with the tag
+version, and bundles it into the application. The same content becomes the
+GitHub Release body, so update prompts and the installed app present exactly the
+notes reviewed before tagging. Electron Builder artifacts and auto-update
+metadata are uploaded to a draft. The release becomes public only after its
 title and notes are finalized.
+
+After the release is published, move the released entries from `Unreleased`
+under a new `## vX.Y.Z` heading and restore an empty `Unreleased` section in a
+follow-up commit. Do not move entries before tagging because the tagged commit
+is the immutable source used by the release workflow.
 
 ## Verify the release
 
@@ -86,6 +94,9 @@ After the workflow completes:
 2. Confirm the GitHub Release is published under the same tag.
 3. Confirm the Windows installer and `latest.yml` are attached.
 4. Install or update the app and confirm its displayed version matches the tag.
+5. Confirm the update prompt or Settings → About shows the same notes as the
+   GitHub Release. On the first release containing this feature, verify the
+   post-install “What’s New” prompt instead of the pre-update prompt.
 
 ## If a release fails
 

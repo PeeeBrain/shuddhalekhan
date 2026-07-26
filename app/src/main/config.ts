@@ -11,6 +11,7 @@ type StoreConfig = AppConfig & {
   migrated?: boolean;
   transcriptionMigrated?: boolean;
   shortcutsMigrated?: boolean;
+  lastSeenReleaseNotesVersion?: string;
 };
 
 const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:8080/inference';
@@ -247,6 +248,14 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
       },
     });
   }
+}
+
+export function getLastSeenReleaseNotesVersion(): string | null {
+  return store.get('lastSeenReleaseNotesVersion') ?? null;
+}
+
+export function setLastSeenReleaseNotesVersion(version: string): void {
+  store.set('lastSeenReleaseNotesVersion', version);
 }
 
 export function mergeDiscoveredTools(

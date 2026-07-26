@@ -120,6 +120,20 @@ describe('config store', () => {
     });
   });
 
+  it('tracks the last viewed release notes without exposing it as user config', async () => {
+    existsSync.mockReturnValue(false);
+    const {
+      getConfig,
+      getLastSeenReleaseNotesVersion,
+      setLastSeenReleaseNotesVersion,
+    } = await import(`../config?test=${Date.now()}-release-notes`);
+
+    expect(getLastSeenReleaseNotesVersion()).toBeNull();
+    setLastSeenReleaseNotesVersion('4.6.0');
+    expect(getLastSeenReleaseNotesVersion()).toBe('4.6.0');
+    expect(getConfig()).not.toHaveProperty('lastSeenReleaseNotesVersion');
+  });
+
   it('defaults recording activation to push-to-talk', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig } = await import(`../config?test=${Date.now()}-activation-default`);

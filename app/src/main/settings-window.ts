@@ -34,13 +34,22 @@ export function getSettingsWindow(): BrowserWindow | null {
   return settingsWindow.get();
 }
 
-export function openSettingsWindow(): BrowserWindow {
+export function openSettingsWindow(section?: 'about'): BrowserWindow {
   const existingWindow = settingsWindow.get();
   if (existingWindow && !existingWindow.isDestroyed()) {
     existingWindow.show();
     existingWindow.focus();
+    if (section) {
+      existingWindow.webContents.send('settings:navigate', section);
+    }
     return existingWindow;
   }
 
-  return settingsWindow.create();
+  const createdWindow = settingsWindow.create();
+  if (section) {
+    createdWindow.webContents.once('did-finish-load', () => {
+      createdWindow.webContents.send('settings:navigate', section);
+    });
+  }
+  return createdWindow;
 }

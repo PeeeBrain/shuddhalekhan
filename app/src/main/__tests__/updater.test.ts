@@ -12,6 +12,7 @@ const checkForUpdatesMock = vi.fn();
 const quitAndInstall = vi.fn();
 const autoUpdater = {
   autoDownload: false,
+  fullChangelog: true,
   on: vi.fn((event: string, listener: UpdaterListener) => {
     updaterListeners.set(event, listener);
   }),
@@ -33,6 +34,7 @@ describe('updater', () => {
     consoleError.mockClear();
     updaterListeners.clear();
     autoUpdater.autoDownload = false;
+    autoUpdater.fullChangelog = true;
     autoUpdater.on.mockClear();
     checkForUpdatesMock.mockReset();
     quitAndInstall.mockClear();
@@ -61,13 +63,22 @@ describe('updater', () => {
     const onStatusChanged = vi.fn();
     const { setupUpdater, getUpdateStatus } = await import(`../updater?test=${Date.now()}-events`);
 
-    setupUpdater(onStatusChanged);
+    const onShowReleaseNotes = vi.fn();
+    const loadReleaseNotes = vi.fn(() => Promise.resolve({
+      version: '3.0.3',
+      notes: '### Added\n- Visible release note',
+    }));
+    setupUpdater(onStatusChanged, onShowReleaseNotes, loadReleaseNotes);
     updaterListeners.get('checking-for-update')?.();
     updaterListeners.get('update-available')?.({ version: '3.0.3' });
+    await Promise.resolve();
+    await Promise.resolve();
     updaterListeners.get('download-progress')?.({ percent: 42.4 });
     updaterListeners.get('update-downloaded')?.({ version: '3.0.3' });
 
     expect(autoUpdater.autoDownload).toBe(true);
+    expect(autoUpdater.fullChangelog).toBe(false);
+    expect(loadReleaseNotes).toHaveBeenCalledWith('3.0.3');
     expect(checkForUpdatesMock).toHaveBeenCalled();
     expect(onStatusChanged).toHaveBeenCalledWith(expect.objectContaining({
       state: 'checking',
@@ -76,6 +87,10 @@ describe('updater', () => {
     expect(onStatusChanged).toHaveBeenCalledWith(expect.objectContaining({
       state: 'available',
       availableVersion: '3.0.3',
+      releaseNotes: [{
+        version: '3.0.3',
+        notes: '### Added\n- Visible release note',
+      }],
     }));
     expect(onStatusChanged).toHaveBeenCalledWith(expect.objectContaining({
       state: 'downloading',
@@ -85,7 +100,12 @@ describe('updater', () => {
     expect(getUpdateStatus()).toEqual(expect.objectContaining({
       state: 'downloaded',
       availableVersion: '3.0.3',
+      releaseNotes: [{
+        version: '3.0.3',
+        notes: '### Added\n- Visible release note',
+      }],
     }));
+    expect(onShowReleaseNotes).toHaveBeenCalled();
   });
 
   it('records packaged update check failures', async () => {
