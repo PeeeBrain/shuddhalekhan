@@ -5,6 +5,7 @@ import type {
   McpServerConfig,
   McpServerRuntimeStatus,
   UpdateStatus,
+  VersionReleaseNotes,
 } from '../types/ipc';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -62,6 +63,8 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   const [config, setConfigState] = useState<AppConfig | null>(null);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [bundledReleaseNotes, setBundledReleaseNotes] =
+    useState<VersionReleaseNotes | null>(null);
   const [mcpStatuses, setMcpStatuses] = useState<
     Record<string, McpServerRuntimeStatus>
   >({});
@@ -77,8 +80,14 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     settingsIpc.getUpdateStatus().then(setUpdateStatus).catch((err) => {
       console.error('Failed to load update status:', err);
     });
+    settingsIpc.getReleaseNotes().then(setBundledReleaseNotes).catch((err) => {
+      console.error('Failed to load release notes:', err);
+    });
 
     const offUpdater = settingsIpc.onUpdateStatusChanged(setUpdateStatus);
+    const offNavigate = settingsIpc.onNavigateRequested((section) => {
+      setActiveSection(section);
+    });
     const offMcpStatus = settingsIpc.onMcpServerStatus((status) => {
       setMcpStatuses((current) => ({ ...current, [status.serverId]: status }));
       settingsIpc.getConfig().then(setConfigState).catch((err) => {
@@ -88,6 +97,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
 
     return () => {
       offUpdater?.();
+      offNavigate?.();
       offMcpStatus?.();
     };
   }, [settingsIpc]);
@@ -130,6 +140,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     config,
     appInfo,
     updateStatus,
+    bundledReleaseNotes,
     mcpStatuses,
     settingsIpc,
     persistence,

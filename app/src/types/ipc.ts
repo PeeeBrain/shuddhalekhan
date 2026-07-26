@@ -125,6 +125,7 @@ export interface RendererToMainInvokeChannels {
   ) => void;
   'mcp:test-server': (serverId: string) => void;
   'app:get-info': () => Promise<AppInfo>;
+  'app:get-release-notes': () => Promise<VersionReleaseNotes | null>;
   'updater:get-status': () => Promise<UpdateStatus>;
   'updater:check': () => Promise<UpdateStatus>;
   'audit:get-runs': () => Promise<AuditRunSummary[]>;
@@ -152,6 +153,7 @@ export interface MainToRendererChannels {
   'agent-toast:update': (state: AgentToastState) => void;
   'mcp:server-status': (status: McpServerRuntimeStatus) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
+  'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;
   'shortcuts:paused-changed': (paused: boolean) => void;
 }
@@ -306,6 +308,13 @@ export interface AppInfo {
   isPackaged: boolean;
 }
 
+export interface VersionReleaseNotes {
+  version: string;
+  notes: string;
+}
+
+export type ReleaseNotes = VersionReleaseNotes[];
+
 export type UpdateStatus =
   | {
       state: 'idle';
@@ -323,6 +332,7 @@ export type UpdateStatus =
       state: 'available';
       currentVersion: string;
       availableVersion: string;
+      releaseNotes: ReleaseNotes;
       message: string;
       checkedAt: string;
     }
@@ -330,6 +340,7 @@ export type UpdateStatus =
       state: 'downloading';
       currentVersion: string;
       availableVersion: string;
+      releaseNotes: ReleaseNotes;
       percent: number | null;
       message: string;
       checkedAt: string;
@@ -338,6 +349,7 @@ export type UpdateStatus =
       state: 'downloaded';
       currentVersion: string;
       availableVersion: string;
+      releaseNotes: ReleaseNotes;
       message: string;
       checkedAt: string;
     }

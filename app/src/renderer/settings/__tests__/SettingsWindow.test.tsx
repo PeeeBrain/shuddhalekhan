@@ -16,6 +16,7 @@ import type {
   AuditRunSummary,
   McpServerRuntimeStatus,
   UpdateStatus,
+  VersionReleaseNotes,
   CredentialStatus,
 } from '../../../types/ipc';
 import { SettingsWindow } from '../../SettingsWindow';
@@ -84,6 +85,7 @@ interface MockSettingsIpcOptions {
   auditRuns?: AuditRunSummary[];
   auditRunDetail?: AuditEventDetail[];
   credentialStatus?: CredentialStatus;
+  releaseNotes?: VersionReleaseNotes | null;
 }
 
 function createMockSettingsIpc(
@@ -102,6 +104,7 @@ function createMockSettingsIpc(
     getConfig: mock(() => Promise.resolve(config)),
     setConfig: setConfigMock as SettingsIpc['setConfig'],
     getAppInfo: mock(() => Promise.resolve(APP_INFO)),
+    getReleaseNotes: mock(() => Promise.resolve(options.releaseNotes ?? null)),
     getUpdateStatus: mock(() => Promise.resolve(UPDATE_STATUS)),
     checkForUpdates: mock(() => Promise.resolve(UPDATE_STATUS)),
     testMcpServer: mock(() => Promise.resolve()),
@@ -112,6 +115,7 @@ function createMockSettingsIpc(
     endShortcutCapture: mock(() => Promise.resolve()),
     onShortcutsPausedChanged: mock(() => undefined),
     onUpdateStatusChanged: mock(() => undefined),
+    onNavigateRequested: mock(() => undefined),
     onMcpServerStatus: mock(
       (_callback: (status: McpServerRuntimeStatus) => void) => undefined,
     ),
@@ -517,6 +521,22 @@ describe('Settings section reachability', () => {
     expect(
       screen.getByRole('button', { name: 'Check for Updates' }),
     ).toBeInTheDocument();
+  });
+
+  it('shows the release-scoped notes bundled with the installed version', async () => {
+    renderSettings({
+      releaseNotes: {
+        version: '4.6.0',
+        notes: '### Updates\n- Added visible release notes.',
+      },
+    });
+    await waitForLoaded();
+
+    fireEvent.click(tabByLabel('About'));
+
+    expect(screen.getByRole('heading', { name: "What's new" })).toBeInTheDocument();
+    expect(screen.getByText('v4.6.0')).toBeInTheDocument();
+    expect(screen.getByText('Added visible release notes.')).toBeInTheDocument();
   });
 
   it('exposes MCP server configuration on the MCP Servers section', async () => {
