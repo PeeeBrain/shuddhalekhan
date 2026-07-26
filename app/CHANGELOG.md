@@ -33,6 +33,9 @@ tags and commit history, not from this file. Keep new entries under
 - Agent Mode now supports securely stored API keys alongside existing environment-variable credentials.
 - Fixed stored Agent Mode credentials being misread as environment-variable credentials after settings were normalized or the app restarted.
 
+### Agent Mode
+- Completed agent response toasts now remain visible until dismissed, giving users time to read longer final answers.
+
 ### Settings Redesign
 - Added Low, Medium, and High reasoning-effort controls for Agent Mode models that support thinking.
 - Grouped all six transcription providers into Local, Cloud, and Custom choices with concise descriptions and configuration-readiness feedback.

@@ -40,3 +40,39 @@ describe('transcription failure toast', () => {
     expect(send).toHaveBeenCalledWith('agent-toast:dismiss');
   });
 });
+
+describe('completed agent toast', () => {
+  it('stays visible until the user dismisses it', () => {
+    const originalSetTimeout = window.setTimeout;
+    const setTimeoutMock = mock(originalSetTimeout);
+    window.setTimeout = setTimeoutMock;
+
+    try {
+      (window as unknown as { electronAPI: unknown }).electronAPI = {
+        subscribe: (channel: string, listener: Listener) => {
+          listeners.set(channel, listener);
+          return () => listeners.delete(channel);
+        },
+        send,
+        invoke,
+      };
+      render(<AgentToast />);
+
+      act(() => listeners.get('agent-toast:update')?.({
+        kind: 'completed',
+        agentRunId: 'run-1',
+        response: 'Here is the final answer.',
+        toolSummary: [],
+      }));
+
+      expect(screen.getByText('Here is the final answer.')).toBeInTheDocument();
+      expect(setTimeoutMock).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalledWith('agent-toast:dismiss');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(send).toHaveBeenCalledWith('agent-toast:dismiss');
+    } finally {
+      window.setTimeout = originalSetTimeout;
+    }
+  });
+});
