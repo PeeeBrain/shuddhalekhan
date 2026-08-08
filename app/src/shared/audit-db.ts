@@ -14,6 +14,10 @@ export const AGENT_AUDIT_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_agent_audit_events_run
     ON agent_audit_events(agent_run_id, created_at);
+  CREATE TABLE IF NOT EXISTS agent_audit_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `;
 
 export function resolveAuditDbPath(fallbackBaseDir: string): string {

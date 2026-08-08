@@ -3,6 +3,7 @@ import { join } from 'path';
 import type { AppConfig } from '../types/ipc';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
+import { getPersistentStoreDirectory } from './store-path';
 
 type SidecarEventHandler = (event: SidecarEvent) => void;
 
@@ -79,7 +80,7 @@ export class AgentSidecarManager {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: '1',
-          SHUDDHALEKHAN_AUDIT_DIR: app.getPath('userData'),
+          SHUDDHALEKHAN_AUDIT_DIR: getPersistentStoreDirectory(),
         },
       };
     }
@@ -89,7 +90,7 @@ export class AgentSidecarManager {
       args: [join(app.getAppPath(), 'src', 'agent', 'index.ts')],
       env: {
         ...process.env,
-        SHUDDHALEKHAN_AUDIT_DIR: app.getPath('userData'),
+        SHUDDHALEKHAN_AUDIT_DIR: getPersistentStoreDirectory(),
       },
     };
   }

@@ -71,6 +71,9 @@ describe('AgentSidecarManager', () => {
   beforeEach(() => {
     resetElectronMock();
     electronMock.app.getAppPath.mockReturnValue('D:\\git_repos\\speech-2-text');
+    electronMock.app.getPath.mockImplementation((name: string) =>
+      name === 'appData' ? 'C:\\Users\\tester\\AppData\\Roaming' : 'C:\\Users\\tester\\AppData\\Roaming\\@shuddhalekhan\\app'
+    );
     stdinWrite.mockClear();
     childKill.mockClear();
     spawn.mockClear();
@@ -139,7 +142,10 @@ describe('AgentSidecarManager', () => {
         expect.objectContaining({
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
-          env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }),
+          env: expect.objectContaining({
+            ELECTRON_RUN_AS_NODE: '1',
+            SHUDDHALEKHAN_AUDIT_DIR: 'C:\\Users\\tester\\AppData\\Roaming\\Shuddhalekhan',
+          }),
         })
       );
     } finally {

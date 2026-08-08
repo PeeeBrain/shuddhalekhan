@@ -145,6 +145,34 @@ describe('runAgent', () => {
     expect(isStepCountMock).toHaveBeenCalledWith(5);
   });
 
+  it('reports the provider error carried by an AI SDK error stream part', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: '',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+      streamParts: [{
+        type: 'error',
+        error: {
+          message: 'Provider rejected the request',
+          statusCode: 400,
+          responseBody: { error: 'Unsupported reasoning option' },
+        },
+      }],
+    }));
+    const callbacks = makeCallbacks();
+
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(callbacks.onFailed).toHaveBeenCalledWith(
+      'Provider rejected the request | HTTP 400 | Response: {"error":"Unsupported reasoning option"}'
+    );
+    expect(callbacks.onAudit).toHaveBeenCalledWith('run_failed', {
+      error: 'Provider rejected the request | HTTP 400 | Response: {"error":"Unsupported reasoning option"}',
+    });
+  });
+
   it('uses the stable AI SDK v7 runtime request names', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     streamTextMock.mockImplementation(() => makeStreamResult({
@@ -590,6 +618,46 @@ describe('runAgent', () => {
     });
   });
 
+  it('uses the DeepSeek V4 OpenAI-compatible thinking fields for OpenCode Go', async () => {
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+    const callbacks = makeCallbacks();
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        provider: {
+          ...baseConfig.agent.provider,
+          baseUrl: 'https://opencode.ai/zen/go/v1',
+          model: 'deepseek-v4-flash',
+          apiKeySource: 'stored' as const,
+          reasoningEffort: 'medium' as const,
+        },
+      },
+    };
+
+    await runAgent(
+      'run-1',
+      'hello',
+      config as never,
+      {},
+      new AbortController().signal,
+      callbacks,
+      'stored-agent-secret',
+    );
+
+    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
+    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
+      messages: [],
+      thinking: { type: 'enabled' },
+      reasoning_effort: 'high',
+    });
+  });
+
   it('calls onCancelled when aborted', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     streamTextMock.mockImplementation(() => {
@@ -681,7 +749,7 @@ function makeStreamResult(result: {
   toolCalls: unknown[];
   toolResults: unknown[];
   streamChunks?: string[];
-  streamParts?: Array<{ type: string; text?: string; approvalId?: string; toolCall?: { toolName: string; input: unknown } }>;
+  streamParts?: Array<{ type: string; text?: string; error?: unknown; approvalId?: string; toolCall?: { toolName: string; input: unknown } }>;
   responseMessages?: unknown[];
 }) {
   const streamParts = result.streamParts ?? result.streamChunks?.map((text) => ({ type: 'text-delta', text })) ?? undefined;
