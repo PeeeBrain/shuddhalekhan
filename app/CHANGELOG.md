@@ -40,6 +40,8 @@ tags and commit history, not from this file. Keep new entries under
 
 ### Agent Mode
 - Completed agent response toasts now remain visible until dismissed, giving users time to read longer final answers.
+- Fixed Agent Mode runs being written to a different audit database than the History view after the monorepo move.
+- Provider errors emitted through the AI SDK stream now show the underlying HTTP/provider failure instead of the generic “No output generated” message.
 
 ### Settings Redesign
 - Added Low, Medium, and High reasoning-effort controls for Agent Mode models that support thinking.

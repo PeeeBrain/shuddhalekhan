@@ -4,8 +4,10 @@ import { spawnSync } from 'child_process';
 import { app } from 'electron';
 import fs from 'fs';
 import type { AuditRunSummary, AuditEventDetail } from '../types/ipc';
-import { AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
+import { AGENT_AUDIT_DB_FILENAME, AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
 import { summarizeAuditEvents, type AuditSummaryEventRow } from './audit-summary';
+
+const MONOREPO_AUDIT_MIGRATION_KEY = 'monorepo-audit-merged-v1';
 
 function getAuditDbPath(): string {
   return resolveAuditDbPath(app.getPath('userData'));
@@ -24,8 +26,59 @@ function getDb(): Database.Database {
     
     // In case the DB file exists but table isn't created yet (e.g. settings window opened on fresh install)
     dbInstance.exec(AGENT_AUDIT_SCHEMA_SQL);
+    mergeMonorepoAuditDatabase(dbInstance, dbPath);
   }
   return dbInstance;
+}
+
+function mergeMonorepoAuditDatabase(db: Database.Database, targetPath: string): void {
+  const migration = db
+    .prepare('SELECT value FROM agent_audit_metadata WHERE key = ?')
+    .get(MONOREPO_AUDIT_MIGRATION_KEY);
+  if (migration) return;
+
+  const legacyPath = join(app.getPath('appData'), '@shuddhalekhan', 'app', AGENT_AUDIT_DB_FILENAME);
+  if (legacyPath === targetPath || !fs.existsSync(legacyPath)) {
+    markAuditMigrationComplete(db);
+    return;
+  }
+
+  let attached = false;
+  try {
+    db.prepare('ATTACH DATABASE ? AS monorepo_audit').run(legacyPath);
+    attached = true;
+    db.transaction(() => {
+      db.exec(`
+        INSERT INTO agent_audit_events (agent_run_id, event_type, payload_json, created_at)
+        SELECT legacy.agent_run_id, legacy.event_type, legacy.payload_json, legacy.created_at
+        FROM monorepo_audit.agent_audit_events AS legacy
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM agent_audit_events AS current
+          WHERE current.agent_run_id = legacy.agent_run_id
+            AND current.event_type = legacy.event_type
+            AND current.payload_json = legacy.payload_json
+            AND current.created_at = legacy.created_at
+        );
+      `);
+      markAuditMigrationComplete(db);
+    })();
+  } catch (error) {
+    console.warn('Unable to merge the monorepo Agent History database:', error);
+  } finally {
+    if (attached) {
+      try {
+        db.exec('DETACH DATABASE monorepo_audit');
+      } catch {
+        // Leave the primary database usable even if SQLite cannot detach here.
+      }
+    }
+  }
+}
+
+function markAuditMigrationComplete(db: Database.Database): void {
+  db.prepare('INSERT OR REPLACE INTO agent_audit_metadata (key, value) VALUES (?, ?)')
+    .run(MONOREPO_AUDIT_MIGRATION_KEY, new Date().toISOString());
 }
 
 export function getAuditRuns(): AuditRunSummary[] {

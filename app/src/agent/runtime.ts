@@ -124,7 +124,17 @@ function applyDefaultReasoningOptions(
   args: Record<string, unknown>,
   thinkingEnabled: boolean,
   reasoningEffort: AgentReasoningEffort,
+  baseUrl: string,
+  model: string,
 ): Record<string, unknown> {
+  if (isDeepSeekV4ChatCompletion(baseUrl, model)) {
+    return {
+      ...args,
+      thinking: { type: thinkingEnabled ? "enabled" : "disabled" },
+      ...(thinkingEnabled ? { reasoning_effort: "high" } : {}),
+    };
+  }
+
   if (!thinkingEnabled) return args;
 
   return {
@@ -136,6 +146,13 @@ function applyDefaultReasoningOptions(
       effort: reasoningEffort,
     },
   };
+}
+
+function isDeepSeekV4ChatCompletion(baseUrl: string, model: string): boolean {
+  return (
+    (baseUrl.includes("opencode.ai/zen/") || baseUrl.includes("api.deepseek.com")) &&
+    (model === "deepseek-v4-flash" || model === "deepseek-v4-pro")
+  );
 }
 
 type AgentProviderOptions = Record<string, Record<string, JSONValue>>;
@@ -204,6 +221,7 @@ type ApprovalRequestPart = {
 type StreamPart =
   | { type: "text-delta"; text?: string; textDelta?: string }
   | { type: "reasoning"; text?: string; textDelta?: string }
+  | { type: "error"; error: unknown }
   | ApprovalRequestPart
   | { type: string; [key: string]: unknown };
 
@@ -216,11 +234,17 @@ async function consumeGenerationStream(
 ): Promise<{ text: string; approvalRequests: ApprovalRequestPart[] }> {
   let streamedResponse = "";
   const approvalRequests: ApprovalRequestPart[] = [];
+  let streamError: unknown;
 
   if (result.stream) {
     for await (const part of result.stream) {
       if (isApprovalRequestPart(part)) {
         approvalRequests.push(part);
+        continue;
+      }
+
+      if (part.type === "error") {
+        streamError = part.error;
         continue;
       }
 
@@ -230,6 +254,10 @@ async function consumeGenerationStream(
       streamedResponse += text;
       callbacks.onResponseDelta(text, streamedResponse);
     }
+  }
+
+  if (streamError !== undefined) {
+    throw streamError;
   }
 
   const finalText = await result.text;
@@ -384,6 +412,8 @@ export async function runAgent(
           args,
           provider.thinkingEnabled ?? true,
           provider.reasoningEffort ?? "medium",
+          provider.baseUrl,
+          provider.model,
         ),
     }).chatModel(provider.model);
 
