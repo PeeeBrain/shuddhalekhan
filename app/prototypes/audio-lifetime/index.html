@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Microphone startup test</title>
+    <style>
+      :root { color-scheme: dark; font-family: Segoe UI, system-ui, sans-serif; background: #0b1120; color: #e5e7eb; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      main { width: min(760px, calc(100% - 40px)); margin: 0 auto; padding: 48px 0 72px; }
+      .eyebrow { color: #60a5fa; font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+      h1 { margin: 10px 0 12px; max-width: 680px; font-size: 34px; line-height: 1.15; }
+      h2 { margin: 0 0 8px; font-size: 19px; }
+      p { color: #a9b4c5; line-height: 1.55; }
+      .card { margin-top: 24px; padding: 24px; background: #111a2d; border: 1px solid #27344a; border-radius: 14px; box-shadow: 0 16px 50px #0005; }
+      .promise { display: grid; grid-template-columns: 28px 1fr; gap: 12px; margin: 20px 0; padding: 14px; border-radius: 10px; background: #10251c; color: #bbf7d0; }
+      .promise span { color: #22c55e; font-size: 19px; }
+      .steps { display: grid; gap: 10px; margin: 20px 0; padding: 0; list-style: none; counter-reset: steps; }
+      .steps li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; color: #cbd5e1; }
+      .steps li::before { counter-increment: steps; content: counter(steps); display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #25324a; color: #93c5fd; font-size: 12px; font-weight: 700; }
+      button, input, select { font: inherit; color: inherit; background: #1d2940; border: 1px solid #34435c; border-radius: 9px; padding: 10px 12px; }
+      button { cursor: pointer; font-weight: 650; }
+      button:hover { border-color: #60a5fa; }
+      button:disabled { opacity: .45; cursor: wait; }
+      .primary { width: 100%; padding: 14px 18px; border-color: #3b82f6; background: #2563eb; font-size: 16px; }
+      .secondary { background: transparent; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+      .status { margin-top: 16px; min-height: 24px; color: #93c5fd; }
+      progress { display: none; width: 100%; height: 7px; margin-top: 10px; accent-color: #3b82f6; }
+      .results { display: none; }
+      .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; }
+      .metric { padding: 16px; background: #0b1324; border-radius: 10px; }
+      .metric span { display: block; color: #94a3b8; font-size: 12px; }
+      .metric strong { display: block; margin-top: 6px; font-size: 22px; }
+      .question { padding-top: 16px; border-top: 1px solid #27344a; }
+      details { margin-top: 18px; color: #cbd5e1; }
+      summary { cursor: pointer; color: #94a3b8; }
+      .advanced { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 18px; }
+      label { display: grid; gap: 6px; color: #a9b4c5; font-size: 13px; }
+      pre { max-height: 320px; overflow: auto; padding: 14px; background: #030712; border-radius: 8px; font: 12px/1.5 Cascadia Mono, Consolas, monospace; white-space: pre-wrap; }
+      @media (max-width: 640px) { .result-grid, .advanced { grid-template-columns: 1fr; } h1 { font-size: 28px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">Guided microphone test</div>
+      <h1>Does turning the microphone fully off make dictation feel slow?</h1>
+      <p>This checks the privacy-first design we just chose. Shuddhalekhan will open the microphone, wait for the first audio chunk, close it completely, and repeat five times.</p>
+
+      <section class="card">
+        <h2>Short reactivation test</h2>
+        <div class="promise"><span>✓</span><div><strong>The microphone is off between every test.</strong><br />Audio is discarded from memory after measurement. You do not need to speak.</div></div>
+        <ol class="steps">
+          <li>Allow microphone access once.</li>
+          <li>Wait while five automatic open-and-close checks run.</li>
+          <li>See the typical startup delay in plain language.</li>
+        </ol>
+        <button id="guided" class="primary">Start the guided test</button>
+        <div id="status" class="status">Ready. This takes about 12 seconds.</div>
+        <progress id="progress" max="5" value="0"></progress>
+      </section>
+
+      <section id="results" class="card results">
+        <h2>What happened</h2>
+        <div class="result-grid">
+          <div class="metric"><span>Typical mic startup</span><strong id="medianLatency">—</strong></div>
+          <div class="metric"><span>Privacy checks</span><strong id="privacyResult">—</strong></div>
+          <div class="metric"><span>Audio delivery</span><strong id="integrityResult">—</strong></div>
+        </div>
+        <p id="interpretation"></p>
+        <div class="question">
+          <strong>From your perspective, did activation feel immediate?</strong>
+          <div class="actions">
+            <button id="feltInstant">Yes, it felt immediate</button>
+            <button id="feltDelayed" class="secondary">No, I noticed a delay</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="long">Run the 60-second idle check</button>
+          <button id="diagnostics">Run remaining automatic checks</button>
+          <button id="deviceSwitch">Run automatic device-switch check</button>
+          <button id="export" class="secondary">Export results</button>
+        </div>
+        <p id="diagnosticSummary"></p>
+      </section>
+
+      <details class="card">
+        <summary>Advanced diagnostics (not needed for the guided test)</summary>
+        <p>These controls isolate hidden-window behavior, slow consumers, custom timing, and the privacy-compromising retained-track comparison.</p>
+        <div class="advanced">
+          <label>Input device<select id="device"></select></label>
+          <label>Trials<input id="trials" type="number" min="1" max="30" value="5" /></label>
+          <label>Idle between trials (ms)<input id="idleMs" type="number" min="0" value="1000" /></label>
+          <label>Capture per trial (ms)<input id="captureMs" type="number" min="250" value="1200" /></label>
+          <label>Simulated consumer delay (ms)<input id="sinkDelayMs" type="number" min="0" value="0" /></label>
+          <label>Queue capacity (20 ms chunks)<input id="queueCapacity" type="number" min="1" value="25" /></label>
+          <label>Hidden-window test duration (ms)<input id="hiddenMs" type="number" min="250" value="2500" /></label>
+        </div>
+        <div class="actions">
+          <button id="prepare">Prepare only</button>
+          <button id="strict">Run custom strict-idle test</button>
+          <button id="hidden">Test while window is hidden</button>
+          <button id="retained" class="secondary">Compare with microphone kept on</button>
+          <button id="stopRetained" class="secondary">Stop retained microphone</button>
+        </div>
+        <details>
+          <summary>Raw measurement data</summary>
+          <pre id="output">No trials yet.</pre>
+        </details>
+      </details>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>
