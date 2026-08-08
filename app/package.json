@@ -21,6 +21,7 @@
     "release-notes:prepare": "bun scripts/prepare-release-notes.ts",
     "verify:whisper": "bun scripts/verify-whisper-endpoint.ts",
     "test:transcription-quality": "bun scripts/transcription-quality.ts",
+    "prototype:incremental-injection": "bun src/main/native/prototype-incremental-injection/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
