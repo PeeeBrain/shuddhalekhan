@@ -1,4 +1,4 @@
-// PROTOTYPE ONLY — three runtime-shell visual systems, switchable via ?variant=.
+// PROTOTYPE ONLY — five runtime-shell visual systems, switchable via ?variant=.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -29,6 +29,8 @@ const variants = {
   A: { name: 'Morphing capsule', component: VariantA },
   B: { name: 'Command rail', component: VariantB },
   C: { name: 'Quiet stack', component: VariantC },
+  D: { name: 'Orbit capsule', component: VariantD },
+  E: { name: 'Agent dock', component: VariantE },
 } as const;
 
 type VariantKey = keyof typeof variants;
@@ -182,7 +184,7 @@ export function RuntimeShellPrototype() {
           <p className="eyebrow">WAYFINDER PROTOTYPE · THROWAWAY</p>
           <h1>One shell, many moments</h1>
           <p className="header-copy">
-            Compare three visual contracts for Shuddhalekhan’s persistent runtime shell.
+            Compare five visual contracts for Shuddhalekhan’s persistent runtime shell.
           </p>
         </div>
         <div className="header-meta" aria-label="Prototype constraints">
@@ -444,7 +446,147 @@ export function VariantC(props: VariantProps) {
   );
 }
 
-function ShellFrame({ variant, surface, reducedMotion, children }: VariantProps & { variant: 'a' | 'b' | 'c'; children: React.ReactNode }) {
+export function VariantD(props: VariantProps) {
+  const { surface, active, onActivate } = props;
+
+  if (surface === 'dictation') {
+    return (
+      <ShellFrame variant="d" {...props}>
+        <ProductionDictationPill />
+      </ShellFrame>
+    );
+  }
+
+  if (surface === 'processing') {
+    return (
+      <ShellFrame variant="d" {...props}>
+        <div className="d-finalization" role="status" aria-live="polite">
+          <span className="d-final-icon"><Mic size={14} /></span>
+          <div><strong>Committing stable text</strong><span>Final pass · target locked</span></div>
+          <span className="d-commit-track" aria-hidden="true"><i /><i /><i className="pending" /></span>
+        </div>
+      </ShellFrame>
+    );
+  }
+
+  if (surface === 'agent-recording') {
+    return (
+      <ShellFrame variant="d" {...props}>
+        <div className="d-agent-recording" role="status" aria-live="polite">
+          <span className="d-orbit"><Bot size={17} /><i /></span>
+          <div className="d-agent-pill">
+            <div><span>AGENT</span><strong>Listening</strong></div>
+            <Waveform />
+            <span className="timecode">00:12</span>
+          </div>
+        </div>
+      </ShellFrame>
+    );
+  }
+
+  return (
+    <ShellFrame variant="d" {...props}>
+      <article className={`d-agent-shell tone-${toneFor(surface)}`} {...liveRegionFor(surface)}>
+        <span className="d-shell-orbit" aria-hidden="true">{iconFor(surface)}<i /></span>
+        <div className="d-shell-body">
+          <header className="d-shell-header">
+            <div><span className="micro-label">AGENT · {surfaces[surface].shortLabel}</span><h3>{titleFor(surface)}</h3></div>
+            {surface === 'approval' ? <span className="countdown">18s</span> : <span className="d-presence" />}
+          </header>
+          <ShellBody surface={surface} overflow={props.overflow} active={active} layout="stack" />
+          <ShellActions surface={surface} active={active} layout="stack" />
+        </div>
+      </article>
+      <ActivationGate surface={surface} active={active} onActivate={onActivate} />
+    </ShellFrame>
+  );
+}
+
+export function VariantE(props: VariantProps) {
+  const { surface, active, onActivate } = props;
+
+  if (surface === 'dictation') {
+    return (
+      <ShellFrame variant="e" {...props}>
+        <ProductionDictationPill />
+      </ShellFrame>
+    );
+  }
+
+  if (surface === 'processing') {
+    return (
+      <ShellFrame variant="e" {...props}>
+        <div className="e-finalization" role="status" aria-live="polite">
+          <div className="e-final-label"><span>DICTATION</span><strong>Finalizing</strong></div>
+          <div className="e-ledger" aria-hidden="true">
+            <span className="done"><Check size={9} />Captured</span>
+            <i />
+            <span className="active">Stable</span>
+            <i />
+            <span>Ready</span>
+          </div>
+        </div>
+      </ShellFrame>
+    );
+  }
+
+  if (surface === 'agent-recording') {
+    return (
+      <ShellFrame variant="e" {...props}>
+        <div className="e-agent-recording" role="status" aria-live="polite">
+          <div className="e-agent-core"><Bot size={18} /><span className="e-core-ring" /></div>
+          <div className="e-listen-copy"><span>AGENT COMMAND</span><strong>What should I do?</strong></div>
+          <div className="e-level"><Waveform /><span className="timecode">00:12</span></div>
+        </div>
+      </ShellFrame>
+    );
+  }
+
+  return (
+    <ShellFrame variant="e" {...props}>
+      <article className={`e-agent-shell tone-${toneFor(surface)}`} {...liveRegionFor(surface)}>
+        <div className="e-content-plate">
+          <header className="e-shell-header">
+            <div><span className="micro-label">{surfaces[surface].shortLabel}</span><h3>{titleFor(surface)}</h3></div>
+            {surface === 'approval' ? <span className="countdown">00:18</span> : null}
+          </header>
+          <ShellBody surface={surface} overflow={props.overflow} active={active} layout="flow" />
+          <ShellActions surface={surface} active={active} layout="flow" />
+        </div>
+        <div className="e-agent-dock" aria-hidden="true">
+          <span className="e-dock-core"><Bot size={13} /></span>
+          <strong>Agent</strong>
+          <i />
+          <span>{dockLabelFor(surface)}</span>
+          <b>{iconFor(surface)}</b>
+        </div>
+      </article>
+      <ActivationGate surface={surface} active={active} onActivate={onActivate} />
+    </ShellFrame>
+  );
+}
+
+function ProductionDictationPill() {
+  return (
+    <div className="production-pill-window" role="status" aria-label="Dictation recording in progress, 12 seconds elapsed">
+      <div className="production-pill">
+        <Mic size={14} aria-hidden="true" />
+        <ProductionBars />
+        <span>00:12</span>
+      </div>
+    </div>
+  );
+}
+
+function ProductionBars() {
+  return (
+    <span className="production-bars" aria-hidden="true">
+      {[8, 14, 18, 11, 16, 10, 7, 15, 12, 9].map((height, index) => <i key={index} style={{ height }} />)}
+    </span>
+  );
+}
+
+function ShellFrame({ variant, surface, reducedMotion, children }: VariantProps & { variant: 'a' | 'b' | 'c' | 'd' | 'e'; children: React.ReactNode }) {
   return (
     <div className={`shell-frame variant-${variant} surface-${surface} ${reducedMotion ? 'no-motion' : ''}`}>
       {children}
@@ -553,6 +695,17 @@ function titleFor(surface: SurfaceKey): string {
   }
 }
 
+function dockLabelFor(surface: SurfaceKey): string {
+  switch (surface) {
+    case 'status': return 'Working';
+    case 'streaming': return 'Responding';
+    case 'approval': return 'Needs you';
+    case 'completed': return 'Complete';
+    case 'failure': return 'Stopped';
+    default: return surfaces[surface].shortLabel;
+  }
+}
+
 function iconFor(surface: SurfaceKey) {
   switch (surface) {
     case 'dictation': return <Mic size={16} />;
@@ -573,5 +726,5 @@ function liveRegionFor(surface: SurfaceKey): { role?: 'alert' | 'status'; 'aria-
 
 function readVariant(): VariantKey {
   const value = new URLSearchParams(window.location.search).get('variant')?.toUpperCase();
-  return value === 'B' || value === 'C' ? value : 'A';
+  return value === 'B' || value === 'C' || value === 'D' || value === 'E' ? value : 'A';
 }
