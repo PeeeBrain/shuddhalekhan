@@ -21,6 +21,7 @@
     "release-notes:prepare": "bun scripts/prepare-release-notes.ts",
     "verify:whisper": "bun scripts/verify-whisper-endpoint.ts",
     "test:transcription-quality": "bun scripts/transcription-quality.ts",
+    "prototype:agent-boundary": "electron src/main/prototypes/agent-runtime-boundary/main.cjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

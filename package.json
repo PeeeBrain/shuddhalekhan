@@ -13,7 +13,8 @@
     "typecheck": "bun run --cwd app typecheck && bun run --cwd web typecheck",
     "lint": "bun run --cwd app lint && bun run --cwd web lint",
     "lint:fix": "bun run --cwd app lint:fix && bun run --cwd web lint:fix",
-    "test": "bun run --cwd app test"
+    "test": "bun run --cwd app test",
+    "prototype:agent-boundary": "bun run --cwd app prototype:agent-boundary"
   },
   "engines": {
     "node": ">=22.12.0"
