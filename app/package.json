@@ -9,6 +9,7 @@
   "scripts": {
     "predev": "install-electron",
     "dev": "electron-vite dev",
+    "prototype:runtime-shell": "vite --config vite.runtime-shell-prototype.config.ts",
     "build": "electron-vite build && bun run build:agent",
     "build:agent": "vite build --config vite.agent.config.ts",
     "preview": "electron-vite preview",
