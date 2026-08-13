@@ -28,6 +28,7 @@ param(
   [int]$WarmupRepetitions = 0,
   [int]$ActionRepetitions = 1,
   [string]$FixtureRoot = '',
+  [string]$TranscriptionEndpoint = '',
   [string]$DockerContainerId = '',
   [string]$DockerCommandPath = 'docker',
   [string]$NvidiaSmiPath = ''
@@ -130,6 +131,9 @@ $processStartInfo.Environment['SHUDDHALEKHAN_PERF_DRIVER'] = '1'
 $processStartInfo.Environment['SHUDDHALEKHAN_PERF_FIXTURE_ROOT'] = $resolvedFixtureRoot
 $processStartInfo.Environment['SHUDDHALEKHAN_PERF_WARMUP_REPETITIONS'] = [string]$WarmupRepetitions
 $processStartInfo.Environment['SHUDDHALEKHAN_PERF_ACTION_REPETITIONS'] = [string]$ActionRepetitions
+if ($TranscriptionEndpoint) {
+  $processStartInfo.Environment['SHUDDHALEKHAN_PERF_TRANSCRIPTION_ENDPOINT'] = $TranscriptionEndpoint
+}
 
 $providerFixture = $null
 $mcpHttpFixture = $null
@@ -139,7 +143,9 @@ foreach ($argument in @(ConvertFrom-Json -InputObject $ExecutableArgumentsJson))
 
 $process = $null
 try {
-  if ($ScenarioId -in @('dictation-recording', 'agent-no-mcp', 'mcp-stdio-tool', 'mcp-http-tool')) {
+  if ($ScenarioId -in @('agent-no-mcp', 'mcp-stdio-tool', 'mcp-http-tool') -or (
+    $ScenarioId -eq 'dictation-recording' -and -not $TranscriptionEndpoint
+  )) {
     $providerFixture = Start-FixtureService `
       -ScriptName 'benchmark-provider-server.ts' `
       -PortEnvironmentName 'SHUDDHALEKHAN_BENCHMARK_PROVIDER_PORT'
@@ -296,6 +302,7 @@ try {
     browserWindowCount = if ($null -ne $inventoryMarker) { @($inventoryMarker.windows).Count } else { 0 }
     fixtureProviderBaseUrl = if ($null -ne $providerFixture) { [string]$providerFixture.baseUrl } else { '' }
     fixtureMcpHttpUrl = if ($null -ne $mcpHttpFixture) { [string]$mcpHttpFixture.url } else { '' }
+    transcriptionEndpoint = $TranscriptionEndpoint
     warmupRepetitions = $WarmupRepetitions
     actionRepetitions = $ActionRepetitions
     capturedUtc = [DateTime]::UtcNow.ToString('o')

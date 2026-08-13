@@ -114,6 +114,7 @@ Start-Sleep -Seconds 10
     const fakeAppPath = join(outputDir, 'fake-settings-app.ps1');
     writeFileSync(fakeAppPath, `
 if ($env:SHUDDHALEKHAN_PERF_DRIVER -ne '1') { exit 12 }
+if ($env:SHUDDHALEKHAN_PERF_TRANSCRIPTION_ENDPOINT -ne 'http://127.0.0.1:8000/v1/audio/transcriptions') { exit 13 }
 $eventsPath = $env:SHUDDHALEKHAN_PERF_EVENTS_PATH
 $runId = $env:SHUDDHALEKHAN_PERF_RUN_ID
 $scenarioId = $env:SHUDDHALEKHAN_PERF_SCENARIO_ID
@@ -138,6 +139,7 @@ Start-Sleep -Seconds 10
       '-SampleIntervalMs', '10',
       '-StartupTimeoutSeconds', '5',
       '-ActionTimeoutSeconds', '5',
+      '-TranscriptionEndpoint', 'http://127.0.0.1:8000/v1/audio/transcriptions',
     ]);
 
     expect(result.exitCode).toBe(0);

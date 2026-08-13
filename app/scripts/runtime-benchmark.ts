@@ -176,6 +176,7 @@ async function runAbbaCommand(args: string[]): Promise<void> {
   const warmupRepetitions = readCliOption(args, '--warmup-repetitions', '0')!;
   const actionRepetitions = readCliOption(args, '--action-repetitions', '1')!;
   const fixtureRoot = readCliOption(args, '--fixture-root', join(import.meta.dir, 'performance', 'fixtures'))!;
+  const transcriptionEndpoint = readCliOption(args, '--transcription-endpoint', '')!;
   const comparability = readCliOption(args, '--comparability', 'diagnostic-unverified')!;
   const explicitCommitSha = readCliOption(args, '--commit-sha');
   const detectedCommitSha = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {
@@ -223,6 +224,7 @@ async function runAbbaCommand(args: string[]): Promise<void> {
         '-WarmupRepetitions', warmupRepetitions,
         '-ActionRepetitions', actionRepetitions,
         '-FixtureRoot', resolve(fixtureRoot),
+        '-TranscriptionEndpoint', transcriptionEndpoint,
         '-DockerContainerId', dockerContainerId,
         '-DockerCommandPath', dockerCommandPath,
         '-NvidiaSmiPath', nvidiaSmiPath,

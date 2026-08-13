@@ -18,6 +18,7 @@ export type PerformanceScenarioDriverConfig =
       scenarioId: PerformanceScenarioId;
       fixtureRoot: string;
       providerBaseUrl: string;
+      transcriptionEndpoint?: string;
       mcpHttpUrl: string;
       warmupRepetitions?: number;
       actionRepetitions?: number;
@@ -77,6 +78,7 @@ export function parsePerformanceScenarioDriverConfig(
 
   const fixtureRoot = env.SHUDDHALEKHAN_PERF_FIXTURE_ROOT?.trim() ?? '';
   const providerBaseUrl = env.SHUDDHALEKHAN_PERF_PROVIDER_BASE_URL?.trim() ?? '';
+  const transcriptionEndpoint = env.SHUDDHALEKHAN_PERF_TRANSCRIPTION_ENDPOINT?.trim() ?? '';
   const mcpHttpUrl = env.SHUDDHALEKHAN_PERF_MCP_HTTP_URL?.trim() ?? '';
   const warmupRepetitions = parseRepetitionCount(
     env.SHUDDHALEKHAN_PERF_WARMUP_REPETITIONS,
@@ -92,8 +94,10 @@ export function parsePerformanceScenarioDriverConfig(
   if (['dictation-recording', 'mcp-stdio-tool'].includes(scenarioId) && !fixtureRoot) {
     throw new Error(`Performance scenario ${scenarioId} requires a fixture root.`);
   }
-  if (['dictation-recording', 'agent-no-mcp', 'mcp-stdio-tool', 'mcp-http-tool'].includes(scenarioId)
-    && !providerBaseUrl) {
+  if (scenarioId === 'dictation-recording' && !providerBaseUrl && !transcriptionEndpoint) {
+    throw new Error('Performance scenario dictation-recording requires a transcription endpoint or provider base URL.');
+  }
+  if (['agent-no-mcp', 'mcp-stdio-tool', 'mcp-http-tool'].includes(scenarioId) && !providerBaseUrl) {
     throw new Error(`Performance scenario ${scenarioId} requires a provider base URL.`);
   }
   if (scenarioId === 'mcp-http-tool' && !mcpHttpUrl) {
@@ -105,6 +109,7 @@ export function parsePerformanceScenarioDriverConfig(
     scenarioId,
     fixtureRoot,
     providerBaseUrl,
+    transcriptionEndpoint,
     mcpHttpUrl,
     warmupRepetitions,
     actionRepetitions,
@@ -197,7 +202,8 @@ export function createPerformanceScenarioDriver(
               await deps.runRecording({
                 wav: wrapPcm16LeAsWav(pcm, 16_000),
                 playbackDurationMs: (pcm.byteLength / 2 / 16_000) * 1_000,
-                transcriptionEndpoint: new URL('/inference', config.providerBaseUrl).toString(),
+                transcriptionEndpoint: config.transcriptionEndpoint
+                  || new URL('/inference', config.providerBaseUrl).toString(),
               });
             } else if (config.scenarioId !== 'dictation-idle') {
               await deps.runAgent({

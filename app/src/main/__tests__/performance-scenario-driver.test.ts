@@ -37,6 +37,20 @@ describe('parsePerformanceScenarioDriverConfig', () => {
       SHUDDHALEKHAN_PERF_SCENARIO_ID: 'mcp-stdio-tool',
     })).toThrow('fixture root');
   });
+
+  it('accepts an explicit packaged transcription endpoint without an Agent provider', () => {
+    expect(parsePerformanceScenarioDriverConfig({
+      SHUDDHALEKHAN_PERF_MARKERS: '1',
+      SHUDDHALEKHAN_PERF_DRIVER: '1',
+      SHUDDHALEKHAN_PERF_SCENARIO_ID: 'dictation-recording',
+      SHUDDHALEKHAN_PERF_FIXTURE_ROOT: 'D:\\fixtures',
+      SHUDDHALEKHAN_PERF_TRANSCRIPTION_ENDPOINT: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+    })).toMatchObject({
+      enabled: true,
+      providerBaseUrl: '',
+      transcriptionEndpoint: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+    });
+  });
 });
 
 describe('buildBenchmarkAgentConfig', () => {

@@ -153,6 +153,8 @@ Each run gets an isolated artifact directory. `runtime-scenario-runner.ps1` owns
 
 Action scenarios are driven only when both marker collection and `SHUDDHALEKHAN_PERF_DRIVER=1` are enabled by the runner. The driver ignores persisted Agent/MCP state, suppresses updater work, and uses only the local fixture services. Warm measurements can stay in one packaged process by passing `--warmup-repetitions 3 --action-repetitions 30`; warmup markers are tagged and excluded from summaries. Cold scenarios use one action per process launch.
 
+For a managed local ASR service, pass `--transcription-endpoint <url>` and `--docker-container-id <immutable-id>` to route the pinned WAV through that packaged Dictation path while collecting the attributed container and GPU samples. Without the override, `dictation-recording` uses the deterministic local provider fixture.
+
 The canonical spoken PCM and deterministic MCP servers are declared in `scripts/performance/fixtures/manifest.json`. Replacing the PCM requires an intentional `bun scripts/performance/generate-pcm-fixture.ts --regenerate`, audible review, and a manifest checksum update.
 
 ## Evidence status
