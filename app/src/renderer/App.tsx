@@ -3,15 +3,17 @@ import { prepareStream, recreateStream, startRecording, stopRecording, enumerate
 import { RecordingPopup } from './RecordingPopup';
 import { SettingsWindow } from './SettingsWindow';
 import { AgentToast } from './AgentToast';
-import type { RecordingIntent } from '../types/ipc';
+import { RuntimeShellSurface } from './RuntimeShellSurface';
+import type { RecordingIntent, RuntimeAudioCommand } from '../types/ipc';
 
 async function sendAudioDevices(): Promise<void> {
   const devices = await enumerateDevices();
   window.electronAPI?.send('audio-devices', devices);
 }
 
-function AudioWindow() {
+export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
   const startPromiseRef = useRef<Promise<void> | null>(null);
+  const commandRef = useRef<RuntimeAudioCommand | null>(null);
 
   useEffect(() => {
     window.electronAPI?.invoke('config:get').then((config) => {
@@ -27,6 +29,7 @@ function AudioWindow() {
   }, []);
 
   useEffect(() => {
+    if (runtime) return undefined;
     const unsubscribe = window.electronAPI.subscribe('audio:start-recording', () => {
       startPromiseRef.current = startRecording()
         .then(() => {
@@ -44,9 +47,10 @@ function AudioWindow() {
         });
     });
     return unsubscribe;
-  }, []);
+  }, [runtime]);
 
   useEffect(() => {
+    if (runtime) return undefined;
     const unsubscribe = window.electronAPI.subscribe('audio:stop-recording', async () => {
       try {
         await startPromiseRef.current;
@@ -57,7 +61,50 @@ function AudioWindow() {
       }
     });
     return unsubscribe;
-  }, []);
+  }, [runtime]);
+
+  useEffect(() => {
+    if (!runtime) return undefined;
+    const unsubscribeStart = window.electronAPI.subscribe('runtime:audio-start', (command) => {
+      commandRef.current = command;
+      startPromiseRef.current = startRecording()
+        .then(() => window.electronAPI?.send('audio-capture-started'))
+        .catch((err) => {
+          commandRef.current = null;
+          console.error('Failed to start runtime recording:', err);
+          throw err;
+        })
+        .finally(() => { startPromiseRef.current = null; });
+    });
+    const unsubscribeStop = window.electronAPI.subscribe('runtime:audio-stop', async (command) => {
+      if (
+        commandRef.current?.generation !== command.generation
+        || commandRef.current.recordingSessionId !== command.recordingSessionId
+        || commandRef.current.sequence !== command.sequence
+      ) return;
+      try {
+        await startPromiseRef.current;
+        const audioData = stopRecording();
+        commandRef.current = null;
+        window.electronAPI?.send(
+          'runtime:audio-data-ready',
+          command.generation,
+          command.recordingSessionId,
+          command.sequence,
+          audioData.buffer,
+        );
+      } catch (err) {
+        commandRef.current = null;
+        console.error('Failed to stop runtime recording:', err);
+      }
+    });
+    return () => {
+      unsubscribeStart();
+      unsubscribeStop();
+      if (commandRef.current) stopRecording();
+      commandRef.current = null;
+    };
+  }, [runtime]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('audio:recreate-stream', (deviceId: string | null) => {
@@ -104,7 +151,7 @@ function useSurfacePaintProxy(surface: string): void {
 
 function App() {
   const hash = window.location.hash.replace(/^#\/?/, '');
-  const surface = hash.startsWith('recording')
+  const surface = hash.startsWith('recording') || hash === 'runtime'
     ? 'recording'
     : hash.split('?')[0] || 'unknown';
   useSurfacePaintProxy(surface);
@@ -117,6 +164,16 @@ function App() {
 
   if (hash === 'audio') {
     return <AudioWindow />;
+  }
+
+  if (hash === 'runtime') {
+    return (
+      <>
+        <AudioWindow runtime />
+        <RecordingPopup initialMode="dictation" />
+        <RuntimeShellSurface />
+      </>
+    );
   }
 
   if (hash === 'settings') {

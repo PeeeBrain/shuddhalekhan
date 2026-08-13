@@ -1,17 +1,21 @@
+import type { DictationTargetSnapshot } from '../types/ipc';
+
 export interface LastTranscript {
   text: string;
   createdAt: string;
   injectionStatus: 'pending' | 'dispatched' | 'failed';
+  targetSnapshot: DictationTargetSnapshot | null;
 }
 
 let lastTranscript: LastTranscript | null = null;
 
-export function setLastTranscript(text: string): void {
+export function setLastTranscript(text: string, targetSnapshot: DictationTargetSnapshot | null = null): void {
   if (!text) return;
   lastTranscript = {
     text,
     createdAt: new Date().toISOString(),
     injectionStatus: 'pending',
+    targetSnapshot,
   };
 }
 

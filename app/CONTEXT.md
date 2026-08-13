@@ -37,7 +37,7 @@ The small floating UI window displayed at the bottom-center of the screen while 
 - **Agent Mode** — Red-hued pill indicating the recording will be routed to the AI agent for tool execution. Discontinued during the v3 Electron port and revived in v4 as the visual state for `Alt + Win` agent commands.
 
 ### Recording Session
-A deep module that owns the complete audio-capture lifecycle: keyboard hook, hidden audio window, recording pill visibility, and transcription. Callers use three verbs — `begin(intent)`, `end()`, `cancel()` — and receive `{ text, intent }` on completion. The session hides the audio-window readiness race (`pendingStartRecording`), modifier-state tracking, and process-crash recovery behind its seam. Dictation/Agent routing (clipboard paste vs. sidecar dispatch) stays in the Electron main orchestrator, not inside the session.
+A deep module that owns the complete audio-capture lifecycle: keyboard hook, runtime-shell audio commands, recording presentation, and transcription. Callers use three verbs — `begin(intent)`, `end()`, `cancel()` — and receive `{ text, intent }` on completion. The session hides renderer readiness, generation/session validation, modifier-state tracking, and process-crash recovery behind its seam. Dictation/Agent routing (clipboard paste vs. sidecar dispatch) stays in the Electron main orchestrator, not inside the session. A local maintainer gate retains the former hidden-audio-window and recording-pill pair as a temporary rollback path.
 
 ### Dictation
 The act of converting captured audio into text and injecting it into the currently focused application. Its global shortcut and Push to Talk or Toggle behavior are configurable; `Ctrl + Win` is the default binding. Synonymous with "transcription mode" in user-facing language.
@@ -159,8 +159,10 @@ The app remains tray-first. The settings window opens only when the user chooses
 
 ## UI Architecture Decisions
 
-### Hidden Main Window Removal
-The `MainWindow` component and its `BrowserWindow` are removed. The app no longer creates a hidden background renderer. The tray menu and settings window are the only user-facing persistent surfaces.
+### Runtime and Settings Windows
+The obsolete `MainWindow` remains removed. The app owns exactly two destination roles: a lazy conventional Settings window and one startup-warmed frameless runtime shell. The runtime shell stays hidden while idle, owns no live microphone track while idle, and combines per-recording audio capture with recording, processing, and certainty-safe Dictation recovery presentation. Electron main owns its visibility, focusability, pointer policy, bounds, generation, and monotonic presentation revision. Passive states use show-without-activation and ignore pointer input; recovery controls become focusable only for deliberate interaction.
+
+Runtime audio returns must match the current shell generation plus recording session and command sequence. Cancellation, renderer loss, lock, suspend, replacement, and shutdown invalidate that identity before late work can transcribe or insert. Successful Batch Dictation returns the shell to idle without a result card. Failure cards are derived by main and expose Retry Paste only when no input was accepted; uncertain delivery is copy-only through Last Transcript.
 
 ### Settings Window Design Direction
 Settings uses a **floating panel / sheet** style (Apple System Settings / Windows 11 Settings influence):

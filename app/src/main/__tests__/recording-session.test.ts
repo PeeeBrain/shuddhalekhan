@@ -405,6 +405,58 @@ describe('RecordingSession', () => {
     expect(keyboardStart).toHaveBeenCalledTimes(1);
   });
 
+  it('runs Batch capture, processing, and terminal presentation through the runtime shell', async () => {
+    const runtimeShell = {
+      prepare: vi.fn(),
+      beginCapture: vi.fn(),
+      endCapture: vi.fn(),
+      cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(),
+      show: vi.fn(),
+      hide: vi.fn(),
+      updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(),
+      showProcessing: vi.fn(),
+      showFailure: vi.fn(),
+      finish: vi.fn(),
+      destroy: vi.fn(),
+      markReady: vi.fn(),
+      markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => null),
+      consumeAudioEvent: vi.fn(() => true),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.start();
+
+    expect(runtimeShell.prepare).toHaveBeenCalledTimes(1);
+    expect(prepareRecordingPillWindowMock).not.toHaveBeenCalled();
+
+    session.begin('dictation', 'runtime-session');
+    expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.objectContaining({
+      recordingSessionId: 'runtime-session',
+      capabilities: { batch: true, streaming: false },
+    }));
+    expect(runtimeShell.show).toHaveBeenCalledWith(
+      'dictation',
+      'runtime-session',
+      expect.any(Object),
+    );
+
+    const ending = session.end();
+    expect(runtimeShell.showProcessing).toHaveBeenCalledWith('runtime-session');
+    await session.complete(new Uint8Array(64));
+    await ending;
+    expect(runtimeShell.finish).toHaveBeenCalledTimes(1);
+  });
+
   it('registers IPC listeners on start() and unregisters them on stop()', () => {
     session.start();
 

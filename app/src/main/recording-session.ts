@@ -7,7 +7,12 @@ import type {
   RecordingPresentationEnvelope,
   ShortcutBinding,
 } from '../types/ipc';
-import { createRecordingPresentationEnvelope, getTranscriptionTransportCapabilities } from '../shared/dictation-runtime';
+import {
+  createRecordingPresentationEnvelope,
+  getTranscriptionTransportCapabilities,
+  parseMaintainerRuntimeGates,
+  type MaintainerRuntimeGates,
+} from '../shared/dictation-runtime';
 import { keyboardHook } from './native/keyboard';
 import { DEFAULT_SHORTCUTS } from '../shared/shortcut-bindings';
 import { captureForegroundTarget } from './native/target';
@@ -22,6 +27,7 @@ import { localWhisperCppTranscriber } from './whisper';
 import type { RecognitionSettings, Transcriber } from './transcription';
 import { createSingletonWindow } from './window-factory';
 import { emitPerformanceMarker } from './performance/marker-collector';
+import { RuntimeShell } from './runtime-shell';
 
 export interface RecordingResult {
   text: string;
@@ -36,7 +42,7 @@ export interface RecordingResult {
 
 export interface AudioCapture {
   prepare(): void;
-  beginCapture(): void;
+  beginCapture(envelope?: RecordingPresentationEnvelope): void;
   endCapture(): void;
   cancelCapture(): void;
   setSelectedDevice(deviceId: string | null): void;
@@ -44,6 +50,25 @@ export interface AudioCapture {
   markReady?(): void;
   markCrashed?(reason: string): void;
   getWebContents?(): import('electron').WebContents | null;
+}
+
+export interface RuntimeShellBackend extends AudioCapture {
+  show(
+    intent: RecordingIntent,
+    recordingSessionId?: string,
+    envelope?: RecordingPresentationEnvelope,
+  ): void;
+  hide(): void;
+  showProcessing(recordingSessionId: string): void;
+  showFailure(
+    recordingSessionId: string | null,
+    message: string,
+    recoveryActions?: import('../types/ipc').DictationRecoveryAction[],
+  ): void;
+  finish(): void;
+  updateDurationWarning(remainingSeconds: number | null): void;
+  updateAudioLevel(level: number): void;
+  consumeAudioEvent(generation: number, recordingSessionId: string, sequence: number): boolean;
 }
 
 export class ProductionAudioCapture implements AudioCapture {
@@ -182,6 +207,8 @@ export interface RecordingSessionOptions {
   onError?: (error: Error) => void;
 
   audioCapture?: AudioCapture;
+  runtimeShell?: RuntimeShellBackend;
+  runtimeGates?: MaintainerRuntimeGates;
   keyboardHook?: KeyboardHook;
   transcriber?: Transcriber;
   getTranscriber?: () => Transcriber;
@@ -224,6 +251,12 @@ export class RecordingSession {
   ) => void;
   private hideRecordingPillFn: () => void;
   private updateDurationWarningFn: (remainingSeconds: number | null) => void;
+  private preparePresentationFn: () => void;
+  private updateAudioLevelFn: (level: number) => void;
+  private showProcessingFn: ((recordingSessionId: string) => void) | null;
+  private finishPresentationFn: (() => void) | null;
+  private showFailureFn: ((recordingSessionId: string | null, message: string) => void) | null;
+  private runtimeShellBackend: RuntimeShellBackend | null;
   private setTimeoutFn: typeof setTimeout;
   private clearTimeoutFn: typeof clearTimeout;
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
@@ -239,8 +272,13 @@ export class RecordingSession {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
     this.getRecordingActivationMode = options.getRecordingActivationMode ?? (() => 'push-to-talk');
     this.getShortcutBinding = options.getShortcutBinding ?? ((intent) => DEFAULT_SHORTCUTS[intent].binding);
-    this.audioCapture = options.audioCapture ?? new ProductionAudioCapture(
-      (reason) => this.markAudioWindowCrashed(reason)
+    const runtimeGates = options.runtimeGates ?? parseMaintainerRuntimeGates(process.env);
+    const useRuntimeShell = runtimeGates.runtimeShell && !options.audioCapture;
+    const runtimeShell = useRuntimeShell
+      ? options.runtimeShell ?? new RuntimeShell((reason) => this.handleAudioRendererCrash(reason))
+      : null;
+    this.audioCapture = options.audioCapture ?? runtimeShell ?? new ProductionAudioCapture(
+      (reason) => this.handleAudioRendererCrash(reason)
     );
     this.keyboardHook = options.keyboardHook ?? keyboardHook;
     const defaultTranscriber = options.transcriber ?? localWhisperCppTranscriber;
@@ -253,9 +291,27 @@ export class RecordingSession {
     }));
     this.getReadinessError = options.getReadinessError ?? (() => null);
     this.captureTarget = options.captureTarget ?? captureForegroundTarget;
-    this.showRecordingPillFn = options.showRecordingPill ?? showRecordingPill;
-    this.hideRecordingPillFn = options.hideRecordingPill ?? hideRecordingPill;
-    this.updateDurationWarningFn = options.updateDurationWarning ?? updateRecordingDurationWarning;
+    this.showRecordingPillFn = options.showRecordingPill
+      ?? (runtimeShell ? runtimeShell.show.bind(runtimeShell) : showRecordingPill);
+    this.hideRecordingPillFn = options.hideRecordingPill
+      ?? (runtimeShell ? runtimeShell.hide.bind(runtimeShell) : hideRecordingPill);
+    this.updateDurationWarningFn = options.updateDurationWarning
+      ?? (runtimeShell
+        ? runtimeShell.updateDurationWarning.bind(runtimeShell)
+        : updateRecordingDurationWarning);
+    this.preparePresentationFn = runtimeShell
+      ? runtimeShell.prepare.bind(runtimeShell)
+      : prepareRecordingPillWindow;
+    this.updateAudioLevelFn = runtimeShell
+      ? runtimeShell.updateAudioLevel.bind(runtimeShell)
+      : (level) => {
+          const pill = getRecordingPillWindow();
+          if (pill && !pill.isDestroyed()) pill.webContents.send('audio:level-changed', level);
+        };
+    this.showProcessingFn = runtimeShell ? runtimeShell.showProcessing.bind(runtimeShell) : null;
+    this.finishPresentationFn = runtimeShell ? runtimeShell.finish.bind(runtimeShell) : null;
+    this.showFailureFn = runtimeShell ? runtimeShell.showFailure.bind(runtimeShell) : null;
+    this.runtimeShellBackend = runtimeShell;
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
     this.onResultCallback = options.onResult;
@@ -297,12 +353,13 @@ export class RecordingSession {
     const deviceId = this.getSelectedDeviceId?.();
     console.log(`Starting recording session. Device: ${deviceId ?? 'default'}`);
 
+    const presentation = this.createPresentationEnvelope(transcriber);
     this.audioCapture.prepare();
-    this.audioCapture.beginCapture();
+    this.audioCapture.beginCapture(presentation);
     this.showRecordingPillFn(
       intent,
       this.recordingSessionId,
-      this.createPresentationEnvelope(transcriber),
+      presentation,
     );
     this.scheduleDurationLimit(transcriber.capabilities.maxDurationSeconds);
   }
@@ -316,7 +373,11 @@ export class RecordingSession {
     this.clearDurationTimers();
     const intent = this.activeIntent;
     this.activeIntent = null;
-    this.hideRecordingPillFn();
+    if (this.recordingSessionId && this.showProcessingFn) {
+      this.showProcessingFn(this.recordingSessionId);
+    } else {
+      this.hideRecordingPillFn();
+    }
     this.audioCapture.endCapture();
 
     return new Promise((resolve, reject) => {
@@ -329,6 +390,7 @@ export class RecordingSession {
     this.activeIntent = null;
     this.targetSnapshot = null;
     this.hideRecordingPillFn();
+    this.finishPresentationFn?.();
     this.audioCapture.cancelCapture();
     this.pendingEnd?.resolve(null);
     this.pendingEnd = null;
@@ -392,6 +454,14 @@ export class RecordingSession {
 
   markAudioWindowCrashed(reason: string): void {
     this.audioCapture.markCrashed?.(reason);
+    this.handleAudioRendererCrash(reason);
+  }
+
+  markRuntimeShellCrashed(reason: string): void {
+    this.handleAudioRendererCrash(reason);
+  }
+
+  private handleAudioRendererCrash(reason: string): void {
     const error = new Error(`Audio window crashed: ${reason}`);
     this.clearDurationTimers();
     this.activeIntent = null;
@@ -419,6 +489,7 @@ export class RecordingSession {
       console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
       audioData.fill(0);
       this.targetSnapshot = null;
+      this.finishPresentationFn?.();
       pendingEnd?.resolve(null);
       this.resetRuntimeMetadata();
       return null;
@@ -451,6 +522,7 @@ export class RecordingSession {
         capabilities: envelope.capabilities,
         outcome: envelope.outcome ?? { kind: 'completed' },
       } : null;
+      this.finishPresentationFn?.();
       emitPerformanceMarker('recording.session.completed', {
         recordingSessionId: this.recordingSessionId ?? undefined,
         surface: intent,
@@ -467,6 +539,7 @@ export class RecordingSession {
         surface: intent,
       });
       pendingEnd?.reject(err);
+      this.showFailureFn?.(this.recordingSessionId, 'Transcription failed.');
       this.onErrorCallback?.(err);
       if (!pendingEnd) {
         throw err;
@@ -506,12 +579,13 @@ export class RecordingSession {
   start(): void {
     // Prewarm the hidden renderer before installing the global hook. Audio can
     // still start immediately if the user invokes a shortcut during loading.
-    prepareRecordingPillWindow();
+    this.preparePresentationFn();
 
     ipcMain.on('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.on('audio-capture-started', this.handleAudioCaptureStarted);
     ipcMain.on('audio-data-ready', this.handleAudioDataReady);
+    ipcMain.on('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
     ipcMain.on('audio-level-changed', this.handleAudioLevelChanged);
 
     this.startKeyboardHook();
@@ -523,6 +597,7 @@ export class RecordingSession {
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.off('audio-capture-started', this.handleAudioCaptureStarted);
     ipcMain.off('audio-data-ready', this.handleAudioDataReady);
+    ipcMain.off('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
     ipcMain.off('audio-level-changed', this.handleAudioLevelChanged);
 
     this.stopKeyboardHook();
@@ -612,11 +687,23 @@ export class RecordingSession {
     await this.complete(data);
   };
 
-  private handleAudioLevelChanged = (_event: unknown, level: number): void => {
-    const pill = getRecordingPillWindow();
-    if (pill && !pill.isDestroyed()) {
-      pill.webContents.send('audio:level-changed', level);
+  private handleRuntimeAudioDataReady = async (
+    _event: unknown,
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
+    audioData: ArrayBuffer,
+  ): Promise<void> => {
+    const data = new Uint8Array(audioData);
+    if (!this.runtimeShellBackend?.consumeAudioEvent(generation, recordingSessionId, sequence)) {
+      data.fill(0);
+      return;
     }
+    await this.complete(data);
+  };
+
+  private handleAudioLevelChanged = (_event: unknown, level: number): void => {
+    this.updateAudioLevelFn(level);
   };
 }
 

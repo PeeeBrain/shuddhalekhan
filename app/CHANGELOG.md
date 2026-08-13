@@ -8,6 +8,10 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Dictation Runtime
+- Batch Dictation now runs through one startup-warmed runtime shell for audio capture, recording, processing, and failure recovery; the shell holds no live microphone track while idle.
+- Runtime events carry generation, session, sequence, and revision identity so crashes, cancellation, replacement, lock/suspend, and shutdown cannot replay stale audio or trigger late insertion.
+- Successful Dictation remains silent. Failed insertion offers only certainty-safe exact-target Retry Paste and full-transcript copy actions through Last Transcript.
+- Setting `SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL=1` restores the legacy audio-window and recording-pill path as a local maintainer rollback.
 - Added explicit Batch, Live, and Corrected Dictation modes in persisted config. Existing installations normalize to Batch Dictation without changing provider, shortcuts, activation, MCP, or credential references.
 - Transcription settings now show the selected Dictation mode and reject unsupported Live or Corrected combinations instead of silently switching behavior.
 - Recording sessions and the recording pill can carry opaque session identity, monotonic sequence/revision metadata, provider capabilities, and typed terminal outcomes while preserving existing message meanings.

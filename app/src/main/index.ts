@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { app, BrowserWindow, dialog, ipcMain, session, shell, Notification } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
@@ -46,6 +46,9 @@ import {
   parsePerformanceScenarioDriverConfig,
 } from './performance/scenario-driver';
 import { transcribe as transcribeLocalFixture } from './whisper';
+import { RuntimeShell } from './runtime-shell';
+import { getRecoveryActions } from './dictation-recovery';
+import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
@@ -78,7 +81,13 @@ const sidecarEventRouter = createSidecarEventRouter({
   },
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
+const runtimeGates = parseMaintainerRuntimeGates(process.env);
+const runtimeShell = runtimeGates.runtimeShell
+  ? new RuntimeShell()
+  : null;
 const recordingSession = new RecordingSession({
+  runtimeGates,
+  ...(runtimeShell ? { runtimeShell } : {}),
   isAgentModeEnabled: () => cachedAgentEnabled,
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
@@ -105,6 +114,7 @@ const recordingSession = new RecordingSession({
   onResult: routeRecordingResult,
   onError: showTranscriptionError,
 });
+runtimeShell?.setCrashHandler((reason) => recordingSession.markRuntimeShellCrashed(reason));
 const performanceScenarioDriver = createPerformanceScenarioDriver(
   performanceDriverConfig,
   {
@@ -154,7 +164,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     return;
   }
 
-  setLastTranscript(result.text);
+  setLastTranscript(result.text, result.targetSnapshot);
 
   const injectResult = await injectIntoFocusedApp(result.text, result.targetSnapshot);
   if (injectResult.kind === 'input-dispatched') {
@@ -163,7 +173,15 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   }
 
   markLastTranscriptInjected('failed');
-  showRecoveryNotification(injectResult);
+  if (runtimeShell) {
+    runtimeShell.showFailure(
+      result.recordingSessionId,
+      getRecoveryMessage(injectResult),
+      getRecoveryActions(injectResult),
+    );
+  } else {
+    showRecoveryNotification(injectResult);
+  }
 }
 
 async function pasteLastTranscript(): Promise<void> {
@@ -207,6 +225,35 @@ function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste
   }
 }
 
+function getRecoveryMessage(result: InjectResult): string {
+  if (result.kind === 'clipboard-conflict') {
+    return 'Clipboard changed before Shuddhalekhan could paste the transcript.';
+  }
+  if (result.kind === 'target-changed') return result.reason;
+  if (result.kind === 'input-blocked') return result.reason ?? 'Windows blocked automatic paste.';
+  if (result.kind === 'error') return result.message;
+  return 'Automatic paste failed.';
+}
+
+async function handleRuntimeRecoveryAction(action: import('../types/ipc').DictationRecoveryAction): Promise<void> {
+  const transcript = getLastTranscript();
+  if (!runtimeShell || !transcript) return;
+  if (action === 'copy-full-transcript') {
+    await copyLastTranscriptToClipboard(transcript.text);
+    runtimeShell.finish();
+    return;
+  }
+  if (action !== 'retry-paste') return;
+  const result = await injectIntoFocusedApp(transcript.text, transcript.targetSnapshot);
+  if (result.kind === 'input-dispatched') {
+    markLastTranscriptInjected('dispatched');
+    runtimeShell.finish();
+    return;
+  }
+  markLastTranscriptInjected('failed');
+  runtimeShell.showFailure(null, getRecoveryMessage(result), getRecoveryActions(result));
+}
+
 function finishRecording(): void {
   void recordingSession.end();
 }
@@ -225,6 +272,10 @@ function setShortcutsPaused(paused: boolean): void {
 
 function showTranscriptionError(err: unknown): void {
   console.error('Transcription failed:', err instanceof Error ? err.name : 'Unknown failure');
+  if (runtimeShell) {
+    runtimeShell.showFailure(null, getSafeTranscriptionFailureMessage(err));
+    return;
+  }
   showAgentToast({
     kind: 'transcription-failed',
     message: getSafeTranscriptionFailureMessage(err),
@@ -486,6 +537,10 @@ ipcMain.on('agent-toast:dismiss', () => {
   hideAgentToast();
 });
 
+ipcMain.on('runtime:recovery-action', (_event, action) => {
+  void handleRuntimeRecoveryAction(action);
+});
+
 ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: string) => {
   emitPerformanceMarker('surface.paint-proxy', {
     surface,
@@ -514,6 +569,9 @@ if (!gotSingleInstanceLock) {
     });
 
     recordingSession.start();
+    const failClosed = () => { void recordingSession.cancel(); };
+    powerMonitor.on('suspend', failClosed);
+    powerMonitor.on('lock-screen', failClosed);
 
     createTray({
       onOpenSettings: () => openSettingsWindow(),
@@ -557,6 +615,7 @@ if (!gotSingleInstanceLock) {
   });
 
   app.on('before-quit', () => {
+    void recordingSession.cancel();
     recordingSession.stop();
     agentSidecar.stop();
     closeDb();
