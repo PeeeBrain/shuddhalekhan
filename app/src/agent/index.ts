@@ -115,9 +115,15 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
     await configUpdateQueue;
     const toolSnapshot = mcpRegistry.createRunSnapshot(
       (request) => requestToolApproval(agentRunId, request),
-      (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
+      (eventType, payload) => recordAgentAudit(agentRunId, eventType, payload),
       (tool) => {
         if (activeAgentRunId !== agentRunId) return;
+        writeJsonLine({
+          type: 'mcp:tool-execute-started',
+          agentRunId,
+          serverId: tool.serverId,
+          toolName: tool.toolName,
+        });
         const status = `Using tool: ${tool.serverId}.${tool.toolName}`;
         auditStore.record(agentRunId, 'status', { status });
         writeJsonLine({ type: 'agent:status', agentRunId, status });
@@ -130,6 +136,10 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
           if (activeAgentRunId !== agentRunId) return;
           auditStore.record(agentRunId, 'status', { status });
           writeJsonLine({ type: 'agent:status', agentRunId, status });
+        },
+        onProviderRequestStarted: () => {
+          if (activeAgentRunId !== agentRunId) return;
+          writeJsonLine({ type: 'agent:provider-request-started', agentRunId });
         },
         onResponseDelta: (delta, response) => {
           if (activeAgentRunId !== agentRunId) return;
@@ -157,7 +167,7 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
           activeAbortController = null;
         },
         requestToolApproval: (request) => requestToolApproval(agentRunId, request),
-        onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
+        onAudit: (eventType, payload) => recordAgentAudit(agentRunId, eventType, payload),
       }, currentAgentApiKey);
     } finally {
       await toolSnapshot.close();
@@ -174,6 +184,25 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
     activeAgentRunId = null;
     activeAbortController = null;
   }
+}
+
+function recordAgentAudit(
+  agentRunId: string,
+  eventType: string,
+  payload?: Record<string, unknown>,
+): void {
+  auditStore.record(agentRunId, eventType, payload);
+  if (eventType !== 'mcp_tool_execute_result' && eventType !== 'mcp_tool_execute_error') return;
+  const serverId = typeof payload?.serverId === 'string' ? payload.serverId : '';
+  const toolName = typeof payload?.toolName === 'string' ? payload.toolName : '';
+  if (!serverId || !toolName) return;
+  writeJsonLine({
+    type: 'mcp:tool-execute-result',
+    agentRunId,
+    serverId,
+    toolName,
+    outcome: eventType === 'mcp_tool_execute_result' ? 'success' : 'error',
+  });
 }
 
 function handleAgentCancel(agentRunId: string): void {

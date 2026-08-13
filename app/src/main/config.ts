@@ -6,6 +6,7 @@ import type { AppConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfi
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
 import { preparePersistentStoreDirectory } from './store-path';
+import { isolatePerformanceDriverConfig } from './performance/scenario-driver';
 
 type StoreConfig = AppConfig & {
   migrated?: boolean;
@@ -187,7 +188,7 @@ export function getConfig(): AppConfig {
     },
   };
 
-  return {
+  return isolatePerformanceDriverConfig({
     whisperUrl: localEndpoint,
     transcription,
     selectedDeviceId: store.get('selectedDeviceId'),
@@ -214,7 +215,7 @@ export function getConfig(): AppConfig {
       },
       mcpServers,
     },
-  };
+  }, process.env);
 }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {

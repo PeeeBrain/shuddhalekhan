@@ -5,6 +5,7 @@ import { logSidecar } from "./protocol";
 
 export interface AgentRuntimeCallbacks {
   onStatus(status: string): void;
+  onProviderRequestStarted?(): void;
   onToolStarted?(tool: {
     serverId: string;
     toolName: string;
@@ -429,6 +430,7 @@ export async function runAgent(
 
     while (true) {
       callbacks.onStatus("Thinking...");
+      callbacks.onProviderRequestStarted?.();
       const result = streamText({
         model,
         instructions: systemPrompt,
@@ -487,6 +489,7 @@ export async function runAgent(
 
     if (reachedMaxSteps && hasPendingToolCalls) {
       callbacks.onStatus("Step limit reached. Summarizing...");
+      callbacks.onProviderRequestStarted?.();
       const fallback = streamText({
         model,
         instructions: systemPrompt,

@@ -3,6 +3,11 @@ import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
 import type { Transcriber } from '../transcription';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
 import type { RecordingSession, AudioCapture } from '../recording-session';
+import {
+  createMarkerCollector,
+  resetPerformanceMarkerCollectorForTests,
+  setPerformanceMarkerCollector,
+} from '../performance/marker-collector';
 
 const vi = { fn: mock };
 let RecordingSessionCtor: typeof RecordingSession;
@@ -107,7 +112,7 @@ describe('RecordingSession', () => {
 
     expect(audioStream.prepare).toHaveBeenCalledTimes(1);
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
-    expect(showRecordingPill).toHaveBeenCalledWith('dictation');
+    expect(showRecordingPill).toHaveBeenCalledWith('dictation', expect.any(String));
     expect(session.isActive()).toBe(true);
   });
 
@@ -515,5 +520,98 @@ describe('RecordingSession', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(onResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('measures keyboard activation through the renderer-confirmed capture start', async () => {
+    const lines: string[] = [];
+    resetPerformanceMarkerCollectorForTests();
+    setPerformanceMarkerCollector(createMarkerCollector(
+      {
+        enabled: true,
+        runId: 'run-test',
+        scenarioId: 'recording',
+        eventsPath: 'events.jsonl',
+      },
+      { pid: 99, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.start();
+    const onStart = (keyboardStart.mock.calls[0][0] as {
+      onStart: (intent: RecordingIntent) => void;
+    }).onStart;
+    onStart('dictation');
+
+    let events = lines.map((line) => JSON.parse(line).event);
+    expect(events).toEqual(['hotkey.detected', 'recording.begin.accepted']);
+
+    const captureStartedCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'audio-capture-started'
+    );
+    expect(captureStartedCall).toBeDefined();
+    captureStartedCall[1]({});
+
+    const endPromise = session.end();
+    const fakeAudioData = new Uint8Array(64);
+    await session.complete(fakeAudioData);
+    await endPromise;
+
+    events = lines.map((line) => JSON.parse(line).event);
+    expect(events).toEqual([
+      'hotkey.detected',
+      'recording.begin.accepted',
+      'audio.capture.started',
+      'recording.stop.requested',
+      'transcription.batch.requested',
+      'transcription.batch.completed',
+      'recording.session.completed',
+    ]);
+    resetPerformanceMarkerCollectorForTests();
+  });
+
+  it('runs a paced benchmark WAV without opening the live microphone', async () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      {
+        enabled: true,
+        runId: 'fixture-run',
+        scenarioId: 'dictation-recording',
+        eventsPath: 'events.jsonl',
+      },
+      { pid: 99, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+    const fixtureTranscribe = vi.fn(async () => 'fixture transcript');
+
+    const result = await session.runPerformanceFixture(
+      new Uint8Array(64),
+      0,
+      createTranscriber(({ audio }) => fixtureTranscribe(audio)),
+    );
+
+    expect(result?.text).toBe('fixture transcript');
+    expect(audioStream.prepare).toHaveBeenCalledTimes(1);
+    expect(audioStream.beginCapture).not.toHaveBeenCalled();
+    expect(audioStream.endCapture).not.toHaveBeenCalled();
+    expect(showRecordingPill).toHaveBeenCalledTimes(1);
+    expect(hideRecordingPill).toHaveBeenCalledTimes(1);
+    expect(lines.map((line) => JSON.parse(line).event)).toEqual([
+      'hotkey.detected',
+      'recording.begin.accepted',
+      'audio.capture.started',
+      'recording.stop.requested',
+      'transcription.batch.requested',
+      'transcription.batch.completed',
+      'recording.session.completed',
+    ]);
+    resetPerformanceMarkerCollectorForTests();
   });
 });

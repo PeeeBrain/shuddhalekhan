@@ -23,6 +23,10 @@ export class JsonlProcessManager<TReceive, TSend> {
     return Boolean(this.child && !this.child.killed);
   }
 
+  getChildPid(): number | null {
+    return this.child?.pid ?? null;
+  }
+
   start(launch: JsonlProcessLaunch): void {
     if (this.isRunning) return;
 

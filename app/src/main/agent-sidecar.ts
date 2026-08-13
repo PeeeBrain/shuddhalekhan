@@ -4,10 +4,14 @@ import type { AppConfig } from '../types/ipc';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
 import { getPersistentStoreDirectory } from './store-path';
+import { emitPerformanceMarker } from './performance/marker-collector';
 
 type SidecarEventHandler = (event: SidecarEvent) => void;
 
-type ProcessManager = Pick<JsonlProcessManager<SidecarEvent, ElectronToSidecarMessage>, 'isRunning' | 'start' | 'send' | 'stop'>;
+type ProcessManager = Pick<
+  JsonlProcessManager<SidecarEvent, ElectronToSidecarMessage>,
+  'isRunning' | 'start' | 'send' | 'stop' | 'getChildPid'
+>;
 
 export class AgentSidecarManager {
   private readonly process: ProcessManager;
@@ -24,6 +28,10 @@ export class AgentSidecarManager {
   start(config: AppConfig, agentApiKey?: string): void {
     if (!this.process.isRunning) {
       this.process.start(this.getSidecarLaunch());
+      const pid = this.process.getChildPid?.() ?? null;
+      if (pid) {
+        emitPerformanceMarker('sidecar.spawned', { childPid: pid });
+      }
     }
 
     this.send({
@@ -31,9 +39,11 @@ export class AgentSidecarManager {
       config,
       ...(agentApiKey ? { agentApiKey } : {}),
     });
+    emitPerformanceMarker('sidecar.config.sent');
   }
 
   startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string): void {
+    emitPerformanceMarker('agent.run.requested', { agentRunId });
     this.start(config, agentApiKey);
     this.send({
       type: 'agent:start',

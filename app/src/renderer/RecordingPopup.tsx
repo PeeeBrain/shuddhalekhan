@@ -54,11 +54,16 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   }, []);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.subscribe('recording:pill-show', () => {
+    const unsubscribe = window.electronAPI.subscribe('recording:pill-show', (recordingSessionId) => {
       recordingStartRef.current = Date.now();
       setElapsed(0);
       setRemainingSeconds(null);
       setPillState(reducedMotion ? 'visible' : 'entering');
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.electronAPI?.send('surface-paint-proxy', 'recording', recordingSessionId);
+        });
+      });
     });
     return unsubscribe;
   }, [reducedMotion]);

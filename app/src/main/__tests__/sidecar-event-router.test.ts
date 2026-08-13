@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import {
+  createMarkerCollector,
+  resetPerformanceMarkerCollectorForTests,
+  setPerformanceMarkerCollector,
+} from '../performance/marker-collector';
 
 const vi = { fn: mock };
 const mergeDiscoveredTools = vi.fn();
@@ -52,6 +57,29 @@ describe('SidecarEventRouter', () => {
       status: 'connected',
       message: 'ready',
     });
+  });
+
+  it('records MCP connection request before discovery and connection completion', () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      {
+        enabled: true,
+        runId: 'run-1',
+        scenarioId: 'mcp-stdio-tool',
+        eventsPath: 'events.jsonl',
+      },
+      { pid: 7, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+
+    router.handle({ type: 'mcp:server-status', serverId: 'mail', status: 'connecting' });
+    router.handle({ type: 'mcp:tools-discovered', serverId: 'mail', tools: [] });
+    router.handle({ type: 'mcp:server-status', serverId: 'mail', status: 'connected' });
+
+    expect(lines.map((line) => JSON.parse(line).event)).toEqual([
+      'mcp.connect.requested',
+      'mcp.tools.discovered',
+    ]);
+    resetPerformanceMarkerCollectorForTests();
   });
 
   it('opens OAuth authorization URLs externally', () => {
@@ -111,6 +139,86 @@ describe('SidecarEventRouter', () => {
       kind: 'cancelled',
       agentRunId: 'run-1',
     });
+  });
+
+  it('records Agent terminal outcomes when no response delta arrives', () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      {
+        enabled: true,
+        runId: 'benchmark-run',
+        scenarioId: 'agent-no-mcp',
+        eventsPath: 'events.jsonl',
+      },
+      { pid: 7, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+
+    router.handle({ type: 'agent:completed', agentRunId: 'run-1', response: '', toolSummary: [] });
+    router.handle({ type: 'agent:failed', agentRunId: 'run-1', error: 'Provider failed' });
+    router.handle({ type: 'agent:cancelled', agentRunId: 'run-1' });
+
+    expect(lines.map((line) => {
+      const marker = JSON.parse(line);
+      return [marker.event, marker.agentRunId];
+    })).toEqual([
+      ['agent.completed', 'run-1'],
+      ['agent.failed', 'run-1'],
+      ['agent.cancelled', 'run-1'],
+    ]);
+    resetPerformanceMarkerCollectorForTests();
+  });
+
+  it('records the sidecar provider-request boundary in the main-process clock', () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      {
+        enabled: true,
+        runId: 'benchmark-run',
+        scenarioId: 'agent-no-mcp',
+        eventsPath: 'events.jsonl',
+      },
+      { pid: 7, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+
+    router.handle({ type: 'agent:provider-request-started', agentRunId: 'run-1' });
+
+    expect(lines.map((line) => JSON.parse(line))).toMatchObject([
+      { event: 'agent.provider.request.started', agentRunId: 'run-1' },
+    ]);
+    resetPerformanceMarkerCollectorForTests();
+  });
+
+  it('records MCP tool execution start and result without tool payloads', () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      {
+        enabled: true,
+        runId: 'benchmark-run',
+        scenarioId: 'mcp-stdio-tool',
+        eventsPath: 'events.jsonl',
+      },
+      { pid: 7, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+
+    router.handle({
+      type: 'mcp:tool-execute-started',
+      agentRunId: 'run-1',
+      serverId: 'mail',
+      toolName: 'echo',
+    });
+    router.handle({
+      type: 'mcp:tool-execute-result',
+      agentRunId: 'run-1',
+      serverId: 'mail',
+      toolName: 'echo',
+      outcome: 'success',
+    });
+
+    expect(lines.map((line) => JSON.parse(line))).toMatchObject([
+      { event: 'mcp.tool.execute.started', agentRunId: 'run-1', serverId: 'mail' },
+      { event: 'mcp.tool.execute.result', agentRunId: 'run-1', serverId: 'mail', outcome: 'success' },
+    ]);
+    resetPerformanceMarkerCollectorForTests();
   });
 
   it('shows both waiting status and approval details when approval is requested', () => {

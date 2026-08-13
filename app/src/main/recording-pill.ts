@@ -44,7 +44,10 @@ export function prepareRecordingPillWindow(): BrowserWindow {
   return win;
 }
 
-export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
+export function showRecordingPill(
+  intent: RecordingIntent = 'dictation',
+  recordingSessionId?: string,
+): void {
   if (pendingHideTimeout) {
     clearTimeout(pendingHideTimeout);
     pendingHideTimeout = null;
@@ -55,7 +58,11 @@ export function showRecordingPill(intent: RecordingIntent = 'dictation'): void {
 
   const sendEvents = () => {
     if (win.isDestroyed()) return;
-    win.webContents.send('recording:pill-show');
+    if (recordingSessionId) {
+      win.webContents.send('recording:pill-show', recordingSessionId);
+    } else {
+      win.webContents.send('recording:pill-show');
+    }
     win.webContents.send('recording:mode-changed', intent);
   };
 

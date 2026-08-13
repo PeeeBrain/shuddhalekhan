@@ -13,6 +13,7 @@ tags and commit history, not from this file. Keep new entries under
 - Release packaging now uses the `Unreleased` changelog section as the single source for both GitHub Release notes and the copy bundled with the application.
 
 ### Developer Infrastructure
+- Added an opt-in runtime performance marker stream, QPC-backed Windows collector script, pinned benchmark fixtures, and a summary harness for packaged regression baselines (#176).
 - Fixed development builds reading a new empty settings directory after the monorepo move; keybindings, LLM settings, MCP servers, and secure credentials now use the same stable location as packaged builds.
 - Reorganized the repository as a Bun monorepo with the Windows desktop application under `app/` and a React landing-page workspace under `web/`.
 - Development startup now installs Electron's binary on first use, matching Electron 42+'s lazy-download lifecycle.
