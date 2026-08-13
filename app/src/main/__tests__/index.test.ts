@@ -324,6 +324,7 @@ describe('main process IPC orchestration', () => {
       'agent-toast:content-size',
       'agent-toast:dismiss',
       'audio-devices',
+      'surface-paint-proxy',
     ]);
   });
 
