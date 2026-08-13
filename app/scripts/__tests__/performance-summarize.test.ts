@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  buildMarkerMeasurements,
   buildMarkerSummary,
   correlateMarkerIntervals,
   parseMarkerStream,
@@ -142,6 +143,28 @@ describe('buildMarkerSummary', () => {
       'mcp-connect-discovery': { p50: 10, failures: 0 },
       'mcp-first-tool': { p50: 40, failures: 0 },
       'mcp-tool-execution': { p50: 20, failures: 0 },
+    });
+  });
+
+  it('excludes tagged warmups and counts missing measured endpoints as failures', () => {
+    const markers = parseMarkerStream([
+      '{"schemaVersion":1,"runId":"settings-1","scenarioId":"settings-open","sequence":1,"event":"surface.requested","surface":"settings","benchmarkPhase":"warmup","benchmarkIteration":1,"mainMonotonicMs":10,"utc":"t1","pid":1,"processRole":"electron-main"}',
+      '{"schemaVersion":1,"runId":"settings-1","scenarioId":"settings-open","sequence":2,"event":"surface.paint-proxy","surface":"settings","benchmarkPhase":"warmup","benchmarkIteration":1,"mainMonotonicMs":110,"utc":"t2","pid":1,"processRole":"electron-main"}',
+      '{"schemaVersion":1,"runId":"settings-1","scenarioId":"settings-open","sequence":3,"event":"surface.requested","surface":"settings","benchmarkPhase":"measured","benchmarkIteration":1,"mainMonotonicMs":200,"utc":"t3","pid":1,"processRole":"electron-main"}',
+      '{"schemaVersion":1,"runId":"settings-1","scenarioId":"settings-open","sequence":4,"event":"surface.paint-proxy","surface":"settings","benchmarkPhase":"measured","benchmarkIteration":1,"mainMonotonicMs":225,"utc":"t4","pid":1,"processRole":"electron-main"}',
+      '{"schemaVersion":1,"runId":"settings-1","scenarioId":"settings-open","sequence":5,"event":"surface.requested","surface":"settings","benchmarkPhase":"measured","benchmarkIteration":2,"mainMonotonicMs":300,"utc":"t5","pid":1,"processRole":"electron-main"}',
+    ].join('\n'));
+
+    expect(buildMarkerSummary(markers)['settings-open']).toEqual({
+      count: 1,
+      failures: 1,
+      p50: 25,
+      p95: 25,
+      max: 25,
+    });
+    expect(buildMarkerMeasurements(markers)['settings-open']).toEqual({
+      samples: [25],
+      expectedCount: 2,
     });
   });
 });

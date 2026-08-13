@@ -60,6 +60,82 @@ export type LatencySummary = {
   max: number;
 };
 
+export type MarkerMeasurement = {
+  samples: number[];
+  expectedCount: number;
+};
+
+const metricDefinitions: Array<{
+  name: string;
+  start: string;
+  end: string | string[];
+  scenarios: string[] | 'when-present';
+  correlationField?: keyof PerformanceMarker;
+  surface?: string;
+}> = [
+  {
+    name: 'main-runtime-initialization',
+    start: 'app.electron-ready',
+    end: 'runtime.operational',
+    scenarios: 'when-present',
+  },
+  {
+    name: 'recording-activation',
+    start: 'hotkey.detected',
+    end: 'audio.capture.started',
+    scenarios: ['dictation-recording'],
+    correlationField: 'recordingSessionId',
+  },
+  {
+    name: 'recording-complete',
+    start: 'recording.stop.requested',
+    end: 'recording.session.completed',
+    scenarios: ['dictation-recording'],
+    correlationField: 'recordingSessionId',
+  },
+  {
+    name: 'settings-open',
+    start: 'surface.requested',
+    end: 'surface.paint-proxy',
+    scenarios: ['settings-open'],
+    surface: 'settings',
+  },
+  {
+    name: 'mcp-connect-discovery',
+    start: 'mcp.connect.requested',
+    end: 'mcp.tools.discovered',
+    scenarios: ['mcp-stdio-tool', 'mcp-http-tool'],
+    correlationField: 'serverId',
+  },
+  {
+    name: 'mcp-first-tool',
+    start: 'agent.run.requested',
+    end: 'mcp.tool.execute.started',
+    scenarios: ['mcp-stdio-tool', 'mcp-http-tool'],
+    correlationField: 'agentRunId',
+  },
+  {
+    name: 'mcp-tool-execution',
+    start: 'mcp.tool.execute.started',
+    end: 'mcp.tool.execute.result',
+    scenarios: ['mcp-stdio-tool', 'mcp-http-tool'],
+    correlationField: 'agentRunId',
+  },
+  {
+    name: 'agent-first-outcome',
+    start: 'agent.run.requested',
+    end: [
+      'agent.response.first-delta',
+      'approval.requested',
+      'agent.completed',
+      'agent.failed',
+      'agent.cancelled',
+    ],
+    scenarios: ['agent-no-mcp', 'mcp-stdio-tool', 'mcp-http-tool'],
+    correlationField: 'agentRunId',
+  },
+];
+
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0;
   const position = (p / 100) * (sorted.length - 1);
@@ -84,84 +160,13 @@ export function summarizeLatency(samples: number[], expectedCount: number): Late
   };
 }
 
-export function buildMarkerSummary(markers: PerformanceMarker[]): Record<string, LatencySummary> {
-  const definitions: Array<{
-    name: string;
-    start: string;
-    end: string | string[];
-    scenarios: string[] | 'when-present';
-    correlationField?: keyof PerformanceMarker;
-    surface?: string;
-  }> = [
-    {
-      name: 'main-runtime-initialization',
-      start: 'app.electron-ready',
-      end: 'runtime.operational',
-      scenarios: 'when-present',
-    },
-    {
-      name: 'recording-activation',
-      start: 'hotkey.detected',
-      end: 'audio.capture.started',
-      scenarios: ['dictation-recording'],
-      correlationField: 'recordingSessionId',
-    },
-    {
-      name: 'recording-complete',
-      start: 'recording.stop.requested',
-      end: 'recording.session.completed',
-      scenarios: ['dictation-recording'],
-      correlationField: 'recordingSessionId',
-    },
-    {
-      name: 'settings-open',
-      start: 'surface.requested',
-      end: 'surface.paint-proxy',
-      scenarios: ['settings-open'],
-      surface: 'settings',
-    },
-    {
-      name: 'mcp-connect-discovery',
-      start: 'mcp.connect.requested',
-      end: 'mcp.tools.discovered',
-      scenarios: ['mcp-stdio-tool', 'mcp-http-tool'],
-      correlationField: 'serverId',
-    },
-    {
-      name: 'mcp-first-tool',
-      start: 'agent.run.requested',
-      end: 'mcp.tool.execute.started',
-      scenarios: ['mcp-stdio-tool', 'mcp-http-tool'],
-      correlationField: 'agentRunId',
-    },
-    {
-      name: 'mcp-tool-execution',
-      start: 'mcp.tool.execute.started',
-      end: 'mcp.tool.execute.result',
-      scenarios: ['mcp-stdio-tool', 'mcp-http-tool'],
-      correlationField: 'agentRunId',
-    },
-    {
-      name: 'agent-first-outcome',
-      start: 'agent.run.requested',
-      end: [
-        'agent.response.first-delta',
-        'approval.requested',
-        'agent.completed',
-        'agent.failed',
-        'agent.cancelled',
-      ],
-      scenarios: ['agent-no-mcp', 'mcp-stdio-tool', 'mcp-http-tool'],
-      correlationField: 'agentRunId',
-    },
-  ];
-
-  const scenarioIds = new Set(markers.map((marker) => marker.scenarioId));
-  const expectedRuns = Math.max(1, new Set(markers.map((marker) => marker.runId)).size);
-  const summary: Record<string, LatencySummary> = {};
-  for (const definition of definitions) {
+export function buildMarkerMeasurements(markers: PerformanceMarker[]): Record<string, MarkerMeasurement> {
+  const measuredMarkers = markers.filter((marker) => marker.benchmarkPhase !== 'warmup');
+  const scenarioIds = new Set(measuredMarkers.map((marker) => marker.scenarioId));
+  const measurements: Record<string, MarkerMeasurement> = {};
+  for (const definition of metricDefinitions) {
     const applicable = definition.scenarios === 'when-present'
-      ? markers.some((marker) => marker.event === definition.start || (
+      ? measuredMarkers.some((marker) => marker.event === definition.start || (
         Array.isArray(definition.end)
           ? definition.end.includes(marker.event)
           : marker.event === definition.end
@@ -169,17 +174,25 @@ export function buildMarkerSummary(markers: PerformanceMarker[]): Record<string,
       : definition.scenarios.some((scenarioId) => scenarioIds.has(scenarioId));
     if (!applicable) continue;
     const metricMarkers = definition.surface
-      ? markers.filter((marker) => marker.surface === definition.surface)
-      : markers;
+      ? measuredMarkers.filter((marker) => marker.surface === definition.surface)
+      : measuredMarkers;
     const samples = definition.name === 'recording-activation'
-      ? correlateRecordingActivation(markers)
+      ? correlateRecordingActivation(measuredMarkers)
       : correlateMarkerIntervals(metricMarkers, definition.start, definition.end, {
         correlationField: definition.correlationField,
       });
-    summary[definition.name] = summarizeLatency(
-      samples,
-      expectedRuns,
-    );
+    const expectedIntervals = definition.name === 'recording-activation'
+      ? measuredMarkers.filter((marker) => marker.event === 'hotkey.detected').length
+      : metricMarkers.filter((marker) => marker.event === definition.start).length;
+    measurements[definition.name] = { samples, expectedCount: expectedIntervals };
+  }
+  return measurements;
+}
+
+export function buildMarkerSummary(markers: PerformanceMarker[]): Record<string, LatencySummary> {
+  const summary: Record<string, LatencySummary> = {};
+  for (const [name, measurement] of Object.entries(buildMarkerMeasurements(markers))) {
+    summary[name] = summarizeLatency(measurement.samples, measurement.expectedCount);
   }
   return summary;
 }

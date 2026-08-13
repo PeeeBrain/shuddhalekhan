@@ -159,6 +159,7 @@ export interface MainToRendererChannels {
   'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;
   'shortcuts:paused-changed': (paused: boolean) => void;
+  'surface:request-paint-proxy': (surface: string) => void;
 }
 
 export type McpServerRuntimeStatus = {

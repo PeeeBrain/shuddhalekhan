@@ -41,6 +41,8 @@ export type PerformanceMarker = {
   childPid?: number;
   from?: string;
   to?: string;
+  benchmarkPhase?: 'warmup' | 'measured';
+  benchmarkIteration?: number;
 };
 
 export type MarkerFields = Record<string, unknown>;
@@ -173,6 +175,7 @@ export function createDefaultMarkerCollector(
 }
 
 let globalCollector: MarkerCollector | null = null;
+let globalMarkerContext: MarkerFields = {};
 
 export function getPerformanceMarkerCollector(): MarkerCollector {
   if (!globalCollector) {
@@ -183,6 +186,7 @@ export function getPerformanceMarkerCollector(): MarkerCollector {
 
 export function resetPerformanceMarkerCollectorForTests(): void {
   globalCollector = null;
+  globalMarkerContext = {};
 }
 
 export function setPerformanceMarkerCollector(collector: MarkerCollector): void {
@@ -190,5 +194,9 @@ export function setPerformanceMarkerCollector(collector: MarkerCollector): void 
 }
 
 export function emitPerformanceMarker(event: string, fields?: MarkerFields): void {
-  getPerformanceMarkerCollector().emit(event, fields);
+  getPerformanceMarkerCollector().emit(event, { ...fields, ...globalMarkerContext });
+}
+
+export function setPerformanceMarkerContext(fields: MarkerFields = {}): void {
+  globalMarkerContext = sanitizeMarkerFields(fields);
 }

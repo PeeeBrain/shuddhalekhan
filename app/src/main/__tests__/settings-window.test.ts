@@ -15,6 +15,7 @@ const on = vi.fn();
 const isDestroyed = vi.fn(() => false);
 const loadURL = vi.fn();
 const loadFile = vi.fn();
+const send = vi.fn();
 const BrowserWindow = vi.fn(() => ({
   show,
   focus,
@@ -23,6 +24,7 @@ const BrowserWindow = vi.fn(() => ({
   isDestroyed,
   loadURL,
   loadFile,
+  webContents: { send },
 }));
 
 installElectronMock();
@@ -40,6 +42,7 @@ describe('settings window', () => {
     isDestroyed.mockReturnValue(false);
     loadURL.mockClear();
     loadFile.mockClear();
+    send.mockClear();
   });
 
   it('creates the settings window hidden and shows it when ready', async () => {
@@ -73,6 +76,7 @@ describe('settings window', () => {
     expect(BrowserWindow).toHaveBeenCalledTimes(1);
     expect(show).toHaveBeenCalledTimes(1);
     expect(focus).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('surface:request-paint-proxy', 'settings');
   });
 
   it('marks cold-create and warm-show requests before opening Settings', async () => {

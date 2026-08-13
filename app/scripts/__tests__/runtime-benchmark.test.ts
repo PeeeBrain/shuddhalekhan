@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, relative } from 'path';
 import { buildBenchmarkSummary } from '../runtime-benchmark';
 
 describe('buildBenchmarkSummary', () => {
@@ -30,7 +30,11 @@ describe('buildBenchmarkSummary', () => {
       '0,1000,10000,t0,GPU-1,42,1024,8192,75.5,55',
     ].join('\n'));
 
-    const summary = buildBenchmarkSummary(outputDir);
+    const summary = buildBenchmarkSummary(relative(process.cwd(), outputDir));
+    expect(summary.markerMeasurements['main-runtime-initialization']).toEqual({
+      samples: [120],
+      expectedCount: 1,
+    });
     expect(summary.markerSummary['main-runtime-initialization']?.p50).toBe(120);
     expect(summary.externalMarkerSummary['cold-startup']?.p50).toBe(250);
     expect(summary.markerSummary['recording-activation']).toBeUndefined();

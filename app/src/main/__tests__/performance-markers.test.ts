@@ -2,8 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import {
   createMarkerCollector,
   createFileMarkerSink,
+  emitPerformanceMarker,
   parseMarkerConfig,
+  resetPerformanceMarkerCollectorForTests,
   sanitizeMarkerFields,
+  setPerformanceMarkerCollector,
+  setPerformanceMarkerContext,
   type PerformanceMarker,
 } from '../performance/marker-collector';
 import { buildElectronProcessInventory } from '../performance/process-inventory';
@@ -224,5 +228,24 @@ describe('createFileMarkerSink', () => {
 
     expect(openCount).toBe(1);
     expect(writes).toEqual(['{"sequence":1}\n', '{"sequence":2}\n']);
+  });
+});
+
+describe('performance marker context', () => {
+  it('tags downstream markers for a benchmark iteration and can be cleared', () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      { enabled: true, runId: 'run-1', scenarioId: 'settings-open', eventsPath: 'events.jsonl' },
+      { pid: 1, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+    setPerformanceMarkerContext({ benchmarkPhase: 'warmup', benchmarkIteration: 2 });
+    emitPerformanceMarker('surface.requested', { surface: 'settings' });
+    setPerformanceMarkerContext();
+    emitPerformanceMarker('surface.requested', { surface: 'settings' });
+
+    expect(JSON.parse(lines[0])).toMatchObject({ benchmarkPhase: 'warmup', benchmarkIteration: 2 });
+    expect(JSON.parse(lines[1]).benchmarkPhase).toBeUndefined();
+    setPerformanceMarkerContext();
+    resetPerformanceMarkerCollectorForTests();
   });
 });

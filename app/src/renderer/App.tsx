@@ -77,16 +77,27 @@ function AudioWindow() {
 
 function useSurfacePaintProxy(surface: string): void {
   useEffect(() => {
-    let firstFrame = 0;
-    let secondFrame = 0;
-    firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        window.electronAPI?.send('surface-paint-proxy', surface);
+    const reportPaintProxy = () => {
+      let firstFrame = 0;
+      let secondFrame = 0;
+      firstFrame = requestAnimationFrame(() => {
+        secondFrame = requestAnimationFrame(() => {
+          window.electronAPI?.send('surface-paint-proxy', surface);
+        });
       });
+      return () => {
+        cancelAnimationFrame(firstFrame);
+        if (secondFrame) cancelAnimationFrame(secondFrame);
+      };
+    };
+
+    const cancelInitial = reportPaintProxy();
+    const unsubscribe = window.electronAPI?.subscribe('surface:request-paint-proxy', (requestedSurface) => {
+      if (requestedSurface === surface) reportPaintProxy();
     });
     return () => {
-      cancelAnimationFrame(firstFrame);
-      if (secondFrame) cancelAnimationFrame(secondFrame);
+      cancelInitial();
+      unsubscribe?.();
     };
   }, [surface]);
 }

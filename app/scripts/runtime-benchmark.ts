@@ -1,6 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
-import { buildMarkerSummary, parseMarkerStream } from './performance/summarize-markers';
+import {
+  buildMarkerMeasurements,
+  buildMarkerSummary,
+  parseMarkerStream,
+} from './performance/summarize-markers';
 import {
   groupPrivateBytesByRole,
   parseProcessSampleCsv,
@@ -42,6 +46,7 @@ export function resolveBenchmarkArtifactPaths(outputDir: string): BenchmarkArtif
 }
 
 export function buildBenchmarkSummary(outputDir: string): {
+  markerMeasurements: ReturnType<typeof buildMarkerMeasurements>;
   markerSummary: ReturnType<typeof buildMarkerSummary>;
   externalMarkerSummary: ReturnType<typeof buildExternalMarkerSummary>;
   privateBytesByRole: Record<string, number>;
@@ -56,6 +61,7 @@ export function buildBenchmarkSummary(outputDir: string): {
   const processSamples = parseProcessSampleCsv(readFileSync(paths.processSamples, 'utf8'));
   const dockerSamples = existsSync(paths.dockerSamples) ? readFileSync(paths.dockerSamples, 'utf8') : '';
   const gpuSamples = existsSync(paths.gpuSamples) ? readFileSync(paths.gpuSamples, 'utf8') : '';
+  const markerMeasurements = buildMarkerMeasurements(markers);
   const markerSummary = buildMarkerSummary(markers);
   const externalMarkerSummary = buildExternalMarkerSummary(externalEvents);
   const privateBytesByRole = groupPrivateBytesByRole(processSamples);
@@ -65,6 +71,7 @@ export function buildBenchmarkSummary(outputDir: string): {
   const summary = {
     generatedAt: new Date().toISOString(),
     outputDir: resolve(outputDir),
+    markerMeasurements,
     markerSummary,
     externalMarkerSummary,
     privateBytesByRole,
@@ -74,7 +81,10 @@ export function buildBenchmarkSummary(outputDir: string): {
     markerCount: markers.length,
   };
 
-  mkdirSync(dirname(paths.summaryJson), { recursive: true });
+  const summaryDirectory = dirname(paths.summaryJson);
+  if (!existsSync(summaryDirectory)) {
+    mkdirSync(summaryDirectory, { recursive: true });
+  }
   writeFileSync(paths.summaryJson, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   writeFileSync(
     paths.summaryMarkdown,
@@ -116,6 +126,7 @@ export function buildBenchmarkSummary(outputDir: string): {
   );
 
   return {
+    markerMeasurements,
     markerSummary,
     externalMarkerSummary,
     privateBytesByRole,
@@ -127,7 +138,7 @@ export function buildBenchmarkSummary(outputDir: string): {
 function printUsage(): void {
   console.log(`Usage:
   bun run scripts/runtime-benchmark.ts summarize --output <dir>
-  bun run scripts/runtime-benchmark.ts run-abba --baseline-exe <path> --candidate-exe <path> --scenario <id> --repetitions <even> --output <dir>
+  bun run scripts/runtime-benchmark.ts run-abba --baseline-exe <path> --candidate-exe <path> --scenario <id> --repetitions <even> --output <dir> [--commit-sha <sha>] [--warmup-repetitions <n>] [--action-repetitions <n>]
 
 Environment for packaged app runs:
   SHUDDHALEKHAN_PERF_MARKERS=1
@@ -161,7 +172,16 @@ async function runAbbaCommand(args: string[]): Promise<void> {
   const sampleCount = readCliOption(args, '--sample-count', '60')!;
   const sampleIntervalMs = readCliOption(args, '--sample-interval-ms', '1000')!;
   const startupTimeoutSeconds = readCliOption(args, '--startup-timeout-seconds', '30')!;
+  const actionTimeoutSeconds = readCliOption(args, '--action-timeout-seconds', '45')!;
+  const warmupRepetitions = readCliOption(args, '--warmup-repetitions', '0')!;
+  const actionRepetitions = readCliOption(args, '--action-repetitions', '1')!;
+  const fixtureRoot = readCliOption(args, '--fixture-root', join(import.meta.dir, 'performance', 'fixtures'))!;
   const comparability = readCliOption(args, '--comparability', 'diagnostic-unverified')!;
+  const explicitCommitSha = readCliOption(args, '--commit-sha');
+  const detectedCommitSha = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {
+    cwd: join(import.meta.dir, '..'),
+  }).stdout.toString().trim();
+  const commitSha = explicitCommitSha ?? (detectedCommitSha || 'unspecified');
   const dockerContainerId = readCliOption(args, '--docker-container-id', '')!;
   const dockerCommandPath = readCliOption(args, '--docker-command', 'docker')!;
   const nvidiaSmiPath = readCliOption(args, '--nvidia-smi', '')!;
@@ -193,11 +213,16 @@ async function runAbbaCommand(args: string[]): Promise<void> {
         '-ScenarioId', scenarioId,
         '-RunId', runId,
         '-BuildLabel', run.buildLabel,
+        '-CommitSha', commitSha,
         '-Comparability', comparability,
         '-SettleSeconds', settleSeconds,
         '-SampleCount', sampleCount,
         '-SampleIntervalMs', sampleIntervalMs,
         '-StartupTimeoutSeconds', startupTimeoutSeconds,
+        '-ActionTimeoutSeconds', actionTimeoutSeconds,
+        '-WarmupRepetitions', warmupRepetitions,
+        '-ActionRepetitions', actionRepetitions,
+        '-FixtureRoot', resolve(fixtureRoot),
         '-DockerContainerId', dockerContainerId,
         '-DockerCommandPath', dockerCommandPath,
         '-NvidiaSmiPath', nvidiaSmiPath,
@@ -206,14 +231,20 @@ async function runAbbaCommand(args: string[]): Promise<void> {
         throw new Error(`Benchmark run ${runId} failed: ${result.stderr.toString().trim()}`);
       }
       const summary = buildBenchmarkSummary(run.outputDir);
-      for (const [metric, stats] of Object.entries({
-        ...summary.externalMarkerSummary,
-        ...summary.markerSummary,
-      })) {
+      for (const [metric, stats] of Object.entries(summary.externalMarkerSummary)) {
         if (stats.count > 0) {
           observations.push({ buildLabel: run.buildLabel, metric, value: stats.p50 });
         }
         for (let index = 0; index < stats.failures; index += 1) {
+          observations.push({ buildLabel: run.buildLabel, metric, failed: true });
+        }
+      }
+      for (const [metric, measurement] of Object.entries(summary.markerMeasurements)) {
+        for (const value of measurement.samples) {
+          observations.push({ buildLabel: run.buildLabel, metric, value });
+        }
+        const failures = Math.max(0, measurement.expectedCount - measurement.samples.length);
+        for (let index = 0; index < failures; index += 1) {
           observations.push({ buildLabel: run.buildLabel, metric, failed: true });
         }
       }

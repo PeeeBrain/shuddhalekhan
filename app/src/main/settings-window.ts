@@ -44,6 +44,7 @@ export function openSettingsWindow(section?: 'about'): BrowserWindow {
   if (existingWindow && !existingWindow.isDestroyed()) {
     existingWindow.show();
     existingWindow.focus();
+    existingWindow.webContents.send('surface:request-paint-proxy', 'settings');
     if (section) {
       existingWindow.webContents.send('settings:navigate', section);
     }

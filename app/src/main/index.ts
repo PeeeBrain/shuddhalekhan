@@ -40,13 +40,29 @@ import type { RecordingResult } from './recording-session';
 import { emitPerformanceMarker } from './performance/marker-collector';
 import { buildElectronProcessInventory } from './performance/process-inventory';
 import { createRuntimeReadinessBarrier } from './performance/runtime-readiness';
+import {
+  createPerformanceScenarioDriver,
+  isPerformanceScenarioDriverEnabled,
+  parsePerformanceScenarioDriverConfig,
+} from './performance/scenario-driver';
+import { transcribe as transcribeLocalFixture } from './whisper';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
 let shellPillReadyEmitted = false;
+let startPerformanceScenario = async (): Promise<void> => undefined;
+const performanceDriverEnabled = isPerformanceScenarioDriverEnabled(process.env);
+const performanceDriverConfig = parsePerformanceScenarioDriverConfig(process.env);
+const agentTerminalWaiters = new Map<string, () => void>();
+const surfacePaintWaiters = new Map<string, Array<() => void>>();
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
   emitElectronProcessInventory();
   emitPerformanceMarker('runtime.operational');
+  queueMicrotask(() => {
+    void startPerformanceScenario().catch((error) => {
+      console.error('Performance scenario driver failed:', error);
+    });
+  });
 });
 const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
@@ -55,6 +71,11 @@ const sidecarEventRouter = createSidecarEventRouter({
   openExternal: shell.openExternal,
   mergeDiscoveredTools,
   getConfig,
+  onAgentTerminal: (agentRunId) => {
+    if (activeAgentRunId === agentRunId) activeAgentRunId = null;
+    agentTerminalWaiters.get(agentRunId)?.();
+    agentTerminalWaiters.delete(agentRunId);
+  },
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
 const recordingSession = new RecordingSession({
@@ -84,6 +105,45 @@ const recordingSession = new RecordingSession({
   onResult: routeRecordingResult,
   onError: showTranscriptionError,
 });
+const performanceScenarioDriver = createPerformanceScenarioDriver(
+  performanceDriverConfig,
+  {
+    openSettings: async () => {
+      const painted = waitForSurfacePaint('settings');
+      openSettingsWindow();
+      await painted;
+    },
+    getConfig,
+    async runRecording({ wav, playbackDurationMs, transcriptionEndpoint }) {
+      const config = getConfig();
+      const fixtureConfig: AppConfig = {
+        ...config,
+        whisperUrl: transcriptionEndpoint,
+        transcription: {
+          ...config.transcription,
+          activeProvider: 'local-whisper-cpp',
+          providers: {
+            ...config.transcription.providers,
+            localWhisperCpp: { endpoint: transcriptionEndpoint },
+          },
+        },
+      };
+      await recordingSession.runPerformanceFixture(wav, playbackDurationMs, {
+        id: 'local-whisper-cpp',
+        capabilities: {
+          translation: true,
+          automaticLanguageDetection: true,
+          dictionaryHints: true,
+          authentication: 'none',
+          maxDurationSeconds: null,
+        },
+        transcribe: ({ audio }) => transcribeLocalFixture(audio, fixtureConfig),
+      });
+    },
+    runAgent: ({ transcript, config }) => startAgentRun(transcript, config),
+  },
+);
+startPerformanceScenario = () => performanceScenarioDriver.start();
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
@@ -172,19 +232,26 @@ function showTranscriptionError(err: unknown): void {
 }
 
 function handleAgentTranscript(text: string): void {
-  const config = getConfig();
+  void startAgentRun(text, getConfig());
+}
 
+function startAgentRun(text: string, config: AppConfig): Promise<void> {
   if (!config.agent.enabled) {
     console.warn('Ignoring Agent Mode transcript because Agent Mode is disabled');
     showAgentToast({ kind: 'config', message: 'Agent Mode is disabled. Open Settings to enable it.' });
-    return;
+    return Promise.resolve();
   }
 
   if (activeAgentRunId) {
+    agentTerminalWaiters.get(activeAgentRunId)?.();
+    agentTerminalWaiters.delete(activeAgentRunId);
     agentSidecar.cancelRun(activeAgentRunId);
   }
 
   activeAgentRunId = randomUUID();
+  const terminal = new Promise<void>((resolve) => {
+    agentTerminalWaiters.set(activeAgentRunId!, resolve);
+  });
   agentSidecar.startRun(
     activeAgentRunId,
     text,
@@ -193,6 +260,15 @@ function handleAgentTranscript(text: string): void {
   );
   console.log(`Started Agent Mode run ${activeAgentRunId}`);
   getSettingsWindow()?.webContents.send('audit:run-updated', activeAgentRunId);
+  return terminal;
+}
+
+function waitForSurfacePaint(surface: string): Promise<void> {
+  return new Promise((resolve) => {
+    const waiters = surfacePaintWaiters.get(surface) ?? [];
+    waiters.push(resolve);
+    surfacePaintWaiters.set(surface, waiters);
+  });
 }
 
 function publishUpdateStatus(status: UpdateStatus): void {
@@ -422,6 +498,9 @@ ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: stri
     }
     runtimeReadiness.markShellPaintReady();
   }
+  emitElectronProcessInventory();
+  for (const resolve of surfacePaintWaiters.get(surface) ?? []) resolve();
+  surfacePaintWaiters.delete(surface);
 });
 
 // App lifecycle
@@ -461,9 +540,11 @@ if (!gotSingleInstanceLock) {
       );
     }
 
-    setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
-    publishUpdateStatus(getUpdateStatus());
-    void showBundledReleaseNotesAfterInstall();
+    if (!performanceDriverEnabled) {
+      setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
+      publishUpdateStatus(getUpdateStatus());
+      void showBundledReleaseNotesAfterInstall();
+    }
     runtimeReadiness.markMainReady();
 
     app.on('activate', () => {

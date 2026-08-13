@@ -74,6 +74,13 @@
     "idleSampleSeconds": 60
   },
   "fixtures": {
+    "provider": {
+      "id": "benchmark-provider-v1",
+      "entrypoint": "benchmark-provider-server.ts",
+      "transcriptionPath": "/inference",
+      "openAiBasePath": "/v1",
+      "model": "benchmark-fixture-v1"
+    },
     "transcripts": {
       "check-mail-v1": "check mail"
     },

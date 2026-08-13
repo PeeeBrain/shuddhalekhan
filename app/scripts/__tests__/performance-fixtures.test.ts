@@ -24,6 +24,28 @@ function postJson(port: number, body: unknown): Promise<{ status: number; body: 
   });
 }
 
+function postRaw(port: number, path: string, body: unknown): Promise<{
+  status: number;
+  contentType: string;
+  body: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const client = request({
+      hostname: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json' },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => resolve({
+        status: response.statusCode ?? 0,
+        contentType: String(response.headers['content-type'] ?? ''),
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    client.on('error', reject);
+    client.end(JSON.stringify(body));
+  });
+}
+
 describe('benchmark MCP fixtures', () => {
   it('publishes executable transport definitions in the scenario manifest', () => {
     const manifest = JSON.parse(readFileSync(
@@ -112,6 +134,25 @@ describe('benchmark MCP fixtures', () => {
         id: 1,
         result: { content: [{ type: 'text', text: 'benchmark' }] },
       });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it('serves deterministic transcription and OpenAI-compatible streaming responses', async () => {
+    const { startBenchmarkProviderFixture } = await import('../performance/fixtures/benchmark-provider-server');
+    const server = await startBenchmarkProviderFixture({ port: 0 });
+
+    try {
+      const transcription = await postRaw(server.port, '/inference', { fixture: true });
+      expect(JSON.parse(transcription.body)).toEqual({ text: 'benchmark fixture transcript' });
+
+      const completion = await postRaw(server.port, '/v1/chat/completions', {
+        model: 'benchmark-fixture-v1', messages: [{ role: 'user', content: 'hello' }], stream: true,
+      });
+      expect(completion.contentType).toContain('text/event-stream');
+      expect(completion.body).toContain('benchmark complete');
+      expect(completion.body).toContain('data: [DONE]');
     } finally {
       server.stop(true);
     }

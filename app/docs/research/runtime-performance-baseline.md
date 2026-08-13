@@ -151,6 +151,8 @@ bun run scripts/runtime-benchmark.ts run-abba `
 
 Each run gets an isolated artifact directory. `runtime-scenario-runner.ps1` owns the exact launched process tree, waits for `runtime.operational`, samples declared identities, and terminates only that tree. `runtime-benchmark.ts summarize --output <run-directory>` can regenerate a per-run summary. Local `benchmark-output/` is ignored; publish reviewed evidence deliberately in the issue or a dedicated tracked evidence location.
 
+Action scenarios are driven only when both marker collection and `SHUDDHALEKHAN_PERF_DRIVER=1` are enabled by the runner. The driver ignores persisted Agent/MCP state, suppresses updater work, and uses only the local fixture services. Warm measurements can stay in one packaged process by passing `--warmup-repetitions 3 --action-repetitions 30`; warmup markers are tagged and excluded from summaries. Cold scenarios use one action per process launch.
+
 The canonical spoken PCM and deterministic MCP servers are declared in `scripts/performance/fixtures/manifest.json`. Replacing the PCM requires an intentional `bun scripts/performance/generate-pcm-fixture.ts --regenerate`, audible review, and a manifest checksum update.
 
 ## Evidence status

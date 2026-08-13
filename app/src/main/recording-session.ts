@@ -308,6 +308,46 @@ export class RecordingSession {
     this.pendingEnd = null;
   }
 
+  /** Runs the pinned benchmark audio through the normal batch transcription path without using the live microphone. */
+  async runPerformanceFixture(
+    audioData: Uint8Array,
+    playbackDurationMs: number,
+    transcriber: Transcriber,
+  ): Promise<RecordingResult | null> {
+    const recordingSessionId = randomUUID();
+    emitPerformanceMarker('hotkey.detected', { recordingSessionId, surface: 'dictation' });
+    if (this.activeIntent || this.pendingEnd) {
+      emitPerformanceMarker('recording.begin.rejected', {
+        recordingSessionId,
+        surface: 'dictation',
+        reason: 'busy',
+      });
+      return null;
+    }
+
+    this.recordingSessionId = recordingSessionId;
+    this.activeIntent = 'dictation';
+    this.targetSnapshot = null;
+    emitPerformanceMarker('recording.begin.accepted', {
+      recordingSessionId,
+      surface: 'dictation',
+    });
+    this.audioCapture.prepare();
+    this.showRecordingPillFn('dictation', recordingSessionId);
+    emitPerformanceMarker('audio.capture.started', {
+      recordingSessionId,
+      surface: 'dictation',
+      source: 'fixture',
+    });
+
+    if (playbackDurationMs > 0) {
+      await new Promise<void>((resolve) => this.setTimeoutFn(resolve, playbackDurationMs));
+    }
+    emitPerformanceMarker('recording.stop.requested', { recordingSessionId });
+    this.hideRecordingPillFn();
+    return this.complete(audioData, transcriber, false);
+  }
+
   isActive(): boolean {
     return this.activeIntent !== null;
   }
@@ -326,7 +366,11 @@ export class RecordingSession {
     this.onErrorCallback?.(error);
   }
 
-  async complete(audioData: Uint8Array): Promise<RecordingResult | null> {
+  async complete(
+    audioData: Uint8Array,
+    transcriberOverride?: Transcriber,
+    notifyResult = true,
+  ): Promise<RecordingResult | null> {
     const pendingEnd = this.pendingEnd;
     this.pendingEnd = null;
     const intent = pendingEnd?.intent ?? this.activeIntent ?? 'dictation';
@@ -345,7 +389,7 @@ export class RecordingSession {
         recordingSessionId: this.recordingSessionId ?? undefined,
         surface: intent,
       });
-      const text = await this.getTranscriber().transcribe({
+      const text = await (transcriberOverride ?? this.getTranscriber()).transcribe({
         audio: audioData,
         recognition: this.getRecognitionSettings(),
       });
@@ -362,7 +406,7 @@ export class RecordingSession {
       });
       this.recordingSessionId = null;
       pendingEnd?.resolve(result);
-      if (this.onResultCallback) {
+      if (notifyResult && this.onResultCallback) {
         void this.onResultCallback(result);
       }
       return result;

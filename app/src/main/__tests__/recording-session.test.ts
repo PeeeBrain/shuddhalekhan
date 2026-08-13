@@ -577,4 +577,41 @@ describe('RecordingSession', () => {
     ]);
     resetPerformanceMarkerCollectorForTests();
   });
+
+  it('runs a paced benchmark WAV without opening the live microphone', async () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      {
+        enabled: true,
+        runId: 'fixture-run',
+        scenarioId: 'dictation-recording',
+        eventsPath: 'events.jsonl',
+      },
+      { pid: 99, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+    const fixtureTranscribe = vi.fn(async () => 'fixture transcript');
+
+    const result = await session.runPerformanceFixture(
+      new Uint8Array(64),
+      0,
+      createTranscriber(({ audio }) => fixtureTranscribe(audio)),
+    );
+
+    expect(result?.text).toBe('fixture transcript');
+    expect(audioStream.prepare).toHaveBeenCalledTimes(1);
+    expect(audioStream.beginCapture).not.toHaveBeenCalled();
+    expect(audioStream.endCapture).not.toHaveBeenCalled();
+    expect(showRecordingPill).toHaveBeenCalledTimes(1);
+    expect(hideRecordingPill).toHaveBeenCalledTimes(1);
+    expect(lines.map((line) => JSON.parse(line).event)).toEqual([
+      'hotkey.detected',
+      'recording.begin.accepted',
+      'audio.capture.started',
+      'recording.stop.requested',
+      'transcription.batch.requested',
+      'transcription.batch.completed',
+      'recording.session.completed',
+    ]);
+    resetPerformanceMarkerCollectorForTests();
+  });
 });

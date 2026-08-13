@@ -9,6 +9,7 @@ interface SidecarEventRouterDeps {
   openExternal: (url: string) => Promise<unknown>;
   mergeDiscoveredTools: (serverId: string, tools: Extract<SidecarEvent, { type: 'mcp:tools-discovered' }>['tools']) => void;
   getConfig: () => { agent: { mcpServers: Array<{ id: string; displayName: string }> } };
+  onAgentTerminal?: (agentRunId: string) => void;
 }
 
 type SidecarEventHandler<T extends SidecarEvent['type']> = (event: Extract<SidecarEvent, { type: T }>) => void;
@@ -116,6 +117,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
         toolSummary: event.toolSummary,
       });
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
+      deps.onAgentTerminal?.(event.agentRunId);
     }),
     'agent:failed': whenActive((event) => {
       emitPerformanceMarker('agent.failed', { agentRunId: event.agentRunId });
@@ -123,6 +125,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       console.error(`Agent run ${event.agentRunId} failed: ${event.error}`);
       deps.showAgentToast({ kind: 'failed', agentRunId: event.agentRunId, error: event.error });
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
+      deps.onAgentTerminal?.(event.agentRunId);
     }),
     'agent:cancelled': whenActive((event) => {
       emitPerformanceMarker('agent.cancelled', { agentRunId: event.agentRunId });
@@ -130,6 +133,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       console.log(`Agent run ${event.agentRunId} cancelled`);
       deps.showAgentToast({ kind: 'cancelled', agentRunId: event.agentRunId });
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
+      deps.onAgentTerminal?.(event.agentRunId);
     }),
   };
 
