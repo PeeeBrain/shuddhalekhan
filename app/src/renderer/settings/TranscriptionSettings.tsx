@@ -18,7 +18,10 @@ import { SetupChecklist } from './SetupChecklist';
 import { CredentialControl } from './ui/CredentialControl';
 import { WHISPER_LANGUAGES } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
-import type { AppConfig, CredentialKind, TranscriptionProviderId } from '../../types/ipc';
+import type { AppConfig, CredentialKind, DictationMode, TranscriptionProviderId } from '../../types/ipc';
+import {
+  getAppConfigDictationError,
+} from '../../shared/dictation-runtime';
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';
 
@@ -38,6 +41,7 @@ const FIELD_ID_GOOGLE_MODEL = 'google-model';
 const FIELD_ID_NVIDIA_ENDPOINT = 'nvidia-endpoint';
 const FIELD_ID_NVIDIA_MODEL = 'nvidia-model';
 const FIELD_ID_PROVIDER = 'provider';
+const FIELD_ID_DICTATION_MODE = 'dictation-mode';
 
 interface ProviderOption {
   value: TranscriptionProviderId;
@@ -319,19 +323,51 @@ export function TranscriptionSettings({
 }: SettingsSectionProps) {
   const { commit, fieldErrors } = persistence;
   const provider = config.transcription.activeProvider;
+  const [dictationModeError, setDictationModeError] = useState<string | undefined>();
+  const dictation = config.dictation ?? { mode: 'batch' as const, formatter: null };
+  const storedDictationModeError = getAppConfigDictationError({
+    ...config,
+    dictation,
+  });
 
   const handleProviderChange = async (value: string) => {
     const nextProvider = value as TranscriptionProviderId;
-    await commit('transcription', {
+    const nextTranscription = {
       ...config.transcription,
       activeProvider: nextProvider,
-    }, FIELD_ID_PROVIDER);
+    };
+    const combinationError = getAppConfigDictationError({
+      ...config,
+      dictation,
+      transcription: nextTranscription,
+    });
+    if (combinationError) {
+      setDictationModeError(combinationError);
+      return;
+    }
+    setDictationModeError(undefined);
+    await commit('transcription', nextTranscription, FIELD_ID_PROVIDER);
     if ((nextProvider === 'azure-speech' || nextProvider === 'google-cloud-speech-v2') && config.task === 'translate') {
       await commit('task', 'transcribe', FIELD_ID_TASK);
     }
     if (nextProvider === 'google-cloud-speech-v2' && config.language === 'auto') {
       await commit('language', 'en', FIELD_ID_LANGUAGE);
     }
+  };
+
+  const handleDictationModeChange = (value: string) => {
+    const mode = value as DictationMode;
+    const next = { ...dictation, mode };
+    const error = getAppConfigDictationError({
+      ...config,
+      dictation: next,
+    });
+    if (error) {
+      setDictationModeError(error);
+      return;
+    }
+    setDictationModeError(undefined);
+    void commit('dictation', next, FIELD_ID_DICTATION_MODE);
   };
 
   return (
@@ -383,6 +419,19 @@ export function TranscriptionSettings({
           errorId={useId()}
           error={fieldErrors[FIELD_ID_FILER]}
           onChange={(checked) => commit('removeFillerWords', checked, FIELD_ID_FILER)}
+        />
+        <SelectRow
+          label="Dictation mode"
+          value={dictation.mode}
+          options={[
+            { value: 'batch', label: 'Batch Dictation' },
+            { value: 'live', label: 'Live Dictation (beta)' },
+            { value: 'corrected', label: 'Corrected Dictation' },
+          ]}
+          description="Batch Dictation keeps finalize-once insertion. Live and Corrected are opt-in and require a supported combination."
+          errorId={useId()}
+          error={dictationModeError ?? storedDictationModeError ?? fieldErrors[FIELD_ID_DICTATION_MODE]}
+          onChange={handleDictationModeChange}
         />
         <SelectRow
           label="Mode"

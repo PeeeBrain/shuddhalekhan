@@ -1,0 +1,85 @@
+{
+  "whisperUrl": "http://private.test/inference",
+  "transcription": {
+    "activeProvider": "openai",
+    "providers": {
+      "localWhisperCpp": { "endpoint": "http://private.test/inference" },
+      "openai": { "baseUrl": "https://api.openai.com/v1", "model": "whisper-1" },
+      "azureSpeech": { "endpoint": "", "region": "" },
+      "googleCloudSpeech": {
+        "project": "",
+        "location": "global",
+        "model": "",
+        "credentialSource": "service-account"
+      },
+      "nvidiaSpeechNim": {
+        "endpoint": "",
+        "model": "",
+        "auth": "none",
+        "headerName": "",
+        "supportsAutomaticLanguageDetection": false,
+        "supportsTranslation": false,
+        "supportsDictionaryHints": false
+      },
+      "customOpenAiCompatible": {
+        "endpoint": "",
+        "model": "",
+        "auth": "none",
+        "headerName": ""
+      }
+    }
+  },
+  "transcriptionMigrated": true,
+  "shortcutsMigrated": true,
+  "selectedDeviceId": "usb-mic",
+  "removeFillerWords": false,
+  "language": "hi",
+  "task": "transcribe",
+  "dictionary": ["Shuddhalekhan"],
+  "pasteStrategy": { "default": "ctrl-v", "overrides": {} },
+  "setupChecklistDismissed": true,
+  "recordingActivationMode": "toggle",
+  "shortcuts": {
+    "dictation": {
+      "binding": { "keyCode": 82, "modifiers": ["ctrl"] },
+      "activationMode": "toggle"
+    },
+    "agent": {
+      "binding": { "keyCode": null, "modifiers": ["alt", "win"] },
+      "activationMode": "push-to-talk"
+    }
+  },
+  "agent": {
+    "enabled": true,
+    "provider": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "model": "openai/gpt-4.1-mini",
+      "apiKeyEnvVar": "OPENROUTER_API_KEY",
+      "apiKeySource": "environment",
+      "thinkingEnabled": true,
+      "reasoningEffort": "medium"
+    },
+    "mcpServers": [
+      {
+        "id": "mail",
+        "displayName": "Hosted Mail",
+        "enabled": true,
+        "transport": {
+          "type": "http",
+          "url": "https://mail.example.com/mcp",
+          "redirect": "error"
+        },
+        "discoveredTools": [
+          {
+            "name": "draft_email",
+            "description": "Draft an email",
+            "discoveredAt": "2026-05-07T00:00:00.000Z"
+          }
+        ],
+        "toolPolicies": {
+          "mail:draft_email": "alwaysAsk"
+        }
+      }
+    ]
+  }
+}

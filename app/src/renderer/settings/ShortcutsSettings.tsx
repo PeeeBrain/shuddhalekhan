@@ -5,6 +5,7 @@ import type {
   ShortcutBinding,
   ShortcutsConfig,
 } from '../../types/ipc';
+import { getAppConfigDictationError } from '../../shared/dictation-runtime';
 import { assessBinding, formatBinding } from '../../shared/shortcut-bindings';
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from './ui/SectionHeader';
@@ -210,6 +211,17 @@ function ShortcutRow({
       ...config.shortcuts,
       [intent]: { ...shortcut, activationMode },
     };
+    if (intent === 'dictation' && config.dictation) {
+      const error = getAppConfigDictationError({
+        ...config,
+        shortcuts: next,
+      });
+      if (error) {
+        setMessage(error);
+        return;
+      }
+    }
+    setMessage(null);
     void persistence.commit('shortcuts', next, `${fieldId}-mode`);
   };
 

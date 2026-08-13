@@ -4,8 +4,10 @@ import type {
   DictationTargetSnapshot,
   RecordingActivationMode,
   RecordingIntent,
+  RecordingPresentationEnvelope,
   ShortcutBinding,
 } from '../types/ipc';
+import { createRecordingPresentationEnvelope, getTranscriptionTransportCapabilities } from '../shared/dictation-runtime';
 import { keyboardHook } from './native/keyboard';
 import { DEFAULT_SHORTCUTS } from '../shared/shortcut-bindings';
 import { captureForegroundTarget } from './native/target';
@@ -25,6 +27,11 @@ export interface RecordingResult {
   text: string;
   intent: RecordingIntent;
   targetSnapshot: DictationTargetSnapshot | null;
+  recordingSessionId: string;
+  sequence: number;
+  revision: number;
+  capabilities: RecordingPresentationEnvelope['capabilities'];
+  outcome: NonNullable<RecordingPresentationEnvelope['outcome']>;
 }
 
 export interface AudioCapture {
@@ -179,7 +186,11 @@ export interface RecordingSessionOptions {
   transcriber?: Transcriber;
   getTranscriber?: () => Transcriber;
   captureTarget?: () => DictationTargetSnapshot | null;
-  showRecordingPill?: (intent: RecordingIntent, recordingSessionId?: string) => void;
+  showRecordingPill?: (
+    intent: RecordingIntent,
+    recordingSessionId?: string,
+    envelope?: RecordingPresentationEnvelope,
+  ) => void;
   hideRecordingPill?: () => void;
   updateDurationWarning?: (remainingSeconds: number | null) => void;
   setTimeoutFn?: typeof setTimeout;
@@ -206,13 +217,20 @@ export class RecordingSession {
   private getRecognitionSettings: () => RecognitionSettings;
   private getReadinessError: () => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
-  private showRecordingPillFn: (intent: RecordingIntent, recordingSessionId?: string) => void;
+  private showRecordingPillFn: (
+    intent: RecordingIntent,
+    recordingSessionId?: string,
+    envelope?: RecordingPresentationEnvelope,
+  ) => void;
   private hideRecordingPillFn: () => void;
   private updateDurationWarningFn: (remainingSeconds: number | null) => void;
   private setTimeoutFn: typeof setTimeout;
   private clearTimeoutFn: typeof clearTimeout;
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
   private recordingSessionId: string | null = null;
+  private sessionTranscriber: Transcriber | null = null;
+  private presentationSequence = 0;
+  private presentationRevision = 0;
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
   private getSelectedDeviceId?: () => string | null;
@@ -245,7 +263,7 @@ export class RecordingSession {
     this.getSelectedDeviceId = options.getSelectedDeviceId;
   }
 
-  begin(intent: RecordingIntent = 'dictation', recordingSessionId = randomUUID()): void {
+  begin(intent: RecordingIntent = 'dictation', recordingSessionId: string = randomUUID()): void {
     if (this.activeIntent || this.pendingEnd) {
       emitPerformanceMarker('recording.begin.rejected', {
         recordingSessionId,
@@ -264,7 +282,11 @@ export class RecordingSession {
       this.onErrorCallback?.(readinessError);
       return;
     }
+    const transcriber = this.getTranscriber();
     this.recordingSessionId = recordingSessionId;
+    this.sessionTranscriber = transcriber;
+    this.presentationSequence = 0;
+    this.presentationRevision = 0;
     emitPerformanceMarker('recording.begin.accepted', {
       recordingSessionId: this.recordingSessionId,
       surface: intent,
@@ -277,8 +299,12 @@ export class RecordingSession {
 
     this.audioCapture.prepare();
     this.audioCapture.beginCapture();
-    this.showRecordingPillFn(intent, this.recordingSessionId);
-    this.scheduleDurationLimit(this.getTranscriber().capabilities.maxDurationSeconds);
+    this.showRecordingPillFn(
+      intent,
+      this.recordingSessionId,
+      this.createPresentationEnvelope(transcriber),
+    );
+    this.scheduleDurationLimit(transcriber.capabilities.maxDurationSeconds);
   }
 
   async end(): Promise<RecordingResult | null> {
@@ -306,6 +332,7 @@ export class RecordingSession {
     this.audioCapture.cancelCapture();
     this.pendingEnd?.resolve(null);
     this.pendingEnd = null;
+    this.resetRuntimeMetadata();
   }
 
   /** Runs the pinned benchmark audio through the normal batch transcription path without using the live microphone. */
@@ -326,6 +353,9 @@ export class RecordingSession {
     }
 
     this.recordingSessionId = recordingSessionId;
+    this.sessionTranscriber = transcriber;
+    this.presentationSequence = 0;
+    this.presentationRevision = 0;
     this.activeIntent = 'dictation';
     this.targetSnapshot = null;
     emitPerformanceMarker('recording.begin.accepted', {
@@ -333,7 +363,11 @@ export class RecordingSession {
       surface: 'dictation',
     });
     this.audioCapture.prepare();
-    this.showRecordingPillFn('dictation', recordingSessionId);
+    this.showRecordingPillFn(
+      'dictation',
+      recordingSessionId,
+      this.createPresentationEnvelope(transcriber),
+    );
     emitPerformanceMarker('audio.capture.started', {
       recordingSessionId,
       surface: 'dictation',
@@ -359,10 +393,15 @@ export class RecordingSession {
   markAudioWindowCrashed(reason: string): void {
     this.audioCapture.markCrashed?.(reason);
     const error = new Error(`Audio window crashed: ${reason}`);
+    this.clearDurationTimers();
+    this.activeIntent = null;
+    this.targetSnapshot = null;
+    this.hideRecordingPillFn();
     if (this.pendingEnd) {
       this.pendingEnd.reject(error);
       this.pendingEnd = null;
     }
+    this.resetRuntimeMetadata();
     this.onErrorCallback?.(error);
   }
 
@@ -381,6 +420,7 @@ export class RecordingSession {
       audioData.fill(0);
       this.targetSnapshot = null;
       pendingEnd?.resolve(null);
+      this.resetRuntimeMetadata();
       return null;
     }
 
@@ -389,7 +429,8 @@ export class RecordingSession {
         recordingSessionId: this.recordingSessionId ?? undefined,
         surface: intent,
       });
-      const text = await (transcriberOverride ?? this.getTranscriber()).transcribe({
+      const transcriber = transcriberOverride ?? this.sessionTranscriber ?? this.getTranscriber();
+      const text = await transcriber.transcribe({
         audio: audioData,
         recognition: this.getRecognitionSettings(),
       });
@@ -399,12 +440,21 @@ export class RecordingSession {
       });
       const snapshot = this.targetSnapshot;
       this.targetSnapshot = null;
-      const result = text ? { text, intent, targetSnapshot: snapshot } : null;
+      const envelope = this.createPresentationEnvelope(transcriber, { kind: 'completed' });
+      const result = text ? {
+        text,
+        intent,
+        targetSnapshot: snapshot,
+        recordingSessionId: envelope.recordingSessionId,
+        sequence: envelope.sequence,
+        revision: envelope.revision,
+        capabilities: envelope.capabilities,
+        outcome: envelope.outcome ?? { kind: 'completed' },
+      } : null;
       emitPerformanceMarker('recording.session.completed', {
         recordingSessionId: this.recordingSessionId ?? undefined,
         surface: intent,
       });
-      this.recordingSessionId = null;
       pendingEnd?.resolve(result);
       if (notifyResult && this.onResultCallback) {
         void this.onResultCallback(result);
@@ -425,6 +475,7 @@ export class RecordingSession {
     } finally {
       audioData.fill(0);
       this.targetSnapshot = null;
+      this.resetRuntimeMetadata();
     }
   }
 
@@ -484,6 +535,32 @@ export class RecordingSession {
 
   getAudioWebContents(): import('electron').WebContents | null {
     return this.audioCapture.getWebContents?.() ?? null;
+  }
+
+  private createPresentationEnvelope(
+    transcriber: Transcriber,
+    outcome?: import('../types/ipc').RecordingTerminalOutcome,
+  ): RecordingPresentationEnvelope {
+    if (!this.recordingSessionId) {
+      throw new Error('Recording presentation requires an active session identity.');
+    }
+    this.presentationSequence += 1;
+    this.presentationRevision += 1;
+    return createRecordingPresentationEnvelope({
+      recordingSessionId: this.recordingSessionId,
+      sequence: this.presentationSequence,
+      revision: this.presentationRevision,
+      capabilities: transcriber.transportCapabilities
+        ?? getTranscriptionTransportCapabilities(transcriber.id),
+      outcome,
+    });
+  }
+
+  private resetRuntimeMetadata(): void {
+    this.recordingSessionId = null;
+    this.sessionTranscriber = null;
+    this.presentationSequence = 0;
+    this.presentationRevision = 0;
   }
 
   private scheduleDurationLimit(maxDurationSeconds: number | null): void {

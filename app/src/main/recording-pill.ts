@@ -1,6 +1,6 @@
 import { screen } from 'electron';
 import type { BrowserWindow } from 'electron';
-import type { RecordingIntent } from '../types/ipc';
+import type { RecordingIntent, RecordingPresentationEnvelope } from '../types/ipc';
 import { createSingletonWindow } from './window-factory';
 
 const PILL_WINDOW_WIDTH = 172;
@@ -47,6 +47,7 @@ export function prepareRecordingPillWindow(): BrowserWindow {
 export function showRecordingPill(
   intent: RecordingIntent = 'dictation',
   recordingSessionId?: string,
+  envelope?: RecordingPresentationEnvelope,
 ): void {
   if (pendingHideTimeout) {
     clearTimeout(pendingHideTimeout);
@@ -59,7 +60,7 @@ export function showRecordingPill(
   const sendEvents = () => {
     if (win.isDestroyed()) return;
     if (recordingSessionId) {
-      win.webContents.send('recording:pill-show', recordingSessionId);
+      win.webContents.send('recording:pill-show', recordingSessionId, envelope);
     } else {
       win.webContents.send('recording:pill-show');
     }

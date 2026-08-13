@@ -60,6 +60,7 @@ const config: AppConfig = {
     dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
     agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
   },
+  dictation: { mode: 'batch', formatter: null },
   agent: {
     enabled: true,
     provider: {

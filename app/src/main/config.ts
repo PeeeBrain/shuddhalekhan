@@ -2,13 +2,15 @@ import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import type { AppConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig } from '../types/ipc';
+import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
+import { DEFAULT_DICTATION_CONFIG, getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig } from '../shared/dictation-runtime';
 import { preparePersistentStoreDirectory } from './store-path';
 import { isolatePerformanceDriverConfig } from './performance/scenario-driver';
 
-type StoreConfig = AppConfig & {
+type StoreConfig = Omit<AppConfig, 'dictation'> & {
+  dictation?: unknown;
   migrated?: boolean;
   transcriptionMigrated?: boolean;
   shortcutsMigrated?: boolean;
@@ -48,6 +50,7 @@ const store = new Store<StoreConfig>({
     setupChecklistDismissed: false,
     recordingActivationMode: 'push-to-talk',
     shortcuts: DEFAULT_SHORTCUTS,
+    dictation: DEFAULT_DICTATION_CONFIG,
     agent: {
       enabled: false,
       provider: {
@@ -165,6 +168,16 @@ function maybeMigrateShortcutsConfig(): void {
 
 maybeMigrateShortcutsConfig();
 
+function persistNormalizedDictation(): void {
+  const stored = store.get('dictation');
+  const normalized = normalizeDictationConfig(stored);
+  if (JSON.stringify(stored ?? null) !== JSON.stringify(normalized)) {
+    store.set('dictation', normalized);
+  }
+}
+
+persistNormalizedDictation();
+
 export function getConfig(): AppConfig {
   const agent = store.get('agent');
   const mcpServers = normalizeMcpServers(agent?.mcpServers);
@@ -200,6 +213,7 @@ export function getConfig(): AppConfig {
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
     recordingActivationMode,
     shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
+    dictation: normalizeDictationConfig(store.get('dictation')),
     agent: {
       enabled: agent?.enabled ?? false,
       provider: {
@@ -228,9 +242,40 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
         throw new Error(verdict.message);
       }
     }
+    const previousShortcuts = normalizeShortcutsConfig(store.get('shortcuts'));
+    if (shortcuts.dictation.activationMode !== previousShortcuts.dictation.activationMode) {
+      assertDictationCombination({
+        dictation: normalizeDictationConfig(store.get('dictation')),
+        shortcuts,
+        transcription: store.get('transcription') ?? DEFAULT_TRANSCRIPTION,
+      });
+    }
     store.set(key, shortcuts as AppConfig[K]);
     return;
   }
+
+  if (key === 'dictation') {
+    const dictation = normalizeDictationConfig(value);
+    assertDictationCombination({
+      dictation,
+      shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
+      transcription: store.get('transcription') ?? DEFAULT_TRANSCRIPTION,
+    });
+    store.set(key, dictation as AppConfig[K]);
+    return;
+  }
+
+  if (key === 'transcription') {
+    const transcription = value as TranscriptionConfig;
+    if (transcription.activeProvider !== store.get('transcription')?.activeProvider) {
+      assertDictationCombination({
+        dictation: normalizeDictationConfig(store.get('dictation')),
+        shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
+        transcription,
+      });
+    }
+  }
+
   store.set(key, value);
   if (key === 'transcription') {
     store.set('whisperUrl', (value as TranscriptionConfig).providers.localWhisperCpp.endpoint);
@@ -249,6 +294,20 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
       },
     });
   }
+}
+
+function assertDictationCombination(input: {
+  dictation: DictationConfig;
+  shortcuts: ShortcutsConfig;
+  transcription: TranscriptionConfig;
+}): void {
+  const error = getDictationCombinationError({
+    mode: input.dictation.mode,
+    activationMode: input.shortcuts.dictation.activationMode,
+    capabilities: getTranscriptionTransportCapabilities(input.transcription.activeProvider),
+    formatter: input.dictation.formatter,
+  });
+  if (error) throw new Error(error);
 }
 
 export function getLastSeenReleaseNotesVersion(): string | null {

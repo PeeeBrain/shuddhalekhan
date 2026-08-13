@@ -105,6 +105,7 @@ describe('config store', () => {
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
       recordingActivationMode: 'push-to-talk',
+      dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
         provider: {
@@ -166,6 +167,7 @@ describe('config store', () => {
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
       recordingActivationMode: 'push-to-talk',
+      dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
         provider: {
@@ -266,6 +268,7 @@ describe('config store', () => {
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
       recordingActivationMode: 'push-to-talk',
+      dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
         provider: {
@@ -297,6 +300,7 @@ describe('config store', () => {
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
       recordingActivationMode: 'push-to-talk',
+      dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
         provider: {
@@ -583,5 +587,285 @@ describe('config store', () => {
       dictation: { binding: { keyCode: 0x52, modifiers: [] }, activationMode: 'toggle' },
       agent: { binding: null, activationMode: 'push-to-talk' },
     });
+  });
+
+  it('normalizes a supported pre-mode store to Batch Dictation without rewriting other references', async () => {
+    existsSync.mockReturnValue(false);
+    const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
+    for (const [key, value] of Object.entries(fixture.default ?? fixture)) {
+      if (key === 'default') continue;
+      storeData.set(key, value);
+    }
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-dictation-mode-normalize`);
+    const config = getConfig();
+
+    expect(config.dictation).toEqual({ mode: 'batch', formatter: null });
+    expect(config.transcription.activeProvider).toBe('openai');
+    expect(config.transcription.providers.openai).toEqual({
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'whisper-1',
+    });
+    expect(config.whisperUrl).toBe('http://private.test/inference');
+    expect(config.shortcuts).toEqual({
+      dictation: {
+        binding: { keyCode: 82, modifiers: ['ctrl'] },
+        activationMode: 'toggle',
+      },
+      agent: {
+        binding: { keyCode: null, modifiers: ['alt', 'win'] },
+        activationMode: 'push-to-talk',
+      },
+    });
+    expect(config.agent.enabled).toBe(true);
+    expect(config.agent.provider.apiKeyEnvVar).toBe('OPENROUTER_API_KEY');
+    expect(config.agent.mcpServers).toEqual([
+      {
+        id: 'mail',
+        displayName: 'Hosted Mail',
+        enabled: true,
+        transport: {
+          type: 'http',
+          url: 'https://mail.example.com/mcp',
+          redirect: 'error',
+        },
+        discoveredTools: [
+          {
+            name: 'draft_email',
+            description: 'Draft an email',
+            discoveredAt: '2026-05-07T00:00:00.000Z',
+          },
+        ],
+        toolPolicies: {
+          'mail:draft_email': 'alwaysAsk',
+        },
+      },
+    ]);
+  });
+
+  it('keeps Dictation mode migration idempotent across two startups', async () => {
+    existsSync.mockReturnValue(false);
+    const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
+    for (const [key, value] of Object.entries(fixture.default ?? fixture)) {
+      if (key === 'default') continue;
+      storeData.set(key, value);
+    }
+
+    const first = await import(`../config?test=${Date.now()}-dictation-idempotent-a`);
+    expect(first.getConfig().dictation).toEqual({ mode: 'batch', formatter: null });
+    expect(storeData.get('dictation')).toEqual({ mode: 'batch', formatter: null });
+    const storeAfterFirstStartup = structuredClone(Object.fromEntries(storeData));
+
+    const second = await import(`../config?test=${Date.now()}-dictation-idempotent-b`);
+    expect(second.getConfig().dictation).toEqual({ mode: 'batch', formatter: null });
+    expect(second.getConfig().transcription.activeProvider).toBe('openai');
+    expect(second.getConfig().agent.provider.apiKeyEnvVar).toBe('OPENROUTER_API_KEY');
+    expect(second.getConfig().shortcuts.dictation.activationMode).toBe('toggle');
+    expect(Object.fromEntries(storeData)).toEqual(storeAfterFirstStartup);
+  });
+
+  it('normalizes an unsupported stored Dictation mode to batch', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('dictation', { mode: 'stream', formatter: null });
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-dictation-unknown-mode`);
+
+    expect(getConfig().dictation).toEqual({ mode: 'batch', formatter: null });
+    expect(storeData.get('dictation')).toEqual({ mode: 'batch', formatter: null });
+  });
+
+  it('preserves an explicit Live Dictation mode instead of silently switching it', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('dictation', { mode: 'live', formatter: null });
+    storeData.set('shortcutsMigrated', true);
+    storeData.set('shortcuts', {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    });
+
+    const { getConfig } = await import(`../config?test=${Date.now()}-dictation-preserve-live`);
+
+    expect(getConfig().dictation.mode).toBe('live');
+    expect(getConfig().shortcuts.dictation.activationMode).toBe('push-to-talk');
+    expect(storeData.get('dictation')).toEqual({ mode: 'live', formatter: null });
+  });
+
+  it('rejects Live Dictation when the provider cannot stream or activation is not Toggle', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-live`);
+
+    expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
+      'Live Dictation requires Toggle activation.',
+    );
+    expect(getConfig().dictation.mode).toBe('batch');
+
+    setConfig('shortcuts', {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    });
+
+    expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
+      'Live Dictation requires a streaming-capable provider.',
+    );
+    expect(getConfig().dictation.mode).toBe('batch');
+  });
+
+  it('rejects Corrected Dictation without a formatter profile', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-corrected`);
+
+    expect(() => setConfig('dictation', { mode: 'corrected', formatter: null })).toThrow(
+      'Corrected Dictation requires a formatter profile.',
+    );
+    expect(getConfig().dictation.mode).toBe('batch');
+  });
+
+  it('persists Corrected Dictation when a formatter profile is present', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-persist-corrected`);
+
+    setConfig('dictation', {
+      mode: 'corrected',
+      formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+    });
+
+    expect(getConfig().dictation).toEqual({
+      mode: 'corrected',
+      formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+    });
+  });
+
+  it('rejects unsafe remote formatter profiles', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-formatter-safety`);
+
+    expect(() => setConfig('dictation', {
+      mode: 'corrected',
+      formatter: { baseUrl: 'http://formatter.example.com/v1', model: 'formatter' },
+    })).toThrow('Remote Corrected Dictation formatters must use HTTPS.');
+    expect(getConfig().dictation.mode).toBe('batch');
+  });
+
+  it('rejects activation and provider changes that would silently break Live Dictation', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('dictation', { mode: 'live', formatter: null });
+    storeData.set('shortcutsMigrated', true);
+    storeData.set('shortcuts', {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    });
+
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-combo-change`);
+
+    expect(() => setConfig('shortcuts', {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    })).toThrow('Live Dictation requires Toggle activation.');
+    expect(getConfig().shortcuts.dictation.activationMode).toBe('toggle');
+    expect(getConfig().dictation.mode).toBe('live');
+  });
+
+  it('allows unrelated Agent and provider-detail edits when a preserved mode is unsupported', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('dictation', { mode: 'live', formatter: null });
+    storeData.set('shortcutsMigrated', true);
+    storeData.set('shortcuts', {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    });
+
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-unrelated-edits`);
+    const config = getConfig();
+    setConfig('shortcuts', {
+      ...config.shortcuts,
+      agent: { ...config.shortcuts.agent, activationMode: 'toggle' },
+    });
+    setConfig('transcription', {
+      ...config.transcription,
+      providers: {
+        ...config.transcription.providers,
+        localWhisperCpp: { endpoint: 'http://localhost:9090/inference' },
+      },
+    });
+
+    expect(getConfig().shortcuts.agent.activationMode).toBe('toggle');
+    expect(getConfig().transcription.providers.localWhisperCpp.endpoint).toBe(
+      'http://localhost:9090/inference',
+    );
+    expect(getConfig().dictation.mode).toBe('live');
+  });
+
+  it('preserves Batch Dictation and Agent-only config when maintainer gates are off', async () => {
+    existsSync.mockReturnValue(false);
+    const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
+    for (const [key, value] of Object.entries(fixture.default ?? fixture)) {
+      if (key === 'default') continue;
+      storeData.set(key, value);
+    }
+    const previous = {
+      shell: process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL,
+      streaming: process.env.SHUDDHALEKHAN_DISABLE_STREAMING,
+      unicode: process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE,
+    };
+    process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = '1';
+    process.env.SHUDDHALEKHAN_DISABLE_STREAMING = '1';
+    process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = '1';
+
+    try {
+      const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-feature-off`);
+      const config = getConfig();
+      expect(config.dictation.mode).toBe('batch');
+      expect(config.agent.enabled).toBe(true);
+      expect(config.agent.mcpServers[0]?.id).toBe('mail');
+      expect(config.agent.provider.apiKeyEnvVar).toBe('OPENROUTER_API_KEY');
+
+      setConfig('shortcuts', {
+        dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
+        agent: config.shortcuts.agent,
+      });
+      expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
+        'Live Dictation requires a streaming-capable provider.',
+      );
+      expect(getConfig().dictation.mode).toBe('batch');
+      expect(getConfig().agent.enabled).toBe(true);
+    } finally {
+      if (previous.shell === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+      else process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = previous.shell;
+      if (previous.streaming === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_STREAMING;
+      else process.env.SHUDDHALEKHAN_DISABLE_STREAMING = previous.streaming;
+      if (previous.unicode === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE;
+      else process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = previous.unicode;
+    }
+  });
+
+  it('preserves an explicitly selected mode when future runtime paths are locally disabled', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('dictation', {
+      mode: 'corrected',
+      formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+    });
+    const previous = {
+      shell: process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL,
+      streaming: process.env.SHUDDHALEKHAN_DISABLE_STREAMING,
+      unicode: process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE,
+    };
+    process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = '1';
+    process.env.SHUDDHALEKHAN_DISABLE_STREAMING = '1';
+    process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = '1';
+
+    try {
+      const { getConfig } = await import(`../config?test=${Date.now()}-dictation-gates-preserve-mode`);
+      expect(getConfig().dictation).toEqual({
+        mode: 'corrected',
+        formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+      });
+    } finally {
+      if (previous.shell === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+      else process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = previous.shell;
+      if (previous.streaming === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_STREAMING;
+      else process.env.SHUDDHALEKHAN_DISABLE_STREAMING = previous.streaming;
+      if (previous.unicode === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE;
+      else process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = previous.unicode;
+    }
   });
 });

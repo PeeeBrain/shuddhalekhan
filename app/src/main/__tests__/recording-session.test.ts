@@ -112,8 +112,33 @@ describe('RecordingSession', () => {
 
     expect(audioStream.prepare).toHaveBeenCalledTimes(1);
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
-    expect(showRecordingPill).toHaveBeenCalledWith('dictation', expect.any(String));
+    expect(showRecordingPill).toHaveBeenCalledWith(
+      'dictation',
+      expect.any(String),
+      expect.objectContaining({
+        sequence: 1,
+        revision: 1,
+        capabilities: { batch: true, streaming: false },
+      }),
+    );
     expect(session.isActive()).toBe(true);
+  });
+
+  it('attaches opaque session identity, revision, and provider capabilities to recording presentation', () => {
+    session.begin('dictation');
+
+    expect(showRecordingPill).toHaveBeenCalledWith(
+      'dictation',
+      expect.any(String),
+      expect.objectContaining({
+        recordingSessionId: expect.any(String),
+        sequence: 1,
+        revision: 1,
+        capabilities: { batch: true, streaming: false },
+      }),
+    );
+    const envelope = showRecordingPill.mock.calls[0]?.[2] as { recordingSessionId: string };
+    expect(showRecordingPill.mock.calls[0]?.[1]).toBe(envelope.recordingSessionId);
   });
 
   it('prevents keyboard-triggered recording when the active provider is not ready', () => {
@@ -199,11 +224,54 @@ describe('RecordingSession', () => {
       text: 'transcribed text',
       intent: 'agent' satisfies RecordingIntent,
       targetSnapshot: expect.any(Object),
+      recordingSessionId: expect.any(String),
+      sequence: 2,
+      revision: 2,
+      capabilities: { batch: true, streaming: false },
+      outcome: { kind: 'completed' },
     });
     expect(hideRecordingPill).toHaveBeenCalled();
     expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
     expect(transcribe).toHaveBeenCalledWith(new Uint8Array(64));
     expect(session.isActive()).toBe(false);
+  });
+
+  it('pins the transcriber and advances session metadata monotonically through completion', async () => {
+    const firstTranscribe = vi.fn(async () => 'first provider');
+    const secondTranscribe = vi.fn(async () => 'second provider');
+    const firstTranscriber: Transcriber = {
+      ...createTranscriber(firstTranscribe),
+      transportCapabilities: { batch: true, streaming: true },
+    };
+    const secondTranscriber = createTranscriber(secondTranscribe);
+    const getTranscriber = vi.fn()
+      .mockReturnValueOnce(firstTranscriber)
+      .mockReturnValue(secondTranscriber);
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      getTranscriber,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation', 'opaque-session');
+    const resultPromise = session.end();
+    await session.complete(new Uint8Array(64));
+
+    expect(getTranscriber).toHaveBeenCalledTimes(1);
+    expect(firstTranscribe).toHaveBeenCalledTimes(1);
+    expect(secondTranscribe).not.toHaveBeenCalled();
+    await expect(resultPromise).resolves.toMatchObject({
+      text: 'first provider',
+      recordingSessionId: 'opaque-session',
+      sequence: 2,
+      revision: 2,
+      capabilities: { batch: true, streaming: true },
+      outcome: { kind: 'completed' },
+    });
   });
 
   it('captures the foreground target when recording begins and returns it with the result', async () => {
@@ -252,9 +320,24 @@ describe('RecordingSession', () => {
     expect(audioStream.markReady).toHaveBeenCalledTimes(1);
   });
 
-  it('delegates audio window crash recovery to the audio stream', () => {
+  it('clears recording state when delegating audio window crash recovery', () => {
+    session.begin('dictation', 'crashed-session');
     session.markAudioWindowCrashed('render-process-gone');
+
     expect(audioStream.markCrashed).toHaveBeenCalledWith('render-process-gone');
+    expect(hideRecordingPill).toHaveBeenCalled();
+    expect(session.isActive()).toBe(false);
+
+    session.begin('dictation', 'replacement-session');
+    expect(showRecordingPill).toHaveBeenLastCalledWith(
+      'dictation',
+      'replacement-session',
+      expect.objectContaining({
+        recordingSessionId: 'replacement-session',
+        sequence: 1,
+        revision: 1,
+      }),
+    );
   });
 
   it('owns keyboard hook lifecycle', () => {
@@ -396,6 +479,11 @@ describe('RecordingSession', () => {
       text: 'transcribed text',
       intent: 'dictation',
       targetSnapshot: expect.any(Object),
+      recordingSessionId: expect.any(String),
+      sequence: 2,
+      revision: 2,
+      capabilities: { batch: true, streaming: false },
+      outcome: { kind: 'completed' },
     });
     expect(onError).not.toHaveBeenCalled();
   });

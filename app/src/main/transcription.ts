@@ -33,6 +33,7 @@ export interface TranscriptionRequest {
 export interface Transcriber {
   readonly id: TranscriptionProviderId;
   readonly capabilities: TranscriptionCapabilities;
+  readonly transportCapabilities?: import('../types/ipc').TranscriptionTransportCapabilities;
   transcribe(request: TranscriptionRequest): Promise<string>;
 }
 

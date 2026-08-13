@@ -51,6 +51,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
       agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
     },
+    dictation: { mode: 'batch', formatter: null },
     agent: {
       enabled: false,
       provider: {
@@ -245,6 +246,51 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('combobox', { name: 'Mode' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Spoken language' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeInTheDocument();
+  });
+
+  it('represents Batch Dictation and rejects unsupported Live or Corrected combinations', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+
+    const dictationMode = screen.getByRole('combobox', { name: 'Dictation mode' });
+    expect(dictationMode).toHaveTextContent('Batch Dictation');
+
+    fireEvent.click(dictationMode);
+    fireEvent.click(await screen.findByRole('option', { name: /Live Dictation/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Live Dictation requires Toggle activation.');
+    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent('Batch Dictation');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Dictation mode' }));
+    fireEvent.click(await screen.findByRole('option', { name: /Corrected Dictation/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Corrected Dictation requires a formatter profile.');
+    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent('Batch Dictation');
+  });
+
+  it('explains rejected activation changes instead of silently ignoring them', async () => {
+    const config = baseConfig({
+      dictation: { mode: 'live', formatter: null },
+      shortcuts: {
+        dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
+        agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+      },
+    });
+    const { settingsIpc } = renderSettings({ config });
+    await waitForLoaded();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Live Dictation requires a streaming-capable provider.',
+    );
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    fireEvent.change(screen.getByRole('combobox', {
+      name: 'Dictation activation mode',
+    }), { target: { value: 'push-to-talk' } });
+
+    expect(await screen.findByText('Live Dictation requires Toggle activation.')).toBeInTheDocument();
+    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
   });
 
   it('groups all six provider choices with descriptions and readiness', async () => {
