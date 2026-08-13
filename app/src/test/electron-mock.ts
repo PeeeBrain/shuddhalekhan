@@ -44,6 +44,10 @@ export const electronMock = {
       setPermissionRequestHandler: mock(),
     },
   },
+  powerMonitor: {
+    on: mock(),
+    off: mock(),
+  },
   Notification: Object.assign(mock(() => ({ show: mock() })), {
     isSupported: mock(() => true),
   }),
@@ -129,6 +133,8 @@ export function resetElectronMock(): void {
   electronMock.dialog.showMessageBox.mockReset();
   electronMock.dialog.showMessageBox.mockResolvedValue({ response: 0 });
   electronMock.session.defaultSession.setPermissionRequestHandler.mockReset();
+  electronMock.powerMonitor.on.mockReset();
+  electronMock.powerMonitor.off.mockReset();
   electronMock.Notification.mockReset();
   electronMock.Notification.mockImplementation(() => ({ show: mock() }));
   electronMock.Notification.isSupported.mockReset();

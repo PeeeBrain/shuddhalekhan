@@ -88,6 +88,13 @@ export interface RendererToMainSendChannels {
   'audio-data-ready': (audioData: ArrayBuffer) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
+  'runtime:audio-data-ready': (
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
+    audioData: ArrayBuffer,
+  ) => void;
+  'runtime:recovery-action': (action: DictationRecoveryAction) => void;
   'agent-toast:content-size': (height: number) => void;
   'agent-toast:dismiss': () => void;
 }
@@ -160,7 +167,40 @@ export interface MainToRendererChannels {
   'audit:run-updated': (agentRunId: string) => void;
   'shortcuts:paused-changed': (paused: boolean) => void;
   'surface:request-paint-proxy': (surface: string) => void;
+  'runtime:audio-start': (command: RuntimeAudioCommand) => void;
+  'runtime:audio-stop': (command: RuntimeAudioCommand) => void;
+  'runtime:snapshot': (snapshot: RuntimePresentationSnapshot) => void;
 }
+
+export interface RuntimeAudioCommand {
+  generation: number;
+  recordingSessionId: string;
+  sequence: number;
+}
+
+export type DictationRecoveryAction = 'retry-paste' | 'copy-full-transcript' | 'copy-partial-transcript';
+
+export type RuntimePresentationState =
+  | { kind: 'idle' }
+  | {
+      kind: 'recording';
+      recordingSessionId: string;
+      intent: RecordingIntent;
+      capabilities: TranscriptionTransportCapabilities;
+      durationWarningSeconds: number | null;
+    }
+  | { kind: 'processing'; recordingSessionId: string }
+  | {
+      kind: 'failure';
+      recordingSessionId: string | null;
+      message: string;
+      recoveryActions: DictationRecoveryAction[];
+    };
+
+export type RuntimePresentationSnapshot = {
+  generation: number;
+  revision: number;
+} & RuntimePresentationState;
 
 export type McpServerRuntimeStatus = {
   serverId: string;

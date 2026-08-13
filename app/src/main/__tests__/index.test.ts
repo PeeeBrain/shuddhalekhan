@@ -7,6 +7,7 @@ const vi = { fn: mock, mock: mock.module, spyOn };
 const ipcHandlers = new Map<string, (...args: any[]) => unknown>();
 const ipcListeners = new Map<string, (...args: any[]) => unknown>();
 const appListeners = new Map<string, (...args: any[]) => unknown>();
+const powerMonitorListeners = new Map<string, (...args: any[]) => unknown>();
 const clipboardText = { value: 'original' };
 const send = vi.fn();
 const isDestroyed = vi.fn(() => false);
@@ -102,6 +103,7 @@ const recordingSessionStart = vi.fn();
 const recordingSessionStop = vi.fn();
 const recordingSessionBegin = vi.fn();
 const recordingSessionEnd = vi.fn(() => Promise.resolve({ text: 'transcribed text', intent: 'dictation', targetSnapshot: null }));
+const recordingSessionCancel = vi.fn(() => Promise.resolve());
 const recordingSessionUpdateDevice = vi.fn();
 const recordingSessionGetAudioWebContents = vi.fn();
 let sessionOptions: any = null;
@@ -169,8 +171,10 @@ mock.module('../recording-session', () => ({
     stop = recordingSessionStop;
     begin = recordingSessionBegin;
     end = recordingSessionEnd;
+    cancel = recordingSessionCancel;
     updateDevice = recordingSessionUpdateDevice;
     getAudioWebContents = recordingSessionGetAudioWebContents;
+    markRuntimeShellCrashed = vi.fn();
   }
 }));
 
@@ -213,9 +217,11 @@ describe('main process IPC orchestration', () => {
   });
 
   beforeEach(async () => {
+    process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = '1';
     ipcHandlers.clear();
     ipcListeners.clear();
     appListeners.clear();
+    powerMonitorListeners.clear();
     trayHandlers = {};
     clipboardText.value = 'original';
     resetElectronMock();
@@ -224,6 +230,9 @@ describe('main process IPC orchestration', () => {
     electronMock.Notification.mockImplementation(() => ({ show: notificationShow }));
     electronMock.app.on.mockImplementation((event: string, listener: (...args: any[]) => void) => {
       appListeners.set(event, listener);
+    });
+    electronMock.powerMonitor.on.mockImplementation((event: string, listener: (...args: any[]) => void) => {
+      powerMonitorListeners.set(event, listener);
     });
     electronMock.BrowserWindow.mockImplementation(() => ({
       loadURL: vi.fn(),
@@ -247,6 +256,7 @@ describe('main process IPC orchestration', () => {
     isDestroyed.mockReturnValue(false);
     showRecordingPill.mockClear();
     hideRecordingPill.mockClear();
+    recordingSessionCancel.mockClear();
     setConfig.mockClear();
     getLastSeenReleaseNotesVersion.mockClear();
     setLastSeenReleaseNotesVersion.mockClear();
@@ -324,6 +334,7 @@ describe('main process IPC orchestration', () => {
       'agent-toast:content-size',
       'agent-toast:dismiss',
       'audio-devices',
+      'runtime:recovery-action',
       'surface-paint-proxy',
     ]);
   });
@@ -542,6 +553,16 @@ describe('main process IPC orchestration', () => {
 
     expect(recordingSessionStop).toHaveBeenCalledTimes(1);
     expect(agentStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails active recording closed on screen lock and suspend', async () => {
+    await import(`../index?test=${Date.now()}-power-events`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    powerMonitorListeners.get('lock-screen')?.();
+    powerMonitorListeners.get('suspend')?.();
+
+    expect(recordingSessionCancel).toHaveBeenCalledTimes(2);
   });
 
   it('starts the agent sidecar on app ready when persisted Agent Mode is enabled', async () => {
