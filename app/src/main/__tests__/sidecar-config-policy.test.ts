@@ -27,6 +27,7 @@ const baseConfig: AppConfig = {
     dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
     agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
   },
+  dictation: { mode: 'batch', formatter: null },
   agent: {
     enabled: true,
     provider: {
@@ -90,14 +91,10 @@ describe('getSidecarConfigAction', () => {
     })).toBe('start');
   });
 
-  it('ignores equivalent sidecar config', () => {
+  it('ignores Dictation runtime settings when deciding sidecar lifecycle', () => {
     expect(getSidecarConfigAction(baseConfig, {
       ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: { ...baseConfig.agent.provider },
-        mcpServers: [...baseConfig.agent.mcpServers],
-      },
+      dictation: { mode: 'corrected', formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'fmt' } },
     })).toBe('none');
   });
 });

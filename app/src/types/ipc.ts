@@ -147,7 +147,7 @@ export interface MainToRendererChannels {
   'audio:stop-recording': () => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;
-  'recording:pill-show': (recordingSessionId?: string) => void;
+  'recording:pill-show': (recordingSessionId?: string, envelope?: RecordingPresentationEnvelope) => void;
   'recording:pill-hide': () => void;
   'recording:duration-warning': (remainingSeconds: number | null) => void;
   'recording:started': () => void;
@@ -279,6 +279,37 @@ export interface TranscriptionConfig {
   };
 }
 
+export type DictationMode = 'batch' | 'live' | 'corrected';
+
+export interface DictationFormatterProfile {
+  baseUrl: string;
+  model: string;
+}
+
+export interface DictationConfig {
+  mode: DictationMode;
+  formatter: DictationFormatterProfile | null;
+}
+
+export interface TranscriptionTransportCapabilities {
+  batch: true;
+  streaming: boolean;
+}
+
+export type RecordingTerminalOutcome =
+  | { kind: 'completed' }
+  | { kind: 'cancelled' }
+  | { kind: 'failed'; message: string }
+  | { kind: 'empty' };
+
+export interface RecordingPresentationEnvelope {
+  recordingSessionId: string;
+  sequence: number;
+  revision: number;
+  capabilities: TranscriptionTransportCapabilities;
+  outcome?: RecordingTerminalOutcome;
+}
+
 export interface AppConfig {
   /** @deprecated Read the local provider endpoint from transcription instead. */
   whisperUrl: string;
@@ -293,6 +324,7 @@ export interface AppConfig {
   /** @deprecated Seed value for per-intent activation modes; read shortcuts instead. */
   recordingActivationMode: RecordingActivationMode;
   shortcuts: ShortcutsConfig;
+  dictation: DictationConfig;
   agent: {
     enabled: boolean;
     provider: {

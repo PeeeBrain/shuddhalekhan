@@ -7,6 +7,12 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Dictation Runtime
+- Added explicit Batch, Live, and Corrected Dictation modes in persisted config. Existing installations normalize to Batch Dictation without changing provider, shortcuts, activation, MCP, or credential references.
+- Transcription settings now show the selected Dictation mode and reject unsupported Live or Corrected combinations instead of silently switching behavior.
+- Recording sessions and the recording pill can carry opaque session identity, monotonic sequence/revision metadata, provider capabilities, and typed terminal outcomes while preserving existing message meanings.
+- Added local maintainer kill-switch contracts for the runtime shell, streaming, and direct-Unicode paths without coupling them to persisted user settings.
+
 ### Updates
 - Update prompts now show a preview of the target version's release notes, with the complete notes available in Settings.
 - Newly installed updates include the same version-scoped notes used by the GitHub Release, so the first release containing the viewer can show its changes after installation.
