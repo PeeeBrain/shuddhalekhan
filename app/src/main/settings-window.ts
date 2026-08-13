@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { createSingletonWindow } from './window-factory';
+import { emitPerformanceMarker } from './performance/marker-collector';
 
 let closedHandler: (() => void) | null = null;
 
@@ -36,6 +37,10 @@ export function getSettingsWindow(): BrowserWindow | null {
 
 export function openSettingsWindow(section?: 'about'): BrowserWindow {
   const existingWindow = settingsWindow.get();
+  emitPerformanceMarker('surface.requested', {
+    surface: 'settings',
+    transition: existingWindow && !existingWindow.isDestroyed() ? 'warm-show' : 'cold-create',
+  });
   if (existingWindow && !existingWindow.isDestroyed()) {
     existingWindow.show();
     existingWindow.focus();

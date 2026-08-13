@@ -30,6 +30,7 @@ function AudioWindow() {
     const unsubscribe = window.electronAPI.subscribe('audio:start-recording', () => {
       startPromiseRef.current = startRecording()
         .then(() => {
+          window.electronAPI?.send('audio-capture-started');
           void sendAudioDevices().catch((err) => {
             console.error('Failed to refresh audio devices after recording started:', err);
           });
@@ -74,8 +75,28 @@ function AudioWindow() {
   return null;
 }
 
+function useSurfacePaintProxy(surface: string): void {
+  useEffect(() => {
+    let firstFrame = 0;
+    let secondFrame = 0;
+    firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        window.electronAPI?.send('surface-paint-proxy', surface);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, [surface]);
+}
+
 function App() {
   const hash = window.location.hash.replace(/^#\/?/, '');
+  const surface = hash.startsWith('recording')
+    ? 'recording'
+    : hash.split('?')[0] || 'unknown';
+  useSurfacePaintProxy(surface);
 
   if (hash.startsWith('recording')) {
     const params = new URLSearchParams(hash.split('?')[1] ?? '');

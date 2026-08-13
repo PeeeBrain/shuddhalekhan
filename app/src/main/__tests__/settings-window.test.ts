@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
+import {
+  createMarkerCollector,
+  resetPerformanceMarkerCollectorForTests,
+  setPerformanceMarkerCollector,
+} from '../performance/marker-collector';
 
 const vi = { fn: mock };
 
@@ -68,5 +73,23 @@ describe('settings window', () => {
     expect(BrowserWindow).toHaveBeenCalledTimes(1);
     expect(show).toHaveBeenCalledTimes(1);
     expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks cold-create and warm-show requests before opening Settings', async () => {
+    const lines: string[] = [];
+    setPerformanceMarkerCollector(createMarkerCollector(
+      { enabled: true, runId: 'run-1', scenarioId: 'settings-open', eventsPath: 'events.jsonl' },
+      { pid: 1, now: () => 10, writeLine: (line) => lines.push(line) },
+    ));
+    const { openSettingsWindow } = await import(`../settings-window?test=${Date.now()}-markers`);
+
+    openSettingsWindow();
+    openSettingsWindow();
+
+    expect(lines.map((line) => JSON.parse(line))).toMatchObject([
+      { event: 'surface.requested', surface: 'settings', transition: 'cold-create' },
+      { event: 'surface.requested', surface: 'settings', transition: 'warm-show' },
+    ]);
+    resetPerformanceMarkerCollectorForTests();
   });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type {
   DictationTargetSnapshot,
@@ -18,6 +19,7 @@ import {
 import { localWhisperCppTranscriber } from './whisper';
 import type { RecognitionSettings, Transcriber } from './transcription';
 import { createSingletonWindow } from './window-factory';
+import { emitPerformanceMarker } from './performance/marker-collector';
 
 export interface RecordingResult {
   text: string;
@@ -177,7 +179,7 @@ export interface RecordingSessionOptions {
   transcriber?: Transcriber;
   getTranscriber?: () => Transcriber;
   captureTarget?: () => DictationTargetSnapshot | null;
-  showRecordingPill?: (intent: RecordingIntent) => void;
+  showRecordingPill?: (intent: RecordingIntent, recordingSessionId?: string) => void;
   hideRecordingPill?: () => void;
   updateDurationWarning?: (remainingSeconds: number | null) => void;
   setTimeoutFn?: typeof setTimeout;
@@ -204,12 +206,13 @@ export class RecordingSession {
   private getRecognitionSettings: () => RecognitionSettings;
   private getReadinessError: () => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
-  private showRecordingPillFn: (intent: RecordingIntent) => void;
+  private showRecordingPillFn: (intent: RecordingIntent, recordingSessionId?: string) => void;
   private hideRecordingPillFn: () => void;
   private updateDurationWarningFn: (remainingSeconds: number | null) => void;
   private setTimeoutFn: typeof setTimeout;
   private clearTimeoutFn: typeof clearTimeout;
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
+  private recordingSessionId: string | null = null;
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
   private getSelectedDeviceId?: () => string | null;
@@ -242,13 +245,30 @@ export class RecordingSession {
     this.getSelectedDeviceId = options.getSelectedDeviceId;
   }
 
-  begin(intent: RecordingIntent = 'dictation'): void {
-    if (this.activeIntent || this.pendingEnd) return;
+  begin(intent: RecordingIntent = 'dictation', recordingSessionId = randomUUID()): void {
+    if (this.activeIntent || this.pendingEnd) {
+      emitPerformanceMarker('recording.begin.rejected', {
+        recordingSessionId,
+        surface: intent,
+        reason: 'busy',
+      });
+      return;
+    }
     const readinessError = this.getReadinessError();
     if (readinessError) {
+      emitPerformanceMarker('recording.begin.rejected', {
+        recordingSessionId,
+        surface: intent,
+        reason: 'not-ready',
+      });
       this.onErrorCallback?.(readinessError);
       return;
     }
+    this.recordingSessionId = recordingSessionId;
+    emitPerformanceMarker('recording.begin.accepted', {
+      recordingSessionId: this.recordingSessionId,
+      surface: intent,
+    });
     this.activeIntent = intent;
     this.targetSnapshot = this.captureTarget();
 
@@ -257,13 +277,16 @@ export class RecordingSession {
 
     this.audioCapture.prepare();
     this.audioCapture.beginCapture();
-    this.showRecordingPillFn(intent);
+    this.showRecordingPillFn(intent, this.recordingSessionId);
     this.scheduleDurationLimit(this.getTranscriber().capabilities.maxDurationSeconds);
   }
 
   async end(): Promise<RecordingResult | null> {
     if (!this.activeIntent) return null;
 
+    emitPerformanceMarker('recording.stop.requested', {
+      recordingSessionId: this.recordingSessionId ?? undefined,
+    });
     this.clearDurationTimers();
     const intent = this.activeIntent;
     this.activeIntent = null;
@@ -318,13 +341,26 @@ export class RecordingSession {
     }
 
     try {
+      emitPerformanceMarker('transcription.batch.requested', {
+        recordingSessionId: this.recordingSessionId ?? undefined,
+        surface: intent,
+      });
       const text = await this.getTranscriber().transcribe({
         audio: audioData,
         recognition: this.getRecognitionSettings(),
       });
+      emitPerformanceMarker('transcription.batch.completed', {
+        recordingSessionId: this.recordingSessionId ?? undefined,
+        surface: intent,
+      });
       const snapshot = this.targetSnapshot;
       this.targetSnapshot = null;
       const result = text ? { text, intent, targetSnapshot: snapshot } : null;
+      emitPerformanceMarker('recording.session.completed', {
+        recordingSessionId: this.recordingSessionId ?? undefined,
+        surface: intent,
+      });
+      this.recordingSessionId = null;
       pendingEnd?.resolve(result);
       if (this.onResultCallback) {
         void this.onResultCallback(result);
@@ -332,6 +368,10 @@ export class RecordingSession {
       return result;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+      emitPerformanceMarker('transcription.batch.failed', {
+        recordingSessionId: this.recordingSessionId ?? undefined,
+        surface: intent,
+      });
       pendingEnd?.reject(err);
       this.onErrorCallback?.(err);
       if (!pendingEnd) {
@@ -346,7 +386,11 @@ export class RecordingSession {
 
   startKeyboardHook(onResult?: (result: RecordingResult | null) => void | Promise<void>): void {
     this.keyboardHook.start({
-      onStart: (intent) => this.begin(intent),
+      onStart: (intent) => {
+        const recordingSessionId = randomUUID();
+        emitPerformanceMarker('hotkey.detected', { recordingSessionId, surface: intent });
+        this.begin(intent, recordingSessionId);
+      },
       onStop: () => {
         void this.end().then((result) => {
           if (onResult && !this.onResultCallback) {
@@ -371,6 +415,7 @@ export class RecordingSession {
 
     ipcMain.on('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
+    ipcMain.on('audio-capture-started', this.handleAudioCaptureStarted);
     ipcMain.on('audio-data-ready', this.handleAudioDataReady);
     ipcMain.on('audio-level-changed', this.handleAudioLevelChanged);
 
@@ -381,6 +426,7 @@ export class RecordingSession {
     this.clearDurationTimers();
     ipcMain.off('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
+    ipcMain.off('audio-capture-started', this.handleAudioCaptureStarted);
     ipcMain.off('audio-data-ready', this.handleAudioDataReady);
     ipcMain.off('audio-level-changed', this.handleAudioLevelChanged);
 
@@ -425,7 +471,18 @@ export class RecordingSession {
   };
 
   private handleAudioStreamReady = (): void => {
+    emitPerformanceMarker('audio-stream.ready', {
+      recordingSessionId: this.recordingSessionId ?? undefined,
+    });
     this.audioCapture.markReady?.();
+  };
+
+  private handleAudioCaptureStarted = (): void => {
+    if (!this.recordingSessionId) return;
+    emitPerformanceMarker('audio.capture.started', {
+      recordingSessionId: this.recordingSessionId,
+      surface: this.activeIntent ?? undefined,
+    });
   };
 
   private handleAudioDataReady = async (_event: unknown, audioData: ArrayBuffer): Promise<void> => {

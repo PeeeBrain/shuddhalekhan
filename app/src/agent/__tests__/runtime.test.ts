@@ -56,6 +56,21 @@ describe('runAgent', () => {
     delete process.env.OPENROUTER_API_KEY;
   });
 
+  it('marks the provider request immediately before starting the model stream', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    const order: string[] = [];
+    streamTextMock.mockImplementation(() => {
+      order.push('streamText');
+      return makeStreamResult({ text: 'Done', steps: [], toolCalls: [], toolResults: [] });
+    });
+    const callbacks = makeCallbacks();
+    callbacks.onProviderRequestStarted.mockImplementation(() => { order.push('provider-marker'); });
+
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(order.slice(0, 2)).toEqual(['provider-marker', 'streamText']);
+  });
+
   it('fails when provider config is incomplete', async () => {
     const callbacks = makeCallbacks();
     const config = { ...baseConfig, agent: { ...baseConfig.agent, provider: { ...baseConfig.agent.provider, baseUrl: '' } } };
@@ -734,6 +749,7 @@ describe('runAgent', () => {
 function makeCallbacks(): AgentRuntimeCallbacks & { [K in keyof AgentRuntimeCallbacks]: ReturnType<typeof mock> } {
   return {
     onStatus: mock(() => undefined),
+    onProviderRequestStarted: mock(() => undefined),
     onResponseDelta: mock(() => undefined),
     onCompleted: mock(() => undefined),
     onFailed: mock(() => undefined),

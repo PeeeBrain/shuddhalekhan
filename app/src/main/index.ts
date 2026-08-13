@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { app, dialog, ipcMain, session, shell, Notification } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session, shell, Notification } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
@@ -7,6 +7,7 @@ import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './a
 import {
   getConfig,
   getLastSeenReleaseNotesVersion,
+  mergeDiscoveredTools,
   setConfig,
   setLastSeenReleaseNotesVersion,
 } from './config';
@@ -36,14 +37,24 @@ import {
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
 import type { AppConfig, AudioDevice, InjectResult, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
+import { emitPerformanceMarker } from './performance/marker-collector';
+import { buildElectronProcessInventory } from './performance/process-inventory';
+import { createRuntimeReadinessBarrier } from './performance/runtime-readiness';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
+let shellPillReadyEmitted = false;
+const runtimeReadiness = createRuntimeReadinessBarrier(() => {
+  emitElectronProcessInventory();
+  emitPerformanceMarker('runtime.operational');
+});
 const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
   getActiveAgentRunId: () => activeAgentRunId,
   showAgentToast,
   openExternal: shell.openExternal,
+  mergeDiscoveredTools,
+  getConfig,
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
 const recordingSession = new RecordingSession({
@@ -190,6 +201,22 @@ function publishUpdateStatus(status: UpdateStatus): void {
   if (settingsWin && !settingsWin.isDestroyed()) {
     settingsWin.webContents.send('updater:status-changed', status);
   }
+}
+
+function emitElectronProcessInventory(): void {
+  const windows = BrowserWindow.getAllWindows().flatMap((window) => {
+    try {
+      return [{
+        webContentsId: window.webContents.id,
+        pid: window.webContents.getOSProcessId(),
+        url: window.webContents.getURL(),
+      }];
+    } catch {
+      return [];
+    }
+  });
+  const inventory = buildElectronProcessInventory(app.getAppMetrics(), windows);
+  emitPerformanceMarker('process.inventory', inventory);
 }
 
 async function showBundledReleaseNotesAfterInstall(): Promise<void> {
@@ -383,11 +410,26 @@ ipcMain.on('agent-toast:dismiss', () => {
   hideAgentToast();
 });
 
+ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: string) => {
+  emitPerformanceMarker('surface.paint-proxy', {
+    surface,
+    ...(surface === 'recording' && correlationId ? { recordingSessionId: correlationId } : {}),
+  });
+  if (surface === 'recording') {
+    if (!shellPillReadyEmitted) {
+      shellPillReadyEmitted = true;
+      emitPerformanceMarker('shell.pill.ready');
+    }
+    runtimeReadiness.markShellPaintReady();
+  }
+});
+
 // App lifecycle
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.whenReady().then(() => {
+    emitPerformanceMarker('app.electron-ready');
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(permission === 'media');
     });
@@ -407,6 +449,9 @@ if (!gotSingleInstanceLock) {
       },
     });
 
+    emitPerformanceMarker('tray.ready');
+    emitPerformanceMarker('hotkey-hook.ready');
+
     const startupConfig = getConfig();
     cachedAgentEnabled = startupConfig.agent.enabled;
     if (startupConfig.agent.enabled) {
@@ -419,6 +464,7 @@ if (!gotSingleInstanceLock) {
     setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
     publishUpdateStatus(getUpdateStatus());
     void showBundledReleaseNotesAfterInstall();
+    runtimeReadiness.markMainReady();
 
     app.on('activate', () => {
       // Keep running in tray; no main window to recreate

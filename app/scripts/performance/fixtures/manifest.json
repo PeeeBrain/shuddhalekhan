@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "protocol": "runtime-performance-baseline",
+  "pcmFixture": {
+    "id": "canonical-utterance-v1",
+    "format": "pcm16le",
+    "sampleRateHz": 16000,
+    "channels": 1,
+    "chunkSamples": 4096,
+    "chunkIntervalMs": 256,
+    "leadingSilenceMs": 500,
+    "speechDurationMs": 4015,
+    "utterance": "Shuddhalekhan measures speech latency with a fixed audio sample.",
+    "source": {
+      "kind": "flite-tts",
+      "voice": "slt",
+      "generator": "FFmpeg 8.1.1 full build"
+    },
+    "sha256": "6bbefd61e7b6b2a73791d5a050c43d7eeba1eb5303467aa5433538d55715dc32",
+    "notes": "Committed spoken PCM. Regenerate intentionally with scripts/performance/generate-pcm-fixture.ts --regenerate, then review and update this checksum."
+  },
+  "scenarios": [
+    {
+      "id": "dictation-idle",
+      "description": "Agent disabled, fresh startup, 60s settle + 60s idle sample",
+      "agentEnabled": false,
+      "dictationMode": "batch",
+      "cold": true,
+      "repetitions": { "cold": 20, "warm": 30, "idleLaunches": 5 }
+    },
+    {
+      "id": "dictation-recording",
+      "description": "Batch dictation using the canonical PCM fixture",
+      "agentEnabled": false,
+      "dictationMode": "batch",
+      "fixture": "canonical-utterance-v1",
+      "repetitions": { "warm": 30 }
+    },
+    {
+      "id": "settings-open",
+      "description": "Settings cold create and warm show",
+      "agentEnabled": false,
+      "surface": "settings",
+      "repetitions": { "warm": 30 }
+    },
+    {
+      "id": "agent-no-mcp",
+      "description": "Agent enabled without MCP using a fixed transcript fixture",
+      "agentEnabled": true,
+      "transcriptFixture": "check-mail-v1",
+      "repetitions": { "cold": 20, "warm": 30 }
+    },
+    {
+      "id": "mcp-stdio-tool",
+      "description": "Deterministic stdio MCP one-tool fixture",
+      "agentEnabled": true,
+      "mcpTransport": "stdio",
+      "fixture": "echo-tool-v1",
+      "repetitions": { "cold": 20, "warm": 30 }
+    },
+    {
+      "id": "mcp-http-tool",
+      "description": "Deterministic HTTP MCP one-tool fixture",
+      "agentEnabled": true,
+      "mcpTransport": "http",
+      "fixture": "echo-tool-v1",
+      "repetitions": { "cold": 20, "warm": 30 }
+    }
+  ],
+  "ordering": {
+    "abba": true,
+    "warmUpsBeforeMeasured": 3,
+    "idleSettleSeconds": 60,
+    "idleSampleSeconds": 60
+  },
+  "fixtures": {
+    "transcripts": {
+      "check-mail-v1": "check mail"
+    },
+    "mcp": {
+      "echo-tool-v1": {
+        "toolName": "echo",
+        "arguments": { "message": "benchmark" },
+        "transports": {
+          "stdio": {
+            "type": "stdio",
+            "command": "bun",
+            "entrypoint": "mcp-stdio-server.ts"
+          },
+          "http": {
+            "type": "http",
+            "command": "bun",
+            "entrypoint": "mcp-http-server.ts",
+            "endpoint": "http://127.0.0.1:43176/mcp",
+            "port": 43176
+          }
+        }
+      }
+    }
+  }
+}
