@@ -32,6 +32,9 @@ logs/
 *.log
 report.*.json
 benchmark-output/
+# Per-run benchmark captures are local data; reviewed summaries may be tracked.
+app/docs/performance/evidence/*/*-aa/
+app/docs/performance/evidence/*/idle-five-launches/
 
 # Local audio/transcription utilities
 app/scripts/local-record-wav.ts

@@ -149,7 +149,7 @@ bun run scripts/runtime-benchmark.ts run-abba `
   --output '..\benchmark-output\startup-abba'
 ```
 
-Each run gets an isolated artifact directory. `runtime-scenario-runner.ps1` owns the exact launched process tree, waits for `runtime.operational`, samples declared identities, and terminates only that tree. `runtime-benchmark.ts summarize --output <run-directory>` can regenerate a per-run summary. Local `benchmark-output/` is ignored; publish reviewed evidence deliberately in the issue or a dedicated tracked evidence location.
+Each run gets an isolated artifact directory. `runtime-scenario-runner.ps1` owns the exact launched process tree, waits for `runtime.operational`, samples declared identities, and terminates only that tree. `runtime-benchmark.ts summarize --output <run-directory>` can regenerate a per-run summary. Local `benchmark-output/` is ignored. Keep raw per-run captures out of Git; publish them as an external issue or release attachment only when a review needs the complete capture set. Reviewed summaries and environment provenance may be tracked deliberately.
 
 Action scenarios are driven only when both marker collection and `SHUDDHALEKHAN_PERF_DRIVER=1` are enabled by the runner. The driver ignores persisted Agent/MCP state, suppresses updater work, and uses only the local fixture services. Warm measurements can stay in one packaged process by passing `--warmup-repetitions 3 --action-repetitions 30`; warmup markers are tagged and excluded from summaries. Cold scenarios use one action per process launch.
 
@@ -159,19 +159,13 @@ The canonical spoken PCM and deterministic MCP servers are declared in `scripts/
 
 ## Evidence status
 
-Resolved from official APIs and current code:
+The first packaged current-main baseline summary, A/A noise, process/window inventories, environment provenance, and provisional machine-specific allowances are published under `docs/performance/evidence/2026-08-13-d39acd2/`. Raw per-run captures remain local under ignored `benchmark-output/` and are reproducible through the harness.
 
-- The split between markers, process sampling, and escalation traces.
-- Process identity/role attribution and private-bytes-first memory reporting.
-- Exact metric endpoints, sampling cadence, scenario matrix, and statistical report.
-- Docker/NVIDIA collection and the distinction between container and Desktop/WSL overhead.
+Still open for later runtime work:
 
-Requires the later benchmark-harness implementation and a baseline run:
-
-- Actual A/A noise envelopes and frozen per-machine budgets.
 - The real memory reduction from renderer consolidation.
 - Whether the two-rAF paint proxy tracks visible presentation closely enough on this hardware; use WPR/Chromium tracing to calibrate once.
-- Cold/warm WhisperLiveKit and MCP results for the pinned fixtures.
+- Streaming first-token and server-declared stable-text results after the runtime adopts the streaming WhisperLiveKit path. The current pre-migration app exposes only batch Dictation, so its baseline reports stop-to-batch-result.
 
 ## Primary references
 

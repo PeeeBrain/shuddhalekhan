@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "capturedDate": "2026-08-13",
+  "comparability": "diagnostic-unverified",
+  "commitSha": "d39acd2d10b1c19b85d5b6438a3b1ed2e7257776",
+  "executableSha256": "0c404b3d5cda4e046195897b51d7b7c948fc9d33dd02307895373fc6eac4dde6",
+  "installerSha256": "5bb000e03aafad9d3e3397b862af0653366f4951c7661f92912f2c09e8e7efda",
+  "runtime": {
+    "bun": "1.3.14",
+    "electron": "43.1.0"
+  },
+  "machine": {
+    "windows": "Windows 11 Home 10.0.26200",
+    "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+    "memoryGiB": 31.2,
+    "power": "AC",
+    "display": "2560x1600 at 240 Hz"
+  },
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "uuid": "GPU-8803a86a-745b-52ac-a6c3-829894c24aaf",
+    "driver": "610.88"
+  },
+  "whisperLiveKit": {
+    "dockerVersion": "29.7.2",
+    "containerId": "417dd77fc063b1889d702af926eb3b8b51a22ecae971b3a3a321a4c034e21a80",
+    "image": "whisperlivekit-int8",
+    "imageDigest": "sha256:48307be32191ad1656218ba2007fc7ae119d80931c0231f394f796838e86b716",
+    "backendPolicy": "localagreement",
+    "backend": "faster-whisper",
+    "model": "large-v3-turbo",
+    "language": "auto",
+    "pcmInput": true,
+    "endpoint": "http://127.0.0.1:8000/v1/audio/transcriptions"
+  },
+  "notes": [
+    "The tested artifact is the packaged win-unpacked x64 application, not an installed NSIS copy.",
+    "Updater work and persisted Agent/MCP configuration were isolated by the opt-in benchmark driver.",
+    "No unrelated Docker containers were running.",
+    "The diagnostic-unverified label is retained because every release-comparability machine control was not independently certified."
+  ]
+}
