@@ -29,6 +29,7 @@ tags and commit history, not from this file. Keep new entries under
 - Development startup now installs Electron's binary on first use, matching Electron 42+'s lazy-download lifecycle.
 
 ### Transcription Providers
+- Added WhisperLiveKit as an explicit self-hosted Batch Dictation provider with derived REST/health/WebSocket endpoints, optional secure bearer authentication, loopback/remote endpoint safety validation, and bounded health plus PCM handshake readiness checks.
 - Added Google Cloud Speech-to-Text v2 synchronous recognition with secure service-account import, Advanced Application Default Credentials, model and location configuration, language mapping, and inline phrase hints.
 - Google Cloud recordings now show a restrained final-ten-second warning and stop automatically at 55 seconds for safe synchronous submission in both recording activation modes.
 - Added NVIDIA Speech NIM as a self-hosted OpenAI-compatible offline provider with free-form models, optional Bearer or custom-header authentication, deployment-specific capability controls, and unauthenticated connectivity checks.

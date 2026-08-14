@@ -11,6 +11,7 @@ import {
 import { localWhisperCppTranscriber } from './whisper';
 import { createAzureSpeechTranscriber } from './azure-speech';
 import { createGoogleCloudSpeechTranscriber } from './google-cloud-speech';
+import { createWhisperLiveKitTranscriber } from './whisper-live-kit';
 import type { AppConfig } from '../types/ipc';
 
 type CredentialReader = { read: (id: string) => string | null };
@@ -61,6 +62,17 @@ export function getTranscriber(
 
   if (provider === 'custom-open-ai-compatible') {
     return createCustomOpenAiTranscriber(config, vault);
+  }
+
+  if (provider === 'whisper-live-kit') {
+    const whisperLiveKit = config.transcription.providers.whisperLiveKit ?? {
+      baseUrl: 'http://localhost:8000',
+      auth: 'none' as const,
+    };
+    return createWhisperLiveKitTranscriber(
+      whisperLiveKit,
+      whisperLiveKit.auth === 'bearer' ? vault.read('whisper-live-kit-bearer') : null,
+    );
   }
 
   return localWhisperCppTranscriber;

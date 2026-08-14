@@ -8,7 +8,8 @@ export type TranscriptionProviderId =
   | 'azure-speech'
   | 'google-cloud-speech-v2'
   | 'nvidia-speech-nim'
-  | 'custom-open-ai-compatible';
+  | 'custom-open-ai-compatible'
+  | 'whisper-live-kit';
 
 export interface TranscriptionCapabilities {
   translation: boolean;
@@ -153,6 +154,39 @@ export function validateCustomOpenAiSettings(settings: { endpoint: string; model
   return errors;
 }
 
+export function validateWhisperLiveKitSettings(settings: {
+  baseUrl: string;
+  auth: string;
+}): string[] {
+  const value = settings.baseUrl.trim();
+  if (!value) return ['WhisperLiveKit base URL is required.'];
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return ['Enter a valid WhisperLiveKit base URL.'];
+  }
+
+  if (parsed.username || parsed.password) {
+    return ['WhisperLiveKit endpoint URLs cannot contain credentials.'];
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return ['WhisperLiveKit endpoints must use HTTP or HTTPS.'];
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const loopback = isLoopbackHostname(hostname);
+  if (parsed.protocol === 'http:' && !loopback) {
+    return ['Remote WhisperLiveKit endpoints must use HTTPS.'];
+  }
+  if (settings.auth !== 'none' && settings.auth !== 'bearer') {
+    return ['WhisperLiveKit authentication mode is invalid.'];
+  }
+
+  return [];
+}
+
 const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~\w]+$/;
 
 export function isValidHttpFieldName(name: string): boolean {
@@ -237,7 +271,32 @@ export function validateProviderReadiness(
     }
   }
 
+  if (providerId === 'whisper-live-kit') {
+    const provider = config.transcription.providers.whisperLiveKit;
+    if (!provider) {
+      errors.push('WhisperLiveKit provider settings are not configured.');
+    } else {
+      errors.push(...validateWhisperLiveKitSettings(provider));
+    }
+    if (provider?.auth === 'bearer' && !vault.read('whisper-live-kit-bearer')) {
+      errors.push('WhisperLiveKit bearer token is not configured.');
+    }
+    if (config.task === 'translate') {
+      errors.push('Translation is not supported by WhisperLiveKit batch transcription.');
+    }
+  }
+
   return errors;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '[::1]' || hostname === '::1') {
+    return true;
+  }
+  const octets = hostname.split('.');
+  return octets.length === 4
+    && octets[0] === '127'
+    && octets.slice(1).every((octet) => /^(?:0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255);
 }
 
 export function validateLocalWhisperSettings(settings: { endpoint: string }): string[] {

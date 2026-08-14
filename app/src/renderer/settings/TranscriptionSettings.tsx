@@ -18,7 +18,13 @@ import { SetupChecklist } from './SetupChecklist';
 import { CredentialControl } from './ui/CredentialControl';
 import { WHISPER_LANGUAGES } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
-import type { AppConfig, CredentialKind, DictationMode, TranscriptionProviderId } from '../../types/ipc';
+import type {
+  AppConfig,
+  CredentialKind,
+  DictationMode,
+  TranscriptionProviderId,
+  TranscriptionReadiness,
+} from '../../types/ipc';
 import {
   getAppConfigDictationError,
 } from '../../shared/dictation-runtime';
@@ -69,6 +75,7 @@ const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: Pro
     options: [
       { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM', description: 'Self-hosted NVIDIA offline transcription.' },
       { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible', description: 'A compatible private or local audio endpoint.' },
+      { value: 'whisper-live-kit', label: 'WhisperLiveKit', description: 'Self-hosted Batch Dictation with health and protocol readiness checks.' },
     ],
   },
 ];
@@ -187,6 +194,11 @@ function providerCredentialKind(
         ? 'custom-open-ai-compatible-header'
         : null;
   }
+  if (provider === 'whisper-live-kit') {
+    return config.transcription.providers.whisperLiveKit?.auth === 'bearer'
+      ? 'whisper-live-kit-bearer'
+      : null;
+  }
   return null;
 }
 
@@ -212,6 +224,8 @@ function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderI
         providers.customOpenAiCompatible.endpoint.trim()
         && providers.customOpenAiCompatible.model.trim(),
       );
+    case 'whisper-live-kit':
+      return Boolean(providers.whisperLiveKit?.baseUrl?.trim());
   }
 }
 
@@ -293,6 +307,26 @@ function validateCustomEndpoint(value: string): string | null {
   }
 }
 
+function validateWhisperLiveKitBaseUrl(value: string): string | null {
+  if (!value.trim()) return 'Base URL is required.';
+  try {
+    const parsed = new URL(value);
+    if (parsed.username || parsed.password) return 'Endpoint URLs cannot contain credentials.';
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return 'Endpoints must use HTTP or HTTPS.';
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    const loopback = hostname === 'localhost'
+      || hostname.endsWith('.localhost')
+      || /^127(?:\.\d{1,3}){3}$/.test(hostname)
+      || hostname === '[::1]';
+    if (parsed.protocol === 'http:' && !loopback) return 'Remote endpoints must use HTTPS.';
+    return null;
+  } catch {
+    return 'Enter a valid URL (e.g. http://localhost:8000).';
+  }
+}
+
 function validateHeaderName(value: string): string | null {
   if (!value.trim()) return 'Header name is required.';
   return /^[!#$%&'*+\-.^_`|~\w]+$/.test(value.trim())
@@ -307,6 +341,7 @@ const PRIVACY_MESSAGES: Record<TranscriptionProviderId, string> = {
   'google-cloud-speech-v2': 'Recorded audio is sent to Google Cloud Speech-to-Text for transcription. Review Google Cloud data handling policies.',
   'nvidia-speech-nim': 'Recorded audio is sent to the configured NVIDIA Speech NIM endpoint for transcription.',
   'custom-open-ai-compatible': 'Recorded audio is sent to the configured custom endpoint for transcription.',
+  'whisper-live-kit': 'Recorded audio is sent to your configured WhisperLiveKit service. The service receives audio only while recording or checking readiness.',
 };
 
 const AUTH_OPTIONS: Array<{ value: string; label: string }> = [
@@ -347,7 +382,9 @@ export function TranscriptionSettings({
     }
     setDictationModeError(undefined);
     await commit('transcription', nextTranscription, FIELD_ID_PROVIDER);
-    if ((nextProvider === 'azure-speech' || nextProvider === 'google-cloud-speech-v2') && config.task === 'translate') {
+    if ((nextProvider === 'azure-speech'
+      || nextProvider === 'google-cloud-speech-v2'
+      || nextProvider === 'whisper-live-kit') && config.task === 'translate') {
       await commit('task', 'transcribe', FIELD_ID_TASK);
     }
     if (nextProvider === 'google-cloud-speech-v2' && config.language === 'auto') {
@@ -412,6 +449,14 @@ export function TranscriptionSettings({
           <CustomOpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
         ) : null}
 
+        {provider === 'whisper-live-kit' ? (
+          <WhisperLiveKitSection
+            config={config}
+            persistence={persistence}
+            settingsIpc={settingsIpc}
+          />
+        ) : null}
+
         <ToggleRow
           title="Clean transcription"
           description="Remove common filler words before dictation text is injected."
@@ -440,19 +485,23 @@ export function TranscriptionSettings({
             { value: 'transcribe', label: 'Transcribe spoken language' },
             {
               value: 'translate',
-              label: provider === 'azure-speech'
-                ? 'Translate speech to English (not supported by Azure Fast Transcription)'
-                : provider === 'google-cloud-speech-v2'
-                  ? 'Translate speech to English (not supported by Google synchronous recognition)'
-                  : 'Translate speech to English',
-              disabled: provider === 'azure-speech' || provider === 'google-cloud-speech-v2',
+              label: provider === 'whisper-live-kit'
+                ? 'Translate speech to English (not supported by WhisperLiveKit)'
+                : provider === 'azure-speech'
+                  ? 'Translate speech to English (not supported by Azure Fast Transcription)'
+                  : provider === 'google-cloud-speech-v2'
+                    ? 'Translate speech to English (not supported by Google synchronous recognition)'
+                    : 'Translate speech to English',
+              disabled: provider === 'azure-speech' || provider === 'google-cloud-speech-v2' || provider === 'whisper-live-kit',
             },
           ]}
-          description={provider === 'azure-speech'
-            ? 'Azure Fast Transcription supports transcription only. Translation is not sent to another service.'
-            : provider === 'google-cloud-speech-v2'
-              ? 'Google synchronous recognition transcribes only. Shuddhalekhan does not invoke Google Translate.'
-              : undefined}
+          description={provider === 'whisper-live-kit'
+            ? 'WhisperLiveKit batch transcription supports transcription only. Shuddhalekhan does not send translation requests.'
+            : provider === 'azure-speech'
+              ? 'Azure Fast Transcription supports transcription only. Translation is not sent to another service.'
+              : provider === 'google-cloud-speech-v2'
+                ? 'Google synchronous recognition transcribes only. Shuddhalekhan does not invoke Google Translate.'
+                : undefined}
           errorId={useId()}
           error={fieldErrors[FIELD_ID_TASK]}
           onChange={(value) => commit('task', value as AppConfig['task'], FIELD_ID_TASK)}
@@ -474,6 +523,10 @@ export function TranscriptionSettings({
         />
         <DictionaryRow
           dictionary={config.dictionary}
+          disabled={provider === 'whisper-live-kit'}
+          description={provider === 'whisper-live-kit'
+            ? 'WhisperLiveKit does not support dictionary hints. Saved words stay available for other providers.'
+            : undefined}
           error={fieldErrors[FIELD_ID_DICTIONARY]}
           onChange={(next) => commit('dictionary', next, FIELD_ID_DICTIONARY)}
         />
@@ -903,6 +956,111 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
   );
 }
 
+function WhisperLiveKitSection({
+  config,
+  persistence,
+  settingsIpc,
+}: Props) {
+  const { commit, fieldErrors } = persistence;
+  const [readiness, setReadiness] = useState<TranscriptionReadiness | null>(null);
+  const provider = config.transcription.providers.whisperLiveKit ?? {
+    baseUrl: 'http://localhost:8000',
+    auth: 'none' as const,
+  };
+  const save = (next: typeof provider, field: string) => {
+    setReadiness(null);
+    return commit('transcription', {
+      ...config.transcription,
+      providers: { ...config.transcription.providers, whisperLiveKit: next },
+    }, field);
+  };
+
+  useEffect(() => {
+    const off = settingsIpc.onTranscriptionReadinessChanged(setReadiness);
+    void settingsIpc.checkTranscriptionReadiness().then(setReadiness).catch(() => {
+      setReadiness({
+        providerId: 'whisper-live-kit',
+        state: 'unavailable',
+        message: 'Unable to check WhisperLiveKit readiness.',
+        checkedAt: new Date().toISOString(),
+      });
+    });
+    return () => off?.();
+  }, [settingsIpc]);
+
+  return (
+    <>
+      <DraftTextRow
+        label="Base URL"
+        value={provider.baseUrl}
+        placeholder="http://localhost:8000"
+        description="The service root. Shuddhalekhan derives /health, /asr, and /v1/audio/transcriptions from it."
+        errorId={useId()}
+        error={fieldErrors['whisper-live-kit-base-url']}
+        validate={validateWhisperLiveKitBaseUrl}
+        onCommit={(value) => save({ ...provider, baseUrl: value.trim() }, 'whisper-live-kit-base-url')}
+        clearError={() => persistence.clearFieldError('whisper-live-kit-base-url')}
+      />
+      <SelectRow
+        label="Authentication"
+        value={provider.auth}
+        options={[
+          { value: 'none', label: 'None (local service)' },
+          { value: 'bearer', label: 'Bearer token' },
+        ]}
+        errorId={useId()}
+        description="Bearer tokens are stored in the secure credential vault and passed to health, batch, and WebSocket requests."
+        onChange={(value) => save({ ...provider, auth: value as typeof provider.auth }, 'whisper-live-kit-auth')}
+      />
+      {provider.auth === 'bearer' ? (
+        <CredentialControl
+          credential="whisper-live-kit-bearer"
+          label="Bearer token"
+          settingsIpc={settingsIpc}
+        />
+      ) : null}
+      <div className="flex flex-wrap items-center gap-3 border-b border-border/70 py-5">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={readiness?.state === 'checking'}
+          onClick={() => void settingsIpc.checkTranscriptionReadiness().then(setReadiness)}
+        >
+          {readiness?.state === 'checking' ? 'Checking...' : 'Check readiness'}
+        </Button>
+        {readiness ? <WhisperLiveKitReadinessTag readiness={readiness} /> : null}
+      </div>
+      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+        WhisperLiveKit is a user-hosted service. Batch Dictation sends audio to its REST endpoint; readiness opens a short-lived handshake socket and keeps no idle ASR connection.
+      </p>
+    </>
+  );
+}
+
+function WhisperLiveKitReadinessTag({ readiness }: { readiness: TranscriptionReadiness }) {
+  const tone = readiness.state === 'ready'
+    ? 'success'
+    : readiness.state === 'degraded'
+      ? 'warning'
+      : readiness.state === 'checking'
+        ? 'neutral'
+        : 'error';
+  const label = readiness.state === 'ready'
+    ? 'Ready'
+    : readiness.state === 'degraded'
+      ? 'Degraded'
+      : readiness.state === 'checking'
+        ? 'Checking'
+        : 'Unavailable';
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <Tag tone={tone}>{label}</Tag>
+      <span className="text-xs text-muted-foreground">{readiness.message}</span>
+    </div>
+  );
+}
+
 interface CheckServerTestProps {
   provider: string;
   settingsIpc: import('./settings-ipc').SettingsIpc;
@@ -959,11 +1117,13 @@ function PrivacyNote({ provider }: { provider: TranscriptionProviderId }) {
 
 interface DictionaryRowProps {
   dictionary: string[];
+  disabled?: boolean;
+  description?: string;
   error?: string;
   onChange: (next: string[]) => void;
 }
 
-function DictionaryRow({ dictionary, error, onChange }: DictionaryRowProps) {
+function DictionaryRow({ dictionary, disabled = false, description, error, onChange }: DictionaryRowProps) {
   const [inputValue, setInputValue] = useState('');
   const errorId = useId();
 
@@ -987,7 +1147,7 @@ function DictionaryRow({ dictionary, error, onChange }: DictionaryRowProps) {
       <div className="space-y-1">
         <Label className="text-sm font-medium">Personal dictionary</Label>
         <p className="text-xs text-muted-foreground">
-          Add specific names, technical terms, or acronyms to help transcription. Press Enter to add.
+          {description ?? 'Add specific names, technical terms, or acronyms to help transcription. Press Enter to add.'}
         </p>
       </div>
       <Input
@@ -996,6 +1156,7 @@ function DictionaryRow({ dictionary, error, onChange }: DictionaryRowProps) {
         onKeyDown={handleKeyDown}
         placeholder="Type a word and press Enter..."
         aria-label="Add dictionary word"
+        disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
       />
@@ -1009,6 +1170,7 @@ function DictionaryRow({ dictionary, error, onChange }: DictionaryRowProps) {
             {word}
             <button
               type="button"
+              disabled={disabled}
               onClick={() => removeWord(word)}
               aria-label={`Remove ${word}`}
               className="rounded-full p-0.5 text-muted-foreground transition-colors hover:text-destructive focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"

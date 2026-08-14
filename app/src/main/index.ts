@@ -26,6 +26,7 @@ import {
   validateProviderReadiness,
 } from './transcription';
 import { getTranscriber } from './providers';
+import { checkWhisperLiveKitReadiness } from './whisper-live-kit';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
@@ -447,6 +448,35 @@ ipcMain.handle('transcription:check-server', async () => {
   }
 
   return false;
+});
+
+ipcMain.handle('transcription:check-readiness', async () => {
+  const config = getConfig();
+  const provider = config.transcription.activeProvider;
+  if (provider !== 'whisper-live-kit') {
+    return {
+      providerId: provider,
+      state: 'ready' as const,
+      message: 'The selected batch provider is ready for recording.',
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  const checking = {
+    providerId: provider,
+    state: 'checking' as const,
+    message: 'Checking WhisperLiveKit health and PCM WebSocket readiness...',
+    checkedAt: null,
+  };
+  getSettingsWindow()?.webContents.send('transcription:readiness-changed', checking);
+
+  const providerConfig = config.transcription.providers.whisperLiveKit;
+  const readiness = await checkWhisperLiveKitReadiness(
+    providerConfig ?? { baseUrl: '', auth: 'none' },
+    providerConfig?.auth === 'bearer' ? credentialVault.read('whisper-live-kit-bearer') : null,
+  );
+  getSettingsWindow()?.webContents.send('transcription:readiness-changed', readiness);
+  return readiness;
 });
 
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {

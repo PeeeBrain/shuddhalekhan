@@ -42,7 +42,8 @@ export type CredentialKind =
   | 'custom-open-ai-compatible-header'
   | 'azure-speech-key'
   | 'nvidia-nim-bearer'
-  | 'nvidia-nim-header';
+  | 'nvidia-nim-header'
+  | 'whisper-live-kit-bearer';
 
 export type CredentialStatus =
   | { available: true; exists: boolean }
@@ -147,6 +148,7 @@ export interface RendererToMainInvokeChannels {
   'credential:get-status': (credential: CredentialKind) => Promise<CredentialStatus>;
   'credential:save': (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
   'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
+  'transcription:check-readiness': () => Promise<TranscriptionReadiness>;
 }
 
 export interface MainToRendererChannels {
@@ -170,6 +172,7 @@ export interface MainToRendererChannels {
   'runtime:audio-start': (command: RuntimeAudioCommand) => void;
   'runtime:audio-stop': (command: RuntimeAudioCommand) => void;
   'runtime:snapshot': (snapshot: RuntimePresentationSnapshot) => void;
+  'transcription:readiness-changed': (readiness: TranscriptionReadiness) => void;
 }
 
 export interface RuntimeAudioCommand {
@@ -265,7 +268,8 @@ export type TranscriptionProviderId =
   | 'azure-speech'
   | 'google-cloud-speech-v2'
   | 'nvidia-speech-nim'
-  | 'custom-open-ai-compatible';
+  | 'custom-open-ai-compatible'
+  | 'whisper-live-kit';
 
 export interface LocalWhisperCppProviderConfig {
   endpoint: string;
@@ -307,6 +311,11 @@ export interface NvidiaSpeechNimProviderConfig {
   supportsDictionaryHints: boolean;
 }
 
+export interface WhisperLiveKitProviderConfig {
+  baseUrl: string;
+  auth: 'none' | 'bearer';
+}
+
 export interface TranscriptionConfig {
   activeProvider: TranscriptionProviderId;
   providers: {
@@ -316,7 +325,17 @@ export interface TranscriptionConfig {
     googleCloudSpeech: GoogleCloudSpeechProviderConfig;
     nvidiaSpeechNim: NvidiaSpeechNimProviderConfig;
     customOpenAiCompatible: CustomOpenAiProviderConfig;
+    whisperLiveKit: WhisperLiveKitProviderConfig;
   };
+}
+
+export type TranscriptionReadinessState = 'checking' | 'ready' | 'unavailable' | 'degraded';
+
+export interface TranscriptionReadiness {
+  providerId: TranscriptionProviderId;
+  state: TranscriptionReadinessState;
+  message: string;
+  checkedAt: string | null;
 }
 
 export type DictationMode = 'batch' | 'live' | 'corrected';

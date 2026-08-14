@@ -754,4 +754,50 @@ describe('RecordingSession', () => {
     ]);
     resetPerformanceMarkerCollectorForTests();
   });
+
+  it('carries WhisperLiveKit mandatory Batch capability into the ordinary Batch presentation', async () => {
+    const providerTranscriber: Transcriber = {
+      id: 'whisper-live-kit',
+      capabilities: {
+        translation: false,
+        automaticLanguageDetection: true,
+        dictionaryHints: false,
+        authentication: 'optional',
+        maxDurationSeconds: null,
+      },
+      transportCapabilities: { batch: true, streaming: false },
+      transcribe: vi.fn(async () => 'WhisperLiveKit batch result'),
+    };
+    const onResult = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: providerTranscriber,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onResult,
+    });
+
+    session.start();
+    session.begin('dictation');
+    const audioDataReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'audio-data-ready',
+    );
+    const listener = audioDataReadyCall?.[1] as ((_event: unknown, audio: ArrayBuffer) => Promise<void>);
+    const endPromise = session.end();
+    await listener({}, new Uint8Array(64).buffer);
+    await endPromise;
+
+    expect(showRecordingPill).toHaveBeenCalledWith(
+      'dictation',
+      expect.any(String),
+      expect.objectContaining({ capabilities: { batch: true, streaming: false } }),
+    );
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'WhisperLiveKit batch result',
+      capabilities: { batch: true, streaming: false },
+    }));
+  });
 });

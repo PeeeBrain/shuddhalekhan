@@ -2,7 +2,7 @@ import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig } from '../types/ipc';
+import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig, TranscriptionProviderId } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
 import { DEFAULT_DICTATION_CONFIG, getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig } from '../shared/dictation-runtime';
@@ -29,6 +29,7 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
     googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
     nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
     customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
   },
 };
 
@@ -108,7 +109,9 @@ function maybeMigrateTranscriptionConfig(): void {
     : legacyEndpoint;
 
   store.set('transcription', {
-    activeProvider: 'local-whisper-cpp',
+    activeProvider: isTranscriptionProviderId(transcription?.activeProvider)
+      ? transcription.activeProvider
+      : 'local-whisper-cpp',
     providers: {
       localWhisperCpp: { endpoint },
       openai: transcription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
@@ -116,6 +119,7 @@ function maybeMigrateTranscriptionConfig(): void {
       googleCloudSpeech: transcription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: transcription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: transcription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
+      whisperLiveKit: transcription?.providers?.whisperLiveKit ?? { baseUrl: 'http://localhost:8000', auth: 'none' },
     },
   });
   store.set('transcriptionMigrated', true);
@@ -190,7 +194,9 @@ export function getConfig(): AppConfig {
     || store.get('whisperUrl')
     || DEFAULT_LOCAL_ENDPOINT;
   const transcription: TranscriptionConfig = {
-    activeProvider: storedTranscription?.activeProvider ?? 'local-whisper-cpp',
+    activeProvider: isTranscriptionProviderId(storedTranscription?.activeProvider)
+      ? storedTranscription.activeProvider
+      : 'local-whisper-cpp',
     providers: {
       localWhisperCpp: { endpoint: localEndpoint },
       openai: storedTranscription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
@@ -198,6 +204,7 @@ export function getConfig(): AppConfig {
       googleCloudSpeech: storedTranscription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: storedTranscription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: storedTranscription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
+      whisperLiveKit: storedTranscription?.providers?.whisperLiveKit ?? { baseUrl: 'http://localhost:8000', auth: 'none' },
     },
   };
 
@@ -291,9 +298,20 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
         googleCloudSpeech: existing?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
         nvidiaSpeechNim: existing?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
         customOpenAiCompatible: existing?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
+        whisperLiveKit: existing?.providers?.whisperLiveKit ?? { baseUrl: 'http://localhost:8000', auth: 'none' },
       },
     });
   }
+}
+
+function isTranscriptionProviderId(value: unknown): value is TranscriptionProviderId {
+  return value === 'local-whisper-cpp'
+    || value === 'openai'
+    || value === 'azure-speech'
+    || value === 'google-cloud-speech-v2'
+    || value === 'nvidia-speech-nim'
+    || value === 'custom-open-ai-compatible'
+    || value === 'whisper-live-kit';
 }
 
 function assertDictationCombination(input: {

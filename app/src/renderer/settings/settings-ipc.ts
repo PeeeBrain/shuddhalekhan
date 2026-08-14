@@ -9,6 +9,7 @@ import type {
   AuditEventDetail,
   CredentialKind,
   CredentialStatus,
+  TranscriptionReadiness,
 } from '../../types/ipc';
 
 type Unsubscribe = () => void;
@@ -22,6 +23,8 @@ export interface SettingsIpc {
   checkForUpdates: () => Promise<UpdateStatus>;
   testMcpServer: (serverId: string) => Promise<void>;
   checkTranscriptionServer: () => Promise<boolean>;
+  checkTranscriptionReadiness: () => Promise<TranscriptionReadiness>;
+  onTranscriptionReadinessChanged: (callback: (readiness: TranscriptionReadiness) => void) => Unsubscribe | undefined;
   getShortcutsPaused: () => Promise<boolean>;
   setShortcutsPaused: (paused: boolean) => Promise<boolean>;
   beginShortcutCapture: () => Promise<void>;
@@ -52,6 +55,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await electronAPI?.invoke('mcp:test-server', serverId);
     },
     checkTranscriptionServer: () => requireElectronApi(electronAPI).invoke('transcription:check-server'),
+    checkTranscriptionReadiness: () => requireElectronApi(electronAPI).invoke('transcription:check-readiness'),
     getShortcutsPaused: () => requireElectronApi(electronAPI).invoke('shortcuts:get-paused'),
     setShortcutsPaused: (paused) => requireElectronApi(electronAPI).invoke('shortcuts:set-paused', paused),
     beginShortcutCapture: async () => {
@@ -64,6 +68,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     onUpdateStatusChanged: (callback) => electronAPI?.subscribe('updater:status-changed', callback),
     onNavigateRequested: (callback) => electronAPI?.subscribe('settings:navigate', callback),
     onMcpServerStatus: (callback) => electronAPI?.subscribe('mcp:server-status', callback),
+    onTranscriptionReadinessChanged: (callback) => electronAPI?.subscribe('transcription:readiness-changed', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),
     onAuditRunUpdated: (callback) => electronAPI?.subscribe('audit:run-updated', callback),
