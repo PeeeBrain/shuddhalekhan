@@ -595,7 +595,11 @@ async function transcribeWhisperLiveKit(
   timeoutMs: number,
 ): Promise<string> {
   const form = new FormData();
-  form.append('file', new Blob([audio], { type: 'audio/wav' }), 'audio.wav');
+  form.append(
+    'file',
+    new Blob([audio as Uint8Array<ArrayBuffer>], { type: 'audio/wav' }),
+    'audio.wav',
+  );
   form.append('response_format', 'json');
   if (recognition.language !== 'auto') form.append('language', recognition.language);
 
