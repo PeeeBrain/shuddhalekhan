@@ -246,10 +246,10 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     return;
   }
   if (action !== 'retry-paste') return;
+  runtimeShell.finish();
   const result = await injectIntoFocusedApp(transcript.text, transcript.targetSnapshot);
   if (result.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
-    runtimeShell.finish();
     return;
   }
   markLastTranscriptInjected('failed');

@@ -100,36 +100,30 @@ describe('Batch Dictation runtime shell', () => {
     expect(shell.acceptsAudioEvent(command.generation, 'session-1', 1)).toBe(false);
   });
 
-  it('does not let a pending idle hide dismiss a newer failure', async () => {
-    const scheduled = new Map<number, () => void>();
-    let nextTimer = 1;
-    const setTimeoutFn = vi.fn((callback: () => void) => {
-      const timer = nextTimer++;
-      scheduled.set(timer, callback);
-      return timer as unknown as ReturnType<typeof setTimeout>;
-    });
-    const clearTimeoutFn = vi.fn((timer: ReturnType<typeof setTimeout>) => {
-      scheduled.delete(timer as unknown as number);
-    });
+  it('hides synchronously before insertion and can show a later failure', async () => {
+    let visible = true;
+    const setTimeoutFn = vi.fn();
     const window = {
       webContents: { send: vi.fn(), on: vi.fn(), isLoading: vi.fn(() => false) },
       loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
-      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => true),
-      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => visible),
+      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(),
+      showInactive: vi.fn(() => { visible = true; }),
       setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
-      hide: vi.fn(), destroy: vi.fn(),
+      hide: vi.fn(() => { visible = false; }), destroy: vi.fn(),
     };
     electronMock.BrowserWindow.mockImplementation(() => window);
-    const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-hide-race`);
-    const shell = new RuntimeShell(undefined, { setTimeoutFn, clearTimeoutFn });
+    const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-hide-before-insertion`);
+    const shell = new RuntimeShell(undefined, { setTimeoutFn, clearTimeoutFn: vi.fn() });
     shell.prepare();
 
     shell.finish();
-    shell.showFailure('session-1', 'Paste failed', ['retry-paste']);
-    for (const callback of scheduled.values()) callback();
 
-    expect(clearTimeoutFn).toHaveBeenCalledTimes(1);
-    expect(window.hide).not.toHaveBeenCalled();
+    expect(window.hide).toHaveBeenCalledTimes(1);
+    expect(setTimeoutFn).not.toHaveBeenCalled();
+
+    shell.showFailure('session-1', 'Paste failed', ['retry-paste']);
+    expect(window.showInactive).toHaveBeenCalledTimes(1);
   });
 
   it('accepts returned audio only for the current generation, session, and sequence', async () => {

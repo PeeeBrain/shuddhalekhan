@@ -200,7 +200,10 @@ export class RuntimeShell {
     this.activeRecording = null;
     this.resize(SHELL_WIDTH, SHELL_HEIGHT, false);
     this.publish({ kind: 'idle' });
-    this.hide();
+    this.send('recording:pill-hide');
+    this.cancelPendingHide();
+    const win = this.windows.get();
+    if (win && !win.isDestroyed()) win.hide();
   }
 
   updateDurationWarning(remainingSeconds: number | null): void {

@@ -48,6 +48,43 @@ describe('runtime shell presentation', () => {
     expect(send).toHaveBeenCalledWith('runtime:recovery-action', 'copy-full-transcript');
   });
 
+  it('acknowledges Retry Paste and blocks duplicate recovery actions', () => {
+    (window as any).electronAPI = {
+      subscribe: (channel: string, callback: (...args: any[]) => void) => {
+        const list = listeners.get(channel) ?? [];
+        list.push(callback);
+        listeners.set(channel, list);
+        return () => listeners.set(
+          channel,
+          (listeners.get(channel) ?? []).filter((cb) => cb !== callback),
+        );
+      },
+      send,
+    };
+    render(<RuntimeShellSurface />);
+
+    act(() => emit('runtime:snapshot', {
+      kind: 'failure', generation: 1, revision: 1, recordingSessionId: 'session-1',
+      message: 'Automatic paste failed.',
+      recoveryActions: ['retry-paste', 'copy-full-transcript'],
+    }));
+
+    act(() => screen.getByRole('button', { name: 'Retry Paste' }).click());
+
+    expect(send).toHaveBeenCalledWith('runtime:recovery-action', 'retry-paste');
+    expect(screen.getByRole('button', { name: 'Retrying...' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Copy Full Transcript' })).toBeDisabled();
+
+    act(() => emit('runtime:snapshot', {
+      kind: 'failure', generation: 1, revision: 2, recordingSessionId: null,
+      message: 'Focus is still elsewhere.',
+      recoveryActions: ['retry-paste', 'copy-full-transcript'],
+    }));
+
+    expect(screen.getByRole('button', { name: 'Retry Paste' })).toBeEnabled();
+    expect(screen.getByText('Focus is still elsewhere.')).toBeInTheDocument();
+  });
+
   it('shows committed and tentative streaming text without announcing every tentative revision', () => {
     (window as any).electronAPI = {
       subscribe: (channel: string, callback: (...args: any[]) => void) => {

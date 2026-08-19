@@ -97,6 +97,9 @@ const showAgentToast = vi.fn();
 const hideAgentToast = vi.fn();
 const handleAgentToastContentSize = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
+const runtimeShellFinish = vi.fn();
+const runtimeShellShowFailure = vi.fn();
+const runtimeShellSetCrashHandler = vi.fn();
 
 // Mock RecordingSession
 const recordingSessionStart = vi.fn();
@@ -160,6 +163,13 @@ mock.module('../agent-sidecar', () => ({
     stop = agentStop;
     cancelRun = agentCancelRun;
     sendApprovalDecision = agentSendApprovalDecision;
+  },
+}));
+mock.module('../runtime-shell', () => ({
+  RuntimeShell: class {
+    finish = runtimeShellFinish;
+    showFailure = runtimeShellShowFailure;
+    setCrashHandler = runtimeShellSetCrashHandler;
   },
 }));
 mock.module('../recording-session', () => ({
@@ -293,6 +303,9 @@ describe('main process IPC orchestration', () => {
     hideAgentToast.mockClear();
     handleAgentToastContentSize.mockClear();
     agentEventHandler = null;
+    runtimeShellFinish.mockClear();
+    runtimeShellShowFailure.mockClear();
+    runtimeShellSetCrashHandler.mockClear();
     getConfig.mockReturnValue(baseConfig);
 
     recordingSessionStart.mockClear();
@@ -507,6 +520,40 @@ describe('main process IPC orchestration', () => {
 
     expect(agentStartRun).not.toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('transcribed text');
+  });
+
+  it('hides the recovery shell before Retry Paste validates the target', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    ipcListeners.clear();
+    captureForegroundTarget.mockReturnValueOnce({
+      ...defaultTargetSnapshot,
+      processId: defaultTargetSnapshot.processId + 1,
+    });
+    await import(`../index?test=${Date.now()}-runtime-retry`);
+
+    await sessionOptions.onResult({
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'session-1',
+    });
+    expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
+
+    let markPasteStarted: () => void = () => undefined;
+    const pasteStarted = new Promise<void>((resolve) => { markPasteStarted = resolve; });
+    captureForegroundTarget.mockImplementation(() => {
+      expect(runtimeShellFinish).toHaveBeenCalledTimes(1);
+      return defaultTargetSnapshot;
+    });
+    simulatePaste.mockImplementation(() => {
+      markPasteStarted();
+      return { acceptedEvents: 4 };
+    });
+
+    ipcListeners.get('runtime:recovery-action')?.({}, 'retry-paste');
+    await pasteStarted;
+
+    expect(runtimeShellFinish).toHaveBeenCalledTimes(1);
   });
 
   it('shows a config toast instead of starting the sidecar when Agent Mode is disabled', async () => {

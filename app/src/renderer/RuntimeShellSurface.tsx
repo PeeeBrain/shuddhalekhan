@@ -11,6 +11,7 @@ const ACTION_LABELS: Record<DictationRecoveryAction, string> = {
 
 export function RuntimeShellSurface() {
   const [snapshot, setSnapshot] = useState<RuntimePresentationSnapshot | null>(null);
+  const [retrying, setRetrying] = useState(false);
   const latest = useRef({ generation: 0, revision: 0 });
 
   useEffect(() => window.electronAPI.subscribe('runtime:snapshot', (next) => {
@@ -20,6 +21,7 @@ export function RuntimeShellSurface() {
       || (next.generation === current.generation && next.revision <= current.revision)
     ) return;
     latest.current = { generation: next.generation, revision: next.revision };
+    if (next.kind === 'failure') setRetrying(false);
     setSnapshot(next);
   }), []);
 
@@ -94,9 +96,13 @@ export function RuntimeShellSurface() {
               type="button"
               variant={action === 'retry-paste' ? 'default' : 'outline'}
               size="sm"
-              onClick={() => window.electronAPI?.send('runtime:recovery-action', action)}
+              disabled={retrying}
+              onClick={() => {
+                if (action === 'retry-paste') setRetrying(true);
+                window.electronAPI.send('runtime:recovery-action', action);
+              }}
             >
-              {ACTION_LABELS[action]}
+              {action === 'retry-paste' && retrying ? 'Retrying...' : ACTION_LABELS[action]}
             </Button>
           ))}
         </div>
