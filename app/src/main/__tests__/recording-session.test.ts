@@ -1002,6 +1002,64 @@ describe('RecordingSession', () => {
     expect(onResult).not.toHaveBeenCalled();
   });
 
+  it('does not report a stale batch failure after cancellation', async () => {
+    let rejectBatch!: (error: Error) => void;
+    let markBatchStarted!: () => void;
+    const batchStarted = new Promise<void>((resolve) => {
+      markBatchStarted = resolve;
+    });
+    const batchTranscribe = vi.fn(() => {
+      markBatchStarted();
+      return new Promise<string>((_resolve, reject) => {
+        rejectBatch = reject;
+      });
+    });
+    const cancelStream = vi.fn();
+    const onError = vi.fn();
+    const onResult = vi.fn();
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
+      acceptsAudioEvent: vi.fn(() => true),
+    };
+    const streamingTranscriber: Transcriber = {
+      ...createTranscriber(batchTranscribe),
+      id: 'whisper-live-kit',
+      transportCapabilities: { batch: true, streaming: true },
+      startStreaming: vi.fn(() => ({
+        send: vi.fn(async () => undefined),
+        finish: vi.fn(async () => { throw new Error('stream failed'); }),
+        cancel: cancelStream,
+      })),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: streamingTranscriber,
+      getDictationMode: () => 'live',
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+      onResult,
+    });
+
+    session.begin('dictation', 'cancelled-batch-failure');
+    const ending = session.end();
+    const completion = session.complete(new Uint8Array(128).fill(4));
+    await batchStarted;
+    await session.cancel();
+    rejectBatch(new Error('late batch failure'));
+
+    await expect(ending).resolves.toBeNull();
+    await expect(completion).resolves.toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
   it('cancels the per-utterance stream when capture returns an empty WAV', async () => {
     const cancelStream = vi.fn();
     const runtimeShell = {

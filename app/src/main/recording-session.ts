@@ -577,6 +577,7 @@ export class RecordingSession {
       }
       return result;
     } catch (error) {
+      if (this.activeRun !== run) return null;
       const err = error instanceof Error ? error : new Error(String(error));
       emitPerformanceMarker('transcription.batch.failed', {
         recordingSessionId: run.id,
