@@ -34,9 +34,10 @@ describe('Dictation config normalization', () => {
       'openai',
       'azure-speech',
       'google-cloud-speech-v2',
-      'nvidia-speech-nim',
-      'custom-open-ai-compatible',
-    ] as const) {
+       'nvidia-speech-nim',
+       'custom-open-ai-compatible',
+       'whisper-live-kit',
+     ] as const) {
       expect(getTranscriptionTransportCapabilities(providerId)).toEqual({
         batch: true,
         streaming: false,

@@ -15,6 +15,7 @@ const config: AppConfig = {
       googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+      whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
     },
   },
   selectedDeviceId: null,
@@ -62,6 +63,9 @@ describe('settings IPC adapter', () => {
       if (channel === 'updater:get-status') return Promise.resolve(updateStatus);
       if (channel === 'updater:check') return Promise.resolve(updateStatus);
       if (channel === 'transcription:check-server') return Promise.resolve(true);
+      if (channel === 'transcription:check-readiness') return Promise.resolve({
+        providerId: 'whisper-live-kit', state: 'ready', message: 'ready', checkedAt: null,
+      });
       if (channel === 'shortcuts:get-paused') return Promise.resolve(false);
       if (channel === 'shortcuts:set-paused') return Promise.resolve(true);
       return Promise.resolve(undefined);
@@ -87,12 +91,14 @@ describe('settings IPC adapter', () => {
     await ipc.setConfig('recordingActivationMode', 'toggle');
     await ipc.testMcpServer('mail');
     await ipc.checkTranscriptionServer();
+    await ipc.checkTranscriptionReadiness();
     await ipc.checkForUpdates();
 
     expect(invoke).toHaveBeenCalledWith('config:set', 'agent', config.agent);
     expect(invoke).toHaveBeenCalledWith('config:set', 'recordingActivationMode', 'toggle');
     expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'mail');
     expect(invoke).toHaveBeenCalledWith('transcription:check-server');
+    expect(invoke).toHaveBeenCalledWith('transcription:check-readiness');
     expect(invoke).toHaveBeenCalledWith('updater:check');
   });
 
@@ -142,6 +148,19 @@ describe('settings IPC adapter', () => {
     expect(subscribe).toHaveBeenNthCalledWith(2, 'mcp:server-status', expect.any(Function));
     expect(onUpdate).toHaveBeenCalledWith(updateStatus);
     expect(onMcpStatus).toHaveBeenCalledWith(status);
+  });
+
+  it('subscribes to typed transcription readiness updates', () => {
+    const onReadiness = vi.fn();
+    const off = vi.fn();
+    subscribe.mockReturnValueOnce(off);
+
+    expect(ipc.onTranscriptionReadinessChanged(onReadiness)).toBe(off);
+    const callback = subscribe.mock.calls[0]?.[1] as (readiness: unknown) => void;
+    callback({ state: 'ready' });
+
+    expect(subscribe).toHaveBeenCalledWith('transcription:readiness-changed', expect.any(Function));
+    expect(onReadiness).toHaveBeenCalledWith({ state: 'ready' });
   });
 
   it('subscribes to settings navigation requests', () => {

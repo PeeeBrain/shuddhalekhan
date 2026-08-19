@@ -45,7 +45,7 @@ interface ActiveSession {
 }
 
 export interface KeyboardHookStartOptions {
-  onStart: (intent: RecordingIntent) => void;
+  onStart: (intent: RecordingIntent) => boolean | void;
   onStop: () => void;
   isAgentModeEnabled?: () => boolean;
   getBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
@@ -60,7 +60,7 @@ export class KeyboardHook {
   private toggleAwaitingRelease: ActiveSession | null = null;
   private paused = false;
   private captureSuspended = false;
-  private onStartRecording: ((intent: RecordingIntent) => void) | null = null;
+  private onStartRecording: ((intent: RecordingIntent) => boolean | void) | null = null;
   private onStopRecording: (() => void) | null = null;
   private isAgentModeEnabled: () => boolean = () => false;
   private getBinding: (intent: RecordingIntent) => ShortcutBinding | null =
@@ -199,17 +199,19 @@ export class KeyboardHook {
       const binding = this.getBinding(intent);
       if (!binding) continue;
       if (this.completesBinding(vkCode, modifiers, binding)) {
-        const activationMode = this.getActivationMode(intent);
-        this.session = {
-          intent,
-          activationMode,
-          binding: normalizeBinding(binding),
-          triggerKeyCode: vkCode,
-        };
-        if (activationMode === 'toggle') {
-          this.toggleAwaitingRelease = this.session;
+        const accepted = this.onStartRecording ? this.onStartRecording(intent) !== false : true;
+        if (accepted) {
+          const activationMode = this.getActivationMode(intent);
+          this.session = {
+            intent,
+            activationMode,
+            binding: normalizeBinding(binding),
+            triggerKeyCode: vkCode,
+          };
+          if (activationMode === 'toggle') {
+            this.toggleAwaitingRelease = this.session;
+          }
         }
-        this.onStartRecording?.(intent);
         return true;
       }
     }

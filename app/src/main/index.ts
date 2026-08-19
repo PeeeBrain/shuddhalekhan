@@ -26,6 +26,7 @@ import {
   validateProviderReadiness,
 } from './transcription';
 import { getTranscriber } from './providers';
+import { checkWhisperLiveKitReadiness } from './whisper-live-kit';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
@@ -255,7 +256,9 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
 }
 
 function finishRecording(): void {
-  void recordingSession.end();
+  void recordingSession.end().catch((err) => {
+    console.error('Recording end failed:', err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+  });
 }
 
 // Never leave global shortcut activation suspended after capture ends.
@@ -271,14 +274,16 @@ function setShortcutsPaused(paused: boolean): void {
 }
 
 function showTranscriptionError(err: unknown): void {
-  console.error('Transcription failed:', err instanceof Error ? err.name : 'Unknown failure');
+  const message = getSafeTranscriptionFailureMessage(err);
+  const detail = err instanceof Error ? `${err.name}: ${err.message}` : 'Unknown failure';
+  console.error(`Transcription failed (${detail}):`, message);
   if (runtimeShell) {
-    runtimeShell.showFailure(null, getSafeTranscriptionFailureMessage(err));
+    runtimeShell.showFailure(null, message);
     return;
   }
   showAgentToast({
     kind: 'transcription-failed',
-    message: getSafeTranscriptionFailureMessage(err),
+    message,
   });
 }
 
@@ -449,6 +454,35 @@ ipcMain.handle('transcription:check-server', async () => {
   return false;
 });
 
+ipcMain.handle('transcription:check-readiness', async () => {
+  const config = getConfig();
+  const provider = config.transcription.activeProvider;
+  if (provider !== 'whisper-live-kit') {
+    return {
+      providerId: provider,
+      state: 'ready' as const,
+      message: 'The selected batch provider is ready for recording.',
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  const checking = {
+    providerId: provider,
+    state: 'checking' as const,
+    message: 'Checking WhisperLiveKit health and PCM WebSocket readiness...',
+    checkedAt: null,
+  };
+  getSettingsWindow()?.webContents.send('transcription:readiness-changed', checking);
+
+  const providerConfig = config.transcription.providers.whisperLiveKit;
+  const readiness = await checkWhisperLiveKitReadiness(
+    providerConfig ?? { baseUrl: '', auth: 'none' },
+    providerConfig?.auth === 'bearer' ? credentialVault.read('whisper-live-kit-bearer') : null,
+  );
+  getSettingsWindow()?.webContents.send('transcription:readiness-changed', readiness);
+  return readiness;
+});
+
 ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   const previousConfig = getConfig();
   setConfig(key, value);
@@ -538,7 +572,9 @@ ipcMain.on('agent-toast:dismiss', () => {
 });
 
 ipcMain.on('runtime:recovery-action', (_event, action) => {
-  void handleRuntimeRecoveryAction(action);
+  void handleRuntimeRecoveryAction(action).catch((err) => {
+    console.error('Failed to handle runtime recovery action:', err);
+  });
 });
 
 ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: string) => {

@@ -93,4 +93,51 @@ describe('RecordingPopup timer reset', () => {
       expect(screen.getByText('00:00')).toBeInTheDocument();
     });
   });
+
+  it('stops elapsed timer and clears recording start on recording:pill-hide', async () => {
+    let currentTime = 1000000;
+    const intervalCallbacks: Array<() => void> = [];
+
+    dateSpy = spyOn(Date, 'now').mockImplementation(() => currentTime);
+    intervalSpy = spyOn(window, 'setInterval').mockImplementation((callback: () => void) => {
+      intervalCallbacks.push(callback);
+      return 0 as unknown as number;
+    });
+    rafSpy = spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0 as unknown as number);
+
+    mockElectronAPI();
+    render(<RecordingPopup initialMode="dictation" />);
+
+    act(() => {
+      emit('recording:pill-show');
+    });
+
+    currentTime += 2000;
+    act(() => {
+      intervalCallbacks.forEach((cb) => cb());
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('00:02')).toBeInTheDocument();
+    });
+
+    act(() => {
+      emit('recording:pill-hide');
+    });
+
+    // Subsequent interval ticks after pill-hide should not advance time or throw
+    currentTime += 5000;
+    act(() => {
+      intervalCallbacks.forEach((cb) => cb());
+    });
+
+    // Upon fresh show, timer resets to 00:00
+    act(() => {
+      emit('recording:pill-show');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('00:00')).toBeInTheDocument();
+    });
+  });
 });

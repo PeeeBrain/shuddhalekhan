@@ -569,4 +569,79 @@ describe('KeyboardHook pause and capture suspension', () => {
     hook.handleKeyForTest(keys.leftWin, true);
     expect(started).toHaveBeenCalledWith('dictation');
   });
+
+  it('does not create phantom active or toggle session when onStart returns false', async () => {
+    const hookModule = await importHook('rejected-start');
+    const hook = new hookModule.KeyboardHook();
+    const started = mock();
+    const stopped = mock();
+    const keys = hookModule.keyboardTestKeyCodes;
+
+    // Reject the first start attempt, accept the second
+    started.mockReturnValueOnce(false).mockReturnValue(true);
+
+    hook.start({
+      onStart: started,
+      onStop: stopped,
+      isAgentModeEnabled: () => true,
+      getBinding: (intent) => (intent === 'dictation'
+        ? { keyCode: null, modifiers: ['ctrl', 'win'] }
+        : { keyCode: null, modifiers: ['alt', 'win'] }),
+      getActivationMode: () => 'toggle',
+    });
+
+    // 1. Dictation toggle chord pressed but rejected
+    hook.handleKeyForTest(keys.leftControl, true);
+    const consumed = hook.handleKeyForTest(keys.leftWin, true);
+    expect(consumed).toBe(true);
+    expect(started).toHaveBeenCalledTimes(1);
+
+    // Release the chord
+    hook.handleKeyForTest(keys.leftWin, false);
+    hook.handleKeyForTest(keys.leftControl, false);
+
+    // No stop should have been fired because session was never accepted
+    expect(stopped).not.toHaveBeenCalled();
+
+    // 2. Next press (now accepted) starts cleanly as a toggle
+    hook.handleKeyForTest(keys.leftControl, true);
+    hook.handleKeyForTest(keys.leftWin, true);
+    expect(started).toHaveBeenCalledTimes(2);
+
+    // Release chord keys
+    hook.handleKeyForTest(keys.leftWin, false);
+    hook.handleKeyForTest(keys.leftControl, false);
+
+    // Subsequent press stops the active toggle session
+    hook.handleKeyForTest(keys.leftControl, true);
+    hook.handleKeyForTest(keys.leftWin, true);
+    expect(stopped).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not create phantom agent session when agent onStart returns false', async () => {
+    const hookModule = await importHook('agent-rejected-start');
+    const hook = new hookModule.KeyboardHook();
+    const started = mock(() => false);
+    const stopped = mock();
+    const keys = hookModule.keyboardTestKeyCodes;
+
+    hook.start({
+      onStart: started,
+      onStop: stopped,
+      isAgentModeEnabled: () => true,
+      getBinding: (intent) => (intent === 'dictation'
+        ? { keyCode: null, modifiers: ['ctrl', 'win'] }
+        : { keyCode: null, modifiers: ['alt', 'win'] }),
+      getActivationMode: () => 'push-to-talk',
+    });
+
+    hook.handleKeyForTest(keys.leftAlt, true);
+    hook.handleKeyForTest(keys.leftWin, true);
+    expect(started).toHaveBeenCalledWith('agent');
+
+    // On release of push-to-talk chord, stopped must not be called because start was rejected
+    hook.handleKeyForTest(keys.leftWin, false);
+    hook.handleKeyForTest(keys.leftAlt, false);
+    expect(stopped).not.toHaveBeenCalled();
+  });
 });

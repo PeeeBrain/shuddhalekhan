@@ -295,14 +295,40 @@ describe('RecordingSession', () => {
     await expect(resultPromise).resolves.toMatchObject({ targetSnapshot: snapshot });
   });
 
-  it('resolves empty WAV payloads to null without transcription', async () => {
+  it('reports an empty WAV payload as a capture failure', async () => {
+    const onError = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+    });
     session.begin('dictation');
 
     const resultPromise = session.end();
     await session.complete(new Uint8Array(44));
 
-    await expect(resultPromise).resolves.toBeNull();
+    await expect(resultPromise).rejects.toThrow('No microphone audio was captured');
     expect(transcribe).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'No microphone audio was captured. Check the selected input device and try again.',
+    }));
+  });
+
+  it('releases a session stopped before capture can start', async () => {
+    audioStream.endCapture.mockReturnValue(false);
+    session.begin('dictation', 'not-started');
+
+    const resultPromise = session.end();
+    const acceptedNext = session.begin('dictation', 'next-session');
+    await session.cancel();
+
+    await expect(resultPromise).resolves.toBeNull();
+    expect(acceptedNext).toBe(true);
   });
 
   it('cancels recording and tells the audio stream to discard capture', async () => {
@@ -576,6 +602,43 @@ describe('RecordingSession', () => {
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 
+  it('terminates the correlated run when runtime microphone capture fails', async () => {
+    const onError = vi.fn();
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(), getWebContents: vi.fn(() => null),
+      consumeAudioEvent: vi.fn(() => true),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+    });
+    session.start();
+    session.begin('dictation', 'failed-capture');
+    const command = runtimeShell.beginCapture.mock.calls[0]?.[0] as {
+      recordingSessionId: string;
+      sequence: number;
+    };
+    const failedCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'runtime:audio-failed',
+    );
+
+    failedCall[1]({}, 1, command.recordingSessionId, command.sequence);
+
+    expect(runtimeShell.consumeAudioEvent).toHaveBeenCalledWith(1, 'failed-capture', command.sequence);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Microphone capture failed. Check the selected input device and try again.',
+    }));
+    expect(session.begin('dictation', 'recovered')).toBe(true);
+  });
+
   it('warns for the final ten seconds and auto-stops a duration-limited provider exactly once', async () => {
     const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
     const updateDurationWarning = vi.fn();
@@ -753,5 +816,130 @@ describe('RecordingSession', () => {
       'recording.session.completed',
     ]);
     resetPerformanceMarkerCollectorForTests();
+  });
+
+  it('carries WhisperLiveKit mandatory Batch capability into the ordinary Batch presentation', async () => {
+    const providerTranscriber: Transcriber = {
+      id: 'whisper-live-kit',
+      capabilities: {
+        translation: false,
+        automaticLanguageDetection: true,
+        dictionaryHints: false,
+        authentication: 'optional',
+        maxDurationSeconds: null,
+      },
+      transportCapabilities: { batch: true, streaming: false },
+      transcribe: vi.fn(async () => 'WhisperLiveKit batch result'),
+    };
+    const onResult = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: providerTranscriber,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onResult,
+    });
+
+    session.start();
+    session.begin('dictation');
+    const audioDataReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'audio-data-ready',
+    );
+    const listener = audioDataReadyCall?.[1] as ((_event: unknown, audio: ArrayBuffer) => Promise<void>);
+    const endPromise = session.end();
+    await listener({}, new Uint8Array(64).buffer);
+    await endPromise;
+
+    expect(showRecordingPill).toHaveBeenCalledWith(
+      'dictation',
+      expect.any(String),
+      expect.objectContaining({ capabilities: { batch: true, streaming: false } }),
+    );
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
+      text: 'WhisperLiveKit batch result',
+      capabilities: { batch: true, streaming: false },
+    }));
+  });
+
+  it('rejects begin() and protects session context while deferred transcription is in-flight', async () => {
+    let resolveTranscribe!: (text: string) => void;
+    const slowTranscribe = vi.fn(
+      () => new Promise<string>((resolve) => { resolveTranscribe = resolve; }),
+    );
+    const slowTranscriber = createTranscriber(slowTranscribe);
+
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: slowTranscriber,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    const acceptedFirst = session.begin('dictation', 'session-alpha');
+    expect(acceptedFirst).toBe(true);
+
+    const endPromise = session.end();
+    const completePromise = session.complete(new Uint8Array(64));
+
+    // While transcription is pending, session ownership must not be released:
+    const acceptedSecond = session.begin('agent', 'session-beta');
+    expect(acceptedSecond).toBe(false);
+
+    // Resolve the deferred transcription
+    resolveTranscribe('alpha transcription completed');
+    const result = await completePromise;
+    const endResult = await endPromise;
+
+    expect(result).toMatchObject({
+      text: 'alpha transcription completed',
+      intent: 'dictation',
+      recordingSessionId: 'session-alpha',
+      sequence: 2,
+      revision: 2,
+    });
+    expect(endResult).toEqual(result);
+
+    // After completion reaches terminal state, a new session can begin
+    const acceptedThird = session.begin('dictation', 'session-gamma');
+    expect(acceptedThird).toBe(true);
+  });
+
+  it('handles transcription failure gracefully when end() is triggered via keyboard onStop without unhandled rejection', async () => {
+    const onError = vi.fn();
+    const failingTranscriber = createTranscriber(
+      vi.fn(() => Promise.reject(new Error('Network error during transcription'))),
+    );
+
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: failingTranscriber,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+    });
+
+    session.start();
+    const hookOptions = keyboardStart.mock.calls[0]?.[0] as {
+      onStart: (intent: RecordingIntent) => boolean;
+      onStop: () => void;
+    };
+
+    hookOptions.onStart('dictation');
+    hookOptions.onStop();
+
+    // Trigger audio completion which fails
+    const result = await session.complete(new Uint8Array(64));
+    expect(result).toBeNull();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Network error during transcription' }));
+    expect(session.isActive()).toBe(false);
   });
 });

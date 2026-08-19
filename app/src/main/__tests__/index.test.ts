@@ -324,9 +324,10 @@ describe('main process IPC orchestration', () => {
       'settings:open',
       'shortcuts:begin-capture',
       'shortcuts:end-capture',
-      'shortcuts:get-paused',
-      'shortcuts:set-paused',
-      'transcription:check-server',
+       'shortcuts:get-paused',
+       'shortcuts:set-paused',
+       'transcription:check-readiness',
+       'transcription:check-server',
       'updater:check',
       'updater:get-status',
     ]);
@@ -366,6 +367,42 @@ describe('main process IPC orchestration', () => {
   it('checks the configured local endpoint without audio', async () => {
     await expect(ipcHandlers.get('transcription:check-server')?.({})).resolves.toBe(true);
     expect(fetch).toHaveBeenCalledWith('http://localhost:8080/inference', { method: 'HEAD' });
+  });
+
+  it('returns a typed readiness result for non-WhisperLiveKit providers without probing the network', async () => {
+    await expect(ipcHandlers.get('transcription:check-readiness')?.({})).resolves.toMatchObject({
+      providerId: 'local-whisper-cpp',
+      state: 'ready',
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('publishes checking and terminal readiness for an explicitly selected WhisperLiveKit provider', async () => {
+    const config = {
+      ...baseConfig,
+      transcription: {
+        ...baseConfig.transcription,
+        activeProvider: 'whisper-live-kit' as const,
+        providers: {
+          ...baseConfig.transcription.providers,
+          whisperLiveKit: { baseUrl: 'http://127.0.0.1:8000', auth: 'none' as const },
+        },
+      },
+    };
+    getConfig.mockReturnValue(config);
+
+    const readiness = await ipcHandlers.get('transcription:check-readiness')?.({});
+
+    expect(readiness).toMatchObject({
+      providerId: 'whisper-live-kit',
+      state: 'unavailable',
+    });
+    expect(send).toHaveBeenCalledWith('transcription:readiness-changed', expect.objectContaining({
+      state: 'checking',
+    }));
+    expect(send).toHaveBeenCalledWith('transcription:readiness-changed', expect.objectContaining({
+      state: 'unavailable',
+    }));
   });
 
   it('starts recording when audio:start-recording is invoked', () => {
@@ -422,6 +459,40 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
 
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined);
+    expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('routes a WhisperLiveKit Batch transcript to Agent Mode without changing the provider path', async () => {
+    const config = {
+      ...baseConfig,
+      transcription: {
+        ...baseConfig.transcription,
+        activeProvider: 'whisper-live-kit' as const,
+        providers: {
+          ...baseConfig.transcription.providers,
+          whisperLiveKit: { baseUrl: 'http://127.0.0.1:8000', auth: 'none' as const },
+        },
+      },
+      agent: {
+        ...baseConfig.agent,
+        enabled: true,
+      },
+    };
+    getConfig.mockReturnValue(config);
+    await import(`../index?test=${Date.now()}-whisper-live-kit-agent`);
+
+    await sessionOptions.onResult({
+      text: 'Quick brown fox jumps over the lazy dog.',
+      intent: 'agent' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    });
+
+    expect(agentStartRun).toHaveBeenCalledWith(
+      expect.any(String),
+      'Quick brown fox jumps over the lazy dog.',
+      config,
+      undefined,
+    );
     expect(simulatePaste).not.toHaveBeenCalled();
   });
 

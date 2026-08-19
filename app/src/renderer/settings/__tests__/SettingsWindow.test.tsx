@@ -36,7 +36,8 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       azureSpeech: { endpoint: '', region: '' },
       googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-      customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+       customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+       whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
     },
     },
     selectedDeviceId: AUDIO_DEVICES_PLACEHOLDER,
@@ -110,6 +111,12 @@ function createMockSettingsIpc(
     checkForUpdates: mock(() => Promise.resolve(UPDATE_STATUS)),
     testMcpServer: mock(() => Promise.resolve()),
     checkTranscriptionServer: mock(() => Promise.resolve(true)),
+    checkTranscriptionReadiness: mock(() => Promise.resolve({
+      providerId: 'whisper-live-kit' as const,
+      state: 'ready' as const,
+      message: 'WhisperLiveKit is ready for Batch Dictation.',
+      checkedAt: null,
+    })),
     getShortcutsPaused: mock(() => Promise.resolve(false)),
     setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
     beginShortcutCapture: mock(() => Promise.resolve()),
@@ -120,6 +127,7 @@ function createMockSettingsIpc(
     onMcpServerStatus: mock(
       (_callback: (status: McpServerRuntimeStatus) => void) => undefined,
     ),
+    onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
     getAuditRunDetail: mock(() => Promise.resolve(options.auditRunDetail ?? [])),
     onAuditRunUpdated: mock((_callback: (runId: string) => void) => undefined),
@@ -293,7 +301,7 @@ describe('Settings section reachability', () => {
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
   });
 
-  it('groups all six provider choices with descriptions and readiness', async () => {
+  it('groups all seven provider choices with descriptions and readiness', async () => {
     renderSettings();
     await waitForLoaded();
 
@@ -301,14 +309,15 @@ describe('Settings section reachability', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
 
     const options = await screen.findAllByRole('option');
-    expect(options).toHaveLength(6);
+    expect(options).toHaveLength(7);
     for (const name of [
       'Local whisper.cpp',
       'OpenAI',
       'Microsoft Azure Speech',
       'Google Cloud Speech-to-Text v2',
       'NVIDIA Speech NIM',
-      'Custom OpenAI-compatible',
+       'Custom OpenAI-compatible',
+       'WhisperLiveKit',
     ]) {
       expect(options.some((option) => option.textContent?.includes(name))).toBe(true);
     }
@@ -399,6 +408,43 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('button', { name: 'Check connectivity' })).toBeInTheDocument();
     expect(screen.getByText(/user-hosted, not an NVIDIA managed cloud service/i)).toBeInTheDocument();
     expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('configured NVIDIA Speech NIM endpoint');
+  });
+
+  it('shows explicit WhisperLiveKit Batch setup, secure auth, and readiness', async () => {
+    const current = baseConfig();
+    const { settingsIpc } = renderSettings({ config: {
+      ...current,
+      dictionary: ['Shuddhalekhan'],
+      transcription: {
+        ...current.transcription,
+        activeProvider: 'whisper-live-kit',
+        providers: {
+          ...current.transcription.providers,
+          whisperLiveKit: { baseUrl: 'http://127.0.0.1:8000', auth: 'none' },
+        },
+      },
+    } });
+    await waitForLoaded();
+
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('WhisperLiveKit');
+    expect(screen.getByRole('textbox', { name: 'Base URL' })).toHaveValue('http://127.0.0.1:8000');
+    expect(screen.getByRole('combobox', { name: 'Authentication' })).toHaveTextContent('None (local service)');
+    expect(screen.getByRole('button', { name: 'Check readiness' })).toBeInTheDocument();
+    expect(await screen.findByText('Ready')).toBeInTheDocument();
+    expect(screen.getByText(/keeps no idle ASR connection/i)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeDisabled();
+    expect(screen.getByText(/Saved words stay available for other providers/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Base URL' }), {
+      target: { value: 'http://127.0.0.1:8001' },
+    });
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Base URL' }));
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalled());
+    expect(screen.queryByText('Ready')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Authentication' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Bearer token' }));
+    expect(await screen.findByLabelText('Bearer token')).toBeInTheDocument();
   });
 
   it('shows shared device rows without the removed shared activation setting', async () => {
@@ -860,6 +906,7 @@ describe('Settings validation', () => {
             googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
             nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
             customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+            whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
           },
         },
       );

@@ -17,6 +17,7 @@ const CREDENTIAL_KINDS: CredentialKind[] = [
   'azure-speech-key',
   'nvidia-nim-bearer',
   'nvidia-nim-header',
+  'whisper-live-kit-bearer',
 ];
 
 export function registerCredentialIpcHandlers(

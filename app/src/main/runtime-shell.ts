@@ -27,7 +27,13 @@ export class RuntimeShell {
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly windows;
 
-  constructor(private onCrash?: (reason: string) => void) {
+  constructor(
+    private onCrash?: (reason: string) => void,
+    private readonly timers: {
+      setTimeoutFn: typeof setTimeout;
+      clearTimeoutFn: typeof clearTimeout;
+    } = { setTimeoutFn: setTimeout, clearTimeoutFn: clearTimeout },
+  ) {
     this.windows = createSingletonWindow({
       route: 'runtime',
       options: {
@@ -90,9 +96,11 @@ export class RuntimeShell {
     this.startAudio(envelope);
   }
 
-  endCapture(): void {
+  endCapture(): boolean {
     this.pendingBegin = null;
-    if (this.activeCommand) this.send('runtime:audio-stop', this.activeCommand);
+    if (!this.activeCommand) return false;
+    this.send('runtime:audio-stop', this.activeCommand);
+    return true;
   }
 
   cancelCapture(): void {
@@ -110,10 +118,7 @@ export class RuntimeShell {
     recordingSessionId?: string,
     envelope?: RecordingPresentationEnvelope,
   ): void {
-    if (this.hideTimer) {
-      clearTimeout(this.hideTimer);
-      this.hideTimer = null;
-    }
+    this.cancelPendingHide();
     const win = this.windows.create();
     this.position(win);
     this.resize(SHELL_WIDTH, SHELL_HEIGHT, false);
@@ -141,13 +146,15 @@ export class RuntimeShell {
     this.send('recording:pill-hide');
     const win = this.windows.get();
     if (!win || win.isDestroyed()) return;
-    this.hideTimer = setTimeout(() => {
+    this.hideTimer = this.timers.setTimeoutFn(() => {
       if (!win.isDestroyed()) win.hide();
       this.hideTimer = null;
     }, 100);
   }
 
   showProcessing(recordingSessionId: string): void {
+    this.cancelPendingHide();
+    this.send('recording:pill-hide');
     this.resize(SHELL_WIDTH, SHELL_HEIGHT, false);
     this.publish({ kind: 'processing', recordingSessionId });
     this.showPassive();
@@ -158,6 +165,7 @@ export class RuntimeShell {
     message: string,
     recoveryActions: DictationRecoveryAction[] = [],
   ): void {
+    this.cancelPendingHide();
     this.resize(FAILURE_WIDTH, FAILURE_HEIGHT, recoveryActions.length > 0);
     this.publish({ kind: 'failure', recordingSessionId, message, recoveryActions });
     this.showPassive();
@@ -196,8 +204,7 @@ export class RuntimeShell {
   }
 
   destroy(): void {
-    if (this.hideTimer) clearTimeout(this.hideTimer);
-    this.hideTimer = null;
+    this.cancelPendingHide();
     this.ready = false;
     this.pendingBegin = null;
     this.activeCommand = null;
@@ -256,6 +263,12 @@ export class RuntimeShell {
     const x = workArea.x + Math.max(0, (workAreaSize.width - SHELL_WIDTH) / 2);
     const y = workArea.y + Math.max(0, workAreaSize.height - SHELL_HEIGHT - BOTTOM_MARGIN);
     win.setPosition(Math.round(x), Math.round(y));
+  }
+
+  private cancelPendingHide(): void {
+    if (!this.hideTimer) return;
+    this.timers.clearTimeoutFn(this.hideTimer);
+    this.hideTimer = null;
   }
 
   private handleCrash(reason: string): void {

@@ -13,6 +13,7 @@ const baseConfig: AppConfig = {
       googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+      whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
     },
   },
   selectedDeviceId: null,

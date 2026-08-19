@@ -19,6 +19,7 @@ function config(auth: 'none' | 'bearer' | 'header' = 'none'): AppConfig {
           supportsTranslation: false, supportsDictionaryHints: true,
         },
         customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+        whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
       },
     },
     selectedDeviceId: null, removeFillerWords: false, language: 'en', task: 'transcribe', dictionary: [],

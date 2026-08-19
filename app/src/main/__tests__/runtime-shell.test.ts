@@ -90,10 +90,43 @@ describe('Batch Dictation runtime shell', () => {
     expect(send).toHaveBeenCalledWith('runtime:audio-start', expect.objectContaining({
       recordingSessionId: 'session-1', sequence: 1,
     }));
+    expect(send).toHaveBeenCalledWith('recording:pill-hide');
     expect(window.setFocusable).toHaveBeenCalledWith(true);
     expect(window.setIgnoreMouseEvents).toHaveBeenCalledWith(false, { forward: false });
     const command = (send.mock.calls as unknown[][]).find((call: unknown[]) => call[0] === 'runtime:audio-start')?.[1] as { generation: number };
     expect(shell.acceptsAudioEvent(command.generation, 'session-1', 1)).toBe(false);
+  });
+
+  it('does not let a pending idle hide dismiss a newer failure', async () => {
+    const scheduled = new Map<number, () => void>();
+    let nextTimer = 1;
+    const setTimeoutFn = vi.fn((callback: () => void) => {
+      const timer = nextTimer++;
+      scheduled.set(timer, callback);
+      return timer as unknown as ReturnType<typeof setTimeout>;
+    });
+    const clearTimeoutFn = vi.fn((timer: ReturnType<typeof setTimeout>) => {
+      scheduled.delete(timer as unknown as number);
+    });
+    const window = {
+      webContents: { send: vi.fn(), on: vi.fn(), isLoading: vi.fn(() => false) },
+      loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => true),
+      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+      setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+      hide: vi.fn(), destroy: vi.fn(),
+    };
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-hide-race`);
+    const shell = new RuntimeShell(undefined, { setTimeoutFn, clearTimeoutFn });
+    shell.prepare();
+
+    shell.finish();
+    shell.showFailure('session-1', 'Paste failed', ['retry-paste']);
+    for (const callback of scheduled.values()) callback();
+
+    expect(clearTimeoutFn).toHaveBeenCalledTimes(1);
+    expect(window.hide).not.toHaveBeenCalled();
   });
 
   it('accepts returned audio only for the current generation, session, and sequence', async () => {

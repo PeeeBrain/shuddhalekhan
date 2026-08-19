@@ -29,6 +29,7 @@ const BASE_CONFIG: AppConfig = {
       googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
       customOpenAiCompatible: { endpoint: 'http://localhost:8000/v1/audio/transcriptions', model: 'whisper-1', auth: 'none', headerName: '' },
+      whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
     },
   },
   selectedDeviceId: null,
@@ -588,6 +589,16 @@ describe('getTranscriber provider selection', () => {
     const transcriber = getTranscriber(config, vault);
     expect(transcriber.id).toBe('custom-open-ai-compatible');
   });
+
+  it('returns the explicit WhisperLiveKit transcriber for whisper-live-kit', async () => {
+    const { getTranscriber } = await import('../providers');
+    const config: AppConfig = {
+      ...BASE_CONFIG,
+      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'whisper-live-kit' },
+    };
+
+    expect(getTranscriber(config, createVault({})).id).toBe('whisper-live-kit');
+  });
 });
 
 describe('provider capabilities', () => {
@@ -713,5 +724,30 @@ describe('provider capabilities', () => {
     };
     const errors = validateProviderReadiness('custom-open-ai-compatible', config, { read: (_id) => 'secret' });
     expect(errors.some((e) => e.includes('Header name'))).toBe(true);
+  });
+
+  it('validates WhisperLiveKit configuration and optional credentials', () => {
+    const config: AppConfig = {
+      ...BASE_CONFIG,
+      transcription: {
+        ...BASE_CONFIG.transcription,
+        activeProvider: 'whisper-live-kit',
+        providers: {
+          ...BASE_CONFIG.transcription.providers,
+          whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'bearer' },
+        },
+      },
+    };
+    expect(validateProviderReadiness('whisper-live-kit', config, createVault())).toContain(
+      'WhisperLiveKit bearer token is not configured.',
+    );
+    expect(validateProviderReadiness('whisper-live-kit', config, createVault({ 'whisper-live-kit-bearer': 'secret' }))).toEqual([]);
+
+    const configWithDictionary = { ...config, dictionary: ['Shuddhalekhan'] };
+    expect(validateProviderReadiness(
+      'whisper-live-kit',
+      configWithDictionary,
+      createVault({ 'whisper-live-kit-bearer': 'secret' }),
+    )).toEqual([]);
   });
 });

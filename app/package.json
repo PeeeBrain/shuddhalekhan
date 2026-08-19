@@ -40,6 +40,7 @@
     "react-dom": "^19.1.0",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.3.2",
+    "ws": "^8.21.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -51,6 +52,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.6.0",
     "electron": "^43.1.0",
     "electron-builder": "^26.15.6",

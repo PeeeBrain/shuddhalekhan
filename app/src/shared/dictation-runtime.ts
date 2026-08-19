@@ -22,6 +22,7 @@ const TRANSCRIPTION_TRANSPORT_CAPABILITIES = {
   'google-cloud-speech-v2': { batch: true, streaming: false },
   'nvidia-speech-nim': { batch: true, streaming: false },
   'custom-open-ai-compatible': { batch: true, streaming: false },
+  'whisper-live-kit': { batch: true, streaming: false },
 } satisfies Record<TranscriptionProviderId, TranscriptionTransportCapabilities>;
 
 export function normalizeDictationConfig(stored: unknown): DictationConfig {
