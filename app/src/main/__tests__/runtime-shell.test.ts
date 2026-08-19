@@ -76,6 +76,8 @@ describe('Batch Dictation runtime shell', () => {
     };
     shell.beginCapture(envelope);
     shell.show('dictation', 'session-1', envelope);
+    shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
+    shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showProcessing('session-1');
     shell.showFailure('session-1', 'Paste failed', ['retry-paste', 'copy-full-transcript']);
     shell.finish();
@@ -84,9 +86,9 @@ describe('Batch Dictation runtime shell', () => {
       .filter((call: unknown[]) => call[0] === 'runtime:snapshot')
       .map((call: unknown[]) => call[1] as { kind: string; revision: number });
     expect(snapshots.map((snapshot: { kind: string }) => snapshot.kind)).toEqual([
-      'recording', 'processing', 'failure', 'idle',
+      'recording', 'recording', 'processing', 'failure', 'idle',
     ]);
-    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4]);
+    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4, 5]);
     expect(send).toHaveBeenCalledWith('runtime:audio-start', expect.objectContaining({
       recordingSessionId: 'session-1', sequence: 1,
     }));

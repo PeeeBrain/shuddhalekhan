@@ -28,21 +28,24 @@ describe('Dictation config normalization', () => {
     expect(normalizeDictationConfig(once)).toEqual(once);
   });
 
-  it('declares every current transcription provider as batch-capable', () => {
+  it('keeps every provider batch-capable and exposes streaming only for WhisperLiveKit', () => {
     for (const providerId of [
       'local-whisper-cpp',
       'openai',
       'azure-speech',
       'google-cloud-speech-v2',
-       'nvidia-speech-nim',
-       'custom-open-ai-compatible',
-       'whisper-live-kit',
-     ] as const) {
+      'nvidia-speech-nim',
+      'custom-open-ai-compatible',
+    ] as const) {
       expect(getTranscriptionTransportCapabilities(providerId)).toEqual({
         batch: true,
         streaming: false,
       });
     }
+    expect(getTranscriptionTransportCapabilities('whisper-live-kit')).toEqual({
+      batch: true,
+      streaming: true,
+    });
   });
 
   it('accepts local HTTP and remote HTTPS formatter profiles but rejects unsafe endpoints', () => {

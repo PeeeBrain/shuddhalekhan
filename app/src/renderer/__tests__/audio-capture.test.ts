@@ -25,6 +25,59 @@ afterEach(() => {
 });
 
 describe('audio capture helpers', () => {
+  it('emits ordered 20 ms PCM16 frames and builds the final WAV from the same samples', () => {
+    const source = Float32Array.from({ length: 640 }, (_, index) => (index - 320) / 320);
+    const capture = __audioCaptureTestUtils.createStreamingCapture({
+      recordingSessionId: 'utterance-1',
+      maxInFlightChunks: 2,
+    });
+
+    const first = capture.push([source.slice(0, 500)], 16_000);
+    const second = capture.push([source.slice(500)], 16_000);
+
+    expect(first).toEqual([{
+      recordingSessionId: 'utterance-1',
+      sequence: 0,
+      pcm: expect.any(Uint8Array),
+    }]);
+    expect(first[0]?.pcm.byteLength).toBe(640);
+    expect(second).toEqual([{
+      recordingSessionId: 'utterance-1',
+      sequence: 1,
+      pcm: expect.any(Uint8Array),
+    }]);
+    expect(capture.finish()).toEqual(__audioCaptureTestUtils.encodeWAV([source], 16_000, 1));
+  });
+
+  it('observes a 48 kHz stereo source and downmixes one 20 ms frame to 16 kHz mono', () => {
+    const capture = __audioCaptureTestUtils.createStreamingCapture({
+      recordingSessionId: 'utterance-stereo',
+      maxInFlightChunks: 1,
+    });
+
+    const chunks = capture.push([
+      new Float32Array(960).fill(1),
+      new Float32Array(960).fill(-1),
+    ], 48_000);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.pcm.byteLength).toBe(640);
+    expect(chunks[0]?.pcm.every((byte) => byte === 0)).toBe(true);
+    expect(capture.finish().byteLength).toBe(684);
+  });
+
+  it('stops realtime emission at the credit bound without losing retained WAV audio', () => {
+    const source = new Float32Array(640).fill(0.25);
+    const capture = __audioCaptureTestUtils.createStreamingCapture({
+      recordingSessionId: 'utterance-2',
+      maxInFlightChunks: 1,
+    });
+
+    expect(capture.push([source], 16_000)).toHaveLength(1);
+    expect(capture.realtimeEnabled).toBe(false);
+    expect(capture.finish()).toEqual(__audioCaptureTestUtils.encodeWAV([source], 16_000, 1));
+  });
+
   it('encodes PCM samples into a valid 16-bit WAV file', () => {
     const wav = __audioCaptureTestUtils.encodeWAV(
       [new Float32Array([-1, 0, 1])],
@@ -118,12 +171,20 @@ describe('recording lifecycle', () => {
       }),
     });
 
+    const onPcmChunk = vi.fn();
+    const source = new Float32Array(640).fill(0.25);
     setSelectedDeviceId('mic-123');
-    await startRecording();
+    await startRecording({
+      recordingSessionId: 'capture-session',
+      maxInFlightChunks: 50,
+      onPcmChunk,
+      onRealtimeDisabled: vi.fn(),
+    });
     expect(audioProcess).toBeTypeOf('function');
     (audioProcess as unknown as (event: AudioProcessingEvent) => void)({
       inputBuffer: {
-        getChannelData: () => new Float32Array([0.2, -0.4, 0.6]),
+        numberOfChannels: 1,
+        getChannelData: () => source,
       },
     } as unknown as AudioProcessingEvent);
     const wav = stopRecording();
@@ -137,7 +198,37 @@ describe('recording lifecycle', () => {
     expect(stopTrack).toHaveBeenCalledTimes(1);
     expect(disconnect).toHaveBeenCalledTimes(2);
     expect(close).toHaveBeenCalledTimes(1);
-    expect(wav.byteLength).toBe(50);
+    expect(onPcmChunk.mock.calls.map(([chunk]: [{ sequence: number; pcm: Uint8Array }]) => [
+      chunk.sequence,
+      chunk.pcm.byteLength,
+    ])).toEqual([
+      [0, 640],
+      [1, 640],
+    ]);
+    expect(wav).toEqual(__audioCaptureTestUtils.encodeWAV([source], 16_000, 1));
+  });
+});
+
+describe('capture cleanup', () => {
+  it('stops microphone tracks when setup fails after acquisition', async () => {
+    const stopTrack = vi.fn();
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(async () => ({
+          getTracks: () => [{ stop: stopTrack }],
+        })),
+      },
+    });
+    Object.defineProperty(globalThis, 'AudioContext', {
+      configurable: true,
+      value: vi.fn(() => {
+        throw new Error('Audio context failed');
+      }),
+    });
+
+    await expect(startRecording()).rejects.toThrow('Audio context failed');
+    expect(stopTrack).toHaveBeenCalledTimes(1);
   });
 });
 

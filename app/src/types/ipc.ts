@@ -90,6 +90,18 @@ export interface RendererToMainSendChannels {
   'audio-data-ready': (audioData: ArrayBuffer) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
+  'runtime:audio-chunk': (
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+    chunkSequence: number,
+    pcm: ArrayBuffer,
+  ) => void;
+  'runtime:audio-stream-disabled': (
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+  ) => void;
   'runtime:audio-data-ready': (
     generation: number,
     recordingSessionId: string,
@@ -177,6 +189,12 @@ export interface MainToRendererChannels {
   'surface:request-paint-proxy': (surface: string) => void;
   'runtime:audio-start': (command: RuntimeAudioCommand) => void;
   'runtime:audio-stop': (command: RuntimeAudioCommand) => void;
+  'runtime:audio-chunk-accepted': (
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+    chunkSequence: number,
+  ) => void;
   'runtime:snapshot': (snapshot: RuntimePresentationSnapshot) => void;
   'transcription:readiness-changed': (readiness: TranscriptionReadiness) => void;
 }
@@ -185,6 +203,7 @@ export interface RuntimeAudioCommand {
   generation: number;
   recordingSessionId: string;
   sequence: number;
+  streaming: boolean;
 }
 
 export type DictationRecoveryAction = 'retry-paste' | 'copy-full-transcript' | 'copy-partial-transcript';
@@ -197,6 +216,8 @@ export type RuntimePresentationState =
       intent: RecordingIntent;
       capabilities: TranscriptionTransportCapabilities;
       durationWarningSeconds: number | null;
+      committed?: string;
+      tentative?: string;
     }
   | { kind: 'processing'; recordingSessionId: string }
   | {
@@ -372,6 +393,7 @@ export interface RecordingPresentationEnvelope {
   sequence: number;
   revision: number;
   capabilities: TranscriptionTransportCapabilities;
+  streamingActive?: boolean;
   outcome?: RecordingTerminalOutcome;
 }
 

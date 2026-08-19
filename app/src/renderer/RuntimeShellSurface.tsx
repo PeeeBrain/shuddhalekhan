@@ -26,12 +26,37 @@ export function RuntimeShellSurface() {
   if (!snapshot || snapshot.kind === 'idle') return null;
 
   if (snapshot.kind === 'recording') {
+    const committed = snapshot.committed ?? '';
+    const tentative = snapshot.tentative ?? '';
+    const tentativeSuffix = tentative.startsWith(committed)
+      ? tentative.slice(committed.length)
+      : tentative;
+    const hasPreview = committed.length > 0 || tentativeSuffix.length > 0;
+
     return (
-      <RecordingPopup
-        key={snapshot.recordingSessionId}
-        initialMode={snapshot.intent}
-        recordingSessionId={snapshot.recordingSessionId}
-      />
+      <main className="flex h-screen w-screen flex-col items-center justify-center gap-2 overflow-hidden bg-transparent">
+        <div className="h-[52px] w-[172px] shrink-0">
+          <RecordingPopup
+            key={snapshot.recordingSessionId}
+            initialMode={snapshot.intent}
+            recordingSessionId={snapshot.recordingSessionId}
+          />
+        </div>
+        {hasPreview ? (
+          <p
+            data-testid="streaming-preview"
+            aria-live="off"
+            className="m-0 max-h-12 w-[488px] overflow-hidden rounded-lg border border-white/10 bg-[rgba(20,20,23,0.96)] px-3 py-2 text-sm leading-5 shadow-lg"
+          >
+            <span data-testid="streaming-committed" className="text-white/90">
+              {committed}
+            </span>
+            <span data-testid="streaming-tentative" className="text-white/45">
+              {tentativeSuffix}
+            </span>
+          </p>
+        ) : null}
+      </main>
     );
   }
 

@@ -12,6 +12,8 @@ import { createSingletonWindow } from './window-factory';
 
 const SHELL_WIDTH = 172;
 const SHELL_HEIGHT = 52;
+const PREVIEW_WIDTH = 520;
+const PREVIEW_HEIGHT = 116;
 const FAILURE_WIDTH = 520;
 const FAILURE_HEIGHT = 220;
 const BOTTOM_MARGIN = 48;
@@ -24,6 +26,7 @@ export class RuntimeShell {
   private generation = 1;
   private revision = 0;
   private pendingSnapshot: RuntimePresentationSnapshot | null = null;
+  private activeRecording: Extract<RuntimePresentationState, { kind: 'recording' }> | null = null;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly windows;
 
@@ -123,13 +126,14 @@ export class RuntimeShell {
     this.position(win);
     this.resize(SHELL_WIDTH, SHELL_HEIGHT, false);
     if (recordingSessionId && envelope) {
-      this.publish({
+      this.activeRecording = {
         kind: 'recording',
         recordingSessionId,
         intent,
         capabilities: envelope.capabilities,
         durationWarningSeconds: null,
-      });
+      };
+      this.publish(this.activeRecording);
     }
     const publish = () => {
       if (win.isDestroyed()) return;
@@ -152,7 +156,27 @@ export class RuntimeShell {
     }, 100);
   }
 
+  showStreamingPreview(
+    recordingSessionId: string,
+    committed: string,
+    tentative: string,
+  ): void {
+    if (this.activeRecording?.recordingSessionId !== recordingSessionId) return;
+    if (
+      this.activeRecording.committed === committed
+      && this.activeRecording.tentative === tentative
+    ) return;
+    const previewWasVisible = this.activeRecording.committed !== undefined
+      || this.activeRecording.tentative !== undefined;
+    this.cancelPendingHide();
+    if (!previewWasVisible) this.resize(PREVIEW_WIDTH, PREVIEW_HEIGHT, false);
+    this.activeRecording = { ...this.activeRecording, committed, tentative };
+    this.publish(this.activeRecording);
+    if (!previewWasVisible) this.showPassive();
+  }
+
   showProcessing(recordingSessionId: string): void {
+    this.activeRecording = null;
     this.cancelPendingHide();
     this.send('recording:pill-hide');
     this.resize(SHELL_WIDTH, SHELL_HEIGHT, false);
@@ -173,6 +197,7 @@ export class RuntimeShell {
 
   finish(): void {
     this.activeCommand = null;
+    this.activeRecording = null;
     this.resize(SHELL_WIDTH, SHELL_HEIGHT, false);
     this.publish({ kind: 'idle' });
     this.hide();
@@ -208,6 +233,7 @@ export class RuntimeShell {
     this.ready = false;
     this.pendingBegin = null;
     this.activeCommand = null;
+    this.activeRecording = null;
     this.windows.destroy();
   }
 
@@ -221,6 +247,7 @@ export class RuntimeShell {
       generation: this.generation,
       recordingSessionId: envelope.recordingSessionId,
       sequence: envelope.sequence,
+      streaming: envelope.streamingActive === true,
     };
     this.send('runtime:audio-start', this.activeCommand);
   }
@@ -275,6 +302,7 @@ export class RuntimeShell {
     this.ready = false;
     this.pendingBegin = null;
     this.activeCommand = null;
+    this.activeRecording = null;
     this.generation += 1;
     this.revision = 0;
     this.pendingSnapshot = null;

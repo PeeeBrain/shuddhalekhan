@@ -93,6 +93,7 @@ const recordingSession = new RecordingSession({
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
+  getDictationMode: () => getConfig().dictation.mode,
   getRecognitionSettings: () => {
     const config = getConfig();
     return {

@@ -1,7 +1,9 @@
 import { describe, expect, it, mock } from 'bun:test';
+import type NodeWebSocket from 'ws';
 import {
   checkWhisperLiveKitReadiness,
   WHISPER_LIVE_KIT_CAPABILITIES,
+  createWhisperLiveKitStreamingSession,
   createWhisperLiveKitTranscriber,
   deriveWhisperLiveKitEndpoints,
   validateWhisperLiveKitSettings,
@@ -9,6 +11,7 @@ import {
 
 class FakeSocket {
   private readonly listeners = new Map<string, Array<(event: Event) => void>>();
+  readonly sent: Array<string | Uint8Array> = [];
   closed = false;
 
   addEventListener(type: string, listener: (event: Event) => void): void {
@@ -23,6 +26,11 @@ class FakeSocket {
 
   close(): void {
     this.closed = true;
+  }
+
+  send(data: string | Uint8Array, callback?: (error?: Error) => void): void {
+    this.sent.push(data);
+    callback?.();
   }
 
   emit(type: string, event: Event = new Event(type)): void {
@@ -82,7 +90,7 @@ describe('WhisperLiveKit endpoint contract', () => {
     })).resolves.toBe('Quick brown fox.');
 
     expect(transcriber.capabilities).toEqual(WHISPER_LIVE_KIT_CAPABILITIES);
-    expect(transcriber.transportCapabilities).toEqual({ batch: true, streaming: false });
+    expect(transcriber.transportCapabilities).toEqual({ batch: true, streaming: true });
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8000/v1/audio/transcriptions',
       expect.objectContaining({
@@ -173,6 +181,129 @@ describe('WhisperLiveKit endpoint contract', () => {
       category: 'network',
       message: 'WhisperLiveKit transcription timed out. Try again.',
     });
+  });
+
+  it('streams ordered PCM and finalizes from late committed full-mode snapshots', async () => {
+    const socket = new FakeSocket();
+    const snapshots: Array<{ sequence: number; committed: string; tentative: string }> = [];
+    const session = createWhisperLiveKitStreamingSession(
+      { baseUrl: 'http://127.0.0.1:8000', auth: 'none' },
+      null,
+      {
+        recognition: {
+          language: 'en',
+          task: 'transcribe',
+          dictionary: [],
+          removeFillerWords: false,
+        },
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+      },
+      {
+        webSocketFactory: () => socket as unknown as NodeWebSocket,
+        handshakeTimeoutMs: 100,
+        stalledAudioTimeoutMs: 100,
+        flushTimeoutMs: 100,
+      },
+    );
+
+    socket.emit('open');
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({ type: 'config', useAudioWorklet: true, mode: 'full' }),
+    }));
+    await session.send(new Uint8Array(640).fill(7));
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({
+        status: 'active_transcription',
+        lines: [
+          { speaker: 1, text: 'Hello ', start: '0:00:00', end: '0:00:01' },
+          { speaker: -2, text: null, start: '0:00:01', end: '0:00:02' },
+          { speaker: 1, text: 'world', start: '0:00:02', end: '0:00:03' },
+        ],
+        buffer_transcription: ' again',
+      }),
+    }));
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({
+        status: 'no_audio_detected',
+        lines: [],
+        buffer_transcription: '',
+      }),
+    }));
+
+    const finalized = session.finish();
+    expect(socket.sent.map((frame) => frame.length)).toEqual([640, 0]);
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({
+        status: 'active_transcription',
+        lines: [
+          { speaker: 1, text: 'Hello ', start: '0:00:00', end: '0:00:01' },
+          { speaker: 1, text: 'world again', start: '0:00:02', end: '0:00:04' },
+        ],
+        buffer_transcription: '',
+      }),
+    }));
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({ type: 'ready_to_stop' }),
+    }));
+
+    await expect(finalized).resolves.toBe('Hello world again');
+    expect(snapshots).toEqual([
+      { sequence: 0, committed: 'Hello world', tentative: 'Hello world again' },
+      { sequence: 1, committed: 'Hello world again', tentative: 'Hello world again' },
+    ]);
+    expect(socket.closed).toBe(true);
+  });
+
+  it('bounds a per-utterance handshake and final flush', async () => {
+    const handshakeSocket = new FakeSocket();
+    const stalledHandshake = createWhisperLiveKitStreamingSession(
+      { baseUrl: 'http://127.0.0.1:8000', auth: 'none' },
+      null,
+      {
+        recognition: {
+          language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false,
+        },
+        onSnapshot: () => undefined,
+      },
+      {
+        webSocketFactory: () => handshakeSocket as unknown as NodeWebSocket,
+        handshakeTimeoutMs: 1,
+      },
+    );
+    await expect(stalledHandshake.send(new Uint8Array(640))).rejects.toMatchObject({
+      category: 'network',
+      message: 'WhisperLiveKit PCM handshake timed out. Falling back to Batch Dictation.',
+    });
+    expect(handshakeSocket.closed).toBe(true);
+
+    const flushSocket = new FakeSocket();
+    const stalledFlush = createWhisperLiveKitStreamingSession(
+      { baseUrl: 'http://127.0.0.1:8000', auth: 'none' },
+      null,
+      {
+        recognition: {
+          language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false,
+        },
+        onSnapshot: () => undefined,
+      },
+      {
+        webSocketFactory: () => flushSocket as unknown as NodeWebSocket,
+        handshakeTimeoutMs: 100,
+        stalledAudioTimeoutMs: 100,
+        flushTimeoutMs: 1,
+      },
+    );
+    flushSocket.emit('open');
+    flushSocket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({ type: 'config', useAudioWorklet: true, mode: 'full' }),
+    }));
+
+    await expect(stalledFlush.finish()).rejects.toMatchObject({
+      category: 'network',
+      message: 'WhisperLiveKit finalization timed out. Falling back to Batch Dictation.',
+    });
+    expect(flushSocket.sent.map((frame) => frame.length)).toEqual([0]);
+    expect(flushSocket.closed).toBe(true);
   });
 
   it('reports ready only after a healthy service passes the PCM WebSocket handshake', async () => {
