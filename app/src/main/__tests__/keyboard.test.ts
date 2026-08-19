@@ -106,6 +106,16 @@ describe('KeyboardHook mode detection', () => {
     expect(stopped).toHaveBeenCalledTimes(1);
   });
 
+  it('consumes every configured modifier release when Win is pressed first', async () => {
+    const hookModule = await importHook('modifier-release-consumption');
+    const { hook, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
+
+    hook.handleKeyForTest(keys.leftWin, true);
+    expect(hook.handleKeyForTest(keys.leftControl, true)).toBe(true);
+    expect(hook.handleKeyForTest(keys.leftControl, false)).toBe(true);
+    expect(hook.handleKeyForTest(keys.leftWin, false)).toBe(true);
+  });
+
   it('toggles dictation on fresh presses of the same chord', async () => {
     const hookModule = await importHook('toggle-dictation');
     const { hook, started, stopped, keys } = createHarness(hookModule, { dictationMode: 'toggle' });

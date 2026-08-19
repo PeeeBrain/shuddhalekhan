@@ -80,6 +80,8 @@ describe('Batch Dictation runtime shell', () => {
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showProcessing('session-1');
     shell.showFailure('session-1', 'Paste failed', ['retry-paste', 'copy-full-transcript']);
+    expect(window.setFocusable).toHaveBeenLastCalledWith(false);
+    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
     shell.finish();
 
     const snapshots = (send.mock.calls as unknown[][])
@@ -93,8 +95,7 @@ describe('Batch Dictation runtime shell', () => {
       recordingSessionId: 'session-1', sequence: 1,
     }));
     expect(send).toHaveBeenCalledWith('recording:pill-hide');
-    expect(window.setFocusable).toHaveBeenCalledWith(true);
-    expect(window.setIgnoreMouseEvents).toHaveBeenCalledWith(false, { forward: false });
+    expect(window.setFocusable).not.toHaveBeenCalledWith(true);
     const command = (send.mock.calls as unknown[][]).find((call: unknown[]) => call[0] === 'runtime:audio-start')?.[1] as { generation: number };
     expect(shell.acceptsAudioEvent(command.generation, 'session-1', 1)).toBe(false);
   });

@@ -8,6 +8,7 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Dictation Runtime
+- Fixed modifier-only recording shortcuts leaking a Windows-key release that could move focus before insertion. Recovery buttons now accept clicks without activating Shuddhalekhan, so Retry Paste checks and pastes into the app that still owns focus.
 - WhisperLiveKit Live Dictation now shows committed and tentative text during recording, then inserts one finalized transcript. Streaming failures fall back once to WhisperLiveKit batch transcription from the retained recording.
 - Fixed Batch Dictation sessions getting stuck when microphone capture stops before startup completes, capture initialization fails, or an empty recording is produced; recovery errors now remain visible instead of being hidden by an older window timer.
 - Batch Dictation now runs through one startup-warmed runtime shell for audio capture, recording, processing, and failure recovery; the shell holds no live microphone track while idle.

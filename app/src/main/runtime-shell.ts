@@ -190,7 +190,7 @@ export class RuntimeShell {
     recoveryActions: DictationRecoveryAction[] = [],
   ): void {
     this.cancelPendingHide();
-    this.resize(FAILURE_WIDTH, FAILURE_HEIGHT, recoveryActions.length > 0);
+    this.resize(FAILURE_WIDTH, FAILURE_HEIGHT, false, recoveryActions.length > 0);
     this.publish({ kind: 'failure', recordingSessionId, message, recoveryActions });
     this.showPassive();
   }
@@ -274,14 +274,19 @@ export class RuntimeShell {
     win.setAlwaysOnTop(true, 'screen-saver');
   }
 
-  private resize(width: number, height: number, focusable: boolean): void {
+  private resize(
+    width: number,
+    height: number,
+    focusable: boolean,
+    interactive = focusable,
+  ): void {
     const win = this.windows.get();
     if (!win || win.isDestroyed()) return;
     const display = screen.getPrimaryDisplay();
     const x = display.workArea.x + Math.max(0, (display.workArea.width - width) / 2);
     const y = display.workArea.y + Math.max(0, display.workArea.height - height - BOTTOM_MARGIN);
     win.setFocusable(focusable);
-    win.setIgnoreMouseEvents(!focusable, { forward: !focusable });
+    win.setIgnoreMouseEvents(!interactive, { forward: !interactive });
     win.setBounds({ x: Math.round(x), y: Math.round(y), width, height }, false);
   }
 
