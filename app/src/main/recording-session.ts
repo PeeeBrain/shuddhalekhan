@@ -553,6 +553,7 @@ export class RecordingSession {
     try {
       const transcriber = transcriberOverride ?? run.transcriber;
       const text = await this.transcribeCompletedAudio(run, transcriber, audioData);
+      if (text === null || this.activeRun !== run) return null;
       const snapshot = run.targetSnapshot;
       const envelope = this.createPresentationEnvelope(run, transcriber, { kind: 'completed' });
       const result = text ? {
@@ -712,13 +713,15 @@ export class RecordingSession {
     run: RecordingRunContext,
     transcriber: Transcriber,
     audioData: Uint8Array,
-  ): Promise<string> {
+  ): Promise<string | null> {
     const streaming = run.streaming;
     if (streaming) {
       await streaming.queue;
+      if (this.activeRun !== run) return null;
       if (!streaming.failed) {
         try {
           const providerFinal = await streaming.session.finish();
+          if (this.activeRun !== run) return null;
           const acceptedFinal = streaming.ledger.finalize();
           if (providerFinal !== acceptedFinal) {
             throw new TranscriptionFailure(
@@ -732,11 +735,13 @@ export class RecordingSession {
           });
           return acceptedFinal;
         } catch {
+          if (this.activeRun !== run) return null;
           this.disableStreaming(run);
         }
       }
     }
 
+    if (this.activeRun !== run) return null;
     emitPerformanceMarker('transcription.batch.requested', {
       recordingSessionId: run.id,
       surface: run.intent,
@@ -745,6 +750,7 @@ export class RecordingSession {
       audio: audioData,
       recognition: this.getRecognitionSettings(),
     });
+    if (this.activeRun !== run) return null;
     emitPerformanceMarker('transcription.batch.completed', {
       recordingSessionId: run.id,
       surface: run.intent,
