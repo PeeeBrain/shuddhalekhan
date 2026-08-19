@@ -8,6 +8,7 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Dictation Runtime
+- Fixed Batch Dictation sessions getting stuck when microphone capture stops before startup completes, capture initialization fails, or an empty recording is produced; recovery errors now remain visible instead of being hidden by an older window timer.
 - Batch Dictation now runs through one startup-warmed runtime shell for audio capture, recording, processing, and failure recovery; the shell holds no live microphone track while idle.
 - Runtime events carry generation, session, sequence, and revision identity so crashes, cancellation, replacement, lock/suspend, and shutdown cannot replay stale audio or trigger late insertion.
 - Successful Dictation remains silent. Failed insertion offers only certainty-safe exact-target Retry Paste and full-transcript copy actions through Last Transcript.
@@ -29,6 +30,7 @@ tags and commit history, not from this file. Keep new entries under
 - Development startup now installs Electron's binary on first use, matching Electron 42+'s lazy-download lifecycle.
 
 ### Transcription Providers
+- WhisperLiveKit batch requests now fail with a recoverable timeout instead of waiting indefinitely when the service stops responding.
 - Added WhisperLiveKit as an explicit self-hosted Batch Dictation provider with derived REST/health/WebSocket endpoints, optional secure bearer authentication, loopback/remote endpoint safety validation, and bounded health plus PCM handshake readiness checks.
 - Added Google Cloud Speech-to-Text v2 synchronous recognition with secure service-account import, Advanced Application Default Credentials, model and location configuration, language mapping, and inline phrase hints.
 - Google Cloud recordings now show a restrained final-ten-second warning and stop automatically at 55 seconds for safe synchronous submission in both recording activation modes.

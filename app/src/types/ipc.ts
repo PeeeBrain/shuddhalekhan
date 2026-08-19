@@ -85,6 +85,7 @@ export interface RendererToMainSendChannels {
   'audio-window-ready': () => void;
   'audio-stream-ready': () => void;
   'audio-capture-started': () => void;
+  'audio-capture-failed': () => void;
   'surface-paint-proxy': (surface: string, correlationId?: string) => void;
   'audio-data-ready': (audioData: ArrayBuffer) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
@@ -94,6 +95,11 @@ export interface RendererToMainSendChannels {
     recordingSessionId: string,
     sequence: number,
     audioData: ArrayBuffer,
+  ) => void;
+  'runtime:audio-failed': (
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
   ) => void;
   'runtime:recovery-action': (action: DictationRecoveryAction) => void;
   'agent-toast:content-size': (height: number) => void;

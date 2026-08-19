@@ -256,7 +256,9 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
 }
 
 function finishRecording(): void {
-  void recordingSession.end();
+  void recordingSession.end().catch((err) => {
+    console.error('Recording end failed:', err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+  });
 }
 
 // Never leave global shortcut activation suspended after capture ends.
@@ -272,14 +274,16 @@ function setShortcutsPaused(paused: boolean): void {
 }
 
 function showTranscriptionError(err: unknown): void {
-  console.error('Transcription failed:', err instanceof Error ? err.name : 'Unknown failure');
+  const message = getSafeTranscriptionFailureMessage(err);
+  const detail = err instanceof Error ? `${err.name}: ${err.message}` : 'Unknown failure';
+  console.error(`Transcription failed (${detail}):`, message);
   if (runtimeShell) {
-    runtimeShell.showFailure(null, getSafeTranscriptionFailureMessage(err));
+    runtimeShell.showFailure(null, message);
     return;
   }
   showAgentToast({
     kind: 'transcription-failed',
-    message: getSafeTranscriptionFailureMessage(err),
+    message,
   });
 }
 
@@ -568,7 +572,9 @@ ipcMain.on('agent-toast:dismiss', () => {
 });
 
 ipcMain.on('runtime:recovery-action', (_event, action) => {
-  void handleRuntimeRecoveryAction(action);
+  void handleRuntimeRecoveryAction(action).catch((err) => {
+    console.error('Failed to handle runtime recovery action:', err);
+  });
 });
 
 ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: string) => {

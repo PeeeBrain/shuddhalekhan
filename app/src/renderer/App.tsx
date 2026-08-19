@@ -40,7 +40,7 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
         })
         .catch((err) => {
           console.error('Failed to start recording:', err);
-          throw err;
+          window.electronAPI?.send('audio-capture-failed');
         })
         .finally(() => {
           startPromiseRef.current = null;
@@ -58,6 +58,7 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
         window.electronAPI?.send('audio-data-ready', audioData.buffer);
       } catch (err) {
         console.error('Failed to stop recording:', err);
+        window.electronAPI?.send('audio-capture-failed');
       }
     });
     return unsubscribe;
@@ -72,7 +73,12 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
         .catch((err) => {
           commandRef.current = null;
           console.error('Failed to start runtime recording:', err);
-          throw err;
+          window.electronAPI?.send(
+            'runtime:audio-failed',
+            command.generation,
+            command.recordingSessionId,
+            command.sequence,
+          );
         })
         .finally(() => { startPromiseRef.current = null; });
     });
@@ -96,6 +102,12 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
       } catch (err) {
         commandRef.current = null;
         console.error('Failed to stop runtime recording:', err);
+        window.electronAPI?.send(
+          'runtime:audio-failed',
+          command.generation,
+          command.recordingSessionId,
+          command.sequence,
+        );
       }
     });
     return () => {
@@ -170,7 +182,6 @@ function App() {
     return (
       <>
         <AudioWindow runtime />
-        <RecordingPopup initialMode="dictation" />
         <RuntimeShellSurface />
       </>
     );

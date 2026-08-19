@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DictationRecoveryAction, RuntimePresentationSnapshot } from '../types/ipc';
 import { Button } from './components/ui/button';
+import { RecordingPopup } from './RecordingPopup';
 
 const ACTION_LABELS: Record<DictationRecoveryAction, string> = {
   'retry-paste': 'Retry Paste',
@@ -22,12 +23,36 @@ export function RuntimeShellSurface() {
     setSnapshot(next);
   }), []);
 
-  if (!snapshot || snapshot.kind === 'idle' || snapshot.kind === 'recording') return null;
+  if (!snapshot || snapshot.kind === 'idle') return null;
+
+  if (snapshot.kind === 'recording') {
+    return (
+      <RecordingPopup
+        key={snapshot.recordingSessionId}
+        initialMode={snapshot.intent}
+        recordingSessionId={snapshot.recordingSessionId}
+      />
+    );
+  }
 
   if (snapshot.kind === 'processing') {
     return (
-      <main aria-live="polite" className="flex h-screen w-screen items-center justify-center rounded-full border border-border bg-card text-sm text-muted-foreground shadow-lg">
-        Processing…
+      <main
+        role="status"
+        aria-label="Processing transcription"
+        aria-live="polite"
+        className="flex h-screen w-screen items-center justify-center bg-transparent"
+      >
+        <div
+          className="flex h-10 w-40 items-center justify-center gap-2 rounded-full border border-[rgba(133,146,255,0.42)] text-[11px] font-medium text-white/70 shadow-[inset_0_0_14px_rgba(100,108,255,0.16),inset_0_0_28px_rgba(100,108,255,0.06)]"
+          style={{ background: 'rgba(20, 20, 23, 0.96)' }}
+        >
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 rounded-full bg-[#8592ff] shadow-[0_0_6px_rgba(133,146,255,0.65)]"
+          />
+          <span>Processing…</span>
+        </div>
       </main>
     );
   }

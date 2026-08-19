@@ -32,6 +32,7 @@ export const WHISPER_LIVE_KIT_CAPABILITIES: TranscriptionCapabilities = {
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
+const DEFAULT_BATCH_TIMEOUT_MS = 60_000;
 const DEFAULT_HANDSHAKE_RETRY_DELAYS_MS = [250, 1_000];
 
 interface WhisperLiveKitReadinessOptions {
@@ -157,6 +158,7 @@ export function createWhisperLiveKitTranscriber(
   config: WhisperLiveKitProviderConfig,
   savedBearerToken: string | null,
   fetcher: typeof fetch = fetch,
+  batchTimeoutMs = DEFAULT_BATCH_TIMEOUT_MS,
 ): Transcriber {
   return {
     id: 'whisper-live-kit',
@@ -192,6 +194,7 @@ export function createWhisperLiveKitTranscriber(
         endpoints.transcription,
         headers,
         fetcher,
+        batchTimeoutMs,
       );
     },
   };
@@ -296,36 +299,58 @@ async function transcribeWhisperLiveKit(
   endpoint: string,
   headers: Record<string, string>,
   fetcher: typeof fetch,
+  timeoutMs: number,
 ): Promise<string> {
   const form = new FormData();
   form.append('file', new Blob([audio], { type: 'audio/wav' }), 'audio.wav');
   form.append('response_format', 'json');
   if (recognition.language !== 'auto') form.append('language', recognition.language);
 
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetcher(endpoint, {
       method: 'POST',
       headers,
       body: form as unknown as BodyInit,
+      signal: abortController.signal,
     });
   } catch {
+    clearTimeout(timeout);
+    if (abortController.signal.aborted) {
+      throw new TranscriptionFailure(
+        'network',
+        'WhisperLiveKit transcription timed out. Try again.',
+      );
+    }
     throw new TranscriptionFailure(
       'network',
       'Could not reach WhisperLiveKit. Check the endpoint and network connection.',
     );
   }
 
-  if (!response.ok) throw failureForHttpStatus(response.status, 'WhisperLiveKit');
+  if (!response.ok) {
+    clearTimeout(timeout);
+    throw failureForHttpStatus(response.status, 'WhisperLiveKit');
+  }
 
   let data: unknown;
   try {
     data = await response.json();
   } catch {
+    if (abortController.signal.aborted) {
+      throw new TranscriptionFailure(
+        'network',
+        'WhisperLiveKit transcription timed out. Try again.',
+      );
+    }
     throw new TranscriptionFailure(
       'malformed-response',
       'WhisperLiveKit returned an invalid transcription response.',
     );
+  } finally {
+    clearTimeout(timeout);
   }
 
   const rawText = data && typeof data === 'object' && 'text' in data

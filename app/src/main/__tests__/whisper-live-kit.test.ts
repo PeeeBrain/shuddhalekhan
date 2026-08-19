@@ -155,6 +155,26 @@ describe('WhisperLiveKit endpoint contract', () => {
     });
   });
 
+  it('bounds batch transcription requests that never complete', async () => {
+    const fetchMock = mock((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+    const transcriber = createWhisperLiveKitTranscriber(
+      { baseUrl: 'http://127.0.0.1:8000', auth: 'none' },
+      null,
+      fetchMock as unknown as typeof fetch,
+      1,
+    );
+
+    await expect(transcriber.transcribe({
+      audio: new Uint8Array([1]),
+      recognition: { language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false },
+    })).rejects.toMatchObject({
+      category: 'network',
+      message: 'WhisperLiveKit transcription timed out. Try again.',
+    });
+  });
+
   it('reports ready only after a healthy service passes the PCM WebSocket handshake', async () => {
     const socket = new FakeSocket();
     const fetcher = mock(() => Promise.resolve(new Response(

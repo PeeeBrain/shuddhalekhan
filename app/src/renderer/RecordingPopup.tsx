@@ -11,9 +11,13 @@ import './RecordingPopup.css';
 
 interface RecordingPopupProps {
   initialMode?: RecordingIntent;
+  recordingSessionId?: string;
 }
 
-export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProps) {
+export function RecordingPopup({
+  initialMode = 'dictation',
+  recordingSessionId,
+}: RecordingPopupProps) {
   const [mode, setMode] = useState<RecordingIntent>(initialMode);
   const [level, setLevel] = useState(0);
   const [tick, setTick] = useState(0);
@@ -24,7 +28,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
   const [pillState, setPillState] = useState<'hidden' | 'entering' | 'visible' | 'exiting'>(
-    'hidden'
+    recordingSessionId ? 'visible' : 'hidden'
   );
   const targetLevelRef = useRef(0);
   const bars = Array.from({ length: BAR_COUNT });
@@ -69,7 +73,18 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   }, [reducedMotion]);
 
   useEffect(() => {
+    if (!recordingSessionId) return;
+    recordingStartRef.current = Date.now();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.electronAPI?.send('surface-paint-proxy', 'recording', recordingSessionId);
+      });
+    });
+  }, [recordingSessionId]);
+
+  useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('recording:pill-hide', () => {
+      recordingStartRef.current = null;
       setPillState(reducedMotion ? 'hidden' : 'exiting');
     });
     return unsubscribe;
@@ -87,7 +102,7 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
   }, [pillState]);
 
   useEffect(() => {
-    if (reducedMotion) return;
+    if (reducedMotion || pillState === 'hidden') return;
 
     let raf = 0;
     const loop = () => {
@@ -113,16 +128,17 @@ export function RecordingPopup({ initialMode = 'dictation' }: RecordingPopupProp
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [reducedMotion]);
+  }, [reducedMotion, pillState]);
 
   useEffect(() => {
+    if (pillState === 'hidden') return;
     const id = setInterval(() => {
       if (recordingStartRef.current !== null) {
         setElapsed(Math.floor((Date.now() - recordingStartRef.current) / 1000));
       }
     }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [pillState]);
 
   const phase = tick * PHASE_STEP;
 
