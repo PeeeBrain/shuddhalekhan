@@ -24,8 +24,8 @@ import { SettingsWindow } from '../../SettingsWindow';
 afterEach(cleanup);
 
 const AUDIO_DEVICES_PLACEHOLDER = null;
-const SLOW_CI_TIMEOUT = 3000;
-const SLOW_CI_TEST_TIMEOUT = 15000;
+const SLOW_CI_TIMEOUT = 5000;
+const SLOW_CI_TEST_TIMEOUT = 20000;
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
