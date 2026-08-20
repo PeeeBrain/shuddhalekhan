@@ -24,7 +24,8 @@ import { SettingsWindow } from '../../SettingsWindow';
 afterEach(cleanup);
 
 const AUDIO_DEVICES_PLACEHOLDER = null;
-const SLOW_CI_TIMEOUT = 5000;
+const SLOW_CI_TIMEOUT = 3000;
+const SLOW_CI_TEST_TIMEOUT = 15000;
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -500,7 +501,7 @@ describe('Settings section reachability', () => {
     }, { timeout: SLOW_CI_TIMEOUT });
     expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1);
     expect(screen.getByText('Settings saved')).toBeInTheDocument();
-  });
+  }, SLOW_CI_TEST_TIMEOUT);
 
   it('requires Use anyway before saving a disruptive bare-key shortcut', async () => {
     const { settingsIpc } = renderSettings();
@@ -522,7 +523,7 @@ describe('Settings section reachability', () => {
         dictation: expect.objectContaining({ binding: { keyCode: 0x52, modifiers: [] } }),
       }),
     ), { timeout: SLOW_CI_TIMEOUT });
-  });
+  }, SLOW_CI_TEST_TIMEOUT);
 
   it('rejects an ambiguous binding and restores normal hook operation on Escape', async () => {
     const { settingsIpc } = renderSettings();
@@ -543,7 +544,7 @@ describe('Settings section reachability', () => {
 
     await waitFor(() => expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1), { timeout: SLOW_CI_TIMEOUT });
     expect(await screen.findByText(/capture cancelled/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
-  });
+  }, SLOW_CI_TEST_TIMEOUT);
 
   it('clears a binding with idle Backspace and toggles session-only pause', async () => {
     const { settingsIpc } = renderSettings();
@@ -563,7 +564,7 @@ describe('Settings section reachability', () => {
       'shortcuts',
       expect.objectContaining({ dictation: expect.objectContaining({ binding: null }) }),
     ), { timeout: SLOW_CI_TIMEOUT });
-  });
+  }, SLOW_CI_TEST_TIMEOUT);
 
   it('shows agent provider controls on the Agent section', async () => {
     renderSettings();
