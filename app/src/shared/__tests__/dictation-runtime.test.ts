@@ -18,12 +18,24 @@ describe('Dictation config normalization', () => {
   it('normalizes formatter values idempotently', () => {
     const once = normalizeDictationConfig({
       mode: 'corrected',
-      formatter: { baseUrl: ' http://127.0.0.1:11434/v1 ', model: ' formatter ' },
+      formatter: {
+        baseUrl: ' http://127.0.0.1:11434/v1 ',
+        model: ' formatter ',
+        apiKeyEnvVar: ' FORMATTER_KEY ',
+        apiKeySource: 'stored',
+        processingConsent: true,
+      },
     });
 
     expect(once).toEqual({
       mode: 'corrected',
-      formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+      formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'formatter',
+        apiKeyEnvVar: 'FORMATTER_KEY',
+        apiKeySource: 'stored',
+        processingConsent: true,
+      },
     });
     expect(normalizeDictationConfig(once)).toEqual(once);
   });
@@ -49,26 +61,55 @@ describe('Dictation config normalization', () => {
   });
 
   it('accepts local HTTP and remote HTTPS formatter profiles but rejects unsafe endpoints', () => {
+    const baseProfile = {
+      model: 'formatter',
+      apiKeyEnvVar: '',
+      apiKeySource: 'environment' as const,
+      processingConsent: true,
+    };
     expect(getFormatterProfileError({
       baseUrl: 'http://127.0.0.1:11434/v1',
-      model: 'formatter',
+      ...baseProfile,
     })).toBeNull();
     expect(getFormatterProfileError({
       baseUrl: 'https://formatter.example.com/v1',
-      model: 'formatter',
+      ...baseProfile,
     })).toBeNull();
     expect(getFormatterProfileError({
       baseUrl: 'http://formatter.example.com/v1',
-      model: 'formatter',
+      ...baseProfile,
     })).toBe('Remote Corrected Dictation formatters must use HTTPS.');
     expect(getFormatterProfileError({
       baseUrl: 'http://127.0.0.1.example.com/v1',
-      model: 'formatter',
+      ...baseProfile,
     })).toBe('Remote Corrected Dictation formatters must use HTTPS.');
     expect(getFormatterProfileError({
       baseUrl: 'https://secret@example.com/v1',
-      model: 'formatter',
+      ...baseProfile,
     })).toBe('Corrected Dictation formatter URLs cannot contain credentials.');
+  });
+
+  it('requires processing consent and remote credential references for Corrected Dictation', () => {
+    const formatter = {
+      baseUrl: 'https://formatter.example.com/v1',
+      model: 'formatter',
+      apiKeyEnvVar: '',
+      apiKeySource: 'environment' as const,
+      processingConsent: false,
+    };
+    expect(getDictationCombinationError({
+      mode: 'corrected',
+      activationMode: 'push-to-talk',
+      capabilities: { batch: true, streaming: false },
+      formatter,
+    })).toBe('Corrected Dictation requires explicit processing consent.');
+
+    expect(getDictationCombinationError({
+      mode: 'corrected',
+      activationMode: 'push-to-talk',
+      capabilities: { batch: true, streaming: false },
+      formatter: { ...formatter, processingConsent: true },
+    })).toBe('Remote Corrected Dictation requires an API key environment variable.');
   });
 });
 

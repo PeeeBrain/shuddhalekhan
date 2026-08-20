@@ -18,6 +18,7 @@ const CREDENTIAL_KINDS: CredentialKind[] = [
   'nvidia-nim-bearer',
   'nvidia-nim-header',
   'whisper-live-kit-bearer',
+  'dictation-formatter-api-key',
 ];
 
 export function registerCredentialIpcHandlers(

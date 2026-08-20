@@ -95,7 +95,16 @@ describe('getSidecarConfigAction', () => {
   it('ignores Dictation runtime settings when deciding sidecar lifecycle', () => {
     expect(getSidecarConfigAction(baseConfig, {
       ...baseConfig,
-      dictation: { mode: 'corrected', formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'fmt' } },
+      dictation: {
+        mode: 'corrected',
+        formatter: {
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          model: 'fmt',
+          apiKeyEnvVar: '',
+          apiKeySource: 'environment',
+          processingConsent: true,
+        },
+      },
     })).toBe('none');
   });
 });

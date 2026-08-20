@@ -16,17 +16,20 @@ import { SectionHeader } from './ui/SectionHeader';
 import { Tag, ToggleRow, SelectRow, DraftTextRow } from './ui/rows';
 import { SetupChecklist } from './SetupChecklist';
 import { CredentialControl } from './ui/CredentialControl';
-import { WHISPER_LANGUAGES } from './settings-model';
+import { WHISPER_LANGUAGES, isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
 import type {
   AppConfig,
   CredentialKind,
   DictationMode,
+  DictationFormatterProfile,
+  FormatterApiKeySource,
   TranscriptionProviderId,
   TranscriptionReadiness,
 } from '../../types/ipc';
 import {
   getAppConfigDictationError,
+  classifyFormatterEndpoint,
 } from '../../shared/dictation-runtime';
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';
@@ -48,6 +51,9 @@ const FIELD_ID_NVIDIA_ENDPOINT = 'nvidia-endpoint';
 const FIELD_ID_NVIDIA_MODEL = 'nvidia-model';
 const FIELD_ID_PROVIDER = 'provider';
 const FIELD_ID_DICTATION_MODE = 'dictation-mode';
+const FIELD_ID_FORMATTER_BASE_URL = 'formatter-base-url';
+const FIELD_ID_FORMATTER_MODEL = 'formatter-model';
+const FIELD_ID_FORMATTER_CONSENT = 'formatter-consent';
 
 interface ProviderOption {
   value: TranscriptionProviderId;
@@ -478,6 +484,12 @@ export function TranscriptionSettings({
           error={dictationModeError ?? storedDictationModeError ?? fieldErrors[FIELD_ID_DICTATION_MODE]}
           onChange={handleDictationModeChange}
         />
+        <CorrectedDictationFormatterSection
+          dictation={dictation}
+          persistence={persistence}
+          settingsIpc={settingsIpc}
+          onDictationCommit={(next) => commit('dictation', next, FIELD_ID_DICTATION_MODE)}
+        />
         <SelectRow
           label="Mode"
           value={config.task}
@@ -540,6 +552,112 @@ interface Props {
   config: AppConfig;
   persistence: import('./use-settings-persistence').SettingsPersistence;
   settingsIpc: import('./settings-ipc').SettingsIpc;
+}
+
+function defaultFormatterProfile(dictation: AppConfig['dictation']): DictationFormatterProfile {
+  return dictation.formatter ?? {
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    model: '',
+    apiKeyEnvVar: '',
+    apiKeySource: 'environment',
+    processingConsent: false,
+  };
+}
+
+function CorrectedDictationFormatterSection({
+  dictation,
+  persistence,
+  settingsIpc,
+  onDictationCommit,
+}: {
+  dictation: AppConfig['dictation'];
+  persistence: import('./use-settings-persistence').SettingsPersistence;
+  settingsIpc: import('./settings-ipc').SettingsIpc;
+  onDictationCommit: (next: AppConfig['dictation']) => void;
+}) {
+  const { fieldErrors, clearFieldError } = persistence;
+  const formatter = defaultFormatterProfile(dictation);
+  const endpointClass = classifyFormatterEndpoint(formatter.baseUrl);
+  const apiKeySource = formatter.apiKeySource ?? 'environment';
+  const apiKeyWarning = looksLikeRawApiKey(formatter.apiKeyEnvVar)
+    ? 'Enter the environment variable name here, not the API key value.'
+    : isLocalProviderUrl(formatter.baseUrl)
+      ? 'Local formatters can leave the API key reference empty.'
+      : undefined;
+
+  const updateFormatter = (patch: Partial<DictationFormatterProfile>) => {
+    const nextFormatter = { ...formatter, ...patch };
+    onDictationCommit({ ...dictation, formatter: nextFormatter });
+  };
+
+  return (
+    <div className="border-b border-border/70 py-5 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-medium">Corrected Dictation formatter</p>
+        <Tag tone={endpointClass === 'local' ? 'success' : 'warning'}>
+          {endpointClass === 'local' ? 'Local processing' : 'Remote processing'}
+        </Tag>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Corrected Dictation sends finalized transcript text to a separate no-tools formatter after recognition.
+        {endpointClass === 'remote'
+          ? ' Remote formatters require HTTPS and explicit consent before transcript text is sent.'
+          : ' Loopback formatters stay on this device.'}
+      </p>
+      <DraftTextRow
+        label="Formatter base URL"
+        value={formatter.baseUrl}
+        placeholder="http://127.0.0.1:11434/v1"
+        errorId={useId()}
+        error={fieldErrors[FIELD_ID_FORMATTER_BASE_URL]}
+        onCommit={(baseUrl) => updateFormatter({ baseUrl })}
+        clearError={() => clearFieldError(FIELD_ID_FORMATTER_BASE_URL)}
+      />
+      <DraftTextRow
+        label="Formatter model"
+        value={formatter.model}
+        placeholder="formatter"
+        errorId={useId()}
+        error={fieldErrors[FIELD_ID_FORMATTER_MODEL]}
+        onCommit={(model) => updateFormatter({ model })}
+        clearError={() => clearFieldError(FIELD_ID_FORMATTER_MODEL)}
+      />
+      <SelectRow
+        label="Formatter API key source"
+        value={apiKeySource}
+        options={[
+          { value: 'environment', label: 'Environment variable' },
+          { value: 'stored', label: 'Saved in Shuddhalekhan' },
+        ]}
+        errorId={useId()}
+        onChange={(value) => updateFormatter({ apiKeySource: value as FormatterApiKeySource })}
+      />
+      {apiKeySource === 'environment' ? (
+        <DraftTextRow
+          label="Formatter API key environment variable"
+          value={formatter.apiKeyEnvVar}
+          placeholder="OPENAI_API_KEY"
+          warning={apiKeyWarning}
+          errorId={useId()}
+          onCommit={(apiKeyEnvVar) => updateFormatter({ apiKeyEnvVar })}
+        />
+      ) : (
+        <CredentialControl
+          credential="dictation-formatter-api-key"
+          label="Formatter API key"
+          settingsIpc={settingsIpc}
+        />
+      )}
+      <ToggleRow
+        title="Allow transcript processing"
+        description="Required for Corrected Dictation. Shuddhalekhan never stores formatter transcript content in Agent audit logs."
+        checked={formatter.processingConsent}
+        errorId={useId()}
+        error={fieldErrors[FIELD_ID_FORMATTER_CONSENT]}
+        onChange={(checked) => updateFormatter({ processingConsent: checked })}
+      />
+    </div>
+  );
 }
 
 function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {

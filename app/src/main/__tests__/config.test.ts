@@ -753,13 +753,42 @@ describe('config store', () => {
 
     setConfig('dictation', {
       mode: 'corrected',
-      formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+      formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'formatter',
+        apiKeyEnvVar: '',
+        apiKeySource: 'environment',
+        processingConsent: true,
+      },
     });
 
     expect(getConfig().dictation).toEqual({
       mode: 'corrected',
-      formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+      formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'formatter',
+        apiKeyEnvVar: '',
+        apiKeySource: 'environment',
+        processingConsent: true,
+      },
     });
+  });
+
+  it('rejects Corrected Dictation without processing consent', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-consent`);
+
+    expect(() => setConfig('dictation', {
+      mode: 'corrected',
+      formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'formatter',
+        apiKeyEnvVar: '',
+        apiKeySource: 'environment',
+        processingConsent: false,
+      },
+    })).toThrow('Corrected Dictation requires explicit processing consent.');
+    expect(getConfig().dictation.mode).toBe('batch');
   });
 
   it('rejects unsafe remote formatter profiles', async () => {
@@ -768,7 +797,13 @@ describe('config store', () => {
 
     expect(() => setConfig('dictation', {
       mode: 'corrected',
-      formatter: { baseUrl: 'http://formatter.example.com/v1', model: 'formatter' },
+      formatter: {
+        baseUrl: 'http://formatter.example.com/v1',
+        model: 'formatter',
+        apiKeyEnvVar: '',
+        apiKeySource: 'environment',
+        processingConsent: true,
+      },
     })).toThrow('Remote Corrected Dictation formatters must use HTTPS.');
     expect(getConfig().dictation.mode).toBe('batch');
   });
@@ -869,7 +904,13 @@ describe('config store', () => {
     existsSync.mockReturnValue(false);
     storeData.set('dictation', {
       mode: 'corrected',
-      formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+      formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'formatter',
+        apiKeyEnvVar: '',
+        apiKeySource: 'environment',
+        processingConsent: true,
+      },
     });
     const previous = {
       shell: process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL,
@@ -884,7 +925,13 @@ describe('config store', () => {
       const { getConfig } = await import(`../config?test=${Date.now()}-dictation-gates-preserve-mode`);
       expect(getConfig().dictation).toEqual({
         mode: 'corrected',
-        formatter: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter' },
+        formatter: {
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          model: 'formatter',
+          apiKeyEnvVar: '',
+          apiKeySource: 'environment',
+          processingConsent: true,
+        },
       });
     } finally {
       if (previous.shell === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
