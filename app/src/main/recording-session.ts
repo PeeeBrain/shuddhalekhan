@@ -477,8 +477,7 @@ export class RecordingSession {
     this.finishPresentationFn?.();
     this.audioCapture.cancelCapture();
     if (run) {
-      run.streaming?.liveInsertion?.invalidate();
-      run.streaming?.session.cancel();
+      this.teardownLiveDictation(run);
       run.pendingEnd?.resolve(null);
       this.activeRun = null;
     }
@@ -561,7 +560,7 @@ export class RecordingSession {
     const run = this.activeRun;
     this.hideRecordingPillFn();
     if (run) {
-      run.streaming?.session.cancel();
+      this.teardownLiveDictation(run);
       run.pendingEnd?.reject(error);
       this.activeRun = null;
     }
@@ -588,7 +587,7 @@ export class RecordingSession {
         'unknown',
         'No microphone audio was captured. Check the selected input device and try again.',
       );
-      run.streaming?.session.cancel();
+      this.teardownLiveDictation(run);
       run.streaming = null;
       audioData.fill(0);
       pendingEnd?.reject(error);
@@ -791,6 +790,13 @@ export class RecordingSession {
     }
   }
 
+  private teardownLiveDictation(run: RecordingRunContext): void {
+    if (!run.streaming) return;
+    run.streaming.liveInsertion?.invalidate();
+    run.streaming.session.cancel();
+    this.keyboardHook.setKeyboardStateListener?.(null);
+  }
+
   private disableStreaming(run: RecordingRunContext): void {
     if (!run.streaming || run.streaming.failed) return;
     run.streaming.failed = true;
@@ -798,8 +804,7 @@ export class RecordingSession {
     if (liveInsertion && !liveInsertion.getState().halted) {
       liveInsertion.haltForReason('session-invalidated');
     }
-    run.streaming.session.cancel();
-    this.keyboardHook.setKeyboardStateListener?.(null);
+    this.teardownLiveDictation(run);
   }
 
   private async transcribeCompletedAudio(
@@ -1036,7 +1041,7 @@ export class RecordingSession {
   private failActiveCapture(): void {
     const run = this.activeRun;
     if (!run) return;
-    run.streaming?.session.cancel();
+    this.teardownLiveDictation(run);
     const error = new TranscriptionFailure(
       'unknown',
       'Microphone capture failed. Check the selected input device and try again.',

@@ -1201,6 +1201,48 @@ describe('RecordingSession', () => {
     expect(showRecordingPill).not.toHaveBeenCalled();
   });
 
+  it('clears the keyboard listener when cancelling a live streaming session', async () => {
+    const setKeyboardStateListener = vi.fn();
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
+      acceptsAudioEvent: vi.fn(() => true),
+    };
+    const streamingTranscriber: Transcriber = {
+      ...createTranscriber(async () => 'unused'),
+      id: 'whisper-live-kit',
+      transportCapabilities: { batch: true, streaming: true },
+      startStreaming: vi.fn(() => ({
+        send: vi.fn(async () => undefined),
+        finish: vi.fn(async () => 'cancelled transcript'),
+        cancel: vi.fn(),
+      })),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: streamingTranscriber,
+      getDictationMode: () => 'live',
+      getRecordingActivationMode,
+      keyboardHook: {
+        start: keyboardStart,
+        stop: keyboardStop,
+        isKeyboardClear: () => false,
+        setKeyboardStateListener,
+      },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation', 'live-cancel');
+    expect(setKeyboardStateListener).toHaveBeenCalledWith(expect.any(Function));
+    await session.cancel();
+    expect(setKeyboardStateListener).toHaveBeenLastCalledWith(null);
+  });
+
   it('carries WhisperLiveKit mandatory Batch capability into the ordinary Batch presentation', async () => {
     const providerTranscriber: Transcriber = {
       id: 'whisper-live-kit',
