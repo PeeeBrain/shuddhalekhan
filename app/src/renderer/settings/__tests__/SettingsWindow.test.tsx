@@ -481,10 +481,11 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    capture.focus();
+    expect(await screen.findByText(/Recording a new Dictation shortcut/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     expect(settingsIpc.beginShortcutCapture).toHaveBeenCalledTimes(1);
 
     await act(async () => {
+      capture.focus();
       fireEvent.keyDown(capture, { code: 'ControlRight', key: 'Control' });
       fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
       fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
@@ -513,8 +514,9 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    capture.focus();
+    expect(await screen.findByText(/Recording a new Dictation shortcut/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     await act(async () => {
+      capture.focus();
       fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
       fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
     });
@@ -539,8 +541,9 @@ describe('Settings section reachability', () => {
     const change = screen.getAllByRole('button', { name: 'Change' })[0];
     fireEvent.click(change);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    capture.focus();
+    expect(await screen.findByText(/Recording a new Dictation shortcut/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     await act(async () => {
+      capture.focus();
       fireEvent.keyDown(capture, { code: 'AltLeft', key: 'Alt' });
       fireEvent.keyDown(capture, { code: 'MetaLeft', key: 'Meta' });
       fireEvent.keyUp(capture, { code: 'AltLeft', key: 'Alt' });
@@ -567,8 +570,9 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    capture.focus();
+    expect(await screen.findByText(/Recording a new Dictation shortcut/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     await act(async () => {
+      capture.focus();
       fireEvent.keyDown(capture, { code: 'Backspace', key: 'Backspace' });
     });
 
