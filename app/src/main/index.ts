@@ -277,6 +277,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   if (injectResult.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
     if (formatterDegraded) showFormatterDegradedNotice();
+    runtimeShell?.finish();
     return;
   }
 

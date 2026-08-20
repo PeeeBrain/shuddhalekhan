@@ -2,6 +2,7 @@ export interface DictationFormatterCorpusFixture {
   id: string;
   language: string;
   raw: string;
+  protectedTerms?: string[];
   acceptableOutputs: string[];
   rejectedOutputs: string[];
 }
@@ -37,6 +38,7 @@ export const FORMATTER_CORPUS: DictationFormatterCorpusFixture[] = [
     id: 'english-protected-term',
     language: 'en',
     raw: 'deploy Shuddhalekhan to Kubernetes tonight',
+    protectedTerms: ['Shuddhalekhan', 'Kubernetes'],
     acceptableOutputs: [
       'Deploy Shuddhalekhan to Kubernetes tonight.',
       'deploy Shuddhalekhan to Kubernetes tonight',

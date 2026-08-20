@@ -635,7 +635,10 @@ function CorrectedDictationFormatterSection({
           { value: 'stored', label: 'Saved in Shuddhalekhan' },
         ]}
         errorId={formatterApiKeySourceErrorId}
-        onChange={(value) => updateFormatter({ apiKeySource: value as FormatterApiKeySource })}
+        onChange={(value) => updateFormatter({
+          apiKeySource: value as FormatterApiKeySource,
+          apiKeyEnvVar: value === 'stored' ? '' : formatter.apiKeyEnvVar,
+        })}
       />
       {apiKeySource === 'environment' ? (
         <DraftTextRow

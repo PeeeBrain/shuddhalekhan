@@ -4,6 +4,7 @@ import {
   getDictationCombinationError,
   getDictationRuntimeError,
   getFormatterProfileError,
+  getFormatterCredentialError,
   getTranscriptionTransportCapabilities,
   normalizeDictationConfig,
   parseMaintainerRuntimeGates,
@@ -110,6 +111,14 @@ describe('Dictation config normalization', () => {
       capabilities: { batch: true, streaming: false },
       formatter: { ...formatter, processingConsent: true },
     })).toBe('Remote Corrected Dictation requires an API key environment variable.');
+
+    expect(getFormatterCredentialError({
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'formatter',
+      apiKeyEnvVar: 'sk-test-key',
+      apiKeySource: 'environment',
+      processingConsent: true,
+    })).toBe('Enter the environment variable name for the formatter API key, not the key value.');
   });
 });
 

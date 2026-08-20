@@ -105,6 +105,7 @@ export function validateFormatterOutput(
   rawText: string,
   correctedText: string,
   language: string,
+  protectedTerms: string[] = [],
 ): string | null {
   const trimmed = correctedText.trim();
   if (!trimmed) return 'Formatter output was empty.';
@@ -123,6 +124,14 @@ export function validateFormatterOutput(
 
   if (hasWrongLanguageShift(rawText, correctedText, language)) {
     return 'Formatter output changed the source language.';
+  }
+
+  for (const term of protectedTerms) {
+    const protectedTerm = term.trim();
+    if (!protectedTerm) continue;
+    if (rawText.includes(protectedTerm) && !correctedText.includes(protectedTerm)) {
+      return 'Formatter output changed a protected spelling term.';
+    }
   }
 
   return null;
@@ -216,7 +225,12 @@ export async function applyDictationFormatter(
       return { kind: 'fallback', rawText, reason: 'malformed-response' };
     }
 
-    const validationError = validateFormatterOutput(rawText, correctedText, language);
+    const validationError = validateFormatterOutput(
+      rawText,
+      correctedText,
+      language,
+      request.protectedTerms,
+    );
     if (validationError) {
       return { kind: 'fallback', rawText, reason: 'invalid-output' };
     }

@@ -82,13 +82,16 @@ export function classifyFormatterEndpoint(baseUrl: string): 'local' | 'remote' {
 export function getFormatterCredentialError(
   formatter: DictationFormatterProfile,
 ): string | null {
+  if (
+    formatter.apiKeySource === 'environment'
+    && looksLikeRawApiKey(formatter.apiKeyEnvVar)
+  ) {
+    return 'Enter the environment variable name for the formatter API key, not the key value.';
+  }
   if (classifyFormatterEndpoint(formatter.baseUrl) !== 'remote') return null;
   if (formatter.apiKeySource === 'stored') return null;
   if (!formatter.apiKeyEnvVar) {
     return 'Remote Corrected Dictation requires an API key environment variable.';
-  }
-  if (looksLikeRawApiKey(formatter.apiKeyEnvVar)) {
-    return 'Enter the environment variable name for the formatter API key, not the key value.';
   }
   return null;
 }

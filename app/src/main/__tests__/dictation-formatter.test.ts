@@ -35,7 +35,12 @@ describe('validateFormatterOutput', () => {
   it('accepts conservative corrections from the pinned corpus', () => {
     for (const fixture of FORMATTER_CORPUS) {
       for (const output of fixture.acceptableOutputs) {
-        expect(validateFormatterOutput(fixture.raw, output, fixture.language)).toBeNull();
+        expect(validateFormatterOutput(
+          fixture.raw,
+          output,
+          fixture.language,
+          fixture.protectedTerms ?? [],
+        )).toBeNull();
       }
     }
   });
@@ -43,9 +48,23 @@ describe('validateFormatterOutput', () => {
   it('rejects unsafe corpus outputs without meaning-changing false positives', () => {
     for (const fixture of FORMATTER_CORPUS) {
       for (const output of fixture.rejectedOutputs) {
-        expect(validateFormatterOutput(fixture.raw, output, fixture.language)).not.toBeNull();
+        expect(validateFormatterOutput(
+          fixture.raw,
+          output,
+          fixture.language,
+          fixture.protectedTerms ?? [],
+        )).not.toBeNull();
       }
     }
+  });
+
+  it('rejects formatter output that drops protected spelling terms', () => {
+    expect(validateFormatterOutput(
+      'deploy Shuddhalekhan to Kubernetes tonight',
+      'deploy the app tonight',
+      'en',
+      ['Shuddhalekhan', 'Kubernetes'],
+    )).toMatch(/protected spelling/i);
   });
 });
 
@@ -117,5 +136,36 @@ describe('applyDictationFormatter', () => {
       apiKey: null,
       deadlineMs: 20,
     })).toEqual({ kind: 'fallback', rawText: raw, reason: 'deadline' });
+
+    globalThis.fetch = async () => new Response('', { status: 500 });
+    expect(await applyDictationFormatter({
+      profile,
+      rawText: raw,
+      language: 'en',
+      protectedTerms: [],
+      apiKey: null,
+    })).toEqual({ kind: 'fallback', rawText: raw, reason: 'provider-failure' });
+
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      choices: [{ message: { content: 'not-json' } }],
+    }), { status: 200 });
+    expect(await applyDictationFormatter({
+      profile,
+      rawText: raw,
+      language: 'en',
+      protectedTerms: [],
+      apiKey: null,
+    })).toEqual({ kind: 'fallback', rawText: raw, reason: 'malformed-response' });
+
+    globalThis.fetch = async () => {
+      throw new Error('network down');
+    };
+    expect(await applyDictationFormatter({
+      profile,
+      rawText: raw,
+      language: 'en',
+      protectedTerms: [],
+      apiKey: null,
+    })).toEqual({ kind: 'fallback', rawText: raw, reason: 'network' });
   });
 });
