@@ -13,6 +13,7 @@ export type LiveInsertionHaltReason =
   | 'oversized-delta'
   | 'partial-dispatch'
   | 'zero-dispatch'
+  | 'prefix-violation'
   | 'keyboard-timeout'
   | 'session-invalidated';
 
@@ -58,8 +59,11 @@ export class LiveDictationController {
 
   invalidate(): void {
     this.invalidated = true;
-    this.halted = true;
-    this.haltReason = 'session-invalidated';
+  }
+
+  haltForReason(reason: LiveInsertionHaltReason): void {
+    if (this.halted) return;
+    this.halt(reason);
   }
 
   async onCommittedUpdate(rawCommitted: string): Promise<void> {
@@ -141,6 +145,7 @@ export class LiveDictationController {
   }
 
   private halt(reason: LiveInsertionHaltReason): void {
+    this.invalidated = true;
     this.halted = true;
     this.haltReason = reason;
     this.deps.onHalted?.(reason);

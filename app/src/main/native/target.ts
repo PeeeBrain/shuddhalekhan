@@ -7,7 +7,13 @@ export interface TargetCaptureDeps {
   getClassName: (hwnd: bigint, classNameBuf: Buffer, maxCount: number) => number;
   openProcess: (desiredAccess: number, inheritHandle: boolean, processId: number) => bigint;
   queryFullProcessImageName: (handle: bigint, flags: number, exeNameBuf: Buffer, sizeBuf: Buffer) => boolean;
-  getProcessCreationTime: (handle: bigint, creationTimeBuf: Buffer) => boolean;
+  getProcessCreationTime: (
+    handle: bigint,
+    creationTimeBuf: Buffer,
+    exitTimeBuf: Buffer,
+    kernelTimeBuf: Buffer,
+    userTimeBuf: Buffer,
+  ) => boolean;
   closeHandle: (handle: bigint) => boolean;
 }
 
@@ -46,7 +52,16 @@ export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTar
         executablePath = exeNameBuf.toString('utf16le', 0, size * 2);
       }
       const creationTimeBuf = Buffer.alloc(8);
-      if (deps.getProcessCreationTime(BigInt(processHandle), creationTimeBuf)) {
+      const exitTimeBuf = Buffer.alloc(8);
+      const kernelTimeBuf = Buffer.alloc(8);
+      const userTimeBuf = Buffer.alloc(8);
+      if (deps.getProcessCreationTime(
+        BigInt(processHandle),
+        creationTimeBuf,
+        exitTimeBuf,
+        kernelTimeBuf,
+        userTimeBuf,
+      )) {
         processCreationTime = fileTimeToIsoString(
           creationTimeBuf.readUInt32LE(0),
           creationTimeBuf.readUInt32LE(4),
@@ -100,8 +115,8 @@ const realDeps: TargetCaptureDeps = {
     OpenProcess(desiredAccess, inheritHandle, processId) as bigint,
   queryFullProcessImageName: (handle, flags, exeNameBuf, sizeBuf) =>
     QueryFullProcessImageNameW(handle, flags, exeNameBuf, sizeBuf) as boolean,
-  getProcessCreationTime: (handle, creationTimeBuf) =>
-    GetProcessTimes(handle, creationTimeBuf, null, null, null) as boolean,
+  getProcessCreationTime: (handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) =>
+    GetProcessTimes(handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) as boolean,
   closeHandle: (handle) => CloseHandle(handle) as boolean,
 };
 

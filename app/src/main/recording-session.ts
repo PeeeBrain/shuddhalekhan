@@ -378,15 +378,27 @@ export class RecordingSession {
       return false;
     }
     const targetSnapshot = this.captureTarget();
-    if (intent === 'dictation' && this.getDictationMode() === 'live' && !targetSnapshot) {
-      const error = new Error('Live Dictation requires a focused target application.');
-      emitPerformanceMarker('recording.begin.rejected', {
-        recordingSessionId,
-        surface: intent,
-        reason: 'no-target',
-      });
-      this.onErrorCallback?.(error);
-      return false;
+    if (intent === 'dictation' && this.getDictationMode() === 'live') {
+      if (this.getRecordingActivationMode('dictation') !== 'toggle') {
+        const error = new Error('Live Dictation requires Toggle activation.');
+        emitPerformanceMarker('recording.begin.rejected', {
+          recordingSessionId,
+          surface: intent,
+          reason: 'live-activation',
+        });
+        this.onErrorCallback?.(error);
+        return false;
+      }
+      if (!targetSnapshot) {
+        const error = new Error('Live Dictation requires a focused target application.');
+        emitPerformanceMarker('recording.begin.rejected', {
+          recordingSessionId,
+          surface: intent,
+          reason: 'no-target',
+        });
+        this.onErrorCallback?.(error);
+        return false;
+      }
     }
     const transcriber = this.getTranscriber();
     const run: RecordingRunContext = {
@@ -707,7 +719,10 @@ export class RecordingSession {
       !this.streamingEnabled
       || !this.runtimeShellBackend
       || !run.transcriber.startStreaming
-      || (run.intent === 'dictation' && this.getDictationMode() !== 'live')
+      || (run.intent === 'dictation' && (
+        this.getDictationMode() !== 'live'
+        || this.getRecordingActivationMode('dictation') !== 'toggle'
+      ))
     ) return;
 
     const ledger = createStreamingTranscriptLedger();
@@ -729,7 +744,7 @@ export class RecordingSession {
           if (this.activeRun !== run) return;
           const update = ledger.apply(snapshot);
           if (update.kind === 'protocol-failure') {
-            liveInsertion?.invalidate();
+            liveInsertion?.haltForReason('prefix-violation');
             this.disableStreaming(run);
             return;
           }
@@ -791,7 +806,7 @@ export class RecordingSession {
           if (streaming.liveInsertion) {
             const keyboardClear = await this.waitForKeyboardClear(LIVE_KEYBOARD_RELEASE_GRACE_MS);
             if (!keyboardClear) {
-              streaming.liveInsertion.invalidate();
+              streaming.liveInsertion.haltForReason('keyboard-timeout');
             } else {
               await streaming.liveInsertion.finalize(acceptedFinal);
             }

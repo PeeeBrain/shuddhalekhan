@@ -2,7 +2,6 @@ import { describe, expect, it, mock } from 'bun:test';
 import {
   buildUnicodeKeyboardInputs,
   dispatchUnicodeText,
-  type UnicodeDispatchResult,
 } from '../unicode-input';
 
 mock.module('koffi', () => ({
@@ -25,14 +24,11 @@ describe('unicode input dispatch', () => {
     expect(events[5]).toEqual({ codeUnit: 0xde42, keyUp: true });
   });
 
-  it('reports zero, full, and partial SendInput acceptance without clipboard use', () => {
-    const dispatch = mock((text: string, expectedEvents: number): Pick<UnicodeDispatchResult, 'acceptedEvents' | 'errorCode'> => {
-      void text;
-      const acceptedEvents = expectedEvents;
-      return { acceptedEvents };
-    });
-
-    expect(dispatchUnicodeText('hi', dispatch).certainty).toBe('os-accepted-all');
-    expect(dispatchUnicodeText('', dispatch).certainty).toBe('os-accepted-all');
+  it('classifies zero, full, and partial SendInput acceptance without clipboard use', () => {
+    expect(dispatchUnicodeText('hi', () => ({ acceptedEvents: 0 })).certainty).toBe('none-accepted');
+    expect(dispatchUnicodeText('hi', (_text, expectedEvents) => ({ acceptedEvents: expectedEvents })).certainty)
+      .toBe('os-accepted-all');
+    expect(dispatchUnicodeText('hi', () => ({ acceptedEvents: 1 })).certainty).toBe('ambiguous-partial');
+    expect(dispatchUnicodeText('', () => ({ acceptedEvents: 0 })).certainty).toBe('os-accepted-all');
   });
 });

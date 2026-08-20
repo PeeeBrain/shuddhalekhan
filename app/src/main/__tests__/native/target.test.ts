@@ -107,6 +107,30 @@ describe('target capture', () => {
     expect(closeHandle).not.toHaveBeenCalled();
   });
 
+  it('returns null when process creation time cannot be read', async () => {
+    const { createTargetCapture } = await import(`../../native/target?test=${Date.now()}-${Math.random()}`);
+    const closeHandle = vi.fn(() => true);
+    const captureCreationFailed = createTargetCapture({
+      getForegroundWindow: vi.fn(() => BigInt(12345)),
+      getWindowThreadProcessId: vi.fn((_hwnd: bigint, pidBuf: Buffer) => {
+        pidBuf.writeUInt32LE(67890, 0);
+        return BigInt(111);
+      }),
+      getClassName: vi.fn((_hwnd: bigint, buf: Buffer, _maxCount: number) => {
+        const name = 'Notepad';
+        buf.write(name, 'utf16le');
+        return name.length;
+      }),
+      openProcess: vi.fn(() => BigInt(999)),
+      queryFullProcessImageName: vi.fn(() => false),
+      getProcessCreationTime: vi.fn(() => false),
+      closeHandle,
+    });
+
+    expect(captureCreationFailed()).toBeNull();
+    expect(closeHandle).toHaveBeenCalledWith(BigInt(999));
+  });
+
   it('leaves executablePath null when the executable path query fails', async () => {
     const { createTargetCapture } = await import(`../../native/target?test=${Date.now()}-${Math.random()}`);
     const closeHandle = vi.fn(() => true);
