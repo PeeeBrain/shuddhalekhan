@@ -738,6 +738,9 @@ export class RecordingSession {
       || this.getRecordingActivationMode('dictation') !== 'toggle'
     )) return;
 
+    const startStreaming = run.transcriber.startStreaming;
+    if (!startStreaming) return;
+
     const ledger = createStreamingTranscriptLedger();
     const liveInsertion = run.intent === 'dictation' && this.getDictationMode() === 'live' && run.targetSnapshot
       ? new LiveDictationController({
@@ -751,7 +754,7 @@ export class RecordingSession {
         })
       : null;
     try {
-      const session = run.transcriber.startStreaming({
+      const session = startStreaming({
         recognition: this.getRecognitionSettings(),
         onSnapshot: (snapshot) => {
           if (this.activeRun !== run) return;
