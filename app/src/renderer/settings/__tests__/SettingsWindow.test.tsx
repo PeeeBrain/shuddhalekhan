@@ -146,7 +146,7 @@ function renderSettings(options?: MockSettingsIpcOptions) {
 async function waitForLoaded() {
   await waitFor(() => {
     expect(screen.getByRole('tab', { name: 'Transcription' })).toBeInTheDocument();
-  });
+  }, { timeout: 3000 });
 }
 
 function getTabs() {

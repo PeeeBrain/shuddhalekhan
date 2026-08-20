@@ -24,7 +24,9 @@ describe('HTTP MCP redirect policy', () => {
     const redirectingUrl = `${serverUrl(redirecting)}/mcp`;
     const oauthProviderResolver: McpOAuthProviderResolver = { resolve: () => undefined };
     const bunFetch = (Bun as unknown as { fetch: typeof globalThis.fetch }).fetch;
-    const factory = new AisdkMcpClientFactory(oauthProviderResolver, undefined, bunFetch);
+    const fetchForMcp: typeof globalThis.fetch = (input, init) =>
+      bunFetch(input, init ? { ...init, signal: undefined } : init);
+    const factory = new AisdkMcpClientFactory(oauthProviderResolver, undefined, fetchForMcp);
 
     await expect(factory.connect(makeServer(redirectingUrl, 'error'))).rejects.toThrow();
     expect(destinationRequests).toBe(0);
