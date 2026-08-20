@@ -481,12 +481,15 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
+    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
     expect(settingsIpc.beginShortcutCapture).toHaveBeenCalledTimes(1);
 
-    fireEvent.keyDown(capture, { code: 'ControlRight', key: 'Control' });
-    fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
-    fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
-    fireEvent.keyUp(capture, { code: 'ControlRight', key: 'Control' });
+    await act(async () => {
+      fireEvent.keyDown(capture, { code: 'ControlRight', key: 'Control' });
+      fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
+      fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
+      fireEvent.keyUp(capture, { code: 'ControlRight', key: 'Control' });
+    });
 
     await waitFor(() => {
       expect(settingsIpc.setConfig).toHaveBeenCalledWith(
@@ -510,8 +513,11 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
-    fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
+    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
+    await act(async () => {
+      fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
+      fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
+    });
 
     expect(await screen.findByText('This shortcut can disrupt normal typing', {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
@@ -533,10 +539,13 @@ describe('Settings section reachability', () => {
     const change = screen.getAllByRole('button', { name: 'Change' })[0];
     fireEvent.click(change);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    fireEvent.keyDown(capture, { code: 'AltLeft', key: 'Alt' });
-    fireEvent.keyDown(capture, { code: 'MetaLeft', key: 'Meta' });
-    fireEvent.keyUp(capture, { code: 'AltLeft', key: 'Alt' });
-    fireEvent.keyUp(capture, { code: 'MetaLeft', key: 'Meta' });
+    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
+    await act(async () => {
+      fireEvent.keyDown(capture, { code: 'AltLeft', key: 'Alt' });
+      fireEvent.keyDown(capture, { code: 'MetaLeft', key: 'Meta' });
+      fireEvent.keyUp(capture, { code: 'AltLeft', key: 'Alt' });
+      fireEvent.keyUp(capture, { code: 'MetaLeft', key: 'Meta' });
+    });
 
     expect(await screen.findByText(/cannot use the same shortcut/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
@@ -558,7 +567,10 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    fireEvent.keyDown(capture, { code: 'Backspace', key: 'Backspace' });
+    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
+    await act(async () => {
+      fireEvent.keyDown(capture, { code: 'Backspace', key: 'Backspace' });
+    });
 
     await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith(
       'shortcuts',
