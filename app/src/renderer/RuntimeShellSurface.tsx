@@ -33,7 +33,7 @@ export function RuntimeShellSurface() {
     const tentativeSuffix = tentative.startsWith(committed)
       ? tentative.slice(committed.length)
       : tentative;
-    const hasPreview = committed.length > 0 || tentativeSuffix.length > 0;
+    const hasPreview = committed.length > 0 || tentativeSuffix.length > 0 || snapshot.insertionHalted;
 
     return (
       <main className="flex h-screen w-screen flex-col items-center justify-center gap-2 overflow-hidden bg-transparent">
@@ -50,6 +50,11 @@ export function RuntimeShellSurface() {
             aria-live="off"
             className="m-0 max-h-12 w-[488px] overflow-hidden rounded-lg border border-white/10 bg-[rgba(20,20,23,0.96)] px-3 py-2 text-sm leading-5 shadow-lg"
           >
+            {snapshot.insertionHalted ? (
+              <span data-testid="insertion-halted" className="mb-1 block text-xs font-medium text-amber-300">
+                Insertion stopped — recording continues
+              </span>
+            ) : null}
             <span data-testid="streaming-committed" className="text-white/90">
               {committed}
             </span>

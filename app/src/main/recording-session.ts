@@ -32,6 +32,9 @@ import {
   type Transcriber,
 } from './transcription';
 import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from './streaming-transcript';
+import { LiveDictationController } from './live-dictation-controller';
+import { sendUnicodeText } from './native/unicode-input';
+import { LIVE_KEYBOARD_RELEASE_GRACE_MS } from '../shared/live-dictation';
 import { createSingletonWindow } from './window-factory';
 import { emitPerformanceMarker } from './performance/marker-collector';
 import { RuntimeShell } from './runtime-shell';
@@ -45,6 +48,13 @@ export interface RecordingResult {
   revision: number;
   capabilities: RecordingPresentationEnvelope['capabilities'];
   outcome: NonNullable<RecordingPresentationEnvelope['outcome']>;
+  liveDictation?: {
+    halted: boolean;
+    uncertain: boolean;
+    hasAcceptedEvents: boolean;
+    dispatchedProjectedLength: number;
+    rawCommitted: string;
+  };
 }
 
 export interface AudioCapture {
@@ -76,6 +86,7 @@ export interface RuntimeShellBackend extends AudioCapture {
   updateDurationWarning(remainingSeconds: number | null): void;
   updateAudioLevel(level: number): void;
   showStreamingPreview?(recordingSessionId: string, committed: string, tentative: string): void;
+  showInsertionHalted?(recordingSessionId: string): void;
   acceptsAudioEvent?(generation: number, recordingSessionId: string, sequence: number): boolean;
   consumeAudioEvent(generation: number, recordingSessionId: string, sequence: number): boolean;
 }
@@ -205,6 +216,8 @@ export interface KeyboardHook {
   }): void;
   stop(): void;
   recordingEndedExternally?(): void;
+  isKeyboardClear?(): boolean;
+  setKeyboardStateListener?(listener: (() => void) | null): void;
 }
 
 export interface RecordingSessionOptions {
@@ -254,6 +267,7 @@ interface RecordingRunContext {
     queue: Promise<void>;
     expectedChunkSequence: number;
     failed: boolean;
+    liveInsertion: LiveDictationController | null;
   } | null;
 }
 
@@ -363,12 +377,23 @@ export class RecordingSession {
       this.onErrorCallback?.(readinessError);
       return false;
     }
+    const targetSnapshot = this.captureTarget();
+    if (intent === 'dictation' && this.getDictationMode() === 'live' && !targetSnapshot) {
+      const error = new Error('Live Dictation requires a focused target application.');
+      emitPerformanceMarker('recording.begin.rejected', {
+        recordingSessionId,
+        surface: intent,
+        reason: 'no-target',
+      });
+      this.onErrorCallback?.(error);
+      return false;
+    }
     const transcriber = this.getTranscriber();
     const run: RecordingRunContext = {
       id: recordingSessionId,
       intent,
       transcriber,
-      targetSnapshot: this.captureTarget(),
+      targetSnapshot,
       sequence: 0,
       revision: 0,
       state: 'recording',
@@ -555,6 +580,7 @@ export class RecordingSession {
       const text = await this.transcribeCompletedAudio(run, transcriber, audioData);
       if (text === null || this.activeRun !== run) return null;
       const snapshot = run.targetSnapshot;
+      const liveState = run.streaming?.liveInsertion?.getState();
       const envelope = this.createPresentationEnvelope(run, transcriber, { kind: 'completed' });
       const result = text ? {
         text,
@@ -565,7 +591,17 @@ export class RecordingSession {
         revision: envelope.revision,
         capabilities: envelope.capabilities,
         outcome: envelope.outcome ?? { kind: 'completed' },
+        ...(liveState ? {
+          liveDictation: {
+            halted: liveState.halted,
+            uncertain: liveState.uncertain,
+            hasAcceptedEvents: liveState.hasAcceptedEvents,
+            dispatchedProjectedLength: liveState.dispatchedProjectedLength,
+            rawCommitted: liveState.rawCommitted,
+          },
+        } : {}),
       } : null;
+      this.keyboardHook.setKeyboardStateListener?.(null);
       this.finishPresentationFn?.();
       emitPerformanceMarker('recording.session.completed', {
         recordingSessionId: run.id,
@@ -675,6 +711,17 @@ export class RecordingSession {
     ) return;
 
     const ledger = createStreamingTranscriptLedger();
+    const liveInsertion = run.intent === 'dictation' && this.getDictationMode() === 'live' && run.targetSnapshot
+      ? new LiveDictationController({
+          originalTarget: run.targetSnapshot,
+          captureTarget: this.captureTarget,
+          isKeyboardClear: () => this.keyboardHook.isKeyboardClear?.() ?? true,
+          dispatchUnicode: sendUnicodeText,
+          onHalted: () => {
+            this.runtimeShellBackend?.showInsertionHalted?.(run.id);
+          },
+        })
+      : null;
     try {
       const session = run.transcriber.startStreaming({
         recognition: this.getRecognitionSettings(),
@@ -682,9 +729,11 @@ export class RecordingSession {
           if (this.activeRun !== run) return;
           const update = ledger.apply(snapshot);
           if (update.kind === 'protocol-failure') {
+            liveInsertion?.invalidate();
             this.disableStreaming(run);
             return;
           }
+          void liveInsertion?.onCommittedUpdate(update.committed);
           this.runtimeShellBackend?.showStreamingPreview?.(
             run.id,
             update.committed,
@@ -698,7 +747,14 @@ export class RecordingSession {
         queue: Promise.resolve(),
         expectedChunkSequence: 0,
         failed: false,
+        liveInsertion,
       };
+      if (liveInsertion) {
+        this.keyboardHook.setKeyboardStateListener?.(() => {
+          if (this.activeRun !== run) return;
+          void liveInsertion.onKeyboardStateChanged();
+        });
+      }
     } catch {
       run.streaming = null;
     }
@@ -707,7 +763,9 @@ export class RecordingSession {
   private disableStreaming(run: RecordingRunContext): void {
     if (!run.streaming || run.streaming.failed) return;
     run.streaming.failed = true;
+    run.streaming.liveInsertion?.invalidate();
     run.streaming.session.cancel();
+    this.keyboardHook.setKeyboardStateListener?.(null);
   }
 
   private async transcribeCompletedAudio(
@@ -729,6 +787,14 @@ export class RecordingSession {
               'malformed-response',
               'WhisperLiveKit finalized a transcript that was not committed.',
             );
+          }
+          if (streaming.liveInsertion) {
+            const keyboardClear = await this.waitForKeyboardClear(LIVE_KEYBOARD_RELEASE_GRACE_MS);
+            if (!keyboardClear) {
+              streaming.liveInsertion.invalidate();
+            } else {
+              await streaming.liveInsertion.finalize(acceptedFinal);
+            }
           }
           emitPerformanceMarker('transcription.streaming.completed', {
             recordingSessionId: run.id,
@@ -799,6 +865,17 @@ export class RecordingSession {
     for (const timer of this.durationTimers) this.clearTimeoutFn(timer);
     this.durationTimers = [];
     this.updateDurationWarningFn(null);
+  }
+
+  private async waitForKeyboardClear(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.keyboardHook.isKeyboardClear?.()) return true;
+      await new Promise<void>((resolve) => {
+        this.setTimeoutFn(resolve, 50);
+      });
+    }
+    return this.keyboardHook.isKeyboardClear?.() ?? false;
   }
 
   private handleAudioWindowReady = (): void => {

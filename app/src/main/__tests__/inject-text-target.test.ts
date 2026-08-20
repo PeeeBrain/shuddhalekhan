@@ -24,6 +24,7 @@ function snapshot(partial: Partial<DictationTargetSnapshot>): DictationTargetSna
   return {
     hwnd: 1,
     processId: 100,
+    processCreationTime: '2026-01-01T00:00:00.000Z',
     threadId: 200,
     windowClass: 'TestWindow',
     executablePath: 'C:\\test\\app.exe',

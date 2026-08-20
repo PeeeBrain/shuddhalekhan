@@ -165,12 +165,31 @@ export class RuntimeShell {
     if (
       this.activeRecording.committed === committed
       && this.activeRecording.tentative === tentative
+      && !this.activeRecording.insertionHalted
     ) return;
     const previewWasVisible = this.activeRecording.committed !== undefined
-      || this.activeRecording.tentative !== undefined;
+      || this.activeRecording.tentative !== undefined
+      || this.activeRecording.insertionHalted;
     this.cancelPendingHide();
     if (!previewWasVisible) this.resize(PREVIEW_WIDTH, PREVIEW_HEIGHT, false);
-    this.activeRecording = { ...this.activeRecording, committed, tentative };
+    this.activeRecording = {
+      ...this.activeRecording,
+      committed,
+      tentative,
+      insertionHalted: false,
+    };
+    this.publish(this.activeRecording);
+    if (!previewWasVisible) this.showPassive();
+  }
+
+  showInsertionHalted(recordingSessionId: string): void {
+    if (this.activeRecording?.recordingSessionId !== recordingSessionId) return;
+    const previewWasVisible = this.activeRecording.committed !== undefined
+      || this.activeRecording.tentative !== undefined
+      || this.activeRecording.insertionHalted;
+    this.cancelPendingHide();
+    if (!previewWasVisible) this.resize(PREVIEW_WIDTH, PREVIEW_HEIGHT, false);
+    this.activeRecording = { ...this.activeRecording, insertionHalted: true };
     this.publish(this.activeRecording);
     if (!previewWasVisible) this.showPassive();
   }

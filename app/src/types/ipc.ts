@@ -121,6 +121,8 @@ export interface RendererToMainSendChannels {
 export interface DictationTargetSnapshot {
   hwnd: number;
   processId: number;
+  /** UTC ISO timestamp for the original process; used to detect PID reuse. */
+  processCreationTime: string;
   threadId: number;
   windowClass: string;
   executablePath: string | null;
@@ -218,6 +220,7 @@ export type RuntimePresentationState =
       durationWarningSeconds: number | null;
       committed?: string;
       tentative?: string;
+      insertionHalted?: boolean;
     }
   | { kind: 'processing'; recordingSessionId: string }
   | {

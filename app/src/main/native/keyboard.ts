@@ -123,6 +123,17 @@ export class KeyboardHook {
     return this.captureSuspended;
   }
 
+  /** True when no physical keys remain in the low-level hook state. */
+  isKeyboardClear(): boolean {
+    return this.pressed.size === 0;
+  }
+
+  private onKeyboardStateChanged: (() => void) | null = null;
+
+  setKeyboardStateListener(listener: (() => void) | null): void {
+    this.onKeyboardStateChanged = listener;
+  }
+
   stop(): void {
     if (this.hookHandle) {
       UnhookWindowsHookEx(this.hookHandle);
@@ -135,6 +146,7 @@ export class KeyboardHook {
     this.pressed.clear();
     this.session = null;
     this.toggleAwaitingRelease = null;
+    this.onKeyboardStateChanged = null;
   }
 
   /**
@@ -146,6 +158,7 @@ export class KeyboardHook {
     if (!isRepeat) {
       if (isDown) this.pressed.add(vkCode);
       else this.pressed.delete(vkCode);
+      this.onKeyboardStateChanged?.();
     }
 
     const modifiers = this.logicalModifiers();

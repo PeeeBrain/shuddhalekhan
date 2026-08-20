@@ -7,10 +7,18 @@ export interface TargetCaptureDeps {
   getClassName: (hwnd: bigint, classNameBuf: Buffer, maxCount: number) => number;
   openProcess: (desiredAccess: number, inheritHandle: boolean, processId: number) => bigint;
   queryFullProcessImageName: (handle: bigint, flags: number, exeNameBuf: Buffer, sizeBuf: Buffer) => boolean;
+  getProcessCreationTime: (handle: bigint, creationTimeBuf: Buffer) => boolean;
   closeHandle: (handle: bigint) => boolean;
 }
 
 const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+function fileTimeToIsoString(low: number, high: number): string {
+  const fileTime = BigInt(high) << 32n | BigInt(low >>> 0);
+  const windowsEpochOffsetMs = 11644473600000n;
+  const milliseconds = fileTime / 10000n - windowsEpochOffsetMs;
+  return new Date(Number(milliseconds)).toISOString();
+}
 
 export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTargetSnapshot | null {
   return function captureForegroundTarget(): DictationTargetSnapshot | null {
@@ -27,6 +35,7 @@ export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTar
     const windowClass = classNameLen > 0 ? classNameBuf.toString('utf16le', 0, classNameLen * 2) : '';
 
     let executablePath: string | null = null;
+    let processCreationTime = '';
     const processHandle = Number(deps.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, processId));
     if (processHandle) {
       const exeNameBuf = Buffer.alloc(1024);
@@ -36,12 +45,22 @@ export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTar
         const size = sizeBuf.readUInt32LE(0);
         executablePath = exeNameBuf.toString('utf16le', 0, size * 2);
       }
+      const creationTimeBuf = Buffer.alloc(8);
+      if (deps.getProcessCreationTime(BigInt(processHandle), creationTimeBuf)) {
+        processCreationTime = fileTimeToIsoString(
+          creationTimeBuf.readUInt32LE(0),
+          creationTimeBuf.readUInt32LE(4),
+        );
+      }
       deps.closeHandle(BigInt(processHandle));
     }
+
+    if (!processCreationTime) return null;
 
     return {
       hwnd,
       processId,
+      processCreationTime,
       threadId,
       windowClass,
       executablePath,
@@ -66,6 +85,9 @@ const OpenProcess = kernel32.func(
 const QueryFullProcessImageNameW = kernel32.func(
   'bool __stdcall QueryFullProcessImageNameW(uintptr_t hProcess, uint32_t dwFlags, char16_t * lpExeName, uint32_t * lpdwSize)'
 );
+const GetProcessTimes = kernel32.func(
+  'bool __stdcall GetProcessTimes(uintptr_t hProcess, void * lpCreationTime, void * lpExitTime, void * lpKernelTime, void * lpUserTime)'
+);
 const CloseHandle = kernel32.func('bool __stdcall CloseHandle(uintptr_t hObject)');
 
 const realDeps: TargetCaptureDeps = {
@@ -78,6 +100,8 @@ const realDeps: TargetCaptureDeps = {
     OpenProcess(desiredAccess, inheritHandle, processId) as bigint,
   queryFullProcessImageName: (handle, flags, exeNameBuf, sizeBuf) =>
     QueryFullProcessImageNameW(handle, flags, exeNameBuf, sizeBuf) as boolean,
+  getProcessCreationTime: (handle, creationTimeBuf) =>
+    GetProcessTimes(handle, creationTimeBuf, null, null, null) as boolean,
   closeHandle: (handle) => CloseHandle(handle) as boolean,
 };
 

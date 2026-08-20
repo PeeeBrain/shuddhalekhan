@@ -85,6 +85,7 @@ describe('RecordingSession', () => {
     captureTarget = vi.fn(() => ({
       hwnd: 12345,
       processId: 67890,
+      processCreationTime: '2026-01-01T00:00:00.000Z',
       threadId: 111,
       windowClass: 'Notepad',
       executablePath: 'C:\\Windows\\notepad.exe',
@@ -100,6 +101,8 @@ describe('RecordingSession', () => {
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
+        isKeyboardClear: () => true,
+        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,

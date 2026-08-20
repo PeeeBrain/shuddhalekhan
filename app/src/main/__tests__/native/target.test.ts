@@ -24,6 +24,13 @@ describe('target capture', () => {
         sizeBuf.writeUInt32LE(exe.length, 0);
         return true;
       }),
+      getProcessCreationTime: vi.fn((_handle: bigint, creationTimeBuf: Buffer) => {
+        const fileTime = BigInt(Date.UTC(2026, 0, 1)) + 11644473600000n;
+        const ticks = fileTime * 10000n;
+        creationTimeBuf.writeUInt32LE(Number(ticks & 0xffffffffn), 0);
+        creationTimeBuf.writeUInt32LE(Number(ticks >> 32n), 4);
+        return true;
+      }),
       closeHandle: vi.fn(() => true),
     });
   });
@@ -34,6 +41,7 @@ describe('target capture', () => {
     expect(result).toEqual({
       hwnd: 12345,
       processId: 67890,
+      processCreationTime: '2026-01-01T00:00:00.000Z',
       threadId: 111,
       windowClass: 'Notepad',
       executablePath: 'C:\\Windows\\notepad.exe',
@@ -49,6 +57,7 @@ describe('target capture', () => {
       getClassName: vi.fn(),
       openProcess: vi.fn(),
       queryFullProcessImageName: vi.fn(),
+      getProcessCreationTime: vi.fn(),
       closeHandle: vi.fn(),
     });
 
@@ -66,13 +75,14 @@ describe('target capture', () => {
       getClassName: vi.fn(),
       openProcess: vi.fn(),
       queryFullProcessImageName: vi.fn(),
+      getProcessCreationTime: vi.fn(),
       closeHandle: vi.fn(),
     });
 
     expect(captureNoProcess()).toBeNull();
   });
 
-  it('leaves executablePath null when the process cannot be opened', async () => {
+  it('returns null when the process cannot be opened for identity inspection', async () => {
     const { createTargetCapture } = await import(`../../native/target?test=${Date.now()}-${Math.random()}`);
     const openProcess = vi.fn(() => BigInt(0));
     const closeHandle = vi.fn(() => true);
@@ -89,12 +99,11 @@ describe('target capture', () => {
       }),
       openProcess,
       queryFullProcessImageName: vi.fn(),
+      getProcessCreationTime: vi.fn(),
       closeHandle,
     });
 
-    const result = captureNoExe();
-
-    expect(result?.executablePath).toBeNull();
+    expect(captureNoExe()).toBeNull();
     expect(closeHandle).not.toHaveBeenCalled();
   });
 
@@ -114,6 +123,13 @@ describe('target capture', () => {
       }),
       openProcess: vi.fn(() => BigInt(999)),
       queryFullProcessImageName: vi.fn(() => false),
+      getProcessCreationTime: vi.fn((_handle: bigint, creationTimeBuf: Buffer) => {
+        const fileTime = BigInt(Date.UTC(2026, 0, 1)) + 11644473600000n;
+        const ticks = fileTime * 10000n;
+        creationTimeBuf.writeUInt32LE(Number(ticks & 0xffffffffn), 0);
+        creationTimeBuf.writeUInt32LE(Number(ticks >> 32n), 4);
+        return true;
+      }),
       closeHandle,
     });
 

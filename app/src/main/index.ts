@@ -50,6 +50,7 @@ import { transcribe as transcribeLocalFixture } from './whisper';
 import { RuntimeShell } from './runtime-shell';
 import { getRecoveryActions } from './dictation-recovery';
 import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
+import { outerTrimTranscript } from '../shared/live-dictation';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
@@ -167,7 +168,41 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     return;
   }
 
-  setLastTranscript(result.text, result.targetSnapshot);
+  const live = result.liveDictation;
+  const liveDispatch = live ? {
+    hasAcceptedEvents: live.hasAcceptedEvents,
+    uncertain: live.uncertain,
+  } : undefined;
+
+  setLastTranscript(result.text, result.targetSnapshot, liveDispatch);
+
+  if (live) {
+    if (live.hasAcceptedEvents || live.uncertain) {
+      markLastTranscriptInjected(live.uncertain ? 'uncertain' : 'dispatched');
+      if (live.halted && live.uncertain) {
+        runtimeShell?.showFailure(
+          result.recordingSessionId,
+          'Live Dictation stopped because Windows could not confirm the last insertion.',
+          getRecoveryActions({ kind: 'input-blocked', acceptedEvents: 1 }),
+        );
+      }
+      return;
+    }
+
+    const fallbackText = outerTrimTranscript(result.text);
+    const injectResult = await injectIntoFocusedApp(fallbackText, result.targetSnapshot);
+    if (injectResult.kind === 'input-dispatched') {
+      markLastTranscriptInjected('dispatched');
+      return;
+    }
+    markLastTranscriptInjected('failed');
+    runtimeShell?.showFailure(
+      result.recordingSessionId,
+      getRecoveryMessage(injectResult),
+      getRecoveryActions(injectResult),
+    );
+    return;
+  }
 
   const injectResult = await injectIntoFocusedApp(result.text, result.targetSnapshot);
   if (injectResult.kind === 'input-dispatched') {

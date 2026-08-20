@@ -8,7 +8,7 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Dictation Runtime
-- The runtime shell now closes before target validation, removing a focus race during automatic insertion and Retry Paste. Retry Paste also acknowledges clicks and blocks duplicate recovery actions while it runs.
+- Live Dictation (beta) now dispatches committed WhisperLiveKit text through ordered `KEYEVENTF_UNICODE` insertion into the exact original target window, with keyboard-release gating, whitespace projection, fail-closed target validation, and certainty-based recovery when Windows accepts zero, all, or only part of a delta.
 - Fixed modifier-only recording shortcuts leaking a Windows-key release that could move focus before insertion. Recovery buttons now accept clicks without activating Shuddhalekhan, so Retry Paste checks and pastes into the app that still owns focus.
 - WhisperLiveKit Live Dictation now shows committed and tentative text during recording, then inserts one finalized transcript. Streaming failures fall back once to WhisperLiveKit batch transcription from the retained recording.
 - Fixed Batch Dictation sessions getting stuck when microphone capture stops before startup completes, capture initialization fails, or an empty recording is produced; recovery errors now remain visible instead of being hidden by an older window timer.

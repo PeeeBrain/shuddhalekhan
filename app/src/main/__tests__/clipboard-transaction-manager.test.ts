@@ -13,6 +13,7 @@ import type { DictationTargetSnapshot } from '../../types/ipc';
 const defaultTarget: DictationTargetSnapshot = {
   hwnd: 12345,
   processId: 67890,
+  processCreationTime: '2026-01-01T00:00:00.000Z',
   threadId: 111,
   windowClass: 'Notepad',
   executablePath: 'C:\\Windows\\notepad.exe',
