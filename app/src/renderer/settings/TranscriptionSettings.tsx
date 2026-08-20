@@ -484,12 +484,14 @@ export function TranscriptionSettings({
           error={dictationModeError ?? storedDictationModeError ?? fieldErrors[FIELD_ID_DICTATION_MODE]}
           onChange={handleDictationModeChange}
         />
-        <CorrectedDictationFormatterSection
-          dictation={dictation}
-          persistence={persistence}
-          settingsIpc={settingsIpc}
-          onDictationCommit={(next) => commit('dictation', next, FIELD_ID_DICTATION_MODE)}
-        />
+        {dictation.mode === 'corrected' ? (
+          <CorrectedDictationFormatterSection
+            dictation={dictation}
+            persistence={persistence}
+            settingsIpc={settingsIpc}
+            onDictationCommit={(next) => commit('dictation', next, FIELD_ID_DICTATION_MODE)}
+          />
+        ) : null}
         <SelectRow
           label="Mode"
           value={config.task}
