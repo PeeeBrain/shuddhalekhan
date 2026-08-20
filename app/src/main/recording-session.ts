@@ -467,6 +467,7 @@ export class RecordingSession {
     this.finishPresentationFn?.();
     this.audioCapture.cancelCapture();
     if (run) {
+      run.streaming?.liveInsertion?.invalidate();
       run.streaming?.session.cancel();
       run.pendingEnd?.resolve(null);
       this.activeRun = null;
@@ -778,7 +779,10 @@ export class RecordingSession {
   private disableStreaming(run: RecordingRunContext): void {
     if (!run.streaming || run.streaming.failed) return;
     run.streaming.failed = true;
-    run.streaming.liveInsertion?.invalidate();
+    const liveInsertion = run.streaming.liveInsertion;
+    if (liveInsertion && !liveInsertion.getState().halted) {
+      liveInsertion.haltForReason('session-invalidated');
+    }
     run.streaming.session.cancel();
     this.keyboardHook.setKeyboardStateListener?.(null);
   }
@@ -805,10 +809,12 @@ export class RecordingSession {
           }
           if (streaming.liveInsertion) {
             const keyboardClear = await this.waitForKeyboardClear(LIVE_KEYBOARD_RELEASE_GRACE_MS);
+            if (this.activeRun !== run) return null;
             if (!keyboardClear) {
               streaming.liveInsertion.haltForReason('keyboard-timeout');
-            } else {
+            } else if (this.activeRun === run) {
               await streaming.liveInsertion.finalize(acceptedFinal);
+              if (this.activeRun !== run) return null;
             }
           }
           emitPerformanceMarker('transcription.streaming.completed', {

@@ -185,13 +185,19 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
       const uncertain = live.uncertain || insertionIncomplete;
       markLastTranscriptInjected(uncertain ? 'uncertain' : 'dispatched');
       if (live.halted && uncertain) {
-        runtimeShell?.showFailure(
-          result.recordingSessionId,
-          insertionIncomplete
-            ? 'Live Dictation stopped before the full transcript was inserted.'
-            : 'Live Dictation stopped because Windows could not confirm the last insertion.',
-          getRecoveryActions({ kind: 'input-blocked', acceptedEvents: 1 }),
-        );
+        const message = insertionIncomplete
+          ? 'Live Dictation stopped before the full transcript was inserted.'
+          : 'Live Dictation stopped because Windows could not confirm the last insertion.';
+        const recoveryResult = { kind: 'input-blocked' as const, acceptedEvents: 1, reason: message };
+        if (runtimeShell) {
+          runtimeShell.showFailure(
+            result.recordingSessionId,
+            message,
+            getRecoveryActions(recoveryResult),
+          );
+        } else {
+          showRecoveryNotification(recoveryResult, 'Live Dictation stopped');
+        }
       }
       return;
     }
