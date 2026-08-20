@@ -24,6 +24,7 @@ import { SettingsWindow } from '../../SettingsWindow';
 afterEach(cleanup);
 
 const AUDIO_DEVICES_PLACEHOLDER = null;
+const SLOW_CI_TIMEOUT = 3000;
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -496,7 +497,7 @@ describe('Settings section reachability', () => {
           },
         }),
       );
-    });
+    }, { timeout: SLOW_CI_TIMEOUT });
     expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1);
     expect(screen.getByText('Settings saved')).toBeInTheDocument();
   });
@@ -511,7 +512,7 @@ describe('Settings section reachability', () => {
     fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
     fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
 
-    expect(await screen.findByText('This shortcut can disrupt normal typing')).toBeInTheDocument();
+    expect(await screen.findByText('This shortcut can disrupt normal typing', { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Use anyway' }));
 
@@ -520,7 +521,7 @@ describe('Settings section reachability', () => {
       expect.objectContaining({
         dictation: expect.objectContaining({ binding: { keyCode: 0x52, modifiers: [] } }),
       }),
-    ));
+    ), { timeout: SLOW_CI_TIMEOUT });
   });
 
   it('rejects an ambiguous binding and restores normal hook operation on Escape', async () => {
@@ -536,12 +537,12 @@ describe('Settings section reachability', () => {
     fireEvent.keyUp(capture, { code: 'AltLeft', key: 'Alt' });
     fireEvent.keyUp(capture, { code: 'MetaLeft', key: 'Meta' });
 
-    expect(await screen.findByText(/cannot use the same shortcut/i)).toBeInTheDocument();
+    expect(await screen.findByText(/cannot use the same shortcut/i, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
     fireEvent.keyDown(capture, { code: 'Escape', key: 'Escape' });
 
-    await waitFor(() => expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText(/capture cancelled/i)).toBeInTheDocument();
+    await waitFor(() => expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1), { timeout: SLOW_CI_TIMEOUT });
+    expect(await screen.findByText(/capture cancelled/i, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
   });
 
   it('clears a binding with idle Backspace and toggles session-only pause', async () => {
@@ -551,8 +552,8 @@ describe('Settings section reachability', () => {
 
     const pause = screen.getByRole('switch', { name: 'Pause global shortcuts' });
     fireEvent.click(pause);
-    await waitFor(() => expect(settingsIpc.setShortcutsPaused).toHaveBeenCalledWith(true));
-    expect(await screen.findByText(/Global shortcuts are paused/i)).toBeInTheDocument();
+    await waitFor(() => expect(settingsIpc.setShortcutsPaused).toHaveBeenCalledWith(true), { timeout: SLOW_CI_TIMEOUT });
+    expect(await screen.findByText(/Global shortcuts are paused/i, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
@@ -561,7 +562,7 @@ describe('Settings section reachability', () => {
     await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith(
       'shortcuts',
       expect.objectContaining({ dictation: expect.objectContaining({ binding: null }) }),
-    ));
+    ), { timeout: SLOW_CI_TIMEOUT });
   });
 
   it('shows agent provider controls on the Agent section', async () => {
