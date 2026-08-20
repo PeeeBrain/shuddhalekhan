@@ -1153,8 +1153,6 @@ describe('RecordingSession', () => {
       showRecordingPill,
       hideRecordingPill,
       transcriber,
-      getDictationMode: () => 'live',
-      getRecordingActivationMode,
       runtimeGates: { runtimeShell: false, streaming: true, directUnicode: true },
       keyboardHook: {
         start: keyboardStart,
@@ -1173,6 +1171,34 @@ describe('RecordingSession', () => {
     await expect(ending).resolves.toMatchObject({ text: 'legacy batch result' });
     expect(startStreaming).not.toHaveBeenCalled();
     expect(batchTranscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects Live Dictation when streaming prerequisites are unavailable', () => {
+    const onError = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(async () => 'unused'),
+      getDictationMode: () => 'live',
+      getRecordingActivationMode,
+      runtimeGates: { runtimeShell: false, streaming: true, directUnicode: true },
+      keyboardHook: {
+        start: keyboardStart,
+        stop: keyboardStop,
+        isKeyboardClear: () => true,
+        setKeyboardStateListener: vi.fn(),
+      },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+    });
+
+    expect(session.begin('dictation', 'live-unavailable')).toBe(false);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Live Dictation requires a streaming-capable provider and runtime shell.',
+    }));
+    expect(showRecordingPill).not.toHaveBeenCalled();
   });
 
   it('carries WhisperLiveKit mandatory Batch capability into the ordinary Batch presentation', async () => {

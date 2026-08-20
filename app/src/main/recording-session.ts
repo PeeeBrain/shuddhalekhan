@@ -378,6 +378,7 @@ export class RecordingSession {
       return false;
     }
     const targetSnapshot = this.captureTarget();
+    const transcriber = this.getTranscriber();
     if (intent === 'dictation' && this.getDictationMode() === 'live') {
       if (this.getRecordingActivationMode('dictation') !== 'toggle') {
         const error = new Error('Live Dictation requires Toggle activation.');
@@ -399,8 +400,17 @@ export class RecordingSession {
         this.onErrorCallback?.(error);
         return false;
       }
+      if (!this.canStartLiveStreaming(transcriber)) {
+        const error = new Error('Live Dictation requires a streaming-capable provider and runtime shell.');
+        emitPerformanceMarker('recording.begin.rejected', {
+          recordingSessionId,
+          surface: intent,
+          reason: 'live-streaming-unavailable',
+        });
+        this.onErrorCallback?.(error);
+        return false;
+      }
     }
-    const transcriber = this.getTranscriber();
     const run: RecordingRunContext = {
       id: recordingSessionId,
       intent,
@@ -715,16 +725,18 @@ export class RecordingSession {
     return this.audioCapture.getWebContents?.() ?? null;
   }
 
+  private canStartLiveStreaming(transcriber: Transcriber): boolean {
+    return this.streamingEnabled
+      && this.runtimeShellBackend !== null
+      && typeof transcriber.startStreaming === 'function';
+  }
+
   private startStreamingIfEligible(run: RecordingRunContext): void {
-    if (
-      !this.streamingEnabled
-      || !this.runtimeShellBackend
-      || !run.transcriber.startStreaming
-      || (run.intent === 'dictation' && (
-        this.getDictationMode() !== 'live'
-        || this.getRecordingActivationMode('dictation') !== 'toggle'
-      ))
-    ) return;
+    if (!this.canStartLiveStreaming(run.transcriber)) return;
+    if (run.intent === 'dictation' && (
+      this.getDictationMode() !== 'live'
+      || this.getRecordingActivationMode('dictation') !== 'toggle'
+    )) return;
 
     const ledger = createStreamingTranscriptLedger();
     const liveInsertion = run.intent === 'dictation' && this.getDictationMode() === 'live' && run.targetSnapshot
