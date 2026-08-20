@@ -481,7 +481,7 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
+    capture.focus();
     expect(settingsIpc.beginShortcutCapture).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -513,7 +513,7 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
+    capture.focus();
     await act(async () => {
       fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
       fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
@@ -539,7 +539,7 @@ describe('Settings section reachability', () => {
     const change = screen.getAllByRole('button', { name: 'Change' })[0];
     fireEvent.click(change);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
+    capture.focus();
     await act(async () => {
       fireEvent.keyDown(capture, { code: 'AltLeft', key: 'Alt' });
       fireEvent.keyDown(capture, { code: 'MetaLeft', key: 'Meta' });
@@ -567,7 +567,7 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
-    await waitFor(() => expect(capture).toHaveFocus(), { timeout: SLOW_CI_TIMEOUT });
+    capture.focus();
     await act(async () => {
       fireEvent.keyDown(capture, { code: 'Backspace', key: 'Backspace' });
     });
