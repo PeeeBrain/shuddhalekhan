@@ -53,6 +53,10 @@ import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 import { outerTrimTranscript } from '../shared/live-dictation';
 import { applyDictationFormatter } from './dictation-formatter';
 import { getDictationFormatterApiKey } from './dictation-formatter-credential';
+import {
+  isDictationResultStillDeliverable,
+  markDictationResultPending,
+} from './dictation-result-delivery';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
@@ -170,6 +174,9 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     return;
   }
 
+  const sessionId = result.recordingSessionId;
+  markDictationResultPending(sessionId);
+
   const live = result.liveDictation;
   const liveDispatch = live ? {
     hasAcceptedEvents: live.hasAcceptedEvents,
@@ -245,7 +252,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     config.dictation.mode === 'corrected'
     && config.dictation.formatter?.processingConsent
   ) {
-    if (runtimeShell) runtimeShell.showProcessing(result.recordingSessionId);
+    if (runtimeShell) runtimeShell.showProcessing(sessionId);
     const outcome = await applyDictationFormatter({
       profile: config.dictation.formatter,
       rawText: result.text,
@@ -253,6 +260,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
       protectedTerms: config.dictionary,
       apiKey: getDictationFormatterApiKey(config.dictation.formatter, credentialVault),
     });
+    if (!isDictationResultStillDeliverable(sessionId)) return;
     if (outcome.kind === 'fallback') {
       text = outcome.rawText;
       formatterDegraded = true;
@@ -260,6 +268,8 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
       text = outcome.text;
     }
   }
+
+  if (!isDictationResultStillDeliverable(sessionId)) return;
 
   setLastTranscript(text, result.targetSnapshot);
 

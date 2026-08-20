@@ -579,6 +579,11 @@ function CorrectedDictationFormatterSection({
   const formatter = defaultFormatterProfile(dictation);
   const endpointClass = classifyFormatterEndpoint(formatter.baseUrl);
   const apiKeySource = formatter.apiKeySource ?? 'environment';
+  const formatterBaseUrlErrorId = useId();
+  const formatterModelErrorId = useId();
+  const formatterApiKeySourceErrorId = useId();
+  const formatterApiKeyEnvVarErrorId = useId();
+  const formatterConsentErrorId = useId();
   const apiKeyWarning = looksLikeRawApiKey(formatter.apiKeyEnvVar)
     ? 'Enter the environment variable name here, not the API key value.'
     : isLocalProviderUrl(formatter.baseUrl)
@@ -608,7 +613,7 @@ function CorrectedDictationFormatterSection({
         label="Formatter base URL"
         value={formatter.baseUrl}
         placeholder="http://127.0.0.1:11434/v1"
-        errorId={useId()}
+        errorId={formatterBaseUrlErrorId}
         error={fieldErrors[FIELD_ID_FORMATTER_BASE_URL]}
         onCommit={(baseUrl) => updateFormatter({ baseUrl })}
         clearError={() => clearFieldError(FIELD_ID_FORMATTER_BASE_URL)}
@@ -617,7 +622,7 @@ function CorrectedDictationFormatterSection({
         label="Formatter model"
         value={formatter.model}
         placeholder="formatter"
-        errorId={useId()}
+        errorId={formatterModelErrorId}
         error={fieldErrors[FIELD_ID_FORMATTER_MODEL]}
         onCommit={(model) => updateFormatter({ model })}
         clearError={() => clearFieldError(FIELD_ID_FORMATTER_MODEL)}
@@ -629,7 +634,7 @@ function CorrectedDictationFormatterSection({
           { value: 'environment', label: 'Environment variable' },
           { value: 'stored', label: 'Saved in Shuddhalekhan' },
         ]}
-        errorId={useId()}
+        errorId={formatterApiKeySourceErrorId}
         onChange={(value) => updateFormatter({ apiKeySource: value as FormatterApiKeySource })}
       />
       {apiKeySource === 'environment' ? (
@@ -638,7 +643,7 @@ function CorrectedDictationFormatterSection({
           value={formatter.apiKeyEnvVar}
           placeholder="OPENAI_API_KEY"
           warning={apiKeyWarning}
-          errorId={useId()}
+          errorId={formatterApiKeyEnvVarErrorId}
           onCommit={(apiKeyEnvVar) => updateFormatter({ apiKeyEnvVar })}
         />
       ) : (
@@ -652,7 +657,7 @@ function CorrectedDictationFormatterSection({
         title="Allow transcript processing"
         description="Required for Corrected Dictation. Shuddhalekhan never stores formatter transcript content in Agent audit logs."
         checked={formatter.processingConsent}
-        errorId={useId()}
+        errorId={formatterConsentErrorId}
         error={fieldErrors[FIELD_ID_FORMATTER_CONSENT]}
         onChange={(checked) => updateFormatter({ processingConsent: checked })}
       />
