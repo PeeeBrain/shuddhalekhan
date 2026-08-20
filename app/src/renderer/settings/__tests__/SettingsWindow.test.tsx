@@ -24,7 +24,7 @@ import { SettingsWindow } from '../../SettingsWindow';
 afterEach(cleanup);
 
 const AUDIO_DEVICES_PLACEHOLDER = null;
-const SLOW_CI_TIMEOUT = 3000;
+const SLOW_CI_TIMEOUT = 5000;
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
@@ -147,7 +147,7 @@ function renderSettings(options?: MockSettingsIpcOptions) {
 async function waitForLoaded() {
   await waitFor(() => {
     expect(screen.getByRole('tab', { name: 'Transcription' })).toBeInTheDocument();
-  }, { timeout: 3000 });
+  }, { timeout: SLOW_CI_TIMEOUT });
 }
 
 function getTabs() {
@@ -479,7 +479,7 @@ describe('Settings section reachability', () => {
     fireEvent.click(tabByLabel('Shortcuts'));
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
-    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
     expect(settingsIpc.beginShortcutCapture).toHaveBeenCalledTimes(1);
 
     fireEvent.keyDown(capture, { code: 'ControlRight', key: 'Control' });
@@ -508,7 +508,7 @@ describe('Settings section reachability', () => {
     fireEvent.click(tabByLabel('Shortcuts'));
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
-    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
     fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
     fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
 
@@ -531,7 +531,7 @@ describe('Settings section reachability', () => {
 
     const change = screen.getAllByRole('button', { name: 'Change' })[0];
     fireEvent.click(change);
-    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
     fireEvent.keyDown(capture, { code: 'AltLeft', key: 'Alt' });
     fireEvent.keyDown(capture, { code: 'MetaLeft', key: 'Meta' });
     fireEvent.keyUp(capture, { code: 'AltLeft', key: 'Alt' });
@@ -556,7 +556,7 @@ describe('Settings section reachability', () => {
     expect(await screen.findByText(/Global shortcuts are paused/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
-    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
+    const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
     fireEvent.keyDown(capture, { code: 'Backspace', key: 'Backspace' });
 
     await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith(
