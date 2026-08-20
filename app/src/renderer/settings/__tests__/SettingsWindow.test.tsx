@@ -512,7 +512,7 @@ describe('Settings section reachability', () => {
     fireEvent.keyDown(capture, { code: 'KeyR', key: 'r' });
     fireEvent.keyUp(capture, { code: 'KeyR', key: 'r' });
 
-    expect(await screen.findByText('This shortcut can disrupt normal typing', { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
+    expect(await screen.findByText('This shortcut can disrupt normal typing', {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Use anyway' }));
 
@@ -537,12 +537,12 @@ describe('Settings section reachability', () => {
     fireEvent.keyUp(capture, { code: 'AltLeft', key: 'Alt' });
     fireEvent.keyUp(capture, { code: 'MetaLeft', key: 'Meta' });
 
-    expect(await screen.findByText(/cannot use the same shortcut/i, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
+    expect(await screen.findByText(/cannot use the same shortcut/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
     fireEvent.keyDown(capture, { code: 'Escape', key: 'Escape' });
 
     await waitFor(() => expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1), { timeout: SLOW_CI_TIMEOUT });
-    expect(await screen.findByText(/capture cancelled/i, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
+    expect(await screen.findByText(/capture cancelled/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
   });
 
   it('clears a binding with idle Backspace and toggles session-only pause', async () => {
@@ -553,7 +553,7 @@ describe('Settings section reachability', () => {
     const pause = screen.getByRole('switch', { name: 'Pause global shortcuts' });
     fireEvent.click(pause);
     await waitFor(() => expect(settingsIpc.setShortcutsPaused).toHaveBeenCalledWith(true), { timeout: SLOW_CI_TIMEOUT });
-    expect(await screen.findByText(/Global shortcuts are paused/i, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
+    expect(await screen.findByText(/Global shortcuts are paused/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' });
