@@ -39,6 +39,15 @@ describe('streaming transcript ledger', () => {
       .toEqual({ kind: 'protocol-failure' });
   });
 
+  it('treats the protocol-failure latch as terminal', () => {
+    const ledger = createStreamingTranscriptLedger();
+    ledger.apply({ sequence: 0, committed: 'first', tentative: 'first' });
+    expect(ledger.apply({ sequence: 0, committed: 'first again', tentative: 'first again' }))
+      .toEqual({ kind: 'protocol-failure' });
+    expect(ledger.apply({ sequence: 1, committed: 'first', tentative: 'first' }))
+      .toEqual({ kind: 'protocol-failure' });
+  });
+
   it('discards tentative text at the finalization barrier', () => {
     const ledger = createStreamingTranscriptLedger();
     ledger.apply({ sequence: 0, committed: 'stable', tentative: 'stable maybe' });

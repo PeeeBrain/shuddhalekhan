@@ -100,6 +100,36 @@ describe('Batch Dictation runtime shell', () => {
     expect(shell.acceptsAudioEvent(command.generation, 'session-1', 1)).toBe(false);
   });
 
+  it('ignores late streaming previews after failure clears the active recording', async () => {
+    const send = vi.fn();
+    const window = {
+      webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+      loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => true),
+      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+      setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+      hide: vi.fn(), destroy: vi.fn(),
+    };
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-late-preview`);
+    const shell = new RuntimeShell();
+    shell.prepare();
+    shell.markReady();
+
+    const envelope = {
+      recordingSessionId: 'session-1', sequence: 1, revision: 1,
+      capabilities: { batch: true as const, streaming: true },
+    };
+    shell.beginCapture(envelope);
+    shell.show('dictation', 'session-1', envelope);
+    shell.showStreamingPreview('session-1', 'Hello ', 'Hello world');
+    shell.showFailure('session-1', 'Paste failed', ['retry-paste']);
+    send.mockClear();
+    shell.showStreamingPreview('session-1', 'late', 'late text');
+
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('hides synchronously before insertion and can show a later failure', async () => {
     let visible = true;
     const setTimeoutFn = vi.fn();

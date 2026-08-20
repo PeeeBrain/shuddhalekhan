@@ -189,6 +189,7 @@ export class RuntimeShell {
     message: string,
     recoveryActions: DictationRecoveryAction[] = [],
   ): void {
+    this.activeRecording = null;
     this.cancelPendingHide();
     this.resize(FAILURE_WIDTH, FAILURE_HEIGHT, false, recoveryActions.length > 0);
     this.publish({ kind: 'failure', recordingSessionId, message, recoveryActions });

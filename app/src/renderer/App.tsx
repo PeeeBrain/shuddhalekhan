@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import {
   acknowledgeRealtimeChunk,
   enumerateDevices,
+  MAX_IN_FLIGHT_PCM_CHUNKS,
   prepareStream,
   recreateStream,
   setSelectedDeviceId,
@@ -78,7 +79,7 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
       commandRef.current = command;
       startPromiseRef.current = startRecording(command.streaming ? {
         recordingSessionId: command.recordingSessionId,
-        maxInFlightChunks: 50,
+        maxInFlightChunks: MAX_IN_FLIGHT_PCM_CHUNKS,
         onPcmChunk: (chunk) => {
           window.electronAPI?.send(
             'runtime:audio-chunk',

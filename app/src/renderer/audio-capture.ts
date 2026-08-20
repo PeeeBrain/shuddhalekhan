@@ -12,6 +12,8 @@ let streamingCallbacks: Pick<StreamingRecordingOptions, 'onPcmChunk' | 'onRealti
 const AUDIO_LEVEL_TELEMETRY_INTERVAL_MS = 50;
 const STREAM_SAMPLE_RATE = 16_000;
 const STREAM_CHUNK_SAMPLES = 320;
+/** One second of buffered audio at 16 kHz with 320-sample chunks. */
+export const MAX_IN_FLIGHT_PCM_CHUNKS = 50;
 
 export interface StreamingPcmChunk {
   recordingSessionId: string;
@@ -61,6 +63,7 @@ function createStreamingCapture(options: {
       if (sourceSampleRate === null) sourceSampleRate = sampleRate;
       if (sourceSampleRate !== sampleRate) {
         realtimeEnabled = false;
+        pendingSamples.length = 0;
         return [];
       }
 
@@ -81,6 +84,7 @@ function createStreamingCapture(options: {
         if (!realtimeEnabled) break;
         if (inFlight.size >= options.maxInFlightChunks) {
           realtimeEnabled = false;
+          pendingSamples.length = 0;
           break;
         }
         const samples = pendingSamples.splice(0, STREAM_CHUNK_SAMPLES);

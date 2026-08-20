@@ -77,7 +77,7 @@ tags and commit history, not from this file. Keep new entries under
 - Added a session-only Pause Global Shortcuts control to Settings and the tray. Pausing blocks only new sessions and resets when the app restarts.
 
 ### Deferred Scope
-- Live microphone streaming, partial transcripts, progressive paste, and provider SDK realtime integrations remain deferred to v2.
+- Progressive paste and provider SDK realtime integrations remain deferred to v2.
 
 ### Toolchain Modernization
 - Upgraded to Electron 43, electron-builder 26, electron-vite 5, and Vite 7.

@@ -236,9 +236,9 @@ export class KeyboardHook {
   }
 
   private shouldConsumeBindingKey(binding: ShortcutBinding, keyCode: number): boolean {
-    if (binding.keyCode !== null) return binding.keyCode === keyCode;
     const modifier = modifierForKeyCode(keyCode);
-    return modifier !== null && binding.modifiers.includes(modifier);
+    if (modifier !== null) return binding.modifiers.includes(modifier);
+    return binding.keyCode === keyCode;
   }
 
   private isModifierHeld(modifier: ShortcutModifier): boolean {

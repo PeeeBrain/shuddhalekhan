@@ -73,7 +73,7 @@ describe('runtime shell presentation', () => {
 
     expect(send).toHaveBeenCalledWith('runtime:recovery-action', 'retry-paste');
     expect(screen.getByRole('button', { name: 'Retrying...' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Copy Full Transcript' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Copy Full Transcript' })).toBeEnabled();
 
     act(() => emit('runtime:snapshot', {
       kind: 'failure', generation: 1, revision: 2, recordingSessionId: null,

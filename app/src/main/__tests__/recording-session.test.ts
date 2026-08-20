@@ -820,7 +820,10 @@ describe('RecordingSession', () => {
 
   it('streams correlated PCM, publishes preview, and returns one finalized transcript', async () => {
     let publishSnapshot!: (snapshot: { sequence: number; committed: string; tentative: string }) => void;
-    const sendPcm = vi.fn(async () => undefined);
+    const sentPcm: Uint8Array[] = [];
+    const sendPcm = vi.fn(async (pcm: Uint8Array) => {
+      sentPcm.push(new Uint8Array(pcm));
+    });
     const finishStream = vi.fn(async () => {
       publishSnapshot({ sequence: 1, committed: 'Hello world', tentative: 'Hello world maybe' });
       return 'Hello world';
@@ -876,8 +879,8 @@ describe('RecordingSession', () => {
     const chunkCall = (electronMock.ipcMain.on as any).mock.calls.find(
       (call: any) => call[0] === 'runtime:audio-chunk',
     );
-    await chunkCall[1]({}, 1, 'live-session', 1, 0, new Uint8Array(640).buffer);
-    expect(sendPcm).toHaveBeenCalledWith(new Uint8Array(640));
+    await chunkCall[1]({}, 1, 'live-session', 1, 0, new Uint8Array(640).fill(9).buffer);
+    expect(sentPcm).toEqual([new Uint8Array(640).fill(9)]);
     expect(webContents.send).toHaveBeenCalledWith(
       'runtime:audio-chunk-accepted',
       1,

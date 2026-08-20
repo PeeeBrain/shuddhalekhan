@@ -448,6 +448,18 @@ function isWhisperLiveKitNoAudioSnapshot(value: unknown): boolean {
     && record.buffer_transcription === '';
 }
 
+function joinSpokenLineText(lines: WhisperLiveKitLine[]): string {
+  return lines
+    .filter((line) => line.speaker !== -2)
+    .map((line) => line.text ?? '')
+    .reduce((committed, text) => {
+      if (!text) return committed;
+      if (!committed) return text;
+      const needsSpace = !/\s$/.test(committed) && !/^\s/.test(text);
+      return needsSpace ? `${committed} ${text}` : `${committed}${text}`;
+    }, '');
+}
+
 function parseWhisperLiveKitFullSnapshot(
   value: unknown,
   sequence: number,
@@ -472,10 +484,7 @@ function parseWhisperLiveKitFullSnapshot(
     if (line.text !== null && typeof line.text !== 'string') return null;
     lines.push({ speaker: line.speaker, text: line.text });
   }
-  const committed = lines
-    .filter((line) => line.speaker !== -2)
-    .map((line) => line.text ?? '')
-    .join('');
+  const committed = joinSpokenLineText(lines);
   return {
     sequence,
     committed,

@@ -322,6 +322,20 @@ describe('KeyboardHook configurable bindings', () => {
     expect(consumedUp).toBe(true);
   });
 
+  it('consumes required modifier releases during an ordinary chord session', async () => {
+    const hookModule = await importHook('ordinary-chord-modifier-release');
+    const { hook, stopped, keys } = createHarness(hookModule, {
+      dictationBinding: { keyCode: 0x52, modifiers: ['ctrl', 'win'] },
+    });
+
+    hook.handleKeyForTest(keys.leftControl, true);
+    hook.handleKeyForTest(keys.leftWin, true);
+    hook.handleKeyForTest(0x52, true);
+    expect(hook.handleKeyForTest(keys.leftWin, false)).toBe(true);
+    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(hook.handleKeyForTest(0x52, false)).toBe(true);
+  });
+
   it('continues consuming an ordinary trigger when a modifier is released first', async () => {
     const hookModule = await importHook('ordinary-chord-release-order');
     const { hook, stopped, keys } = createHarness(hookModule, {
@@ -330,7 +344,7 @@ describe('KeyboardHook configurable bindings', () => {
 
     hook.handleKeyForTest(keys.leftControl, true);
     hook.handleKeyForTest(0x52, true);
-    expect(hook.handleKeyForTest(keys.leftControl, false)).toBe(false);
+    expect(hook.handleKeyForTest(keys.leftControl, false)).toBe(true);
     expect(stopped).toHaveBeenCalledTimes(1);
 
     expect(hook.handleKeyForTest(0x52, true)).toBe(true);

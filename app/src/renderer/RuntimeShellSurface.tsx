@@ -96,7 +96,7 @@ export function RuntimeShellSurface() {
               type="button"
               variant={action === 'retry-paste' ? 'default' : 'outline'}
               size="sm"
-              disabled={retrying}
+              disabled={retrying && action === 'retry-paste'}
               onClick={() => {
                 if (action === 'retry-paste') setRetrying(true);
                 window.electronAPI.send('runtime:recovery-action', action);

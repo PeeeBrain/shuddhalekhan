@@ -556,6 +556,41 @@ describe('main process IPC orchestration', () => {
     expect(runtimeShellFinish).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores duplicate retry-paste recovery actions while injection is in flight', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    ipcListeners.clear();
+    captureForegroundTarget.mockReturnValueOnce({
+      ...defaultTargetSnapshot,
+      processId: defaultTargetSnapshot.processId + 1,
+    });
+    await import(`../index?test=${Date.now()}-runtime-retry-dedupe`);
+
+    await sessionOptions.onResult({
+      text: 'transcribed text',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'session-1',
+    });
+    expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
+
+    let releasePaste: () => void = () => undefined;
+    const pasteGate = new Promise<void>((resolve) => { releasePaste = resolve; });
+    captureForegroundTarget.mockReturnValue(defaultTargetSnapshot);
+    simulatePaste.mockImplementation(async () => {
+      await pasteGate;
+      return { acceptedEvents: 4 };
+    });
+
+    const handler = ipcListeners.get('runtime:recovery-action');
+    handler?.({}, 'retry-paste');
+    handler?.({}, 'retry-paste');
+    releasePaste();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    expect(runtimeShellFinish).toHaveBeenCalledTimes(1);
+    expect(simulatePaste).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a config toast instead of starting the sidecar when Agent Mode is disabled', async () => {
     const result = {
       text: 'transcribed text',

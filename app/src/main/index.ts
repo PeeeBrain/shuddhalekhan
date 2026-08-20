@@ -53,6 +53,7 @@ import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
+let retryPasteInFlight = false;
 let shellPillReadyEmitted = false;
 let startPerformanceScenario = async (): Promise<void> => undefined;
 const performanceDriverEnabled = isPerformanceScenarioDriverEnabled(process.env);
@@ -246,14 +247,20 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     return;
   }
   if (action !== 'retry-paste') return;
-  runtimeShell.finish();
-  const result = await injectIntoFocusedApp(transcript.text, transcript.targetSnapshot);
-  if (result.kind === 'input-dispatched') {
-    markLastTranscriptInjected('dispatched');
-    return;
+  if (retryPasteInFlight) return;
+  retryPasteInFlight = true;
+  try {
+    runtimeShell.finish();
+    const result = await injectIntoFocusedApp(transcript.text, transcript.targetSnapshot);
+    if (result.kind === 'input-dispatched') {
+      markLastTranscriptInjected('dispatched');
+      return;
+    }
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(null, getRecoveryMessage(result), getRecoveryActions(result));
+  } finally {
+    retryPasteInFlight = false;
   }
-  markLastTranscriptInjected('failed');
-  runtimeShell.showFailure(null, getRecoveryMessage(result), getRecoveryActions(result));
 }
 
 function finishRecording(): void {
