@@ -166,7 +166,7 @@ export class KeyboardHook {
           this.session = null;
           this.onStopRecording?.();
         }
-        return vkCode === session.triggerKeyCode;
+        return this.shouldConsumeBindingKey(session.binding, vkCode);
       }
 
       if (
@@ -180,13 +180,13 @@ export class KeyboardHook {
         this.onStopRecording?.();
         return true;
       }
-      return vkCode === session.triggerKeyCode;
+      return this.shouldConsumeBindingKey(session.binding, vkCode);
     }
 
     if (awaiting) {
       // Events belonging to the just-stopped trigger are consumed; new
       // sessions stay blocked until the binding is fully released.
-      if (vkCode === awaiting.triggerKeyCode) return !this.captureSuspended;
+      if (this.shouldConsumeBindingKey(awaiting.binding, vkCode)) return !this.captureSuspended;
       if (this.toggleAwaitingRelease) return false;
     }
 
@@ -233,6 +233,12 @@ export class KeyboardHook {
       if (modifier) modifiers.add(modifier);
     }
     return modifiers;
+  }
+
+  private shouldConsumeBindingKey(binding: ShortcutBinding, keyCode: number): boolean {
+    const modifier = modifierForKeyCode(keyCode);
+    if (modifier !== null) return binding.modifiers.includes(modifier);
+    return binding.keyCode === keyCode;
   }
 
   private isModifierHeld(modifier: ShortcutModifier): boolean {

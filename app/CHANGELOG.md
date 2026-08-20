@@ -8,6 +8,9 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Dictation Runtime
+- The runtime shell now closes before target validation, removing a focus race during automatic insertion and Retry Paste. Retry Paste also acknowledges clicks and blocks duplicate recovery actions while it runs.
+- Fixed modifier-only recording shortcuts leaking a Windows-key release that could move focus before insertion. Recovery buttons now accept clicks without activating Shuddhalekhan, so Retry Paste checks and pastes into the app that still owns focus.
+- WhisperLiveKit Live Dictation now shows committed and tentative text during recording, then inserts one finalized transcript. Streaming failures fall back once to WhisperLiveKit batch transcription from the retained recording.
 - Fixed Batch Dictation sessions getting stuck when microphone capture stops before startup completes, capture initialization fails, or an empty recording is produced; recovery errors now remain visible instead of being hidden by an older window timer.
 - Batch Dictation now runs through one startup-warmed runtime shell for audio capture, recording, processing, and failure recovery; the shell holds no live microphone track while idle.
 - Runtime events carry generation, session, sequence, and revision identity so crashes, cancellation, replacement, lock/suspend, and shutdown cannot replay stale audio or trigger late insertion.
@@ -74,7 +77,7 @@ tags and commit history, not from this file. Keep new entries under
 - Added a session-only Pause Global Shortcuts control to Settings and the tray. Pausing blocks only new sessions and resets when the app restarts.
 
 ### Deferred Scope
-- Live microphone streaming, partial transcripts, progressive paste, and provider SDK realtime integrations remain deferred to v2.
+- Progressive paste and provider SDK realtime integrations remain deferred to v2.
 
 ### Toolchain Modernization
 - Upgraded to Electron 43, electron-builder 26, electron-vite 5, and Vite 7.

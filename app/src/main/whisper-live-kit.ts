@@ -8,6 +8,9 @@ import {
   failureForHttpStatus,
   validateWhisperLiveKitSettings,
   type RecognitionSettings,
+  type StreamingTranscriptionRequest,
+  type StreamingTranscriptionSession,
+  type StreamingTranscriptSnapshot,
   type Transcriber,
   type TranscriptionCapabilities,
   TranscriptionFailure,
@@ -33,6 +36,8 @@ export const WHISPER_LIVE_KIT_CAPABILITIES: TranscriptionCapabilities = {
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
 const DEFAULT_BATCH_TIMEOUT_MS = 60_000;
+const DEFAULT_STALLED_AUDIO_TIMEOUT_MS = 2_000;
+const DEFAULT_FLUSH_TIMEOUT_MS = 10_000;
 const DEFAULT_HANDSHAKE_RETRY_DELAYS_MS = [250, 1_000];
 
 interface WhisperLiveKitReadinessOptions {
@@ -136,7 +141,7 @@ export async function checkWhisperLiveKitReadiness(
       return {
         providerId: 'whisper-live-kit',
         state: 'ready',
-        message: 'WhisperLiveKit is ready for Batch Dictation.',
+        message: 'WhisperLiveKit is ready for Batch and Live Dictation.',
         checkedAt,
       };
     }
@@ -154,6 +159,198 @@ export async function checkWhisperLiveKitReadiness(
   };
 }
 
+interface WhisperLiveKitStreamingOptions {
+  webSocketFactory?: (
+    url: string,
+    headers?: Record<string, string>,
+  ) => WebSocket;
+  handshakeTimeoutMs?: number;
+  stalledAudioTimeoutMs?: number;
+  flushTimeoutMs?: number;
+}
+
+interface WhisperLiveKitLine {
+  speaker: number;
+  text: string | null;
+}
+
+export function createWhisperLiveKitStreamingSession(
+  config: WhisperLiveKitProviderConfig,
+  savedBearerToken: string | null,
+  request: StreamingTranscriptionRequest,
+  options: WhisperLiveKitStreamingOptions = {},
+): StreamingTranscriptionSession {
+  const settingsErrors = validateWhisperLiveKitSettings(config);
+  if (settingsErrors.length > 0) {
+    throw new TranscriptionFailure('endpoint', settingsErrors[0]!);
+  }
+  if (request.recognition.task === 'translate') {
+    throw new TranscriptionFailure('model', 'WhisperLiveKit streaming does not support translation.');
+  }
+  if (config.auth === 'bearer' && !savedBearerToken) {
+    throw new TranscriptionFailure(
+      'authentication',
+      'WhisperLiveKit bearer token is not configured. Save it in Settings.',
+    );
+  }
+
+  const endpoint = new URL(buildWhisperLiveKitEndpoints(config).websocket);
+  endpoint.searchParams.set('language', request.recognition.language);
+  const headers = config.auth === 'bearer' && savedBearerToken
+    ? { Authorization: `Bearer ${savedBearerToken}` }
+    : undefined;
+  const webSocketFactory = options.webSocketFactory
+    ?? ((url: string, socketHeaders?: Record<string, string>) => new WebSocket(
+      url,
+      socketHeaders ? { headers: socketHeaders } : undefined,
+    ));
+  const socket = webSocketFactory(endpoint.toString(), headers);
+  const handshakeTimeoutMs = options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
+  const stalledAudioTimeoutMs = options.stalledAudioTimeoutMs ?? DEFAULT_STALLED_AUDIO_TIMEOUT_MS;
+  const flushTimeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
+  let opened = false;
+  let configured = false;
+  let terminal = false;
+  let finishing = false;
+  let snapshotSequence = 0;
+  let committed = '';
+  let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let resolveFinal!: (text: string) => void;
+  let rejectFinal!: (error: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+  const final = new Promise<string>((resolve, reject) => {
+    resolveFinal = resolve;
+    rejectFinal = reject;
+  });
+  void ready.catch(() => undefined);
+  void final.catch(() => undefined);
+
+  const cleanup = (): void => {
+    if (handshakeTimer) clearTimeout(handshakeTimer);
+    if (flushTimer) clearTimeout(flushTimer);
+    socket.removeEventListener('open', onOpen);
+    socket.removeEventListener('message', onMessage);
+    socket.removeEventListener('error', onSocketFailure);
+    socket.removeEventListener('close', onSocketFailure);
+  };
+  const closeSocket = (): void => {
+    try {
+      socket.close();
+    } catch {
+      // The socket is already terminal.
+    }
+  };
+  const fail = (message: string): void => {
+    if (terminal) return;
+    terminal = true;
+    const error = new TranscriptionFailure('network', message);
+    cleanup();
+    closeSocket();
+    if (!configured) rejectReady(error);
+    rejectFinal(error);
+  };
+  const onOpen = (): void => {
+    opened = true;
+  };
+  const onSocketFailure = (): void => {
+    fail('WhisperLiveKit streaming connection failed. Falling back to Batch Dictation.');
+  };
+  const publishSnapshot = (value: unknown): void => {
+    if (isWhisperLiveKitNoAudioSnapshot(value)) return;
+    const snapshot = parseWhisperLiveKitFullSnapshot(value, snapshotSequence);
+    if (!snapshot) {
+      fail('WhisperLiveKit returned an invalid streaming response. Falling back to Batch Dictation.');
+      return;
+    }
+    snapshotSequence += 1;
+    committed = snapshot.committed;
+    request.onSnapshot(snapshot);
+  };
+  const onMessage = (event: WebSocket.MessageEvent): void => {
+    if (typeof event.data !== 'string') {
+      fail('WhisperLiveKit returned an invalid streaming response. Falling back to Batch Dictation.');
+      return;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(event.data);
+    } catch {
+      fail('WhisperLiveKit returned an invalid streaming response. Falling back to Batch Dictation.');
+      return;
+    }
+    if (!configured) {
+      if (!opened || !isWhisperLiveKitPcmConfig(value)) {
+        fail('WhisperLiveKit PCM handshake failed. Falling back to Batch Dictation.');
+        return;
+      }
+      configured = true;
+      if (handshakeTimer) clearTimeout(handshakeTimer);
+      resolveReady();
+      return;
+    }
+    if (isReadyToStop(value)) {
+      if (!finishing) {
+        fail('WhisperLiveKit ended the stream before finalization. Falling back to Batch Dictation.');
+        return;
+      }
+      terminal = true;
+      cleanup();
+      closeSocket();
+      resolveFinal(committed);
+      return;
+    }
+    publishSnapshot(value);
+  };
+
+  socket.addEventListener('open', onOpen);
+  socket.addEventListener('message', onMessage);
+  socket.addEventListener('error', onSocketFailure);
+  socket.addEventListener('close', onSocketFailure);
+  handshakeTimer = setTimeout(() => {
+    fail('WhisperLiveKit PCM handshake timed out. Falling back to Batch Dictation.');
+  }, handshakeTimeoutMs);
+
+  const send = async (pcm: Uint8Array): Promise<void> => {
+    await ready;
+    if (terminal || finishing) {
+      throw new TranscriptionFailure('network', 'WhisperLiveKit streaming session is closed.');
+    }
+    await sendWebSocketBinary(socket, pcm, stalledAudioTimeoutMs);
+  };
+
+  return {
+    send,
+    finish() {
+      const beginFinish = async (): Promise<void> => {
+        if (!finishing && !terminal) {
+          if (!configured) await ready;
+          finishing = true;
+          await sendWebSocketBinary(socket, new Uint8Array(), stalledAudioTimeoutMs);
+          flushTimer = setTimeout(() => {
+            fail('WhisperLiveKit finalization timed out. Falling back to Batch Dictation.');
+          }, flushTimeoutMs);
+        }
+      };
+      return beginFinish().then(() => final);
+    },
+    cancel() {
+      if (terminal) return;
+      terminal = true;
+      const error = new TranscriptionFailure('network', 'WhisperLiveKit streaming was cancelled.');
+      cleanup();
+      closeSocket();
+      if (!configured) rejectReady(error);
+      rejectFinal(error);
+    },
+  };
+}
+
 export function createWhisperLiveKitTranscriber(
   config: WhisperLiveKitProviderConfig,
   savedBearerToken: string | null,
@@ -163,7 +360,10 @@ export function createWhisperLiveKitTranscriber(
   return {
     id: 'whisper-live-kit',
     capabilities: WHISPER_LIVE_KIT_CAPABILITIES,
-    transportCapabilities: { batch: true, streaming: false },
+    transportCapabilities: { batch: true, streaming: true },
+    startStreaming(request) {
+      return createWhisperLiveKitStreamingSession(config, savedBearerToken, request);
+    },
     async transcribe({ audio, recognition }) {
       const settingsErrors = validateWhisperLiveKitSettings(config);
       if (settingsErrors.length > 0) {
@@ -219,6 +419,108 @@ export function buildWhisperLiveKitEndpoints(
   config: WhisperLiveKitProviderConfig,
 ): WhisperLiveKitEndpoints {
   return deriveWhisperLiveKitEndpoints(config.baseUrl);
+}
+
+function isWhisperLiveKitPcmConfig(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const config = value as { type?: unknown; useAudioWorklet?: unknown; mode?: unknown };
+  return config.type === 'config' && config.useAudioWorklet === true && config.mode === 'full';
+}
+
+function isReadyToStop(value: unknown): boolean {
+  return Boolean(value && typeof value === 'object' && (value as { type?: unknown }).type === 'ready_to_stop');
+}
+
+function isWhisperLiveKitNoAudioSnapshot(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as {
+    type?: unknown;
+    status?: unknown;
+    lines?: unknown;
+    buffer_transcription?: unknown;
+    error?: unknown;
+  };
+  return record.type === undefined
+    && record.error === undefined
+    && record.status === 'no_audio_detected'
+    && Array.isArray(record.lines)
+    && record.lines.length === 0
+    && record.buffer_transcription === '';
+}
+
+function joinSpokenLineText(lines: WhisperLiveKitLine[]): string {
+  return lines
+    .filter((line) => line.speaker !== -2)
+    .map((line) => line.text ?? '')
+    .reduce((committed, text) => {
+      if (!text) return committed;
+      if (!committed) return text;
+      const needsSpace = !/\s$/.test(committed) && !/^\s/.test(text);
+      return needsSpace ? `${committed} ${text}` : `${committed}${text}`;
+    }, '');
+}
+
+function parseWhisperLiveKitFullSnapshot(
+  value: unknown,
+  sequence: number,
+): StreamingTranscriptSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as {
+    type?: unknown;
+    status?: unknown;
+    lines?: unknown;
+    buffer_transcription?: unknown;
+    error?: unknown;
+  };
+  if (record.type !== undefined || record.error !== undefined) return null;
+  if (record.status !== 'active_transcription' && record.status !== 'no_audio_detected') return null;
+  if (!Array.isArray(record.lines) || typeof record.buffer_transcription !== 'string') return null;
+
+  const lines: WhisperLiveKitLine[] = [];
+  for (const item of record.lines) {
+    if (!item || typeof item !== 'object') return null;
+    const line = item as { speaker?: unknown; text?: unknown };
+    if (typeof line.speaker !== 'number') return null;
+    if (line.text !== null && typeof line.text !== 'string') return null;
+    lines.push({ speaker: line.speaker, text: line.text });
+  }
+  const committed = joinSpokenLineText(lines);
+  return {
+    sequence,
+    committed,
+    tentative: `${committed}${record.buffer_transcription}`,
+  };
+}
+
+function sendWebSocketBinary(
+  socket: WebSocket,
+  data: Uint8Array,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new TranscriptionFailure(
+        'network',
+        'WhisperLiveKit stopped accepting audio. Falling back to Batch Dictation.',
+      ));
+    }, timeoutMs);
+    socket.send(data, (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) {
+        reject(new TranscriptionFailure(
+          'network',
+          'WhisperLiveKit stopped accepting audio. Falling back to Batch Dictation.',
+        ));
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
 function isHealthyWhisperLiveKitResponse(value: unknown): boolean {
@@ -302,7 +604,11 @@ async function transcribeWhisperLiveKit(
   timeoutMs: number,
 ): Promise<string> {
   const form = new FormData();
-  form.append('file', new Blob([audio], { type: 'audio/wav' }), 'audio.wav');
+  form.append(
+    'file',
+    new Blob([audio as Uint8Array<ArrayBuffer>], { type: 'audio/wav' }),
+    'audio.wav',
+  );
   form.append('response_format', 'json');
   if (recognition.language !== 'auto') form.append('language', recognition.language);
 

@@ -160,9 +160,13 @@ The app remains tray-first. The settings window opens only when the user chooses
 ## UI Architecture Decisions
 
 ### Runtime and Settings Windows
-The obsolete `MainWindow` remains removed. The app owns exactly two destination roles: a lazy conventional Settings window and one startup-warmed frameless runtime shell. The runtime shell stays hidden while idle, owns no live microphone track while idle, and combines per-recording audio capture with recording, processing, and certainty-safe Dictation recovery presentation. Electron main owns its visibility, focusability, pointer policy, bounds, generation, and monotonic presentation revision. Passive states use show-without-activation and ignore pointer input; recovery controls become focusable only for deliberate interaction.
+The obsolete `MainWindow` remains removed. The app owns exactly two destination roles: a lazy conventional Settings window and one startup-warmed frameless runtime shell. The runtime shell stays hidden while idle, owns no live microphone track while idle, and combines per-recording audio capture with recording, processing, and certainty-safe Dictation recovery presentation. Electron main owns its visibility, focusability, pointer policy, bounds, generation, and monotonic presentation revision. Passive states use show-without-activation and ignore pointer input. The shell hides synchronously before automatic insertion and Retry Paste validate the foreground target. Recovery controls accept pointer input without activating Shuddhalekhan, so exact-target Retry Paste does not invalidate its own foreground check.
 
-Runtime audio returns must match the current shell generation plus recording session and command sequence. Cancellation, renderer loss, lock, suspend, replacement, and shutdown invalidate that identity before late work can transcribe or insert. Successful Batch Dictation returns the shell to idle without a result card. Failure cards are derived by main and expose Retry Paste only when no input was accepted; uncertain delivery is copy-only through Last Transcript.
+Runtime audio returns must match the current shell generation plus recording session and command sequence. Streaming chunks add their own monotonic sequence and receive bounded acceptance acknowledgements. If the renderer reaches its credit limit, it stops realtime delivery for that recording but retains every converted sample for the final WAV. Cancellation, renderer loss, lock, suspend, replacement, and shutdown invalidate the session before late work can transcribe or insert.
+
+WhisperLiveKit opens a new `mode=full` PCM WebSocket for each eligible recording. The runtime shell shows cumulative committed text and replaceable tentative text. Main rejects committed text that shrinks or revises an accepted prefix. Stop sends one empty binary frame and waits for `ready_to_stop`; tentative text is then discarded and Dictation inserts one finalized transcript. A failed stream gets one same-provider batch attempt from the retained WAV. Agent Mode receives only the finalized raw transcript.
+
+Successful Batch Dictation returns the shell to idle without a result card. Failure cards are derived by main and expose Retry Paste only when no input was accepted; uncertain delivery is copy-only through Last Transcript.
 
 ### Settings Window Design Direction
 Settings uses a **floating panel / sheet** style (Apple System Settings / Windows 11 Settings influence):
@@ -189,7 +193,7 @@ The process of simulating keystrokes to type transcribed text into the active wi
 ## Technical Terms
 
 ### Audio Stream
-A permanently initialized `cpal` input stream that buffers audio samples in memory. Recording toggles a `discard_audio` flag rather than starting/stopping the stream itself, enabling zero-latency capture.
+The runtime renderer acquires the selected microphone for each recording and stops every track at the terminal path. It observes the `AudioContext` sample rate, downmixes input to mono, and converts it to ordered 320-sample PCM16 chunks at 16 kHz. The same converted samples produce the retained final WAV. The renderer and `AudioContext` stay warm, but the microphone does not.
 
 ### Whisper Client
 HTTP client that sends recorded WAV audio to a configurable Whisper API endpoint (e.g., a local `whisper.cpp` server) and returns transcribed text.

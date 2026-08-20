@@ -7,7 +7,107 @@ let mediaStream: MediaStream | null = null;
 let sourceNode: MediaStreamAudioSourceNode | null = null;
 let processorNode: ScriptProcessorNode | null = null;
 let audioBuffer: Float32Array[] = [];
+let streamingCapture: StreamingCapture | null = null;
+let streamingCallbacks: Pick<StreamingRecordingOptions, 'onPcmChunk' | 'onRealtimeDisabled'> | null = null;
 const AUDIO_LEVEL_TELEMETRY_INTERVAL_MS = 50;
+const STREAM_SAMPLE_RATE = 16_000;
+const STREAM_CHUNK_SAMPLES = 320;
+/** One second of buffered audio at 16 kHz with 320-sample chunks. */
+export const MAX_IN_FLIGHT_PCM_CHUNKS = 50;
+
+export interface StreamingPcmChunk {
+  recordingSessionId: string;
+  sequence: number;
+  pcm: Uint8Array;
+}
+
+export interface StreamingRecordingOptions {
+  recordingSessionId: string;
+  maxInFlightChunks: number;
+  onPcmChunk: (chunk: StreamingPcmChunk) => void;
+  onRealtimeDisabled: () => void;
+}
+
+interface StreamingCapture {
+  readonly realtimeEnabled: boolean;
+  push(channels: Float32Array[], sampleRate: number): StreamingPcmChunk[];
+  acknowledge(sequence: number): void;
+  finish(): Uint8Array;
+}
+
+function createStreamingCapture(options: {
+  recordingSessionId: string;
+  maxInFlightChunks: number;
+}): StreamingCapture {
+  let realtimeEnabled = true;
+  let sequence = 0;
+  let sourceSampleRate: number | null = null;
+  let resampleAccumulator = 0;
+  let pendingSamples: number[] = [];
+  let retainedSamples: number[] = [];
+  const inFlight = new Set<number>();
+
+  const appendSample = (sample: number): void => {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    const pcm16 = Math.trunc(clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff);
+    pendingSamples.push(pcm16);
+    retainedSamples.push(pcm16);
+  };
+
+  return {
+    get realtimeEnabled() {
+      return realtimeEnabled;
+    },
+    push(channels, sampleRate) {
+      if (!Number.isFinite(sampleRate) || sampleRate <= 0 || channels.length === 0) return [];
+      if (sourceSampleRate === null) sourceSampleRate = sampleRate;
+      if (sourceSampleRate !== sampleRate) {
+        realtimeEnabled = false;
+        pendingSamples.length = 0;
+        return [];
+      }
+
+      const frameCount = Math.min(...channels.map((channel) => channel.length));
+      for (let index = 0; index < frameCount; index += 1) {
+        let mono = 0;
+        for (const channel of channels) mono += channel[index] ?? 0;
+        mono /= channels.length;
+        resampleAccumulator += STREAM_SAMPLE_RATE;
+        while (resampleAccumulator >= sampleRate) {
+          appendSample(mono);
+          resampleAccumulator -= sampleRate;
+        }
+      }
+
+      const chunks: StreamingPcmChunk[] = [];
+      while (pendingSamples.length >= STREAM_CHUNK_SAMPLES) {
+        if (!realtimeEnabled) break;
+        if (inFlight.size >= options.maxInFlightChunks) {
+          realtimeEnabled = false;
+          pendingSamples.length = 0;
+          break;
+        }
+        const samples = pendingSamples.splice(0, STREAM_CHUNK_SAMPLES);
+        const pcm = pcm16Bytes(samples);
+        const chunkSequence = sequence;
+        sequence += 1;
+        inFlight.add(chunkSequence);
+        chunks.push({ recordingSessionId: options.recordingSessionId, sequence: chunkSequence, pcm });
+      }
+      return chunks;
+    },
+    acknowledge(acknowledgedSequence) {
+      inFlight.delete(acknowledgedSequence);
+    },
+    finish() {
+      const wav = encodePcm16Wav(retainedSamples, STREAM_SAMPLE_RATE);
+      pendingSamples = [];
+      retainedSamples = [];
+      inFlight.clear();
+      return wav;
+    },
+  };
+}
 
 let isRecording = false;
 let isStreamPrepared = false;
@@ -142,10 +242,12 @@ export async function recreateStream(deviceId: string | null): Promise<void> {
   await prepareStream();
 }
 
-export async function startRecording(): Promise<void> {
+export async function startRecording(options?: StreamingRecordingOptions): Promise<void> {
   if (isRecording) return;
 
   audioBuffer = [];
+  streamingCapture = options ? createStreamingCapture(options) : null;
+  streamingCallbacks = options ?? null;
   latestAudioLevel = 0;
 
   try {
@@ -153,50 +255,83 @@ export async function startRecording(): Promise<void> {
     hasAudioPermission = true;
   } catch (err) {
     audioBuffer = [];
+    streamingCapture = null;
+    streamingCallbacks = null;
     console.error('Failed to open microphone:', err);
     throw err;
   }
 
-  audioContext = new AudioContext({
-    sampleRate: 16000,
-  });
+  try {
+    audioContext = new AudioContext({
+      sampleRate: 16000,
+    });
 
-  sourceNode = audioContext.createMediaStreamSource(mediaStream);
-  processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+    sourceNode = audioContext.createMediaStreamSource(mediaStream);
+    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
 
-  processorNode.onaudioprocess = (event) => {
-    if (!isRecording) return;
+    processorNode.onaudioprocess = (event) => {
+      if (!isRecording) return;
 
-    const inputData = event.inputBuffer.getChannelData(0);
-    const buffer = new Float32Array(inputData);
-    audioBuffer.push(buffer);
+      const channelCount = Math.max(1, event.inputBuffer.numberOfChannels ?? 1);
+      const channels = Array.from(
+        { length: channelCount },
+        (_, channel) => new Float32Array(event.inputBuffer.getChannelData(channel)),
+      );
+      const buffer = channels[0] ?? new Float32Array();
+      if (!streamingCapture) audioBuffer.push(buffer);
 
-    const sum = buffer.reduce((acc, val) => acc + Math.abs(val), 0);
-    const avg = sum / buffer.length;
-    latestAudioLevel = Math.min(avg * 10, 1);
-  };
+      if (streamingCapture && streamingCallbacks) {
+        const wasRealtimeEnabled = streamingCapture.realtimeEnabled;
+        for (const chunk of streamingCapture.push(channels, inputSampleRate)) {
+          streamingCallbacks.onPcmChunk(chunk);
+        }
+        if (wasRealtimeEnabled && !streamingCapture.realtimeEnabled) {
+          streamingCallbacks.onRealtimeDisabled();
+        }
+      }
 
-  sourceNode.connect(processorNode);
-  processorNode.connect(audioContext.destination);
+      const sum = buffer.reduce((acc, val) => acc + Math.abs(val), 0);
+      const avg = buffer.length > 0 ? sum / buffer.length : 0;
+      latestAudioLevel = Math.min(avg * 10, 1);
+    };
 
-  inputSampleRate = audioContext.sampleRate;
-  inputChannels = 1;
-  isRecording = true;
-  isStreamPrepared = true;
-  startLevelTelemetry();
-  console.log(`Recording started at ${inputSampleRate} Hz`);
+    sourceNode.connect(processorNode);
+    processorNode.connect(audioContext.destination);
+
+    inputSampleRate = audioContext.sampleRate;
+    inputChannels = 1;
+    isRecording = true;
+    isStreamPrepared = true;
+    startLevelTelemetry();
+    console.log(`Recording started at ${inputSampleRate} Hz`);
+  } catch (error) {
+    isRecording = false;
+    audioBuffer = [];
+    streamingCapture = null;
+    streamingCallbacks = null;
+    teardownCapture();
+    throw error;
+  }
 }
 
 export function stopRecording(): Uint8Array {
   isRecording = false;
   teardownCapture();
 
-  const wavData = encodeWAV(audioBuffer, inputSampleRate, inputChannels);
+  const wavData = streamingCapture
+    ? streamingCapture.finish()
+    : encodeWAV(audioBuffer, inputSampleRate, inputChannels);
   console.log(`Recording stopped with ${audioBuffer.length} audio chunks and ${wavData.byteLength} WAV bytes`);
   audioBuffer = [];
+  streamingCapture = null;
+  streamingCallbacks = null;
   latestAudioLevel = 0;
 
   return wavData;
+}
+
+export function acknowledgeRealtimeChunk(sequence: number): void {
+  streamingCapture?.acknowledge(sequence);
 }
 
 function encodeWAV(
@@ -258,6 +393,36 @@ function mergeBuffers(buffers: Float32Array[]): Float32Array {
   return result;
 }
 
+function pcm16Bytes(samples: number[]): Uint8Array {
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  for (let index = 0; index < samples.length; index += 1) {
+    view.setInt16(index * 2, samples[index] ?? 0, true);
+  }
+  return bytes;
+}
+
+function encodePcm16Wav(samples: number[], sampleRate: number): Uint8Array {
+  const pcm = pcm16Bytes(samples);
+  const wav = new Uint8Array(44 + pcm.byteLength);
+  const view = new DataView(wav.buffer);
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, pcm.byteLength, true);
+  wav.set(pcm, 44);
+  return wav;
+}
+
 function writeString(view: DataView, offset: number, string: string): void {
   for (let i = 0; i < string.length; i++) {
     view.setUint8(offset + i, string.charCodeAt(i));
@@ -265,6 +430,7 @@ function writeString(view: DataView, offset: number, string: string): void {
 }
 
 export const __audioCaptureTestUtils = {
+  createStreamingCapture,
   encodeWAV,
   mergeBuffers,
 };

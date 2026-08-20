@@ -22,7 +22,7 @@ const TRANSCRIPTION_TRANSPORT_CAPABILITIES = {
   'google-cloud-speech-v2': { batch: true, streaming: false },
   'nvidia-speech-nim': { batch: true, streaming: false },
   'custom-open-ai-compatible': { batch: true, streaming: false },
-  'whisper-live-kit': { batch: true, streaming: false },
+  'whisper-live-kit': { batch: true, streaming: true },
 } satisfies Record<TranscriptionProviderId, TranscriptionTransportCapabilities>;
 
 export function normalizeDictationConfig(stored: unknown): DictationConfig {
@@ -172,6 +172,7 @@ export function createRecordingPresentationEnvelope(input: {
   sequence: number;
   revision: number;
   capabilities: TranscriptionTransportCapabilities;
+  streamingActive?: boolean;
   outcome?: RecordingTerminalOutcome;
 }): RecordingPresentationEnvelope {
   return {
@@ -179,6 +180,7 @@ export function createRecordingPresentationEnvelope(input: {
     sequence: input.sequence,
     revision: input.revision,
     capabilities: input.capabilities,
+    ...(input.streamingActive !== undefined ? { streamingActive: input.streamingActive } : {}),
     ...(input.outcome ? { outcome: input.outcome } : {}),
   };
 }

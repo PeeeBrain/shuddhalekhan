@@ -1,5 +1,14 @@
 import { useEffect, useRef } from 'react';
-import { prepareStream, recreateStream, startRecording, stopRecording, enumerateDevices, setSelectedDeviceId } from './audio-capture';
+import {
+  acknowledgeRealtimeChunk,
+  enumerateDevices,
+  MAX_IN_FLIGHT_PCM_CHUNKS,
+  prepareStream,
+  recreateStream,
+  setSelectedDeviceId,
+  startRecording,
+  stopRecording,
+} from './audio-capture';
 import { RecordingPopup } from './RecordingPopup';
 import { SettingsWindow } from './SettingsWindow';
 import { AgentToast } from './AgentToast';
@@ -68,7 +77,28 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
     if (!runtime) return undefined;
     const unsubscribeStart = window.electronAPI.subscribe('runtime:audio-start', (command) => {
       commandRef.current = command;
-      startPromiseRef.current = startRecording()
+      startPromiseRef.current = startRecording(command.streaming ? {
+        recordingSessionId: command.recordingSessionId,
+        maxInFlightChunks: MAX_IN_FLIGHT_PCM_CHUNKS,
+        onPcmChunk: (chunk) => {
+          window.electronAPI?.send(
+            'runtime:audio-chunk',
+            command.generation,
+            command.recordingSessionId,
+            command.sequence,
+            chunk.sequence,
+            chunk.pcm.buffer,
+          );
+        },
+        onRealtimeDisabled: () => {
+          window.electronAPI?.send(
+            'runtime:audio-stream-disabled',
+            command.generation,
+            command.recordingSessionId,
+            command.sequence,
+          );
+        },
+      } : undefined)
         .then(() => window.electronAPI?.send('audio-capture-started'))
         .catch((err) => {
           commandRef.current = null;
@@ -82,6 +112,17 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
         })
         .finally(() => { startPromiseRef.current = null; });
     });
+    const unsubscribeAccepted = window.electronAPI.subscribe(
+      'runtime:audio-chunk-accepted',
+      (generation, recordingSessionId, commandSequence, chunkSequence) => {
+        if (
+          commandRef.current?.generation !== generation
+          || commandRef.current.recordingSessionId !== recordingSessionId
+          || commandRef.current.sequence !== commandSequence
+        ) return;
+        acknowledgeRealtimeChunk(chunkSequence);
+      },
+    );
     const unsubscribeStop = window.electronAPI.subscribe('runtime:audio-stop', async (command) => {
       if (
         commandRef.current?.generation !== command.generation
@@ -112,6 +153,7 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
     });
     return () => {
       unsubscribeStart();
+      unsubscribeAccepted();
       unsubscribeStop();
       if (commandRef.current) stopRecording();
       commandRef.current = null;

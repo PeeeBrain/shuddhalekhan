@@ -53,6 +53,7 @@ import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
+let retryPasteInFlight = false;
 let shellPillReadyEmitted = false;
 let startPerformanceScenario = async (): Promise<void> => undefined;
 const performanceDriverEnabled = isPerformanceScenarioDriverEnabled(process.env);
@@ -93,6 +94,7 @@ const recordingSession = new RecordingSession({
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
+  getDictationMode: () => getConfig().dictation.mode,
   getRecognitionSettings: () => {
     const config = getConfig();
     return {
@@ -245,14 +247,20 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     return;
   }
   if (action !== 'retry-paste') return;
-  const result = await injectIntoFocusedApp(transcript.text, transcript.targetSnapshot);
-  if (result.kind === 'input-dispatched') {
-    markLastTranscriptInjected('dispatched');
+  if (retryPasteInFlight) return;
+  retryPasteInFlight = true;
+  try {
     runtimeShell.finish();
-    return;
+    const result = await injectIntoFocusedApp(transcript.text, transcript.targetSnapshot);
+    if (result.kind === 'input-dispatched') {
+      markLastTranscriptInjected('dispatched');
+      return;
+    }
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(null, getRecoveryMessage(result), getRecoveryActions(result));
+  } finally {
+    retryPasteInFlight = false;
   }
-  markLastTranscriptInjected('failed');
-  runtimeShell.showFailure(null, getRecoveryMessage(result), getRecoveryActions(result));
 }
 
 function finishRecording(): void {

@@ -31,11 +31,29 @@ export interface TranscriptionRequest {
   recognition: RecognitionSettings;
 }
 
+export interface StreamingTranscriptSnapshot {
+  sequence: number;
+  committed: string;
+  tentative: string;
+}
+
+export interface StreamingTranscriptionSession {
+  send(pcm: Uint8Array): Promise<void>;
+  finish(): Promise<string>;
+  cancel(): void;
+}
+
+export interface StreamingTranscriptionRequest {
+  recognition: RecognitionSettings;
+  onSnapshot: (snapshot: StreamingTranscriptSnapshot) => void;
+}
+
 export interface Transcriber {
   readonly id: TranscriptionProviderId;
   readonly capabilities: TranscriptionCapabilities;
   readonly transportCapabilities?: import('../types/ipc').TranscriptionTransportCapabilities;
   transcribe(request: TranscriptionRequest): Promise<string>;
+  startStreaming?(request: StreamingTranscriptionRequest): StreamingTranscriptionSession;
 }
 
 export type TranscriptionFailureCategory =

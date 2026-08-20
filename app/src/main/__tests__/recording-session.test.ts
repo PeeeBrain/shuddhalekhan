@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
-import type { Transcriber } from '../transcription';
+import type { StreamingTranscriptionRequest, Transcriber } from '../transcription';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
 import type { RecordingSession, AudioCapture } from '../recording-session';
 import {
@@ -818,6 +818,324 @@ describe('RecordingSession', () => {
     resetPerformanceMarkerCollectorForTests();
   });
 
+  it('streams correlated PCM, publishes preview, and returns one finalized transcript', async () => {
+    let publishSnapshot!: (snapshot: { sequence: number; committed: string; tentative: string }) => void;
+    const sentPcm: Uint8Array[] = [];
+    const sendPcm = vi.fn(async (pcm: Uint8Array) => {
+      sentPcm.push(new Uint8Array(pcm));
+    });
+    const finishStream = vi.fn(async () => {
+      publishSnapshot({ sequence: 1, committed: 'Hello world', tentative: 'Hello world maybe' });
+      return 'Hello world';
+    });
+    const cancelStream = vi.fn();
+    const batchTranscribe = vi.fn(async () => 'batch fallback');
+    const webContents = { send: vi.fn() };
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => webContents), consumeAudioEvent: vi.fn(() => true),
+      acceptsAudioEvent: vi.fn(() => true),
+    };
+    const streamingTranscriber: Transcriber = {
+      id: 'whisper-live-kit',
+      capabilities: {
+        translation: false,
+        automaticLanguageDetection: true,
+        dictionaryHints: false,
+        authentication: 'optional',
+        maxDurationSeconds: null,
+      },
+      transportCapabilities: { batch: true, streaming: true },
+      transcribe: batchTranscribe,
+      startStreaming: vi.fn((request: StreamingTranscriptionRequest) => {
+        publishSnapshot = request.onSnapshot;
+        return { send: sendPcm, finish: finishStream, cancel: cancelStream };
+      }),
+    };
+    const onResult = vi.fn();
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: streamingTranscriber,
+      getDictationMode: () => 'live',
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onResult,
+    });
+
+    session.start();
+    session.begin('dictation', 'live-session');
+    publishSnapshot({ sequence: 0, committed: 'Hello ', tentative: 'Hello wor' });
+    expect(runtimeShell.showStreamingPreview).toHaveBeenCalledWith(
+      'live-session',
+      'Hello ',
+      'Hello wor',
+    );
+
+    const chunkCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'runtime:audio-chunk',
+    );
+    await chunkCall[1]({}, 1, 'live-session', 1, 0, new Uint8Array(640).fill(9).buffer);
+    expect(sentPcm).toEqual([new Uint8Array(640).fill(9)]);
+    expect(webContents.send).toHaveBeenCalledWith(
+      'runtime:audio-chunk-accepted',
+      1,
+      'live-session',
+      1,
+      0,
+    );
+
+    const ending = session.end();
+    const audioReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'runtime:audio-data-ready',
+    );
+    await audioReadyCall[1]({}, 1, 'live-session', 1, new Uint8Array(128).buffer);
+
+    await expect(ending).resolves.toMatchObject({ text: 'Hello world', intent: 'dictation' });
+    expect(finishStream).toHaveBeenCalledTimes(1);
+    expect(batchTranscribe).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses one same-provider Batch fallback when streaming finalization fails', async () => {
+    const batchTranscribe = vi.fn(async () => 'complete batch transcript');
+    const cancelStream = vi.fn();
+    const streamingTranscriber: Transcriber = {
+      id: 'whisper-live-kit',
+      capabilities: {
+        translation: false,
+        automaticLanguageDetection: true,
+        dictionaryHints: false,
+        authentication: 'optional',
+        maxDurationSeconds: null,
+      },
+      transportCapabilities: { batch: true, streaming: true },
+      transcribe: batchTranscribe,
+      startStreaming: vi.fn(() => ({
+        send: vi.fn(async () => undefined),
+        finish: vi.fn(async () => { throw new Error('flush timed out'); }),
+        cancel: cancelStream,
+      })),
+    };
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
+      acceptsAudioEvent: vi.fn(() => true),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: streamingTranscriber,
+      getDictationMode: () => 'live',
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation', 'fallback-session');
+    const ending = session.end();
+    await session.complete(new Uint8Array(128).fill(4));
+
+    await expect(ending).resolves.toMatchObject({ text: 'complete batch transcript' });
+    expect(batchTranscribe).toHaveBeenCalledTimes(1);
+    expect(cancelStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fall back or deliver a transcript when cancelled during stream finalization', async () => {
+    let rejectFinalization!: (error: Error) => void;
+    let markFinalizationStarted!: () => void;
+    const finalizationStarted = new Promise<void>((resolve) => {
+      markFinalizationStarted = resolve;
+    });
+    const finishStream = vi.fn(() => {
+      markFinalizationStarted();
+      return new Promise<string>((_resolve, reject) => {
+        rejectFinalization = reject;
+      });
+    });
+    const batchTranscribe = vi.fn(async () => 'late batch transcript');
+    const cancelStream = vi.fn(() => rejectFinalization(new Error('cancelled')));
+    const onResult = vi.fn();
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
+      acceptsAudioEvent: vi.fn(() => true),
+    };
+    const streamingTranscriber: Transcriber = {
+      ...createTranscriber(batchTranscribe),
+      id: 'whisper-live-kit',
+      transportCapabilities: { batch: true, streaming: true },
+      startStreaming: vi.fn(() => ({
+        send: vi.fn(async () => undefined),
+        finish: finishStream,
+        cancel: cancelStream,
+      })),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: streamingTranscriber,
+      getDictationMode: () => 'live',
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onResult,
+    });
+
+    session.begin('dictation', 'cancelled-finalization');
+    const ending = session.end();
+    const completion = session.complete(new Uint8Array(128).fill(4));
+    await finalizationStarted;
+    await session.cancel();
+
+    await expect(ending).resolves.toBeNull();
+    await expect(completion).resolves.toBeNull();
+    expect(cancelStream).toHaveBeenCalledTimes(1);
+    expect(batchTranscribe).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
+  it('does not report a stale batch failure after cancellation', async () => {
+    let rejectBatch!: (error: Error) => void;
+    let markBatchStarted!: () => void;
+    const batchStarted = new Promise<void>((resolve) => {
+      markBatchStarted = resolve;
+    });
+    const batchTranscribe = vi.fn(() => {
+      markBatchStarted();
+      return new Promise<string>((_resolve, reject) => {
+        rejectBatch = reject;
+      });
+    });
+    const cancelStream = vi.fn();
+    const onError = vi.fn();
+    const onResult = vi.fn();
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
+      acceptsAudioEvent: vi.fn(() => true),
+    };
+    const streamingTranscriber: Transcriber = {
+      ...createTranscriber(batchTranscribe),
+      id: 'whisper-live-kit',
+      transportCapabilities: { batch: true, streaming: true },
+      startStreaming: vi.fn(() => ({
+        send: vi.fn(async () => undefined),
+        finish: vi.fn(async () => { throw new Error('stream failed'); }),
+        cancel: cancelStream,
+      })),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber: streamingTranscriber,
+      getDictationMode: () => 'live',
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+      onResult,
+    });
+
+    session.begin('dictation', 'cancelled-batch-failure');
+    const ending = session.end();
+    const completion = session.complete(new Uint8Array(128).fill(4));
+    await batchStarted;
+    await session.cancel();
+    rejectBatch(new Error('late batch failure'));
+
+    await expect(ending).resolves.toBeNull();
+    await expect(completion).resolves.toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
+  it('cancels the per-utterance stream when capture returns an empty WAV', async () => {
+    const cancelStream = vi.fn();
+    const runtimeShell = {
+      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
+      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
+      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
+      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
+      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
+      acceptsAudioEvent: vi.fn(() => true),
+    };
+    const transcriber: Transcriber = {
+      ...createTranscriber(async () => 'unused'),
+      id: 'whisper-live-kit',
+      transportCapabilities: { batch: true, streaming: true },
+      startStreaming: vi.fn(() => ({
+        send: vi.fn(async () => undefined),
+        finish: vi.fn(async () => ''),
+        cancel: cancelStream,
+      })),
+    };
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      runtimeGates: { runtimeShell: true, streaming: true, directUnicode: true },
+      transcriber,
+      getDictationMode: () => 'live',
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onError: vi.fn(),
+    });
+
+    session.begin('dictation', 'empty-stream');
+    const ending = session.end();
+    await session.complete(new Uint8Array(44));
+
+    await expect(ending).rejects.toThrow('No microphone audio was captured');
+    expect(cancelStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the legacy capture path as Batch when the runtime shell is disabled', async () => {
+    const startStreaming = vi.fn(() => ({
+      send: vi.fn(async () => undefined),
+      finish: vi.fn(async () => ''),
+      cancel: vi.fn(),
+    }));
+    const batchTranscribe = vi.fn(async () => 'legacy batch result');
+    const transcriber: Transcriber = {
+      ...createTranscriber(batchTranscribe),
+      id: 'whisper-live-kit',
+      transportCapabilities: { batch: true, streaming: true },
+      startStreaming,
+    };
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber,
+      getDictationMode: () => 'live',
+      runtimeGates: { runtimeShell: false, streaming: true, directUnicode: true },
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation', 'legacy-live');
+    const ending = session.end();
+    await session.complete(new Uint8Array(128));
+
+    await expect(ending).resolves.toMatchObject({ text: 'legacy batch result' });
+    expect(startStreaming).not.toHaveBeenCalled();
+    expect(batchTranscribe).toHaveBeenCalledTimes(1);
+  });
+
   it('carries WhisperLiveKit mandatory Batch capability into the ordinary Batch presentation', async () => {
     const providerTranscriber: Transcriber = {
       id: 'whisper-live-kit',
@@ -828,7 +1146,7 @@ describe('RecordingSession', () => {
         authentication: 'optional',
         maxDurationSeconds: null,
       },
-      transportCapabilities: { batch: true, streaming: false },
+      transportCapabilities: { batch: true, streaming: true },
       transcribe: vi.fn(async () => 'WhisperLiveKit batch result'),
     };
     const onResult = vi.fn();
@@ -856,11 +1174,11 @@ describe('RecordingSession', () => {
     expect(showRecordingPill).toHaveBeenCalledWith(
       'dictation',
       expect.any(String),
-      expect.objectContaining({ capabilities: { batch: true, streaming: false } }),
+      expect.objectContaining({ capabilities: { batch: true, streaming: true } }),
     );
     expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
       text: 'WhisperLiveKit batch result',
-      capabilities: { batch: true, streaming: false },
+      capabilities: { batch: true, streaming: true },
     }));
   });
 
