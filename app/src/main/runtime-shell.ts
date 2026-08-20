@@ -176,7 +176,7 @@ export class RuntimeShell {
       ...this.activeRecording,
       committed,
       tentative,
-      insertionHalted: false,
+      insertionHalted: this.activeRecording.insertionHalted === true,
     };
     this.publish(this.activeRecording);
     if (!previewWasVisible) this.showPassive();

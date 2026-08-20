@@ -31,8 +31,15 @@ describe('committed text projection', () => {
     expect(computeCommittedDelta('  hello', 0)).toBe('hello');
   });
 
-  it('does not strip leading whitespace after text has already been dispatched', () => {
-    expect(projectCommittedText('hello there', 5)).toBe('hello there');
+  it('never reintroduces leading whitespace after the external cursor advances', () => {
+    expect(projectCommittedText('  hello', 5)).toBe('hello');
+    expect(computeCommittedDelta('  hello', 5)).toBe('');
+  });
+
+  it('does not duplicate suffixes when raw committed keeps a leading space prefix', () => {
+    expect(computeCommittedDelta('  hello', 0)).toBe('hello');
+    expect(computeCommittedDelta('  hello', 5)).toBe('');
+    expect(computeCommittedDelta('  hello world', 5)).toBe(' world');
   });
 
   it('holds terminal trailing whitespace while streaming', () => {

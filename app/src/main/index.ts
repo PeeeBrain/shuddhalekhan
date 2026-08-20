@@ -177,12 +177,19 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   setLastTranscript(result.text, result.targetSnapshot, liveDispatch);
 
   if (live) {
-    if (live.hasAcceptedEvents || live.uncertain) {
-      markLastTranscriptInjected(live.uncertain ? 'uncertain' : 'dispatched');
-      if (live.halted && live.uncertain) {
+    const projectedFullLength = outerTrimTranscript(result.text).length;
+    const fullyDispatched = live.dispatchedProjectedLength >= projectedFullLength;
+    const insertionIncomplete = live.hasAcceptedEvents && live.halted && !fullyDispatched;
+
+    if (live.hasAcceptedEvents || live.uncertain || insertionIncomplete) {
+      const uncertain = live.uncertain || insertionIncomplete;
+      markLastTranscriptInjected(uncertain ? 'uncertain' : 'dispatched');
+      if (live.halted && uncertain) {
         runtimeShell?.showFailure(
           result.recordingSessionId,
-          'Live Dictation stopped because Windows could not confirm the last insertion.',
+          insertionIncomplete
+            ? 'Live Dictation stopped before the full transcript was inserted.'
+            : 'Live Dictation stopped because Windows could not confirm the last insertion.',
           getRecoveryActions({ kind: 'input-blocked', acceptedEvents: 1 }),
         );
       }

@@ -50,13 +50,10 @@ function stripTrailingProjectableWhitespace(text: string): string {
 
 export function projectCommittedText(
   rawCommitted: string,
-  dispatchedProjectedLength: number,
+  _dispatchedProjectedLength: number,
   options: ProjectCommittedTextOptions = {},
 ): string {
-  let text = rawCommitted;
-  if (dispatchedProjectedLength === 0) {
-    text = stripLeadingProjectableWhitespace(text);
-  }
+  let text = stripLeadingProjectableWhitespace(rawCommitted);
   if (!options.finalizing) {
     text = stripTrailingProjectableWhitespace(text);
   }
