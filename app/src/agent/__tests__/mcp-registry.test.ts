@@ -285,9 +285,9 @@ describe('McpRegistry', () => {
     const activeRun = registry.createRunSnapshot(approve);
 
     const closing = registry.close(20);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(connection.closed).toBe(false);
     await closing;
+    // The lease was never released, so the deferred close must not have run.
+    expect(connection.closed).toBe(false);
 
     await activeRun.close();
     expect(connection.closed).toBe(true);
