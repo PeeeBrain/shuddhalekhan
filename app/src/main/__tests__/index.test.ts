@@ -54,6 +54,7 @@ const getClipboardSequenceNumber = vi.fn(() => 1);
 const defaultTargetSnapshot: DictationTargetSnapshot = {
   hwnd: 12345,
   processId: 67890,
+  processCreationTime: '2026-01-01T00:00:00.000Z',
   threadId: 111,
   windowClass: 'Notepad',
   executablePath: 'C:\\Windows\\notepad.exe',
@@ -520,6 +521,88 @@ describe('main process IPC orchestration', () => {
 
     expect(agentStartRun).not.toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('transcribed text');
+  });
+
+  it('does not treat an equal-length Batch fallback as already inserted live text', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    await import(`../index?test=${Date.now()}-live-content-mismatch`);
+
+    await sessionOptions.onResult({
+      text: 'batch',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'live-content-mismatch',
+      outcome: { kind: 'completed' as const },
+      liveDictation: {
+        halted: true,
+        uncertain: false,
+        hasAcceptedEvents: true,
+        dispatchedProjectedLength: 'wrong'.length,
+        rawCommitted: 'wrong',
+      },
+    });
+
+    expect(runtimeShellShowFailure).toHaveBeenCalledWith(
+      'live-content-mismatch',
+      'Live Dictation stopped before the full transcript was inserted.',
+      ['copy-full-transcript'],
+    );
+    expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('blocks Paste Last Transcript after Live Dictation accepted input', async () => {
+    await sessionOptions.onResult({
+      text: 'already inserted',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'live-inserted',
+      outcome: { kind: 'completed' as const },
+      liveDictation: {
+        halted: false,
+        uncertain: false,
+        hasAcceptedEvents: true,
+        dispatchedProjectedLength: 'already inserted'.length,
+        rawCommitted: 'already inserted',
+      },
+    });
+
+    await trayHandlers.onPasteLastTranscript?.();
+
+    expect(simulatePaste).not.toHaveBeenCalled();
+    expect(electronMock.Notification).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Paste Last Transcript unavailable',
+      body: expect.stringContaining('Use Copy Last Transcript'),
+    }));
+  });
+
+  it('stores Recognized So Far and shows recovery after terminal Live failure', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    await import(`../index?test=${Date.now()}-recognized-so-far`);
+
+    await sessionOptions.onResult({
+      text: 'recognized so far',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'recognized-so-far',
+      outcome: { kind: 'failed' as const, message: 'Batch fallback failed' },
+      liveDictation: {
+        halted: true,
+        uncertain: false,
+        hasAcceptedEvents: false,
+        dispatchedProjectedLength: 0,
+        rawCommitted: 'recognized so far',
+      },
+    });
+
+    expect(runtimeShellShowFailure).toHaveBeenCalledWith(
+      'recognized-so-far',
+      'Live Dictation could not complete. Last Transcript contains Recognized So Far.',
+      ['retry-paste', 'copy-full-transcript'],
+    );
+    expect(simulatePaste).not.toHaveBeenCalled();
+
+    await trayHandlers.onCopyLastTranscript?.();
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('recognized so far');
   });
 
   it('hides the recovery shell before Retry Paste validates the target', async () => {

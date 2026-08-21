@@ -48,8 +48,9 @@ import {
 } from './performance/scenario-driver';
 import { transcribe as transcribeLocalFixture } from './whisper';
 import { RuntimeShell } from './runtime-shell';
-import { getRecoveryActions } from './dictation-recovery';
+import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
 import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
+import { outerTrimTranscript } from '../shared/live-dictation';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
@@ -167,7 +168,72 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     return;
   }
 
-  setLastTranscript(result.text, result.targetSnapshot);
+  const live = result.liveDictation;
+  const liveDispatch = live ? {
+    hasAcceptedEvents: live.hasAcceptedEvents,
+    uncertain: live.uncertain,
+  } : undefined;
+
+  setLastTranscript(result.text, result.targetSnapshot, liveDispatch);
+
+  if (live) {
+    if (result.outcome.kind === 'failed') {
+      markLastTranscriptInjected(live.hasAcceptedEvents || live.uncertain ? 'uncertain' : 'failed');
+      const message = 'Live Dictation could not complete. Last Transcript contains Recognized So Far.';
+      const actions = getLiveRecoveryActions(live);
+      if (runtimeShell) {
+        runtimeShell.showFailure(result.recordingSessionId, message, actions);
+      } else {
+        showRecoveryNotification(
+          { kind: 'input-blocked', acceptedEvents: live.hasAcceptedEvents || live.uncertain ? 1 : 0, reason: message },
+          'Live Dictation stopped',
+        );
+      }
+      return;
+    }
+
+    const projectedFull = outerTrimTranscript(result.text);
+    const sameTranscript = outerTrimTranscript(live.rawCommitted) === projectedFull;
+    const fullyDispatched = sameTranscript
+      && live.dispatchedProjectedLength >= projectedFull.length;
+
+    if (live.hasAcceptedEvents || live.uncertain) {
+      const uncertain = live.uncertain || !fullyDispatched;
+      markLastTranscriptInjected(uncertain ? 'uncertain' : 'dispatched');
+      if (uncertain) {
+        const message = !fullyDispatched
+          ? 'Live Dictation stopped before the full transcript was inserted.'
+          : 'Live Dictation stopped because Windows could not confirm the last insertion.';
+        if (runtimeShell) {
+          runtimeShell.showFailure(
+            result.recordingSessionId,
+            message,
+            getLiveRecoveryActions(live),
+          );
+        } else {
+          showRecoveryNotification(
+            { kind: 'input-blocked', acceptedEvents: 1, reason: message },
+            'Live Dictation stopped',
+          );
+        }
+      }
+      return;
+    }
+
+    const fallbackText = outerTrimTranscript(result.text);
+    const injectResult = await injectIntoFocusedApp(fallbackText, result.targetSnapshot);
+    if (injectResult.kind === 'input-dispatched') {
+      markLastTranscriptInjected('dispatched');
+      return;
+    }
+    markLastTranscriptInjected('failed');
+    runtimeShell?.showFailure(
+      result.recordingSessionId,
+      getRecoveryMessage(injectResult),
+      getRecoveryActions(injectResult),
+    );
+    return;
+  }
 
   const injectResult = await injectIntoFocusedApp(result.text, result.targetSnapshot);
   if (injectResult.kind === 'input-dispatched') {
@@ -190,11 +256,24 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
 async function pasteLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
   if (!transcript) return;
+  if (transcript.liveDispatch?.hasAcceptedEvents || transcript.liveDispatch?.uncertain) {
+    showLiveCopyOnlyNotification();
+    return;
+  }
 
   const result = await injectIntoFocusedApp(transcript.text);
   if (result.kind !== 'input-dispatched') {
     showRecoveryNotification(result, 'Paste Last Transcript failed');
   }
+}
+
+function showLiveCopyOnlyNotification(): void {
+  if (!Notification.isSupported()) return;
+  new Notification({
+    title: 'Paste Last Transcript unavailable',
+    body: 'Live Dictation may already have inserted this text. Use Copy Last Transcript to avoid duplication.',
+    silent: true,
+  }).show();
 }
 
 async function copyLastTranscript(): Promise<void> {

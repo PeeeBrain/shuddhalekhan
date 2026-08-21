@@ -117,6 +117,37 @@ describe('runtime shell presentation', () => {
     expect(screen.getByTestId('streaming-preview')).toHaveAttribute('aria-live', 'off');
   });
 
+  it('shows a passive amber insertion-halted banner while recording continues', () => {
+    (window as any).electronAPI = {
+      subscribe: (channel: string, callback: (...args: any[]) => void) => {
+        const list = listeners.get(channel) ?? [];
+        list.push(callback);
+        listeners.set(channel, list);
+        return () => listeners.set(
+          channel,
+          (listeners.get(channel) ?? []).filter((cb) => cb !== callback),
+        );
+      },
+      send: () => undefined,
+    };
+    render(<RuntimeShellSurface />);
+
+    act(() => emit('runtime:snapshot', {
+      kind: 'recording',
+      generation: 1,
+      revision: 3,
+      recordingSessionId: 'live-session',
+      intent: 'dictation',
+      capabilities: { batch: true, streaming: true },
+      durationWarningSeconds: null,
+      committed: 'Hello',
+      tentative: 'Hello world',
+      insertionHalted: true,
+    }));
+
+    expect(screen.getByTestId('insertion-halted')).toHaveTextContent('Insertion stopped — recording continues');
+  });
+
   it('renders exactly one visual presentation state and replaces recording with processing', () => {
     (window as any).electronAPI = {
       subscribe: (channel: string, callback: (...args: any[]) => void) => {

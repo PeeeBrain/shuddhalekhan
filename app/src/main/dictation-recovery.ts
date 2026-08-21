@@ -8,3 +8,13 @@ export function getRecoveryActions(result: InjectResult): DictationRecoveryActio
     ? ['retry-paste', 'copy-full-transcript']
     : ['copy-full-transcript'];
 }
+
+export function getLiveRecoveryActions(input: {
+  hasAcceptedEvents: boolean;
+  uncertain: boolean;
+}): DictationRecoveryAction[] {
+  if (input.uncertain || input.hasAcceptedEvents) {
+    return ['copy-full-transcript'];
+  }
+  return ['retry-paste', 'copy-full-transcript'];
+}
