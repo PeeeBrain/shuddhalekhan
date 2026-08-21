@@ -49,6 +49,9 @@ describe('parseElectronMessage', () => {
       decision: 'denied',
       message: 'no',
     });
+    expect(parseElectronMessage(JSON.stringify({ type: 'sidecar:shutdown' }))).toEqual({
+      type: 'sidecar:shutdown',
+    });
   });
 
   it('rejects unknown protocol messages', () => {

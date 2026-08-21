@@ -37,15 +37,86 @@ const baseConfig = {
 };
 
 describe('McpRegistry', () => {
+  it('waits for pending connections and reports how many enabled servers connected', async () => {
+    let releaseConnection: ((connection: McpClientConnection) => void) | undefined;
+    const pendingConnection = new Promise<McpClientConnection>((resolve) => {
+      releaseConnection = resolve;
+    });
+    const ports = makePorts({});
+    ports.mcpClientFactory.connect = async () => pendingConnection;
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+    const settling = registry.settle(1000);
+    releaseConnection?.(new FakeConnection({ search: makeTool('search') }));
+
+    expect(await settling).toEqual({ connected: 1, enabled: 1 });
+    await registry.close();
+  });
+
+  it('stops waiting at the deadline and keeps the connected subset', async () => {
+    let releaseConnection: ((connection: McpClientConnection) => void) | undefined;
+    const ports = makePorts({});
+    ports.mcpClientFactory.connect = async () => new Promise<McpClientConnection>((resolve) => {
+      releaseConnection = resolve;
+    });
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+
+    expect(await registry.settle(10)).toEqual({ connected: 0, enabled: 1 });
+    releaseConnection?.(new FakeConnection({ search: makeTool('search') }));
+    await registry.settle(1000);
+    await registry.close();
+  });
+
+  it('waits for superseded connection attempts during registry shutdown', async () => {
+    const staleConnection = new FakeConnection({ oldTool: makeTool('old') });
+    const replacementConnection = new FakeConnection({ newTool: makeTool('new') });
+    let releaseStale: ((connection: McpClientConnection) => void) | undefined;
+    let connectionNumber = 0;
+    const ports = makePorts({});
+    ports.mcpClientFactory.connect = async () => {
+      connectionNumber += 1;
+      if (connectionNumber === 1) {
+        return new Promise<McpClientConnection>((resolve) => {
+          releaseStale = resolve;
+        });
+      }
+      return replacementConnection;
+    };
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+    await registry.updateConfig(withServer({
+      transport: { type: 'http', url: 'http://localhost:4000/mcp', redirect: 'error' },
+    }) as never);
+    await registry.settle(1000);
+
+    let shutdownComplete = false;
+    const closing = registry.close().then(() => {
+      shutdownComplete = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shutdownComplete).toBe(false);
+
+    releaseStale?.(staleConnection);
+    await closing;
+    expect(staleConnection.closed).toBe(true);
+  });
+
   it('uses its injected client port to expose enabled server tools in a namespaced snapshot', async () => {
     const search = makeTool('search');
     const ports = makePorts({ srv1: [new FakeConnection({ search })] });
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
 
-    expect(Object.keys(registry.createRunSnapshot(approve).tools)).toEqual(['srv1__search']);
+    const snapshot = registry.createRunSnapshot(approve);
+    expect(Object.keys(snapshot.tools)).toEqual(['srv1__search']);
 
+    await snapshot.close();
     await registry.close();
   });
 
@@ -54,6 +125,7 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
 
     expect(ports.transporter.events).toEqual([
       ['status', 'srv1', 'connecting'],
@@ -70,11 +142,15 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
     await registry.updateConfig(withServer({ toolPolicies: { 'srv1:send': 'alwaysAllow' } }) as never);
+    await registry.settle(1000);
 
-    expect(registry.createRunSnapshot(approve).tools.srv1__send.needsApproval).toBeUndefined();
+    const snapshot = registry.createRunSnapshot(approve);
+    expect(snapshot.tools.srv1__send.needsApproval).toBeUndefined();
     expect(connection.closed).toBe(false);
 
+    await snapshot.close();
     await registry.close();
   });
 
@@ -85,9 +161,11 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
     await registry.updateConfig(withServer({
       transport: { type: 'http', url: 'http://localhost:4000/mcp', redirect: 'error' },
     }) as never);
+    await registry.settle(1000);
 
     expect(firstConnection.closed).toBe(true);
     expect(ports.oauthFactory.servers[0]?.closed).toBe(true);
@@ -103,14 +181,42 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
     await registry.updateConfig(withServer({
       transport: { type: 'http', url: 'http://localhost:3000/mcp', redirect: 'follow' },
     }) as never);
+    await registry.settle(1000);
 
     expect(firstConnection.closed).toBe(true);
     expect(ports.oauthFactory.servers[0]?.closed).toBe(true);
     expect(replacementConnection.closed).toBe(false);
 
+    await registry.close();
+  });
+
+  it('keeps a replaced connection alive until the active run releases its snapshot', async () => {
+    const firstConnection = new FakeConnection({ oldTool: makeTool('old') });
+    const replacementConnection = new FakeConnection({ newTool: makeTool('new') });
+    const ports = makePorts({ srv1: [firstConnection, replacementConnection] });
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
+    const activeRun = registry.createRunSnapshot(approve);
+
+    await registry.updateConfig(withServer({
+      transport: { type: 'http', url: 'http://localhost:4000/mcp', redirect: 'error' },
+    }) as never);
+    await registry.settle(1000);
+
+    expect(firstConnection.closed).toBe(false);
+    expect(Object.keys(activeRun.tools)).toEqual(['srv1__oldTool']);
+    const nextRun = registry.createRunSnapshot(approve);
+    expect(Object.keys(nextRun.tools)).toEqual(['srv1__newTool']);
+
+    await activeRun.close();
+    expect(firstConnection.closed).toBe(true);
+    await nextRun.close();
     await registry.close();
   });
 
@@ -120,11 +226,86 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
 
     expect(failingConnection.closed).toBe(true);
     expect(ports.oauthFactory.servers[0]?.closed).toBe(true);
     expect(ports.transporter.events).toContainEqual(['status', 'srv1', 'failed', 'Server refused connection']);
     expect(registry.createRunSnapshot(approve).tools).toEqual({});
+  });
+
+  it('closes a duplicate attempt instead of overwriting the registered client', async () => {
+    const registeredConnection = new FakeConnection({ search: makeTool('registered') });
+    const k2Connection = new FakeConnection({ search: makeTool('k2') });
+    const duplicateConnection = new FakeConnection({ search: makeTool('duplicate') });
+    const releases: Array<((connection: McpClientConnection) => void) | undefined> = [];
+    let attemptNumber = 0;
+    const ports = makePorts({});
+    ports.mcpClientFactory.connect = async () => {
+      attemptNumber += 1;
+      return new Promise<McpClientConnection>((resolve) => {
+        releases[attemptNumber] = resolve;
+      });
+    };
+    const registry = new McpRegistry(ports);
+
+    // K1 -> K2 -> K1 while the first K1 attempt is pending leaves two live
+    // attempts for the same connection key.
+    await registry.updateConfig(baseConfig as never);
+    await registry.updateConfig(withServer({
+      transport: { type: 'http', url: 'http://localhost:4000/mcp', redirect: 'error' },
+    }) as never);
+    await registry.updateConfig(baseConfig as never);
+    releases[1]?.(registeredConnection);
+    releases[2]?.(k2Connection);
+    releases[3]?.(duplicateConnection);
+    await registry.settle(1000);
+
+    // The duplicate loses to the already-registered client and is discarded.
+    expect(duplicateConnection.closed).toBe(true);
+    expect(registeredConnection.closed).toBe(false);
+    expect(ports.oauthFactory.servers.filter((server) => !server.closed)).toHaveLength(1);
+
+    const snapshot = registry.createRunSnapshot(approve);
+    expect(Object.keys(snapshot.tools)).toEqual(['srv1__search']);
+    expect(snapshot.tools.srv1__search.description).toBe('registered');
+
+    await snapshot.close();
+    await registry.close();
+    expect(registeredConnection.closed).toBe(true);
+  });
+
+  it('completes shutdown even when a leased server never releases its snapshot', async () => {
+    const connection = new FakeConnection({ search: makeTool('search') });
+    const ports = makePorts({ srv1: [connection] });
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
+    const activeRun = registry.createRunSnapshot(approve);
+
+    const closing = registry.close(20);
+    await closing;
+    // The lease was never released, so the deferred close must not have run.
+    expect(connection.closed).toBe(false);
+
+    await activeRun.close();
+    expect(connection.closed).toBe(true);
+    await registry.close();
+  });
+
+  it('attempts a failed connection key only once per generation', async () => {
+    const ports = makePorts({
+      srv1: [new FakeConnection({}, new Error('Server refused connection'))],
+    });
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
+    await registry.updateConfig(withServer({ toolPolicies: { 'srv1:search': 'alwaysAllow' } }) as never);
+    await registry.settle(1000);
+
+    expect(ports.transporter.events.filter((event) => event[0] === 'status' && event[2] === 'connecting')).toHaveLength(1);
   });
 
   it('retries discovery with OAuth tokens that arrive during the initial connection', async () => {
@@ -138,6 +319,7 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
     await registry.close();
 
     expect(initialConnection.closed).toBe(true);
@@ -155,6 +337,7 @@ describe('McpRegistry', () => {
     const registry = new McpRegistry(ports);
 
     await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
 
     expect(initialConnection.closed).toBe(true);
     expect(retryConnection.closed).toBe(true);
@@ -168,11 +351,13 @@ describe('McpRegistry', () => {
     await registry.updateConfig(
       withServer({ toolPolicies: { 'srv1:remove': 'disabled' } }) as never
     );
+    await registry.settle(1000);
 
-    const tools = registry.createRunSnapshot(approve).tools;
-    expect(tools.srv1__search.needsApproval).toBe(true);
-    expect(tools).not.toHaveProperty('srv1__remove');
+    const snapshot = registry.createRunSnapshot(approve);
+    expect(snapshot.tools.srv1__search.needsApproval).toBe(true);
+    expect(snapshot.tools).not.toHaveProperty('srv1__remove');
 
+    await snapshot.close();
     await registry.close();
   });
 });

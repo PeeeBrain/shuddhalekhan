@@ -20,6 +20,7 @@ let activeAbortController: AbortController | null = null;
 let pendingApproval: PendingApproval | null = null;
 let approvalQueue: Promise<void> = Promise.resolve();
 let configUpdateQueue: Promise<void> = Promise.resolve();
+let shutdownPromise: Promise<void> | null = null;
 const auditStore = new AgentAuditStore();
 const oauthRedirectFactory = new SidecarOAuthRedirectFactory();
 const mcpRegistry = new McpRegistry({
@@ -68,6 +69,7 @@ function handleLine(line: string): void {
     logSidecar('ignored unknown protocol message');
     return;
   }
+  if (shutdownPromise && message.type !== 'sidecar:shutdown') return;
 
   switch (message.type) {
     case 'config:update':
@@ -84,6 +86,9 @@ function handleLine(line: string): void {
       break;
     case 'approval:decision':
       handleApprovalDecision(message);
+      break;
+    case 'sidecar:shutdown':
+      void beginShutdown(true);
       break;
   }
 }
@@ -113,6 +118,12 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
 
   try {
     await configUpdateQueue;
+    const availability = await mcpRegistry.settle(5000);
+    if (availability.connected < availability.enabled) {
+      const status = `Some Agent tools are unavailable. Connected to ${availability.connected} of ${availability.enabled} MCP servers.`;
+      auditStore.record(agentRunId, 'status', { status });
+      writeJsonLine({ type: 'agent:status', agentRunId, status });
+    }
     const toolSnapshot = mcpRegistry.createRunSnapshot(
       (request) => requestToolApproval(agentRunId, request),
       (eventType, payload) => recordAgentAudit(agentRunId, eventType, payload),
@@ -319,15 +330,30 @@ async function shutdown(): Promise<void> {
     auditStore.record(activeAgentRunId, 'run_interrupted', { reason: 'sidecar_shutdown' });
     rejectPendingApproval(activeAgentRunId, 'Agent run was interrupted because the sidecar is shutting down.');
   }
+  await configUpdateQueue.catch(() => undefined);
   await mcpRegistry.close();
   auditStore.close();
 }
 
+function beginShutdown(acknowledge: boolean): Promise<void> {
+  // A failed registry close must not become an unhandled rejection nor withhold
+  // the acknowledgement: main force-terminates the generation after its wait.
+  if (!shutdownPromise) {
+    shutdownPromise = shutdown().catch((err) => {
+      logSidecar('sidecar shutdown failed', err);
+    });
+  }
+  if (!acknowledge) return shutdownPromise;
+  return shutdownPromise.then(() => {
+    writeJsonLine({ type: 'sidecar:shutdown-complete' });
+  });
+}
+
 process.once('SIGINT', () => {
-  void shutdown().finally(() => process.exit(0));
+  void beginShutdown(false).finally(() => process.exit(0));
 });
 process.once('SIGTERM', () => {
-  void shutdown().finally(() => process.exit(0));
+  void beginShutdown(false).finally(() => process.exit(0));
 });
 process.once('exit', () => {
   auditStore.close();

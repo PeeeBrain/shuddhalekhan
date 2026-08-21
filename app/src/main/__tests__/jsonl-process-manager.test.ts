@@ -13,6 +13,7 @@ const child = Object.assign(new EventEmitter(), {
   stderr,
   killed: false,
   kill: childKill,
+  pid: 1234,
 });
 const spawn = vi.fn(() => child);
 
@@ -73,5 +74,16 @@ describe('JsonlProcessManager', () => {
     expect(malformed).toHaveBeenCalledWith('{bad', expect.any(SyntaxError));
     expect(stdoutLines.close).toHaveBeenCalled();
     expect(onExit).toHaveBeenCalledWith(7, null);
+  });
+
+  it('notifies onSpawn once the child pid exists', async () => {
+    const onSpawn = vi.fn();
+    const { JsonlProcessManager } = await import(`../jsonl-process-manager?test=${Date.now()}-3`) as typeof import('../jsonl-process-manager');
+    const manager = new JsonlProcessManager({ onMessage: vi.fn(), onSpawn });
+
+    manager.start({ command: 'worker.exe', args: [] });
+
+    expect(onSpawn).toHaveBeenCalledTimes(1);
+    expect(manager.getChildPid()).toBeTypeOf('number');
   });
 });

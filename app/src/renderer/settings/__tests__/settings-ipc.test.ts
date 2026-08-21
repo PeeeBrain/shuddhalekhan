@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { AppConfig, McpServerRuntimeStatus, UpdateStatus } from '../../../types/ipc';
+import type { AppConfig, McpStatusSnapshot, UpdateStatus } from '../../../types/ipc';
 import { createSettingsIpc } from '../settings-ipc';
 
 const vi = { fn: mock };
@@ -62,6 +62,7 @@ describe('settings IPC adapter', () => {
       if (channel === 'app:get-release-notes') return Promise.resolve({ version: '4.0.0', notes: '- Added release notes' });
       if (channel === 'updater:get-status') return Promise.resolve(updateStatus);
       if (channel === 'updater:check') return Promise.resolve(updateStatus);
+      if (channel === 'mcp:get-status-snapshot') return Promise.resolve({ revision: 1, servers: [] });
       if (channel === 'transcription:check-server') return Promise.resolve(true);
       if (channel === 'transcription:check-readiness') return Promise.resolve({
         providerId: 'whisper-live-kit', state: 'ready', message: 'ready', checkedAt: null,
@@ -79,11 +80,13 @@ describe('settings IPC adapter', () => {
     await expect(ipc.getAppInfo()).resolves.toEqual({ name: 'Shuddhalekhan', version: '4.0.0', isPackaged: false });
     await expect(ipc.getReleaseNotes()).resolves.toEqual({ version: '4.0.0', notes: '- Added release notes' });
     await expect(ipc.getUpdateStatus()).resolves.toBe(updateStatus);
+    await expect(ipc.getMcpStatusSnapshot()).resolves.toEqual({ revision: 1, servers: [] });
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'config:get');
     expect(invoke).toHaveBeenNthCalledWith(2, 'app:get-info');
     expect(invoke).toHaveBeenNthCalledWith(3, 'app:get-release-notes');
     expect(invoke).toHaveBeenNthCalledWith(4, 'updater:get-status');
+    expect(invoke).toHaveBeenNthCalledWith(5, 'mcp:get-status-snapshot');
   });
 
   it('saves config and forwards actions without exposing channel names to callers', async () => {
@@ -136,18 +139,18 @@ describe('settings IPC adapter', () => {
     subscribe.mockReturnValueOnce(offUpdate).mockReturnValueOnce(offMcp);
 
     expect(ipc.onUpdateStatusChanged(onUpdate)).toBe(offUpdate);
-    expect(ipc.onMcpServerStatus(onMcpStatus)).toBe(offMcp);
+    expect(ipc.onMcpStatusSnapshot(onMcpStatus)).toBe(offMcp);
 
-    const status: McpServerRuntimeStatus = { serverId: 'mail', status: 'connected' };
+    const snapshot: McpStatusSnapshot = { revision: 3, servers: [{ serverId: 'mail', status: 'connected' }] };
     const updateCallback = subscribe.mock.calls[0]?.[1] as (nextStatus: UpdateStatus) => void;
-    const mcpCallback = subscribe.mock.calls[1]?.[1] as (nextStatus: McpServerRuntimeStatus) => void;
+    const mcpCallback = subscribe.mock.calls[1]?.[1] as (snapshot: McpStatusSnapshot) => void;
     updateCallback(updateStatus);
-    mcpCallback(status);
+    mcpCallback(snapshot);
 
     expect(subscribe).toHaveBeenNthCalledWith(1, 'updater:status-changed', expect.any(Function));
-    expect(subscribe).toHaveBeenNthCalledWith(2, 'mcp:server-status', expect.any(Function));
+    expect(subscribe).toHaveBeenNthCalledWith(2, 'mcp:status-snapshot', expect.any(Function));
     expect(onUpdate).toHaveBeenCalledWith(updateStatus);
-    expect(onMcpStatus).toHaveBeenCalledWith(status);
+    expect(onMcpStatus).toHaveBeenCalledWith(snapshot);
   });
 
   it('subscribes to typed transcription readiness updates', () => {

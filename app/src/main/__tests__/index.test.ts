@@ -100,6 +100,10 @@ const showAgentToast = vi.fn();
 const hideAgentToast = vi.fn();
 const handleAgentToastContentSize = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
+let agentManagerDeps: {
+  onLifecycleError?: (error: { reason: string }) => void;
+  onGenerationExit?: () => void;
+} | null = null;
 const runtimeShellFinish = vi.fn();
 const runtimeShellShowFailure = vi.fn();
 const runtimeShellShowProcessing = vi.fn();
@@ -160,8 +164,12 @@ mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUp
 mock.module('../agent-toast-window', () => ({ showAgentToast, hideAgentToast, handleAgentToastContentSize }));
 mock.module('../agent-sidecar', () => ({
   AgentSidecarManager: class {
-    constructor(onEvent: (event: any) => void) {
+    constructor(onEvent: (event: any) => void, deps?: {
+      onLifecycleError?: (error: { reason: string }) => void;
+      onGenerationExit?: () => void;
+    }) {
       agentEventHandler = onEvent;
+      agentManagerDeps = deps ?? null;
     }
     start = agentStart;
     startRun = agentStartRun;
@@ -314,6 +322,7 @@ describe('main process IPC orchestration', () => {
     hideAgentToast.mockClear();
     handleAgentToastContentSize.mockClear();
     agentEventHandler = null;
+    agentManagerDeps = null;
     runtimeShellFinish.mockClear();
     runtimeShellShowFailure.mockClear();
     runtimeShellShowProcessing.mockClear();
@@ -348,6 +357,7 @@ describe('main process IPC orchestration', () => {
       'clipboard:inject-text',
       'config:get',
       'config:set',
+      'mcp:get-status-snapshot',
       'mcp:test-server',
       'settings:open',
       'shortcuts:begin-capture',
@@ -780,7 +790,7 @@ describe('main process IPC orchestration', () => {
     expect(handleAgentToastContentSize).toHaveBeenCalledWith(280);
   });
 
-  it('applies sidecar lifecycle policy for Agent Mode config changes', () => {
+  it('applies sidecar lifecycle policy for Agent Mode config changes', async () => {
     const enabledConfig = {
       ...baseConfig,
       agent: {
@@ -790,19 +800,80 @@ describe('main process IPC orchestration', () => {
     };
 
     getConfig.mockReturnValueOnce(baseConfig).mockReturnValueOnce(enabledConfig);
-    ipcHandlers.get('config:set')?.({}, 'agent', enabledConfig.agent);
+    await ipcHandlers.get('config:set')?.({}, 'agent', enabledConfig.agent);
     expect(agentStart).toHaveBeenCalledWith(enabledConfig, undefined);
 
     getConfig.mockReturnValueOnce(enabledConfig).mockReturnValueOnce(baseConfig);
-    ipcHandlers.get('config:set')?.({}, 'agent', baseConfig.agent);
+    await ipcHandlers.get('config:set')?.({}, 'agent', baseConfig.agent);
     expect(agentStop).toHaveBeenCalled();
   });
 
-  it('stops recording session before quit', () => {
-    appListeners.get('before-quit')?.();
+  it('restarts the generation when the user tests an MCP server', async () => {
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        enabled: true,
+        mcpServers: [{
+          id: 'mail',
+          displayName: 'Mail',
+          enabled: true,
+          transport: { type: 'http', url: 'https://mail.example.com/mcp', redirect: 'error' },
+          discoveredTools: [],
+          toolPolicies: {},
+        }],
+      },
+    };
+    let finishStop: () => void = () => undefined;
+    agentStop.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishStop = resolve;
+    }));
+    getConfig.mockReturnValue(config);
+
+    const reconnecting = ipcHandlers.get('mcp:test-server')?.({}, 'mail');
+    expect(agentStart).not.toHaveBeenCalled();
+
+    finishStop();
+    await reconnecting;
+    expect(agentStop).toHaveBeenCalledTimes(1);
+    expect(agentStart).toHaveBeenCalledWith(config, undefined);
+  });
+
+  it('waits for sidecar shutdown before allowing quit', async () => {
+    let finishStop: () => void = () => undefined;
+    agentStop.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishStop = resolve;
+    }));
+    const preventDefault = vi.fn();
+
+    appListeners.get('before-quit')?.({ preventDefault });
 
     expect(recordingSessionStop).toHaveBeenCalledTimes(1);
     expect(agentStop).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(electronMock.app.quit).not.toHaveBeenCalled();
+
+    finishStop();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a config toast when sidecar containment fails', () => {
+    agentManagerDeps?.onLifecycleError?.({ reason: 'job-assignment-failed' });
+
+    expect(showAgentToast).toHaveBeenCalledWith({
+      kind: 'config',
+      message: 'Agent runtime could not start securely. Check the logs and try again.',
+    });
+  });
+
+  it('shows a config toast when the sidecar exits unexpectedly', () => {
+    agentManagerDeps?.onGenerationExit?.();
+
+    expect(showAgentToast).toHaveBeenCalledWith({
+      kind: 'config',
+      message: 'Agent runtime stopped unexpectedly. Try Agent Mode again.',
+    });
   });
 
   it('fails active recording closed on screen lock and suspend', async () => {

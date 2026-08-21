@@ -9,7 +9,6 @@ const createOpenAICompatibleMock = mock(() => ({
 const isStepCountMock = mock((n: number) => ({ stepCount: n }));
 const createMCPClientMock = mock();
 const closeMock = mock(() => Promise.resolve());
-const Experimental_StdioMCPTransportMock = mock();
 
 mock.module('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: createOpenAICompatibleMock,
@@ -24,9 +23,6 @@ mock.module('@ai-sdk/mcp', () => ({
   createMCPClient: createMCPClientMock,
 }));
 
-mock.module('@ai-sdk/mcp/mcp-stdio', () => ({
-  Experimental_StdioMCPTransport: Experimental_StdioMCPTransportMock,
-}));
 
 const baseConfig = {
   whisperUrl: 'http://localhost:8080/inference',
@@ -52,7 +48,6 @@ describe('runAgent', () => {
     isStepCountMock.mockClear();
     createMCPClientMock.mockClear();
     closeMock.mockClear();
-    Experimental_StdioMCPTransportMock.mockClear();
     delete process.env.OPENROUTER_API_KEY;
   });
 

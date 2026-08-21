@@ -1,5 +1,4 @@
 import { createMCPClient } from '@ai-sdk/mcp';
-import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 import type { OAuthClientProvider } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
 import type { McpServerConfig } from '../types/ipc';
@@ -12,6 +11,7 @@ import type {
 } from './mcp-registry';
 import { createRedirectAwareFetch, SidecarOAuthProvider } from './oauth-provider';
 import { logSidecar, writeJsonLine } from './protocol';
+import { ManagedStdioMcpTransport } from './managed-stdio-transport';
 
 export interface McpOAuthProviderResolver {
   resolve(server: McpServerConfig, oauthTokens?: { access_token: string }): OAuthClientProvider | undefined;
@@ -107,15 +107,20 @@ function createTransport(
   fetchFn: typeof globalThis.fetch,
 ) {
   if (server.transport.type === 'stdio') {
-    const env: Record<string, string> = {};
+    const declaredEnv: Record<string, string> = {};
     for (const name of server.transport.envVarNames) {
       const value = process.env[name];
-      if (value !== undefined) env[name] = value;
+      if (value !== undefined) declaredEnv[name] = value;
     }
-    return new Experimental_StdioMCPTransport({
-      command: server.transport.command,
-      args: server.transport.args,
-      env,
+    return new ManagedStdioMcpTransport({
+      launch: {
+        command: server.transport.command,
+        args: server.transport.args,
+        // Declared values win over the OS baseline; without PATH/SystemRoot
+        // (HOME/SHELL elsewhere) bare commands cannot launch or run at all.
+        env: { ...defaultInheritedEnv(), ...declaredEnv },
+      },
+      redactValues: Object.values(declaredEnv),
     });
   }
 
@@ -126,4 +131,34 @@ function createTransport(
     redirect: server.transport.redirect,
     fetch: createRedirectAwareFetch(fetchFn, server.transport.redirect),
   };
+}
+
+// Non-secret OS variables every stdio server needs to launch and run; the
+// sidecar's remaining environment (secrets included) is never inherited.
+const DEFAULT_INHERITED_ENV_VARS =
+  process.platform === 'win32'
+    ? [
+        'APPDATA',
+        'HOMEDRIVE',
+        'HOMEPATH',
+        'LOCALAPPDATA',
+        'PATH',
+        'PROCESSOR_ARCHITECTURE',
+        'SYSTEMDRIVE',
+        'SYSTEMROOT',
+        'TEMP',
+        'USERNAME',
+        'USERPROFILE',
+      ]
+    : ['HOME', 'LOGNAME', 'PATH', 'SHELL', 'TERM', 'USER'];
+
+function defaultInheritedEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of DEFAULT_INHERITED_ENV_VARS) {
+    const value = process.env[key];
+    // Skip exported shell functions masquerading as environment values.
+    if (value === undefined || value.startsWith('()')) continue;
+    env[key] = value;
+  }
+  return env;
 }

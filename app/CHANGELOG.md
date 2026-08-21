@@ -57,6 +57,11 @@ tags and commit history, not from this file. Keep new entries under
 - Fixed stored Agent Mode credentials being misread as environment-variable credentials after settings were normalized or the app restarted.
 
 ### Agent Mode
+- Agent Mode now keeps enabled MCP servers connected between voice commands. A run waits up to five seconds for pending connections, then continues with the available tools and reports how many servers are unavailable.
+- Local stdio MCP servers now launch without a shell or console window, receive their declared environment variables plus a small non-secret OS baseline (PATH, system directories), keep bounded redacted diagnostics, and get five seconds to exit after stdin closes.
+- The Agent sidecar and every ordinary child process now share a kill-on-close Windows Job Object. Disabling Agent Mode or quitting the app waits for graceful cleanup before Windows enforces process-tree termination.
+- MCP connection status now comes from a complete revisioned snapshot owned by Electron main, so opening Settings after startup shows the current state instead of waiting for another status event.
+- Re-enabling Agent Mode right after disabling it now starts the runtime immediately instead of being ignored while the previous shutdown was still winding down.
 - Completed agent response toasts now remain visible until dismissed, giving users time to read longer final answers.
 - Fixed Agent Mode runs being written to a different audit database than the History view after the monorepo move.
 - Provider errors emitted through the AI SDK stream now show the underlying HTTP/provider failure instead of the generic “No output generated” message.
