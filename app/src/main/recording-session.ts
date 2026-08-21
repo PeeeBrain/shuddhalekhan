@@ -298,6 +298,7 @@ export class RecordingSession {
   private showFailureFn: ((recordingSessionId: string | null, message: string) => void) | null;
   private runtimeShellBackend: RuntimeShellBackend | null;
   private streamingEnabled: boolean;
+  private directUnicodeEnabled: boolean;
   private setTimeoutFn: typeof setTimeout;
   private clearTimeoutFn: typeof clearTimeout;
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
@@ -312,6 +313,7 @@ export class RecordingSession {
     const runtimeGates = options.runtimeGates ?? parseMaintainerRuntimeGates(process.env);
     const useRuntimeShell = runtimeGates.runtimeShell && !options.audioCapture;
     this.streamingEnabled = runtimeGates.streaming;
+    this.directUnicodeEnabled = runtimeGates.directUnicode;
     const runtimeShell = useRuntimeShell
       ? options.runtimeShell ?? new RuntimeShell((reason) => this.handleAudioRendererCrash(reason))
       : null;
@@ -379,7 +381,8 @@ export class RecordingSession {
     }
     const targetSnapshot = this.captureTarget();
     const transcriber = this.getTranscriber();
-    if (intent === 'dictation' && this.getDictationMode() === 'live') {
+    const liveDictationRequested = intent === 'dictation' && this.getDictationMode() === 'live';
+    if (liveDictationRequested) {
       if (this.getRecordingActivationMode('dictation') !== 'toggle') {
         const error = new Error('Live Dictation requires Toggle activation.');
         emitPerformanceMarker('recording.begin.rejected', {
@@ -396,6 +399,16 @@ export class RecordingSession {
           recordingSessionId,
           surface: intent,
           reason: 'no-target',
+        });
+        this.onErrorCallback?.(error);
+        return false;
+      }
+      if (!this.directUnicodeEnabled) {
+        const error = new Error('Direct-Unicode insertion is disabled by a local maintainer switch.');
+        emitPerformanceMarker('recording.begin.rejected', {
+          recordingSessionId,
+          surface: intent,
+          reason: 'live-direct-unicode-disabled',
         });
         this.onErrorCallback?.(error);
         return false;
@@ -423,7 +436,18 @@ export class RecordingSession {
       streaming: null,
     };
     this.activeRun = run;
-    this.startStreamingIfEligible(run);
+    const streamingStarted = this.startStreamingIfEligible(run);
+    if (liveDictationRequested && !streamingStarted) {
+      this.activeRun = null;
+      const error = new Error('Live Dictation streaming could not start.');
+      emitPerformanceMarker('recording.begin.rejected', {
+        recordingSessionId,
+        surface: intent,
+        reason: 'live-streaming-startup',
+      });
+      this.onErrorCallback?.(error);
+      return false;
+    }
 
     emitPerformanceMarker('recording.begin.accepted', {
       recordingSessionId: run.id,
@@ -597,32 +621,13 @@ export class RecordingSession {
       return null;
     }
 
+    const transcriber = transcriberOverride ?? run.transcriber;
     try {
-      const transcriber = transcriberOverride ?? run.transcriber;
       const text = await this.transcribeCompletedAudio(run, transcriber, audioData);
       if (text === null || this.activeRun !== run) return null;
-      const snapshot = run.targetSnapshot;
-      const liveState = run.streaming?.liveInsertion?.getState();
-      const envelope = this.createPresentationEnvelope(run, transcriber, { kind: 'completed' });
-      const result = text ? {
-        text,
-        intent,
-        targetSnapshot: snapshot,
-        recordingSessionId: envelope.recordingSessionId,
-        sequence: envelope.sequence,
-        revision: envelope.revision,
-        capabilities: envelope.capabilities,
-        outcome: envelope.outcome ?? { kind: 'completed' },
-        ...(liveState ? {
-          liveDictation: {
-            halted: liveState.halted,
-            uncertain: liveState.uncertain,
-            hasAcceptedEvents: liveState.hasAcceptedEvents,
-            dispatchedProjectedLength: liveState.dispatchedProjectedLength,
-            rawCommitted: liveState.rawCommitted,
-          },
-        } : {}),
-      } : null;
+      const result = text
+        ? this.createRecordingResult(run, transcriber, text, { kind: 'completed' })
+        : null;
       this.keyboardHook.setKeyboardStateListener?.(null);
       this.finishPresentationFn?.();
       emitPerformanceMarker('recording.session.completed', {
@@ -641,6 +646,22 @@ export class RecordingSession {
         recordingSessionId: run.id,
         surface: intent,
       });
+      const recognizedSoFar = run.streaming?.liveInsertion?.getState().rawCommitted;
+      if (recognizedSoFar) {
+        const result = this.createRecordingResult(
+          run,
+          transcriber,
+          recognizedSoFar,
+          { kind: 'failed', message: err.message },
+        );
+        this.keyboardHook.setKeyboardStateListener?.(null);
+        this.finishPresentationFn?.();
+        pendingEnd?.resolve(result);
+        if (notifyResult && this.onResultCallback) {
+          void this.onResultCallback(result);
+        }
+        return result;
+      }
       pendingEnd?.reject(err);
       if (this.onErrorCallback) this.onErrorCallback(err);
       else this.showFailureFn?.(run.id, 'Transcription failed.');
@@ -730,15 +751,16 @@ export class RecordingSession {
       && typeof transcriber.startStreaming === 'function';
   }
 
-  private startStreamingIfEligible(run: RecordingRunContext): void {
-    if (!this.canStartLiveStreaming(run.transcriber)) return;
+  private startStreamingIfEligible(run: RecordingRunContext): boolean {
+    if (!this.canStartLiveStreaming(run.transcriber)) return false;
     if (run.intent === 'dictation' && (
       this.getDictationMode() !== 'live'
       || this.getRecordingActivationMode('dictation') !== 'toggle'
-    )) return;
+      || !this.directUnicodeEnabled
+    )) return false;
 
     const startStreaming = run.transcriber.startStreaming;
-    if (!startStreaming) return;
+    if (!startStreaming) return false;
 
     const ledger = createStreamingTranscriptLedger();
     const liveInsertion = run.intent === 'dictation' && this.getDictationMode() === 'live' && run.targetSnapshot
@@ -785,8 +807,15 @@ export class RecordingSession {
           void liveInsertion.onKeyboardStateChanged();
         });
       }
+      return true;
     } catch {
+      try {
+        this.teardownLiveDictation(run);
+      } catch {
+        // Startup failure is reported by begin(); teardown remains best effort.
+      }
       run.streaming = null;
+      return false;
     }
   }
 
@@ -864,6 +893,35 @@ export class RecordingSession {
       surface: run.intent,
     });
     return text;
+  }
+
+  private createRecordingResult(
+    run: RecordingRunContext,
+    transcriber: Transcriber,
+    text: string,
+    outcome: RecordingResult['outcome'],
+  ): RecordingResult {
+    const liveState = run.streaming?.liveInsertion?.getState();
+    const envelope = this.createPresentationEnvelope(run, transcriber, outcome);
+    return {
+      text,
+      intent: run.intent,
+      targetSnapshot: run.targetSnapshot,
+      recordingSessionId: envelope.recordingSessionId,
+      sequence: envelope.sequence,
+      revision: envelope.revision,
+      capabilities: envelope.capabilities,
+      outcome: envelope.outcome ?? outcome,
+      ...(liveState ? {
+        liveDictation: {
+          halted: liveState.halted,
+          uncertain: liveState.uncertain,
+          hasAcceptedEvents: liveState.hasAcceptedEvents,
+          dispatchedProjectedLength: liveState.dispatchedProjectedLength,
+          rawCommitted: liveState.rawCommitted,
+        },
+      } : {}),
+    };
   }
 
   private createPresentationEnvelope(

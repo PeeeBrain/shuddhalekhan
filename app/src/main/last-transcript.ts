@@ -14,7 +14,6 @@ export interface LastTranscript {
   liveDispatch?: {
     hasAcceptedEvents: boolean;
     uncertain: boolean;
-    partialTranscript?: string;
   };
 }
 

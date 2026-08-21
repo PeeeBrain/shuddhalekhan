@@ -15,6 +15,7 @@ export type LiveInsertionHaltReason =
   | 'zero-dispatch'
   | 'prefix-violation'
   | 'keyboard-timeout'
+  | 'dispatch-failure'
   | 'session-invalidated';
 
 export interface LiveDictationSessionState {
@@ -94,7 +95,13 @@ export class LiveDictationController {
   }
 
   private enqueueDispatch(finalizing: boolean): Promise<void> {
-    this.queue = this.queue.then(() => this.dispatchPending(finalizing));
+    this.queue = this.queue
+      .then(() => this.dispatchPending(finalizing))
+      .catch(() => {
+        if (this.invalidated || this.halted) return;
+        this.uncertain = true;
+        this.halt('dispatch-failure');
+      });
     return this.queue;
   }
 

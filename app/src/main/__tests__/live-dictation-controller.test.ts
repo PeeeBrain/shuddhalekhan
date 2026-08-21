@@ -98,6 +98,44 @@ describe('LiveDictationController', () => {
     expect(controller.getState().dispatchedProjectedLength).toBe(0);
   });
 
+  it('halts safely when foreground target capture throws', async () => {
+    const onHalted = mock(() => undefined);
+    const controller = new LiveDictationController({
+      originalTarget: target(),
+      captureTarget: () => { throw new Error('target inspection failed'); },
+      isKeyboardClear: () => true,
+      dispatchUnicode: mock(() => successDispatch('hello')),
+      onHalted,
+    });
+
+    await expect(controller.onCommittedUpdate('hello')).resolves.toBeUndefined();
+    expect(controller.getState()).toMatchObject({
+      halted: true,
+      haltReason: 'dispatch-failure',
+      uncertain: true,
+    });
+    expect(onHalted).toHaveBeenCalledWith('dispatch-failure');
+  });
+
+  it('halts safely and keeps the queue observed when Unicode dispatch throws', async () => {
+    const dispatchUnicode = mock(() => { throw new Error('SendInput failed'); });
+    const controller = new LiveDictationController({
+      originalTarget: target(),
+      captureTarget: () => target(),
+      isKeyboardClear: () => true,
+      dispatchUnicode,
+    });
+
+    await expect(controller.onCommittedUpdate('hello')).resolves.toBeUndefined();
+    await expect(controller.onKeyboardStateChanged()).resolves.toBeUndefined();
+    expect(dispatchUnicode).toHaveBeenCalledTimes(1);
+    expect(controller.getState()).toMatchObject({
+      halted: true,
+      haltReason: 'dispatch-failure',
+      uncertain: true,
+    });
+  });
+
   it('flushes remaining projected text during finalization', async () => {
     const dispatchUnicode = mock((text: string) => successDispatch(text));
     const controller = new LiveDictationController({
