@@ -21,6 +21,7 @@ describe('SidecarEventRouter', () => {
   let getActiveAgentRunId: ReturnType<typeof vi.fn>;
   let showAgentToast: ReturnType<typeof vi.fn>;
   let openExternal: ReturnType<typeof vi.fn>;
+  let recordMcpStatus: ReturnType<typeof vi.fn>;
   let router: import('../sidecar-event-router').SidecarEventRouter;
 
   beforeEach(async () => {
@@ -33,6 +34,10 @@ describe('SidecarEventRouter', () => {
     getActiveAgentRunId = vi.fn(() => 'run-1');
     showAgentToast = vi.fn();
     openExternal = vi.fn(async () => undefined);
+    recordMcpStatus = vi.fn(() => ({
+      revision: 7,
+      servers: [{ serverId: 'mail', status: 'connected', message: 'ready' }],
+    }));
     mergeDiscoveredTools.mockClear();
     router = createSidecarEventRouter({
       getSettingsWindow,
@@ -41,6 +46,7 @@ describe('SidecarEventRouter', () => {
       openExternal,
       mergeDiscoveredTools,
       getConfig,
+      recordMcpStatus,
     });
   });
 
@@ -52,10 +58,15 @@ describe('SidecarEventRouter', () => {
       message: 'ready',
     });
 
-    expect(send).toHaveBeenCalledWith('mcp:server-status', {
+    expect(recordMcpStatus).toHaveBeenCalledWith({
       serverId: 'mail',
       status: 'connected',
       message: 'ready',
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('mcp:status-snapshot', {
+      revision: 7,
+      servers: [{ serverId: 'mail', status: 'connected', message: 'ready' }],
     });
   });
 

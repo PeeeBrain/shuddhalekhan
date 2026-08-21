@@ -2,7 +2,7 @@ import type { ElectronAPI } from '../../preload';
 import type {
   AppConfig,
   AppInfo,
-  McpServerRuntimeStatus,
+  McpStatusSnapshot,
   UpdateStatus,
   VersionReleaseNotes,
   AuditRunSummary,
@@ -22,6 +22,7 @@ export interface SettingsIpc {
   getUpdateStatus: () => Promise<UpdateStatus>;
   checkForUpdates: () => Promise<UpdateStatus>;
   testMcpServer: (serverId: string) => Promise<void>;
+  getMcpStatusSnapshot: () => Promise<McpStatusSnapshot>;
   checkTranscriptionServer: () => Promise<boolean>;
   checkTranscriptionReadiness: () => Promise<TranscriptionReadiness>;
   onTranscriptionReadinessChanged: (callback: (readiness: TranscriptionReadiness) => void) => Unsubscribe | undefined;
@@ -32,7 +33,7 @@ export interface SettingsIpc {
   onShortcutsPausedChanged: (callback: (paused: boolean) => void) => Unsubscribe | undefined;
   onUpdateStatusChanged: (callback: (status: UpdateStatus) => void) => Unsubscribe | undefined;
   onNavigateRequested: (callback: (section: 'about') => void) => Unsubscribe | undefined;
-  onMcpServerStatus: (callback: (status: McpServerRuntimeStatus) => void) => Unsubscribe | undefined;
+  onMcpStatusSnapshot: (callback: (snapshot: McpStatusSnapshot) => void) => Unsubscribe | undefined;
   getAuditRuns: () => Promise<AuditRunSummary[]>;
   getAuditRunDetail: (agentRunId: string) => Promise<AuditEventDetail[]>;
   onAuditRunUpdated: (callback: (agentRunId: string) => void) => Unsubscribe | undefined;
@@ -54,6 +55,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     testMcpServer: async (serverId) => {
       await electronAPI?.invoke('mcp:test-server', serverId);
     },
+    getMcpStatusSnapshot: () => requireElectronApi(electronAPI).invoke('mcp:get-status-snapshot'),
     checkTranscriptionServer: () => requireElectronApi(electronAPI).invoke('transcription:check-server'),
     checkTranscriptionReadiness: () => requireElectronApi(electronAPI).invoke('transcription:check-readiness'),
     getShortcutsPaused: () => requireElectronApi(electronAPI).invoke('shortcuts:get-paused'),
@@ -67,7 +69,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     onShortcutsPausedChanged: (callback) => electronAPI?.subscribe('shortcuts:paused-changed', callback),
     onUpdateStatusChanged: (callback) => electronAPI?.subscribe('updater:status-changed', callback),
     onNavigateRequested: (callback) => electronAPI?.subscribe('settings:navigate', callback),
-    onMcpServerStatus: (callback) => electronAPI?.subscribe('mcp:server-status', callback),
+    onMcpStatusSnapshot: (callback) => electronAPI?.subscribe('mcp:status-snapshot', callback),
     onTranscriptionReadinessChanged: (callback) => electronAPI?.subscribe('transcription:readiness-changed', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),

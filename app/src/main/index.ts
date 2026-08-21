@@ -28,6 +28,7 @@ import {
 import { getTranscriber } from './providers';
 import { checkWhisperLiveKitReadiness } from './whisper-live-kit';
 import { createSidecarEventRouter } from './sidecar-event-router';
+import { McpStatusStore } from './mcp-status-store';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
 import {
@@ -36,7 +37,7 @@ import {
   setLastTranscript,
 } from './last-transcript';
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
-import type { AppConfig, AudioDevice, InjectResult, UpdateStatus } from '../types/ipc';
+import type { AppConfig, AudioDevice, InjectResult, McpStatusSnapshot, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
 import { emitPerformanceMarker } from './performance/marker-collector';
 import { buildElectronProcessInventory } from './performance/process-inventory';
@@ -76,6 +77,19 @@ const runtimeReadiness = createRuntimeReadinessBarrier(() => {
     });
   });
 });
+const mcpStatusStore = new McpStatusStore();
+mcpStatusStore.configure(getConfig().agent.mcpServers);
+function publishMcpStatusSnapshot(snapshot: McpStatusSnapshot): void {
+  getSettingsWindow()?.webContents.send('mcp:status-snapshot', snapshot);
+}
+function resetMcpStatusSnapshot(): void {
+  publishMcpStatusSnapshot(mcpStatusStore.reset());
+}
+// A runtime-generation boundary invalidates every live server status.
+function notifyAgentRuntimeStopped(message: string): void {
+  resetMcpStatusSnapshot();
+  showAgentToast({ kind: 'config', message });
+}
 const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
   getActiveAgentRunId: () => activeAgentRunId,
@@ -83,13 +97,26 @@ const sidecarEventRouter = createSidecarEventRouter({
   openExternal: shell.openExternal,
   mergeDiscoveredTools,
   getConfig,
+  recordMcpStatus: (status) => mcpStatusStore.record(status),
   onAgentTerminal: (agentRunId) => {
     if (activeAgentRunId === agentRunId) activeAgentRunId = null;
     agentTerminalWaiters.get(agentRunId)?.();
     agentTerminalWaiters.delete(agentRunId);
   },
 });
-const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle);
+const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
+  onLifecycleError: () => {
+    notifyAgentRuntimeStopped('Agent runtime could not start securely. Check the logs and try again.');
+  },
+  onGenerationExit: () => {
+    notifyAgentRuntimeStopped('Agent runtime stopped unexpectedly. Try Agent Mode again.');
+    if (activeAgentRunId) {
+      agentTerminalWaiters.get(activeAgentRunId)?.();
+      agentTerminalWaiters.delete(activeAgentRunId);
+      activeAgentRunId = null;
+    }
+  },
+});
 const runtimeGates = parseMaintainerRuntimeGates(process.env);
 const runtimeShell = runtimeGates.runtimeShell
   ? new RuntimeShell()
@@ -619,20 +646,24 @@ ipcMain.handle('transcription:check-readiness', async () => {
   return readiness;
 });
 
-ipcMain.handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
+ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   const previousConfig = getConfig();
   setConfig(key, value);
   const config = getConfig();
+  if (key === 'agent') {
+    publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
+  }
   cachedAgentEnabled = config.agent.enabled;
   const sidecarAction = getSidecarConfigAction(previousConfig, config);
   if (sidecarAction === 'stop') {
-    agentSidecar.stop();
+    await agentSidecar.stop();
+    resetMcpStatusSnapshot();
   } else if (sidecarAction === 'start') {
     agentSidecar.start(config, getAgentSidecarApiKey(config, credentialVault));
   }
 });
 
-ipcMain.handle('mcp:test-server', (_event, serverId: string) => {
+ipcMain.handle('mcp:test-server', async (_event, serverId: string) => {
   const config = getConfig();
   const server = config.agent.mcpServers.find((item) => item.id === serverId);
   if (!server) return;
@@ -648,8 +679,12 @@ ipcMain.handle('mcp:test-server', (_event, serverId: string) => {
       })),
     },
   };
+  await agentSidecar.stop();
+  resetMcpStatusSnapshot();
   agentSidecar.start(sidecarConfig, getAgentSidecarApiKey(sidecarConfig, credentialVault));
 });
+
+ipcMain.handle('mcp:get-status-snapshot', () => mcpStatusStore.getSnapshot());
 
 ipcMain.handle('settings:open', () => {
   openSettingsWindow();
@@ -764,6 +799,7 @@ if (!gotSingleInstanceLock) {
     const startupConfig = getConfig();
     cachedAgentEnabled = startupConfig.agent.enabled;
     if (startupConfig.agent.enabled) {
+      resetMcpStatusSnapshot();
       agentSidecar.start(
         startupConfig,
         getAgentSidecarApiKey(startupConfig, credentialVault),
@@ -786,10 +822,20 @@ if (!gotSingleInstanceLock) {
     // Keep running in tray on Windows
   });
 
-  app.on('before-quit', () => {
+  let quitCleanupStarted = false;
+  let quitCleanupComplete = false;
+  app.on('before-quit', (event) => {
+    if (quitCleanupComplete) return;
+    event.preventDefault();
+    if (quitCleanupStarted) return;
+    quitCleanupStarted = true;
     void recordingSession.cancel();
     recordingSession.stop();
-    agentSidecar.stop();
-    closeDb();
+    void agentSidecar.stop().finally(() => {
+      resetMcpStatusSnapshot();
+      closeDb();
+      quitCleanupComplete = true;
+      app.quit();
+    });
   });
 }

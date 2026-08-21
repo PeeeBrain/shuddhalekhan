@@ -5,6 +5,10 @@ export type SidecarReadyEvent = {
   protocolVersion: 1;
 };
 
+export type SidecarShutdownCompleteEvent = {
+  type: 'sidecar:shutdown-complete';
+};
+
 export type McpServerStatusEvent = {
   type: 'mcp:server-status';
   serverId: string;
@@ -92,6 +96,7 @@ export type AgentCancelledEvent = {
 
 export type SidecarEvent =
   | SidecarReadyEvent
+  | SidecarShutdownCompleteEvent
   | McpServerStatusEvent
   | McpToolsDiscoveredEvent
   | McpToolExecuteStartedEvent
@@ -122,6 +127,10 @@ export type AgentCancelMessage = {
   agentRunId: string;
 };
 
+export type SidecarShutdownRequestMessage = {
+  type: 'sidecar:shutdown';
+};
+
 export type ApprovalDecisionMessage = {
   type: 'approval:decision';
   agentRunId: string;
@@ -134,7 +143,8 @@ export type ElectronToSidecarMessage =
   | ConfigUpdateMessage
   | AgentStartMessage
   | AgentCancelMessage
-  | ApprovalDecisionMessage;
+  | ApprovalDecisionMessage
+  | SidecarShutdownRequestMessage;
 
 export function parseElectronMessage(line: string): ElectronToSidecarMessage | null {
   const parsed = JSON.parse(line) as Partial<ElectronToSidecarMessage>;
@@ -144,6 +154,7 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
     case 'agent:start':
     case 'agent:cancel':
     case 'approval:decision':
+    case 'sidecar:shutdown':
       return parsed as ElectronToSidecarMessage;
     default:
       return null;

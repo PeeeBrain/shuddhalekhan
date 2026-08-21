@@ -4,6 +4,7 @@ import type {
   AppInfo,
   McpServerConfig,
   McpServerRuntimeStatus,
+  McpStatusSnapshot,
   UpdateStatus,
   VersionReleaseNotes,
 } from '../types/ipc';
@@ -69,8 +70,17 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     Record<string, McpServerRuntimeStatus>
   >({});
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const latestMcpStatusRevision = useRef(-1);
 
   useEffect(() => {
+    const applyMcpStatusSnapshot = (snapshot: McpStatusSnapshot) => {
+      if (snapshot.revision < latestMcpStatusRevision.current) return;
+      latestMcpStatusRevision.current = snapshot.revision;
+      setMcpStatuses(Object.fromEntries(
+        snapshot.servers.map((status) => [status.serverId, status]),
+      ));
+    };
+
     settingsIpc.getConfig().then(setConfigState).catch((err) => {
       console.error('Failed to load settings config:', err);
     });
@@ -83,22 +93,20 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     settingsIpc.getReleaseNotes().then(setBundledReleaseNotes).catch((err) => {
       console.error('Failed to load release notes:', err);
     });
+    const offMcpSnapshot = settingsIpc.onMcpStatusSnapshot(applyMcpStatusSnapshot);
+    settingsIpc.getMcpStatusSnapshot().then(applyMcpStatusSnapshot).catch((err) => {
+      console.error('Failed to load MCP status:', err);
+    });
 
     const offUpdater = settingsIpc.onUpdateStatusChanged(setUpdateStatus);
     const offNavigate = settingsIpc.onNavigateRequested((section) => {
       setActiveSection(section);
     });
-    const offMcpStatus = settingsIpc.onMcpServerStatus((status) => {
-      setMcpStatuses((current) => ({ ...current, [status.serverId]: status }));
-      settingsIpc.getConfig().then(setConfigState).catch((err) => {
-        console.error('Failed to refresh MCP tools:', err);
-      });
-    });
 
     return () => {
       offUpdater?.();
       offNavigate?.();
-      offMcpStatus?.();
+      offMcpSnapshot?.();
     };
   }, [settingsIpc]);
 

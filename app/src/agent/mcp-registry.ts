@@ -50,10 +50,20 @@ type ManagedServer = {
   client: McpClientConnection;
   rawTools: Record<string, Tool>;
   oauthRedirectServer?: OAuthRedirectServer;
+  leaseCount: number;
+  retired: boolean;
+  closeStarted: boolean;
+  closed: Promise<void>;
+  resolveClosed: () => void;
 };
 
 export class McpRegistry {
   private servers = new Map<string, ManagedServer>();
+  private pendingConnections = new Map<string, { connectionKey: string; promise: Promise<void> }>();
+  private allPendingConnections = new Set<Promise<void>>();
+  private attemptedConnectionKeys = new Map<string, string>();
+  // Enabled-server ids are the keys of this map.
+  private desiredConnectionKeys = new Map<string, string>();
   private toolPolicies = new Map<string, AgentToolApprovalPolicy>();
 
   constructor(private readonly ports: McpRegistryPorts) {}
@@ -62,6 +72,12 @@ export class McpRegistry {
     const enabledServers = new Map<string, McpServerConfig>();
     for (const server of config.agent.mcpServers) {
       if (server.enabled) enabledServers.set(server.id, server);
+    }
+    this.desiredConnectionKeys = new Map(
+      [...enabledServers].map(([serverId, server]) => [serverId, getMcpServerConnectionKey(server)])
+    );
+    for (const serverId of this.attemptedConnectionKeys.keys()) {
+      if (!enabledServers.has(serverId)) this.attemptedConnectionKeys.delete(serverId);
     }
 
     const disconnects: Promise<void>[] = [];
@@ -75,16 +91,42 @@ export class McpRegistry {
 
     this.toolPolicies = collectToolPolicies(config);
 
-    const connections: Promise<void>[] = [];
     for (const server of enabledServers.values()) {
+      const connectionKey = getMcpServerConnectionKey(server);
       if (this.servers.has(server.id)) {
         this.servers.get(server.id)!.config = server;
         continue;
       }
+      if (this.pendingConnections.get(server.id)?.connectionKey === connectionKey) continue;
+      if (this.attemptedConnectionKeys.get(server.id) === connectionKey) continue;
 
-      connections.push(this.connect(server));
+      this.attemptedConnectionKeys.set(server.id, connectionKey);
+      const pending = {
+        connectionKey,
+        promise: Promise.resolve(),
+      };
+      pending.promise = this.connect(server, connectionKey).finally(() => {
+        this.allPendingConnections.delete(pending.promise);
+        if (this.pendingConnections.get(server.id) === pending) {
+          this.pendingConnections.delete(server.id);
+        }
+      });
+      this.allPendingConnections.add(pending.promise);
+      this.pendingConnections.set(server.id, pending);
     }
-    await Promise.all(connections);
+  }
+
+  async settle(timeoutMs: number): Promise<{ connected: number; enabled: number }> {
+    const pending = [...this.pendingConnections.values()].map((attempt) => attempt.promise);
+    if (pending.length > 0) {
+      await waitForSettled(pending, timeoutMs);
+    }
+
+    let connected = 0;
+    for (const serverId of this.desiredConnectionKeys.keys()) {
+      if (this.servers.has(serverId)) connected += 1;
+    }
+    return { connected, enabled: this.desiredConnectionKeys.size };
   }
 
   createRunSnapshot(
@@ -94,8 +136,10 @@ export class McpRegistry {
   ): { tools: Record<string, Tool>; close: () => Promise<void> } {
     const policies = new Map(this.toolPolicies);
     const tools: Record<string, Tool> = {};
+    const leasedServers = [...this.servers.values()];
+    for (const server of leasedServers) server.leaseCount += 1;
 
-    for (const server of this.servers.values()) {
+    for (const server of leasedServers) {
       const serverId = server.config.id;
       for (const [originalName, toolDef] of Object.entries(server.rawTools)) {
         const policyKey = `${serverId}:${originalName}` as const;
@@ -116,14 +160,30 @@ export class McpRegistry {
       }
     }
 
-    return { tools, close: async () => undefined };
+    let released = false;
+    return {
+      tools,
+      close: async () => {
+        if (released) return;
+        released = true;
+        await Promise.all(leasedServers.map(async (server) => {
+          server.leaseCount -= 1;
+          if (server.retired && server.leaseCount === 0) await this.closeManagedServer(server);
+        }));
+      },
+    };
   }
 
   async close(): Promise<void> {
+    this.desiredConnectionKeys.clear();
+    const pending = [...this.allPendingConnections];
+    await Promise.allSettled(pending);
+    const servers = [...this.servers.values()];
     await Promise.all(Array.from(this.servers.keys()).map((serverId) => this.disconnect(serverId)));
+    await Promise.all(servers.map((server) => server.closed));
   }
 
-  private async connect(server: McpServerConfig): Promise<void> {
+  private async connect(server: McpServerConfig, connectionKey: string): Promise<void> {
     this.ports.transporter.sendStatus(server.id, 'connecting');
 
     let oauthRedirectServer: OAuthRedirectServer | undefined;
@@ -138,7 +198,26 @@ export class McpRegistry {
       const discovered = await this.discoverTools(server, client, oauthRedirectServer);
       client = discovered.client;
       const { rawTools } = discovered;
-      this.servers.set(server.id, { config: server, client, rawTools, oauthRedirectServer });
+      if (this.desiredConnectionKeys.get(server.id) !== connectionKey) {
+        await client.close().catch(() => undefined);
+        await oauthRedirectServer?.close().catch(() => undefined);
+        return;
+      }
+      let resolveClosed: () => void = () => undefined;
+      const closed = new Promise<void>((resolve) => {
+        resolveClosed = resolve;
+      });
+      this.servers.set(server.id, {
+        config: server,
+        client,
+        rawTools,
+        oauthRedirectServer,
+        leaseCount: 0,
+        retired: false,
+        closeStarted: false,
+        closed,
+        resolveClosed,
+      });
       this.ports.transporter.sendDiscoveredTools(
         server.id,
         Object.entries(rawTools).map(([name, tool]) => ({
@@ -152,6 +231,7 @@ export class McpRegistry {
     } catch (err) {
       await client?.close().catch(() => undefined);
       await oauthRedirectServer?.close().catch(() => undefined);
+      if (this.desiredConnectionKeys.get(server.id) !== connectionKey) return;
       this.ports.transporter.sendStatus(server.id, 'failed', formatErrorMessage(err));
       this.ports.transporter.log(`MCP server failed: ${server.id}`, err);
     }
@@ -184,9 +264,32 @@ export class McpRegistry {
     if (!server) return;
 
     this.servers.delete(serverId);
+    server.retired = true;
+    this.ports.transporter.sendStatus(serverId, 'disconnected');
+    if (server.leaseCount > 0) return;
+    await this.closeManagedServer(server);
+  }
+
+  private async closeManagedServer(server: ManagedServer): Promise<void> {
+    if (server.closeStarted) return server.closed;
+    server.closeStarted = true;
     await server.client.close().catch(() => undefined);
     await server.oauthRedirectServer?.close().catch(() => undefined);
-    this.ports.transporter.sendStatus(serverId, 'disconnected');
+    server.resolveClosed();
+  }
+}
+
+async function waitForSettled(promises: Promise<void>[], timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.allSettled(promises),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, timeoutMs));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

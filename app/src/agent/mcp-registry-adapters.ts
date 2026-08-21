@@ -1,5 +1,4 @@
 import { createMCPClient } from '@ai-sdk/mcp';
-import { Experimental_StdioMCPTransport } from '@ai-sdk/mcp/mcp-stdio';
 import type { OAuthClientProvider } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
 import type { McpServerConfig } from '../types/ipc';
@@ -12,6 +11,7 @@ import type {
 } from './mcp-registry';
 import { createRedirectAwareFetch, SidecarOAuthProvider } from './oauth-provider';
 import { logSidecar, writeJsonLine } from './protocol';
+import { ManagedStdioMcpTransport } from './managed-stdio-transport';
 
 export interface McpOAuthProviderResolver {
   resolve(server: McpServerConfig, oauthTokens?: { access_token: string }): OAuthClientProvider | undefined;
@@ -112,10 +112,13 @@ function createTransport(
       const value = process.env[name];
       if (value !== undefined) env[name] = value;
     }
-    return new Experimental_StdioMCPTransport({
-      command: server.transport.command,
-      args: server.transport.args,
-      env,
+    return new ManagedStdioMcpTransport({
+      launch: {
+        command: server.transport.command,
+        args: server.transport.args,
+        env,
+      },
+      redactValues: Object.values(env),
     });
   }
 

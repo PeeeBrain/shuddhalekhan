@@ -19,7 +19,6 @@ class FakeOAuthProvider {
   }
 }
 
-mock.module('@ai-sdk/mcp/mcp-stdio', () => ({ Experimental_StdioMCPTransport: class {} }));
 mock.module('../protocol', () => ({ writeJsonLine, logSidecar }));
 import {
   AisdkMcpClientFactory,
@@ -27,6 +26,7 @@ import {
   SidecarOAuthRedirectFactory,
   StdoutSidecarMessageTransporter,
 } from '../mcp-registry-adapters';
+import { ManagedStdioMcpTransport } from '../managed-stdio-transport';
 
 const httpServer = {
   id: 'srv1',
@@ -38,6 +38,31 @@ const httpServer = {
 };
 
 describe('MCP registry production adapters', () => {
+  it('uses the managed transport with declared environment values for stdio servers', async () => {
+    const previousToken = process.env.MCP_ADAPTER_TEST_TOKEN;
+    process.env.MCP_ADAPTER_TEST_TOKEN = 'adapter-secret';
+    createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
+    const oauthProviderResolver: McpOAuthProviderResolver = { resolve: () => undefined };
+
+    try {
+      await new AisdkMcpClientFactory(oauthProviderResolver, createMCPClient as never).connect({
+        ...httpServer,
+        transport: {
+          type: 'stdio',
+          command: process.execPath,
+          args: [],
+          envVarNames: ['MCP_ADAPTER_TEST_TOKEN'],
+        },
+      } as never);
+
+      const transport = createMCPClient.mock.calls.at(-1)?.[0].transport;
+      expect(transport).toBeInstanceOf(ManagedStdioMcpTransport);
+    } finally {
+      if (previousToken === undefined) delete process.env.MCP_ADAPTER_TEST_TOKEN;
+      else process.env.MCP_ADAPTER_TEST_TOKEN = previousToken;
+    }
+  });
+
   it('denies redirects for a direct HTTP MCP connection without OAuth', async () => {
     const oauthProviderResolver: McpOAuthProviderResolver = {
       resolve: () => undefined,

@@ -14,7 +14,6 @@ import type {
   AppInfo,
   AuditEventDetail,
   AuditRunSummary,
-  McpServerRuntimeStatus,
   UpdateStatus,
   VersionReleaseNotes,
   CredentialStatus,
@@ -90,6 +89,7 @@ interface MockSettingsIpcOptions {
   auditRunDetail?: AuditEventDetail[];
   credentialStatus?: CredentialStatus;
   releaseNotes?: VersionReleaseNotes | null;
+  mcpStatusSnapshot?: import('../../../types/ipc').McpStatusSnapshot;
 }
 
 function createMockSettingsIpc(
@@ -112,6 +112,7 @@ function createMockSettingsIpc(
     getUpdateStatus: mock(() => Promise.resolve(UPDATE_STATUS)),
     checkForUpdates: mock(() => Promise.resolve(UPDATE_STATUS)),
     testMcpServer: mock(() => Promise.resolve()),
+    getMcpStatusSnapshot: mock(() => Promise.resolve(options.mcpStatusSnapshot ?? { revision: 0, servers: [] })),
     checkTranscriptionServer: mock(() => Promise.resolve(true)),
     checkTranscriptionReadiness: mock(() => Promise.resolve({
       providerId: 'whisper-live-kit' as const,
@@ -126,9 +127,7 @@ function createMockSettingsIpc(
     onShortcutsPausedChanged: mock(() => undefined),
     onUpdateStatusChanged: mock(() => undefined),
     onNavigateRequested: mock(() => undefined),
-    onMcpServerStatus: mock(
-      (_callback: (status: McpServerRuntimeStatus) => void) => undefined,
-    ),
+    onMcpStatusSnapshot: mock(() => undefined),
     onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
     getAuditRunDetail: mock(() => Promise.resolve(options.auditRunDetail ?? [])),
@@ -683,6 +682,29 @@ describe('Settings section reachability', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Name' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Transport' })).toBeInTheDocument();
+  });
+
+  it('hydrates MCP connection status from the main-owned snapshot', async () => {
+    const config = baseConfig();
+    config.agent.mcpServers = [{
+      id: 'mail',
+      displayName: 'Mail',
+      enabled: true,
+      transport: { type: 'http', url: 'https://mail.example.com/mcp', redirect: 'error' },
+      discoveredTools: [],
+      toolPolicies: {},
+    }];
+    renderSettings({
+      config,
+      mcpStatusSnapshot: {
+        revision: 4,
+        servers: [{ serverId: 'mail', status: 'connected' }],
+      },
+    });
+    await waitForLoaded();
+
+    fireEvent.click(tabByLabel('MCP Servers'));
+    expect(await screen.findByText('connected')).toBeInTheDocument();
   });
 
   it('exposes the agent run history on the History section', async () => {

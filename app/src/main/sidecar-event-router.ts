@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import type { SidecarEvent } from '../agent/protocol';
+import type { McpServerRuntimeStatus, McpStatusSnapshot } from '../types/ipc';
 import { emitPerformanceMarker } from './performance/marker-collector';
 
 interface SidecarEventRouterDeps {
@@ -9,6 +10,7 @@ interface SidecarEventRouterDeps {
   openExternal: (url: string) => Promise<unknown>;
   mergeDiscoveredTools: (serverId: string, tools: Extract<SidecarEvent, { type: 'mcp:tools-discovered' }>['tools']) => void;
   getConfig: () => { agent: { mcpServers: Array<{ id: string; displayName: string }> } };
+  recordMcpStatus: (status: McpServerRuntimeStatus) => McpStatusSnapshot;
   onAgentTerminal?: (agentRunId: string) => void;
 }
 
@@ -35,14 +37,15 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
     },
     'mcp:server-status': (event) => {
       console.log(`MCP server ${event.serverId}: ${event.status}`);
+      const snapshot = deps.recordMcpStatus({
+        serverId: event.serverId,
+        status: event.status,
+        ...(event.message !== undefined ? { message: event.message } : {}),
+      });
       if (event.status === 'connecting') {
         emitPerformanceMarker('mcp.connect.requested', { serverId: event.serverId });
       }
-      deps.getSettingsWindow()?.webContents.send('mcp:server-status', {
-        serverId: event.serverId,
-        status: event.status,
-        message: event.message,
-      });
+      deps.getSettingsWindow()?.webContents.send('mcp:status-snapshot', snapshot);
     },
     'mcp:tools-discovered': (event) => {
       emitPerformanceMarker('mcp.tools.discovered', { serverId: event.serverId });

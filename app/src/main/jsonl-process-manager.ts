@@ -11,6 +11,7 @@ export interface JsonlProcessManagerHandlers<TReceive> {
   onMessage: (message: TReceive) => void;
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void;
   onMalformedMessage?: (line: string, error: unknown) => void;
+  onSpawn?: () => void;
 }
 
 export class JsonlProcessManager<TReceive, TSend> {
@@ -30,27 +31,35 @@ export class JsonlProcessManager<TReceive, TSend> {
   start(launch: JsonlProcessLaunch): void {
     if (this.isRunning) return;
 
-    this.child = spawn(launch.command, launch.args, {
+    // Wire against a local reference: handlers (onSpawn/onExit) may tear the
+    // manager down synchronously before start() finishes.
+    const child = spawn(launch.command, launch.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       env: launch.env,
     });
 
-    this.stdoutLines = createInterface({
-      input: this.child.stdout,
+    const stdoutLines = createInterface({
+      input: child.stdout,
       crlfDelay: Infinity,
     });
 
-    this.stdoutLines.on('line', (line) => this.handleStdoutLine(line));
-    this.child.stderr.on('data', (chunk) => {
+    stdoutLines.on('line', (line) => this.handleStdoutLine(line));
+    child.stderr.on('data', (chunk) => {
       console.error(`[jsonl-process] ${String(chunk).trimEnd()}`);
     });
-    this.child.on('exit', (code, signal) => {
-      this.stdoutLines?.close();
-      this.stdoutLines = null;
-      this.child = null;
+    child.on('exit', (code, signal) => {
+      stdoutLines.close();
+      if (this.child === child) {
+        this.child = null;
+        this.stdoutLines = null;
+      }
       this.handlers.onExit?.(code, signal);
     });
+
+    this.stdoutLines = stdoutLines;
+    this.child = child;
+    this.handlers.onSpawn?.();
   }
 
   send(message: TSend): void {
