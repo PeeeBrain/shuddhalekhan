@@ -40,7 +40,9 @@ const httpServer = {
 describe('MCP registry production adapters', () => {
   it('uses the managed transport with declared environment values for stdio servers', async () => {
     const previousToken = process.env.MCP_ADAPTER_TEST_TOKEN;
+    const previousUndeclared = process.env.MCP_ADAPTER_TEST_UNDECLARED;
     process.env.MCP_ADAPTER_TEST_TOKEN = 'adapter-secret';
+    process.env.MCP_ADAPTER_TEST_UNDECLARED = 'sidecar-secret';
     createMCPClient.mockResolvedValue({ tools: async () => ({}), close: async () => undefined });
     const oauthProviderResolver: McpOAuthProviderResolver = { resolve: () => undefined };
 
@@ -57,9 +59,19 @@ describe('MCP registry production adapters', () => {
 
       const transport = createMCPClient.mock.calls.at(-1)?.[0].transport;
       expect(transport).toBeInstanceOf(ManagedStdioMcpTransport);
+
+      // OS baseline for launching is inherited; declared values win over it;
+      // redaction stays scoped to the declared secrets.
+      const launch = transport.launch as { env: Record<string, string> };
+      expect(launch.env.MCP_ADAPTER_TEST_TOKEN).toBe('adapter-secret');
+      expect(launch.env.PATH ?? launch.env.Path).toBe(process.env.PATH ?? process.env.Path);
+      expect(launch.env.MCP_ADAPTER_TEST_UNDECLARED).toBeUndefined();
+      expect(transport.redactValues).toEqual(['adapter-secret']);
     } finally {
       if (previousToken === undefined) delete process.env.MCP_ADAPTER_TEST_TOKEN;
       else process.env.MCP_ADAPTER_TEST_TOKEN = previousToken;
+      if (previousUndeclared === undefined) delete process.env.MCP_ADAPTER_TEST_UNDECLARED;
+      else process.env.MCP_ADAPTER_TEST_UNDECLARED = previousUndeclared;
     }
   });
 

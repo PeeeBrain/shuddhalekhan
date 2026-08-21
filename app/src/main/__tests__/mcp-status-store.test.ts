@@ -47,4 +47,16 @@ describe('McpStatusStore', () => {
       servers: [{ serverId: 'mail', status: 'disconnected' }],
     });
   });
+
+  it('ignores stale sidecar events for a disabled server', () => {
+    const store = new McpStatusStore();
+    store.configure([{ id: 'mail', enabled: true }]);
+    store.record({ serverId: 'mail', status: 'connected' });
+    store.configure([{ id: 'mail', enabled: false }]);
+
+    expect(store.record({ serverId: 'mail', status: 'connected' })).toEqual({
+      revision: 3,
+      servers: [{ serverId: 'mail', status: 'disconnected' }],
+    });
+  });
 });

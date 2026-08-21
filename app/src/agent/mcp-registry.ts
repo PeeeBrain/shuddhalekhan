@@ -174,13 +174,15 @@ export class McpRegistry {
     };
   }
 
-  async close(): Promise<void> {
+  async close(timeoutMs = 5000): Promise<void> {
     this.desiredConnectionKeys.clear();
     const pending = [...this.allPendingConnections];
     await Promise.allSettled(pending);
     const servers = [...this.servers.values()];
     await Promise.all(Array.from(this.servers.keys()).map((serverId) => this.disconnect(serverId)));
-    await Promise.all(servers.map((server) => server.closed));
+    // A run snapshot that never releases (hung tool call) must not stall
+    // shutdown past the bounded wait; the job kill remains the backstop.
+    await waitForSettled(servers.map((server) => server.closed), timeoutMs);
   }
 
   private async connect(server: McpServerConfig, connectionKey: string): Promise<void> {
@@ -198,7 +200,13 @@ export class McpRegistry {
       const discovered = await this.discoverTools(server, client, oauthRedirectServer);
       client = discovered.client;
       const { rawTools } = discovered;
-      if (this.desiredConnectionKeys.get(server.id) !== connectionKey) {
+      // Two attempts can race for one server id when the desired key cycles
+      // back (K1 -> K2 -> K1); updateConfig keys pending state by id, so the
+      // loser must discard its client instead of overwriting the tracked one.
+      if (
+        this.desiredConnectionKeys.get(server.id) !== connectionKey ||
+        this.servers.has(server.id)
+      ) {
         await client.close().catch(() => undefined);
         await oauthRedirectServer?.close().catch(() => undefined);
         return;

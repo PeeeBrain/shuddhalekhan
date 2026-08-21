@@ -234,6 +234,66 @@ describe('McpRegistry', () => {
     expect(registry.createRunSnapshot(approve).tools).toEqual({});
   });
 
+  it('closes a duplicate attempt instead of overwriting the registered client', async () => {
+    const registeredConnection = new FakeConnection({ search: makeTool('registered') });
+    const k2Connection = new FakeConnection({ search: makeTool('k2') });
+    const duplicateConnection = new FakeConnection({ search: makeTool('duplicate') });
+    const releases: Array<((connection: McpClientConnection) => void) | undefined> = [];
+    let attemptNumber = 0;
+    const ports = makePorts({});
+    ports.mcpClientFactory.connect = async () => {
+      attemptNumber += 1;
+      return new Promise<McpClientConnection>((resolve) => {
+        releases[attemptNumber] = resolve;
+      });
+    };
+    const registry = new McpRegistry(ports);
+
+    // K1 -> K2 -> K1 while the first K1 attempt is pending leaves two live
+    // attempts for the same connection key.
+    await registry.updateConfig(baseConfig as never);
+    await registry.updateConfig(withServer({
+      transport: { type: 'http', url: 'http://localhost:4000/mcp', redirect: 'error' },
+    }) as never);
+    await registry.updateConfig(baseConfig as never);
+    releases[1]?.(registeredConnection);
+    releases[2]?.(k2Connection);
+    releases[3]?.(duplicateConnection);
+    await registry.settle(1000);
+
+    // The duplicate loses to the already-registered client and is discarded.
+    expect(duplicateConnection.closed).toBe(true);
+    expect(registeredConnection.closed).toBe(false);
+    expect(ports.oauthFactory.servers.filter((server) => !server.closed)).toHaveLength(1);
+
+    const snapshot = registry.createRunSnapshot(approve);
+    expect(Object.keys(snapshot.tools)).toEqual(['srv1__search']);
+    expect(snapshot.tools.srv1__search.description).toBe('registered');
+
+    await snapshot.close();
+    await registry.close();
+    expect(registeredConnection.closed).toBe(true);
+  });
+
+  it('completes shutdown even when a leased server never releases its snapshot', async () => {
+    const connection = new FakeConnection({ search: makeTool('search') });
+    const ports = makePorts({ srv1: [connection] });
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(baseConfig as never);
+    await registry.settle(1000);
+    const activeRun = registry.createRunSnapshot(approve);
+
+    const closing = registry.close(20);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(connection.closed).toBe(false);
+    await closing;
+
+    await activeRun.close();
+    expect(connection.closed).toBe(true);
+    await registry.close();
+  });
+
   it('attempts a failed connection key only once per generation', async () => {
     const ports = makePorts({
       srv1: [new FakeConnection({}, new Error('Server refused connection'))],

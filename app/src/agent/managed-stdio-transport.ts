@@ -34,7 +34,7 @@ export class ManagedStdioMcpTransport {
   private readonly redactValues: string[];
   private stderrBuffer = '';
   private closed = false;
-  private closeStarted = false;
+  private closePromise: Promise<void> | null = null;
   private onCloseFired = false;
   constructor(options: ManagedStdioOptions) {
     this.launch = options.launch;
@@ -90,13 +90,30 @@ export class ManagedStdioMcpTransport {
 
     const drained = child.stdin.write(`${JSON.stringify(message)}\n`);
     if (!drained) {
-      await new Promise<void>((resolve) => child.stdin.once('drain', () => resolve()));
+      // A dead child never drains; settle on exit/stdin close so callers of
+      // send cannot park forever inside a tool call.
+      await new Promise<void>((resolve) => {
+        const settle = () => {
+          child.stdin.off('drain', settle);
+          child.stdin.off('close', settle);
+          child.stdin.off('error', settle);
+          child.off('exit', settle);
+          resolve();
+        };
+        child.stdin.once('drain', settle);
+        child.stdin.once('close', settle);
+        child.stdin.once('error', settle);
+        child.once('exit', settle);
+      });
     }
   }
 
-  async close(): Promise<void> {
-    if (this.closeStarted) return;
-    this.closeStarted = true;
+  close(): Promise<void> {
+    this.closePromise ??= this.runClose();
+    return this.closePromise;
+  }
+
+  private async runClose(): Promise<void> {
     this.closed = true;
 
     // An already-exited server has nothing to finalize: its streams are dead

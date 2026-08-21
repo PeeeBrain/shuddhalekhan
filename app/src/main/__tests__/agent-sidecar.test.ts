@@ -369,7 +369,7 @@ describe('AgentSidecarManager', () => {
   it('stops gracefully: requests shutdown, waits for acknowledgement, then enforces teardown', async () => {
     const jobPort = new FakeJobPort();
     const { AgentSidecarManager } = await importManager('graceful-stop');
-    const manager = new AgentSidecarManager(() => undefined, { jobPort: new FakeJobPort() });
+    const manager = new AgentSidecarManager(() => undefined, { jobPort });
 
     manager.startRun('run-1', 'check mail', config);
     stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));

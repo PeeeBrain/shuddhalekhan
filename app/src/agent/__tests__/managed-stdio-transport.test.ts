@@ -148,6 +148,41 @@ describe('ManagedStdioMcpTransport', () => {
     expect(errors).toEqual([]);
   });
 
+  it('settles a backpressured send when the server dies mid-write', async () => {
+    const transport = track(new ManagedStdioMcpTransport({ launch: launchArgs() }));
+
+    await transport.start();
+    // A payload far past the stdin high-water mark parks send in the drain wait.
+    const backpressured = transport.send({
+      jsonrpc: '2.0',
+      method: 'flood',
+      params: { blob: 'x'.repeat(1024 * 1024) },
+    });
+    const pid = transport.getPid()!;
+    process.kill(pid, 'SIGKILL');
+    await waitFor(() => transport.getPid() === null);
+
+    await Promise.race([
+      backpressured,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('send never settled')), 3000)),
+    ]);
+    await transport.close();
+  });
+
+  it('returns the same in-flight close promise to concurrent callers', async () => {
+    const transport = track(
+      new ManagedStdioMcpTransport({
+        launch: launchArgs(['--ignore-stdin-eof']),
+        gracefulCloseTimeoutMs: 300,
+      })
+    );
+
+    await transport.start();
+    const first = transport.close();
+    expect(transport.close()).toBe(first);
+    await first;
+  });
+
   it('reports malformed stdout as an error without crashing the transport', async () => {
     const transport = track(new ManagedStdioMcpTransport({
       launch: launchArgs(),

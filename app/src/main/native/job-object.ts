@@ -46,19 +46,20 @@ const kernel32 = koffi.load('kernel32.dll');
 const CreateJobObjectW = kernel32.func(
   'uintptr_t __stdcall CreateJobObjectW(void * lpJobAttributes, char16_t * lpName)'
 );
+// Win32 BOOL is a 4-byte int; koffi's bool is the 1-byte C++ _Bool.
 const SetInformationJobObject = kernel32.func(
-  'bool __stdcall SetInformationJobObject(uintptr_t hJob, int32_t jobObjectInfoClass, JOBOBJECT_EXTENDED_LIMIT_INFORMATION * lpJobObjectInfo, uint32_t cbJobObjectInfoLength)'
+  'int32_t __stdcall SetInformationJobObject(uintptr_t hJob, int32_t jobObjectInfoClass, JOBOBJECT_EXTENDED_LIMIT_INFORMATION * lpJobObjectInfo, uint32_t cbJobObjectInfoLength)'
 );
 const AssignProcessToJobObjectFn = kernel32.func(
-  'bool __stdcall AssignProcessToJobObject(uintptr_t hJob, uintptr_t hProcess)'
+  'int32_t __stdcall AssignProcessToJobObject(uintptr_t hJob, uintptr_t hProcess)'
 );
 const OpenProcessForContainment = kernel32.func(
   'uintptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, int32_t bInheritHandle, uint32_t dwProcessId)'
 );
 const TerminateJobObjectFn = kernel32.func(
-  'bool __stdcall TerminateJobObject(uintptr_t hJob, uint32_t uExitCode)'
+  'int32_t __stdcall TerminateJobObject(uintptr_t hJob, uint32_t uExitCode)'
 );
-const CloseHandleFn = kernel32.func('bool __stdcall CloseHandle(uintptr_t hObject)');
+const CloseHandleFn = kernel32.func('int32_t __stdcall CloseHandle(uintptr_t hObject)');
 
 function killOnCloseLimits(): Record<string, unknown> {
   return {
@@ -112,7 +113,7 @@ export class KoffiJobObjectPort implements JobObjectPort {
     if (!process) return false;
 
     try {
-      return Boolean(AssignProcessToJobObjectFn(job, process));
+      return AssignProcessToJobObjectFn(job, process) !== 0;
     } finally {
       CloseHandleFn(process);
     }

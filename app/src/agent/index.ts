@@ -336,7 +336,13 @@ async function shutdown(): Promise<void> {
 }
 
 function beginShutdown(acknowledge: boolean): Promise<void> {
-  if (!shutdownPromise) shutdownPromise = shutdown();
+  // A failed registry close must not become an unhandled rejection nor withhold
+  // the acknowledgement: main force-terminates the generation after its wait.
+  if (!shutdownPromise) {
+    shutdownPromise = shutdown().catch((err) => {
+      logSidecar('sidecar shutdown failed', err);
+    });
+  }
   if (!acknowledge) return shutdownPromise;
   return shutdownPromise.then(() => {
     writeJsonLine({ type: 'sidecar:shutdown-complete' });
