@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import type { DictationTargetSnapshot } from '../../types/ipc';
+import { resetDictationResultDeliveryForTests } from '../dictation-result-delivery';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
 
@@ -38,6 +39,7 @@ const getConfig = vi.fn(() => ({
   task: 'transcribe',
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
+  dictation: { mode: 'batch', formatter: null },
   agent: {
     enabled: false,
     provider: {
@@ -100,7 +102,9 @@ const handleAgentToastContentSize = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
 const runtimeShellFinish = vi.fn();
 const runtimeShellShowFailure = vi.fn();
+const runtimeShellShowProcessing = vi.fn();
 const runtimeShellSetCrashHandler = vi.fn();
+const applyDictationFormatter = vi.fn();
 
 // Mock RecordingSession
 const recordingSessionStart = vi.fn();
@@ -170,8 +174,13 @@ mock.module('../runtime-shell', () => ({
   RuntimeShell: class {
     finish = runtimeShellFinish;
     showFailure = runtimeShellShowFailure;
+    showProcessing = runtimeShellShowProcessing;
     setCrashHandler = runtimeShellSetCrashHandler;
   },
+}));
+mock.module('../dictation-formatter', () => ({ applyDictationFormatter }));
+mock.module('../dictation-formatter-credential', () => ({
+  getDictationFormatterApiKey: vi.fn(() => null),
 }));
 mock.module('../recording-session', () => ({
   RecordingSession: class {
@@ -207,6 +216,7 @@ describe('main process IPC orchestration', () => {
     task: 'transcribe',
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
+    dictation: { mode: 'batch', formatter: null },
     shortcuts: {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
       agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
@@ -306,7 +316,11 @@ describe('main process IPC orchestration', () => {
     agentEventHandler = null;
     runtimeShellFinish.mockClear();
     runtimeShellShowFailure.mockClear();
+    runtimeShellShowProcessing.mockClear();
     runtimeShellSetCrashHandler.mockClear();
+    applyDictationFormatter.mockReset();
+    applyDictationFormatter.mockResolvedValue({ kind: 'success', text: 'formatted text' });
+    resetDictationResultDeliveryForTests();
     getConfig.mockReturnValue(baseConfig);
 
     recordingSessionStart.mockClear();
@@ -964,5 +978,88 @@ describe('main process IPC orchestration', () => {
         body: expect.stringContaining('Clipboard changed during dictation'),
       })
     );
+  });
+
+  it('injects corrected formatter output on success', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    ipcListeners.clear();
+    await import(`../index?test=${Date.now()}-corrected-success`);
+    applyDictationFormatter.mockResolvedValueOnce({ kind: 'success', text: 'buy eggs' });
+    getConfig.mockReturnValue({
+      ...baseConfig,
+      dictation: {
+        mode: 'corrected',
+        formatter: {
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          model: 'formatter',
+          apiKeyEnvVar: '',
+          apiKeySource: 'environment',
+          processingConsent: true,
+        },
+      },
+    });
+
+    await sessionOptions.onResult({
+      text: 'buy milk um actually buy eggs',
+      intent: 'dictation',
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'session-corrected',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(applyDictationFormatter).toHaveBeenCalledTimes(1);
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('buy eggs');
+    expect(notificationShow).not.toHaveBeenCalled();
+    expect(runtimeShellFinish).toHaveBeenCalled();
+  });
+
+  it('inserts raw text and shows degraded notice when formatting fails', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    ipcListeners.clear();
+    await import(`../index?test=${Date.now()}-corrected-fallback`);
+    applyDictationFormatter.mockResolvedValueOnce({
+      kind: 'fallback',
+      rawText: 'complete raw transcript',
+      reason: 'deadline',
+    });
+    getConfig.mockReturnValue({
+      ...baseConfig,
+      dictation: {
+        mode: 'corrected',
+        formatter: {
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          model: 'formatter',
+          apiKeyEnvVar: '',
+          apiKeySource: 'environment',
+          processingConsent: true,
+        },
+      },
+    });
+
+    await sessionOptions.onResult({
+      text: 'complete raw transcript',
+      intent: 'dictation',
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'session-fallback',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('complete raw transcript');
+    expect(notificationShow).toHaveBeenCalledTimes(1);
+    expect(runtimeShellFinish).toHaveBeenCalled();
+  });
+
+  it('does not invoke the formatter for batch dictation', async () => {
+    applyDictationFormatter.mockClear();
+    await sessionOptions.onResult({
+      text: 'plain text',
+      intent: 'dictation',
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'session-batch',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(applyDictationFormatter).not.toHaveBeenCalled();
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('plain text');
   });
 });

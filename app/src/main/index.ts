@@ -51,6 +51,12 @@ import { RuntimeShell } from './runtime-shell';
 import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
 import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 import { outerTrimTranscript } from '../shared/live-dictation';
+import { applyDictationFormatter } from './dictation-formatter';
+import { getDictationFormatterApiKey } from './dictation-formatter-credential';
+import {
+  isDictationResultStillDeliverable,
+  markDictationResultPending,
+} from './dictation-result-delivery';
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
@@ -168,15 +174,18 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     return;
   }
 
+  const sessionId = result.recordingSessionId;
+  markDictationResultPending(sessionId);
+
   const live = result.liveDictation;
   const liveDispatch = live ? {
     hasAcceptedEvents: live.hasAcceptedEvents,
     uncertain: live.uncertain,
   } : undefined;
 
-  setLastTranscript(result.text, result.targetSnapshot, liveDispatch);
-
   if (live) {
+    setLastTranscript(result.text, result.targetSnapshot, liveDispatch);
+
     if (result.outcome.kind === 'failed') {
       markLastTranscriptInjected(live.hasAcceptedEvents || live.uncertain ? 'uncertain' : 'failed');
       const message = 'Live Dictation could not complete. Last Transcript contains Recognized So Far.';
@@ -235,9 +244,40 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     return;
   }
 
-  const injectResult = await injectIntoFocusedApp(result.text, result.targetSnapshot);
+  const config = getConfig();
+  let text = result.text;
+  let formatterDegraded = false;
+
+  if (
+    config.dictation.mode === 'corrected'
+    && config.dictation.formatter?.processingConsent
+  ) {
+    if (runtimeShell) runtimeShell.showProcessing(sessionId);
+    const outcome = await applyDictationFormatter({
+      profile: config.dictation.formatter,
+      rawText: result.text,
+      language: config.language,
+      protectedTerms: config.dictionary,
+      apiKey: getDictationFormatterApiKey(config.dictation.formatter, credentialVault),
+    });
+    if (!isDictationResultStillDeliverable(sessionId)) return;
+    if (outcome.kind === 'fallback') {
+      text = outcome.rawText;
+      formatterDegraded = true;
+    } else {
+      text = outcome.text;
+    }
+  }
+
+  if (!isDictationResultStillDeliverable(sessionId)) return;
+
+  setLastTranscript(text, result.targetSnapshot);
+
+  const injectResult = await injectIntoFocusedApp(text, result.targetSnapshot);
   if (injectResult.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
+    if (formatterDegraded) showFormatterDegradedNotice();
+    runtimeShell?.finish();
     return;
   }
 
@@ -251,6 +291,15 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   } else {
     showRecoveryNotification(injectResult);
   }
+}
+
+function showFormatterDegradedNotice(): void {
+  if (!Notification.isSupported()) return;
+  new Notification({
+    title: 'Corrected Dictation',
+    body: 'Formatting was unavailable; your complete raw transcript was inserted.',
+    silent: true,
+  }).show();
 }
 
 async function pasteLastTranscript(): Promise<void> {

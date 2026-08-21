@@ -2,12 +2,17 @@ import type {
   DictationConfig,
   DictationFormatterProfile,
   DictationMode,
+  FormatterApiKeySource,
   RecordingActivationMode,
   RecordingPresentationEnvelope,
   RecordingTerminalOutcome,
   TranscriptionProviderId,
   TranscriptionTransportCapabilities,
 } from '../types/ipc';
+
+export function looksLikeRawApiKey(value: string): boolean {
+  return /^sk-[A-Za-z0-9_-]/.test(value.trim());
+}
 
 export const DEFAULT_DICTATION_CONFIG: DictationConfig = {
   mode: 'batch',
@@ -43,11 +48,52 @@ export function normalizeDictationConfig(stored: unknown): DictationConfig {
 
 function normalizeFormatter(stored: unknown): DictationFormatterProfile | null {
   if (!stored || typeof stored !== 'object') return null;
-  const record = stored as { baseUrl?: unknown; model?: unknown };
+  const record = stored as {
+    baseUrl?: unknown;
+    model?: unknown;
+    apiKeyEnvVar?: unknown;
+    apiKeySource?: unknown;
+    processingConsent?: unknown;
+  };
   const baseUrl = typeof record.baseUrl === 'string' ? record.baseUrl.trim() : '';
   const model = typeof record.model === 'string' ? record.model.trim() : '';
   if (!baseUrl || !model) return null;
-  return { baseUrl, model };
+  const apiKeyEnvVar = typeof record.apiKeyEnvVar === 'string' ? record.apiKeyEnvVar.trim() : '';
+  const apiKeySource: FormatterApiKeySource = record.apiKeySource === 'stored' ? 'stored' : 'environment';
+  const processingConsent = record.processingConsent === true;
+  return { baseUrl, model, apiKeyEnvVar, apiKeySource, processingConsent };
+}
+
+export function classifyFormatterEndpoint(baseUrl: string): 'local' | 'remote' {
+  try {
+    const url = new URL(baseUrl);
+    const hostname = url.hostname.toLowerCase();
+    const loopback = hostname === 'localhost'
+      || hostname.endsWith('.localhost')
+      || /^127(?:\.\d{1,3}){3}$/.test(hostname)
+      || hostname === '[::1]'
+      || hostname === '::1';
+    return loopback ? 'local' : 'remote';
+  } catch {
+    return 'remote';
+  }
+}
+
+export function getFormatterCredentialError(
+  formatter: DictationFormatterProfile,
+): string | null {
+  if (
+    formatter.apiKeySource === 'environment'
+    && looksLikeRawApiKey(formatter.apiKeyEnvVar)
+  ) {
+    return 'Enter the environment variable name for the formatter API key, not the key value.';
+  }
+  if (classifyFormatterEndpoint(formatter.baseUrl) !== 'remote') return null;
+  if (formatter.apiKeySource === 'stored') return null;
+  if (!formatter.apiKeyEnvVar) {
+    return 'Remote Corrected Dictation requires an API key environment variable.';
+  }
+  return null;
 }
 
 export function getTranscriptionTransportCapabilities(
@@ -146,7 +192,12 @@ export function getDictationCombinationError(input: DictationCombinationInput): 
   }
 
   if (input.mode === 'corrected') {
-    return getFormatterProfileError(input.formatter);
+    const profileError = getFormatterProfileError(input.formatter);
+    if (profileError) return profileError;
+    if (!input.formatter?.processingConsent) {
+      return 'Corrected Dictation requires explicit processing consent.';
+    }
+    return getFormatterCredentialError(input.formatter);
   }
 
   return null;

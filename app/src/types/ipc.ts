@@ -43,7 +43,10 @@ export type CredentialKind =
   | 'azure-speech-key'
   | 'nvidia-nim-bearer'
   | 'nvidia-nim-header'
-  | 'whisper-live-kit-bearer';
+  | 'whisper-live-kit-bearer'
+  | 'dictation-formatter-api-key';
+
+export type FormatterApiKeySource = 'environment' | 'stored';
 
 export type CredentialStatus =
   | { available: true; exists: boolean }
@@ -373,6 +376,9 @@ export type DictationMode = 'batch' | 'live' | 'corrected';
 export interface DictationFormatterProfile {
   baseUrl: string;
   model: string;
+  apiKeyEnvVar: string;
+  apiKeySource: FormatterApiKeySource;
+  processingConsent: boolean;
 }
 
 export interface DictationConfig {
