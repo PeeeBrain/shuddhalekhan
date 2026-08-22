@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useReducedMotion } from 'motion/react';
 import { Check } from 'lucide-react';
 import { Reveal } from '@/components/motion/Reveal';
 import { Eyebrow } from '@/components/landing/Eyebrow';
@@ -12,13 +13,17 @@ const DEMO_STEPS: { label: string; tool: string; runAt: number; doneAt: number; 
 ];
 
 export function AgentSection() {
+  const reduceMotion = useReducedMotion();
   const [tick, setTick] = useState(0);
+  const finalTick = TICK_DURATIONS.length - 1;
+  const demoTick = reduceMotion ? finalTick : tick;
 
-  // Cycles one scripted agent run: speak → tools → approval → result.
+  // Plays one scripted agent run, then leaves the completed result in place.
   useEffect(() => {
-    const timeout = setTimeout(() => setTick((t) => (t + 1) % TICK_DURATIONS.length), TICK_DURATIONS[tick]);
+    if (reduceMotion || tick >= finalTick) return undefined;
+    const timeout = setTimeout(() => setTick((current) => current + 1), TICK_DURATIONS[tick]);
     return () => clearTimeout(timeout);
-  }, [tick]);
+  }, [finalTick, reduceMotion, tick]);
 
   return (
     <section id="agent-mode" className="relative scroll-mt-20 overflow-hidden py-28 md:py-36">
@@ -69,7 +74,7 @@ export function AgentSection() {
             </div>
 
             <div
-              className={`mt-7 transition-all duration-700 ease-out ${tick >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'}`}
+              className={`mt-7 transition-all duration-700 ease-out ${demoTick >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'}`}
             >
               <div className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">You said</div>
               <p className="mt-2.5 text-lg leading-relaxed text-zinc-100 sm:text-xl">
@@ -82,9 +87,9 @@ export function AgentSection() {
               <ul className="mt-3.5 space-y-3">
                 {DEMO_STEPS.map((step) => {
                   const status =
-                    tick >= step.doneAt ? 'done'
-                    : step.waitAt?.includes(tick) ? 'waiting'
-                    : tick === step.runAt ? 'running'
+                    demoTick >= step.doneAt ? 'done'
+                    : step.waitAt?.includes(demoTick) ? 'waiting'
+                    : demoTick === step.runAt ? 'running'
                     : 'pending';
                   return (
                     <li
@@ -95,7 +100,7 @@ export function AgentSection() {
                         {status === 'done' ? (
                           <Check className="size-3.5 text-emerald-400" aria-hidden="true" />
                         ) : status === 'running' ? (
-                          <span className="size-3 animate-spin rounded-full border border-zinc-700 border-t-agent" aria-hidden="true" />
+                          <span className="motion-safe:animate-spin size-3 rounded-full border border-zinc-700 border-t-agent" aria-hidden="true" />
                         ) : status === 'waiting' ? (
                           <span className="animate-live-dot size-2 rounded-full bg-agent" aria-hidden="true" />
                         ) : (
@@ -114,7 +119,7 @@ export function AgentSection() {
 
             <div className="mt-6 min-h-7">
               <div
-                className={`flex items-center gap-2 text-sm transition-all duration-700 ease-out ${tick >= 7 ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'}`}
+                className={`flex items-center gap-2 text-sm transition-all duration-700 ease-out ${demoTick >= 7 ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'}`}
                 style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
               >
                 <Check className="size-4 text-emerald-400" aria-hidden="true" />
@@ -127,7 +132,7 @@ export function AgentSection() {
             <div
               role="presentation"
               className={`absolute right-4 bottom-4 w-64 rounded-xl border border-agent/25 bg-[#141010]/95 p-4 shadow-2xl backdrop-blur transition-all duration-500 ${
-                tick === 5 || tick === 6 ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'
+                demoTick === 5 || demoTick === 6 ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'
               }`}
             >
               <div className="font-mono text-[9px] tracking-[0.18em] text-agent/90 uppercase">Approval needed</div>
@@ -138,7 +143,7 @@ export function AgentSection() {
               <div className="mt-3 flex gap-1.5">
                 <span
                   className={`rounded-md px-2.5 py-1 text-[10px] font-semibold transition-all duration-300 ${
-                    tick === 6 ? 'scale-95 bg-emerald-400 text-zinc-950' : 'bg-zinc-100 text-zinc-950'
+                    demoTick === 6 ? 'scale-95 bg-emerald-400 text-zinc-950' : 'bg-zinc-100 text-zinc-950'
                   }`}
                 >
                   Allow

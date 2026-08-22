@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useReducedMotion } from 'motion/react';
 import { Check } from 'lucide-react';
 import { Reveal } from '@/components/motion/Reveal';
 import { Eyebrow } from '@/components/landing/Eyebrow';
@@ -37,18 +38,21 @@ const TRIGGER_CLASS =
   + 'data-[state=inactive]:hover:bg-white/[0.06] data-[state=inactive]:hover:text-white '
   + 'data-[state=active]:bg-white/[0.09] data-[state=active]:text-white';
 
-/** Cycles raw → strike fillers → collapse → clean, forever. */
+/** Plays the cleanup sequence once, then leaves the finished text in place. */
 function useScrubPhase() {
+  const reduceMotion = useReducedMotion();
   const [phase, setPhase] = useState<ScrubPhase>('raw');
 
   useEffect(() => {
+    if (reduceMotion || phase === 'clean') return undefined;
     const timeout = setTimeout(() => {
-      setPhase((p) => SCRUB_PHASE_ORDER[(SCRUB_PHASE_ORDER.indexOf(p) + 1) % SCRUB_PHASE_ORDER.length]);
+      const nextPhase = SCRUB_PHASE_ORDER[SCRUB_PHASE_ORDER.indexOf(phase) + 1];
+      if (nextPhase) setPhase(nextPhase);
     }, SCRUB_PHASE_DURATION[phase]);
     return () => clearTimeout(timeout);
-  }, [phase]);
+  }, [phase, reduceMotion]);
 
-  return phase;
+  return reduceMotion ? 'clean' : phase;
 }
 
 export function DictationSection() {

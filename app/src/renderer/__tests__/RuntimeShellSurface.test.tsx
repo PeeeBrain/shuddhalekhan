@@ -111,12 +111,15 @@ describe('RuntimeShellSurface agent cards', () => {
     });
     for (const call of send.mock.calls as unknown[][]) {
       if (call[0] === 'runtime:agent-card-size') {
-        expect(typeof call[1]).toBe('number');
+        const height = call[1];
+        expect(typeof height).toBe('number');
+        expect(typeof height === 'number' && Number.isFinite(height)).toBe(true);
+        if (typeof height === 'number') expect(height).toBeGreaterThanOrEqual(0);
       }
     }
   });
 
-  it('sends approval decisions with optional denial feedback', async () => {
+  it('sends approval decisions without optional denial feedback', async () => {
     const user = userEvent.setup();
     mockElectronAPI();
     render(<RuntimeShellSurface />);
@@ -124,7 +127,7 @@ describe('RuntimeShellSurface agent cards', () => {
     showCard({
       kind: 'agent-approval',
       agentRunId: 'run-1',
-      approvalId: 'approval-1',
+      approvalId: 'approval-empty',
       serverId: 'mail',
       toolName: 'send_message',
       modelToolName: 'mail__send_message',
@@ -138,10 +141,64 @@ describe('RuntimeShellSurface agent cards', () => {
     expect(invoke).toHaveBeenCalledWith(
       'agent:approval-decision',
       'run-1',
-      'approval-1',
+      'approval-empty',
       'denied',
       undefined,
     );
+  });
+
+  it('sends populated denial feedback', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+
+    showCard({
+      kind: 'agent-approval',
+      agentRunId: 'run-1',
+      approvalId: 'approval-feedback',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: { to: 'a@example.com' },
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    await user.type(
+      await screen.findByLabelText('Optional denial message'),
+      'Use the other account',
+    );
+    await user.click(await screen.findByRole('button', { name: 'Deny' }));
+
+    expect(invoke).toHaveBeenCalledWith(
+      'agent:approval-decision',
+      'run-1',
+      'approval-feedback',
+      'denied',
+      'Use the other account',
+    );
+  });
+
+  it('allows approval decisions to be retried after IPC rejection', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
+    invoke.mockImplementationOnce(() => Promise.reject(new Error('sidecar unavailable')));
+    render(<RuntimeShellSurface />);
+
+    showCard({
+      kind: 'agent-approval',
+      agentRunId: 'run-1',
+      approvalId: 'approval-retry',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Deny' }));
+
+    expect(await screen.findByRole('button', { name: 'Deny' })).toBeEnabled();
+    expect(screen.queryByText('Feedback sent. Continuing…')).not.toBeInTheDocument();
   });
 
   it('keeps denial feedback drafts across preemption round-trips', async () => {
@@ -152,7 +209,7 @@ describe('RuntimeShellSurface agent cards', () => {
     showCard({
       kind: 'agent-approval',
       agentRunId: 'run-1',
-      approvalId: 'approval-1',
+      approvalId: 'approval-draft',
       serverId: 'mail',
       toolName: 'send_message',
       modelToolName: 'mail__send_message',
@@ -176,7 +233,7 @@ describe('RuntimeShellSurface agent cards', () => {
     showCard({
       kind: 'agent-approval',
       agentRunId: 'run-1',
-      approvalId: 'approval-1',
+      approvalId: 'approval-draft',
       serverId: 'mail',
       toolName: 'send_message',
       modelToolName: 'mail__send_message',

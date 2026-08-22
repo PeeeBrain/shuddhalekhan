@@ -354,7 +354,7 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
       snapshot.approvalId,
       decision,
       decision === 'denied' ? message || undefined : undefined,
-    );
+    ).catch(() => setSubmitting(false));
   };
 
   return (
@@ -435,14 +435,17 @@ function isThinkingMessage(message: string): boolean {
 
 function ThinkingDots() {
   return (
-    <span className="inline-flex items-center gap-1" aria-label="Thinking" role="status">
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="motion-safe:animate-thinking-dot inline-block h-[5px] w-[5px] rounded-full bg-current opacity-20"
-          style={{ animationDelay: `${i * 0.2}s` }}
-        />
-      ))}
+    <span>
+      <span className="sr-only">Thinking</span>
+      <span aria-hidden="true" className="inline-flex items-center gap-1">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="motion-safe:animate-thinking-dot inline-block h-[5px] w-[5px] rounded-full bg-current opacity-20"
+            style={{ animationDelay: `${i * 0.2}s` }}
+          />
+        ))}
+      </span>
     </span>
   );
 }

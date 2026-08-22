@@ -77,7 +77,7 @@ const runtimeShell = runtimeGates.runtimeShell
 const usesAgentShell = runtimeShell !== null && runtimeGates.agentShell;
 const agentPresenter: AgentPresenter = usesAgentShell && runtimeShell
   ? createRuntimeShellPresenter(runtimeShell)
-  : createLegacyToastPresenter((state) => showAgentToast(state));
+  : createLegacyToastPresenter((state) => showAgentToast(state), hideAgentToast);
 const agentTerminalWaiters = new Map<string, () => void>();
 const surfacePaintWaiters = new Map<string, Array<() => void>>();
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {

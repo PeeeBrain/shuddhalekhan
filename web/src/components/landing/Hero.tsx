@@ -7,11 +7,7 @@ import { Badge } from '@/components/ui/badge';
 
 const EASE_OUT_EXPO = [0.16, 1, 0.3, 1] as const;
 
-const TRANSCRIPT_PHRASES = [
-  'Hey Sarah, just pushed the auth fix to staging. Can you take a look?',
-  'Note to self: optimize the local database query before Friday’s release.',
-  'Thanks for the quick call. I’ve updated the proposal with the timeline we agreed on.',
-];
+const TRANSCRIPT_PHRASE = 'Hey Sarah, just pushed the auth fix to staging. Can you take a look?';
 
 /* Staggered mount choreography for everything above the fold. */
 const ENTER = (delay: number) => ({
@@ -22,41 +18,30 @@ const ENTER = (delay: number) => ({
 
 const HERO_CHECKS = ['No subscription', 'Works offline', 'Bring your own keys'];
 
-function useTypewriter() {
-  const [phraseIdx, setPhraseIdx] = useState(0);
+function useTypewriter(reduceMotion: boolean) {
   const [charIdx, setCharIdx] = useState(0);
-  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    const phrase = TRANSCRIPT_PHRASES[phraseIdx];
-    const timeout = setTimeout(
-      () => {
-        if (!isDeleting && charIdx < phrase.length) setCharIdx((c) => c + 1);
-        else if (!isDeleting) setTimeout(() => setIsDeleting(true), 2200);
-        else if (charIdx > 0) setCharIdx((c) => c - 1);
-        else {
-          setIsDeleting(false);
-          setPhraseIdx((p) => (p + 1) % TRANSCRIPT_PHRASES.length);
-        }
-      },
-      isDeleting ? 14 : 34,
-    );
+    if (reduceMotion || charIdx >= TRANSCRIPT_PHRASE.length) return undefined;
+    const timeout = setTimeout(() => setCharIdx((current) => current + 1), 34);
     return () => clearTimeout(timeout);
-  }, [charIdx, isDeleting, phraseIdx]);
+  }, [charIdx, reduceMotion]);
 
-  return TRANSCRIPT_PHRASES[phraseIdx].slice(0, charIdx);
+  return reduceMotion ? TRANSCRIPT_PHRASE : TRANSCRIPT_PHRASE.slice(0, charIdx);
 }
 
 /** Faithful miniature of the desktop recording pill (periwinkle dictation mode). */
-function RecordingPill() {
+function RecordingPill({ reduceMotion }: { reduceMotion: boolean }) {
   const [seconds, setSeconds] = useState(2);
 
   useEffect(() => {
-    const timer = setInterval(() => setSeconds((s) => (s + 1) % 60), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (reduceMotion || seconds >= 8) return undefined;
+    const timer = setTimeout(() => setSeconds((current) => current + 1), 1000);
+    return () => clearTimeout(timer);
+  }, [reduceMotion, seconds]);
 
-  const label = `0:${String(seconds).padStart(2, '0')}`;
+  const displayedSeconds = reduceMotion ? 8 : seconds;
+  const label = `0:${String(displayedSeconds).padStart(2, '0')}`;
 
   return (
     <div className="pointer-events-none flex h-11 w-44 items-center justify-center gap-2.5 rounded-full border border-[rgba(133,146,255,0.66)] bg-[#101120]/95 px-4 shadow-[inset_0_0_14px_rgba(100,108,255,0.28),inset_0_0_28px_rgba(100,108,255,0.12),0_16px_40px_rgba(0,0,0,0.55)]">
@@ -76,8 +61,8 @@ function RecordingPill() {
 }
 
 export function Hero() {
-  const transcript = useTypewriter();
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = useReducedMotion() ?? false;
+  const transcript = useTypewriter(reduceMotion);
 
   // Device rises and settles into place as it scrolls into view.
   const deviceRef = useRef<HTMLDivElement>(null);
@@ -199,8 +184,8 @@ export function Hero() {
           {/* Recording pill straddling the window edge, like the real overlay.
               Outer div owns centering so Motion can own transform during the entrance. */}
           <div className="absolute -bottom-6 left-1/2 -translate-x-1/2">
-            <motion.div {...ENTER(0.5)}>
-              <RecordingPill />
+            <motion.div {...(reduceMotion ? { initial: false } : ENTER(0.5))}>
+              <RecordingPill reduceMotion={reduceMotion} />
             </motion.div>
           </div>
         </div>

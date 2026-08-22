@@ -52,6 +52,7 @@ export function createRuntimeShellPresenter(shell: RuntimeShellPresenterTarget):
 
 export function createLegacyToastPresenter(
   showToast: (state: AgentToastState) => void,
+  hideToast: () => void,
 ): AgentPresenter {
   return {
     // The legacy window has no run-invalidation concept; toasts replace each other.
@@ -88,6 +89,6 @@ export function createLegacyToastPresenter(
       if (!agentRunId) return;
       showToast({ kind: 'failed', agentRunId, error: message });
     },
-    cancelled: (agentRunId) => showToast({ kind: 'cancelled', agentRunId }),
+    cancelled: () => hideToast(),
   };
 }

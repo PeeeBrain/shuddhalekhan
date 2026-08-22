@@ -267,8 +267,7 @@ describe('Agent Mode runtime shell presentation', () => {
     });
   });
 
-  function createWindowMock(overrides: Record<string, unknown> = {}) {
-    const send = vi.fn();
+  function createWindowMock(send = vi.fn()) {
     return {
       send,
       window: {
@@ -278,7 +277,6 @@ describe('Agent Mode runtime shell presentation', () => {
         setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
         setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
         hide: vi.fn(), destroy: vi.fn(),
-        ...overrides,
       },
     };
   }
@@ -287,17 +285,6 @@ describe('Agent Mode runtime shell presentation', () => {
     return (send.mock.calls as unknown[][])
       .filter((call: unknown[]) => call[0] === 'runtime:snapshot')
       .map((call: unknown[]) => call[1] as { kind: string; revision: number } & Record<string, unknown>);
-  }
-
-  function windowless(send: ReturnType<typeof vi.fn>): Record<string, unknown> {
-    return {
-      webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
-      loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
-      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
-      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
-      setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
-      hide: vi.fn(), destroy: vi.fn(),
-    };
   }
 
   function createShell(moduleSuffix: string, timers?: { setTimeoutFn: typeof setTimeout; clearTimeoutFn: typeof clearTimeout }) {
@@ -363,8 +350,8 @@ describe('Agent Mode runtime shell presentation', () => {
       timers.push({ fn, delay });
       return timers.length - 1;
     }) as unknown as typeof setTimeout;
-    const { send } = createWindowMock();
-    electronMock.BrowserWindow.mockImplementation(() => windowless(send));
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
     const shell = await createShell('agent-approval-priority', { setTimeoutFn, clearTimeoutFn: vi.fn() as unknown as typeof clearTimeout });
     shell.prepare();
 
@@ -385,13 +372,38 @@ describe('Agent Mode runtime shell presentation', () => {
 
     const expiryTimer = timers.at(-1);
     expect(expiryTimer?.delay).toBeLessThanOrEqual(30000);
+    expect(expiryTimer?.delay).toBeGreaterThan(29000);
     expiryTimer?.fn();
 
     expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-streaming', response: 'Draft ready for review' });
   });
 
+  it('ignores approvals with invalid expiry timestamps', async () => {
+    const setTimeoutFn = vi.fn() as unknown as typeof setTimeout;
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('invalid-approval-expiry', {
+      setTimeoutFn,
+      clearTimeoutFn: vi.fn() as unknown as typeof clearTimeout,
+    });
+    shell.prepare();
+
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-invalid',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: 'not-a-date',
+    });
+
+    expect(snapshotsOf(send)).toEqual([]);
+    expect(setTimeoutFn).not.toHaveBeenCalled();
+  });
+
   it('presents the approval card interactable and keyboard-capable without stealing focus', async () => {
-    const win = windowless(createWindowMock().send);
+    const { window: win } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => win);
     const shell = await createShell('approval-policy');
     shell.prepare();
@@ -415,12 +427,18 @@ describe('Agent Mode runtime shell presentation', () => {
   });
 
   it('grows streamed and completed cards toward measured content within the clamp', async () => {
-    const win = windowless(createWindowMock().send);
+    const { window: win } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => win);
     const shell = await createShell('card-growth');
     shell.prepare();
 
     shell.showAgentCompleted('run-1', 'Long answer', []);
+    win.setBounds.mockClear();
+
+    shell.handleAgentCardSize(Number.NaN);
+    shell.handleAgentCardSize(Number.POSITIVE_INFINITY);
+    expect(win.setBounds).not.toHaveBeenCalled();
+
     // Renderer reports the natural content height (chrome included).
     shell.handleAgentCardSize(460);
 
@@ -434,8 +452,8 @@ describe('Agent Mode runtime shell presentation', () => {
   });
 
   it('retires a pending approval once post-decision run activity arrives', async () => {
-    const { send } = createWindowMock();
-    electronMock.BrowserWindow.mockImplementation(() => windowless(send));
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
     const shell = await createShell('approval-resolved');
     shell.prepare();
 
@@ -458,8 +476,7 @@ describe('Agent Mode runtime shell presentation', () => {
   });
 
   it('lets a dictation recording preempt an approval visually and restores it after capture finishes', async () => {
-    const win = windowless(createWindowMock().send);
-    const send = (win.webContents as { send: ReturnType<typeof vi.fn> }).send;
+    const { send, window: win } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => win);
     const shell = await createShell('dictation-preempts-approval');
     shell.prepare();
@@ -491,8 +508,7 @@ describe('Agent Mode runtime shell presentation', () => {
   });
 
   it('invalidates prior run presentation when an agent recording starts but not when dictation starts', async () => {
-    const win = windowless(createWindowMock().send);
-    const send = (win.webContents as { send: ReturnType<typeof vi.fn> }).send;
+    const { send, window: win } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => win);
     const shell = await createShell('run-invalidation');
     shell.prepare();
@@ -520,9 +536,52 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'idle' });
   });
 
+  it('replays surviving Agent presentation after a renderer crash', async () => {
+    function createCrashWindow() {
+      const webHandlers = new Map<string, (...args: unknown[]) => void>();
+      return {
+        webHandlers,
+        webContents: {
+          send: vi.fn(),
+          isLoading: vi.fn(() => true),
+          on: vi.fn((event: string, handler: (...args: unknown[]) => void) => webHandlers.set(event, handler)),
+        },
+        loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+        isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
+        setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+        hide: vi.fn(), destroy: vi.fn(), setBounds: vi.fn(),
+        setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+      };
+    }
+
+    const windows: ReturnType<typeof createCrashWindow>[] = [];
+    electronMock.BrowserWindow.mockImplementation(() => {
+      const window = createCrashWindow();
+      windows.push(window);
+      return window;
+    });
+    const shell = await createShell('agent-crash-replay');
+    shell.prepare();
+    shell.showAgentCompleted('run-1', 'Recovered answer', []);
+
+    windows[0].webHandlers.get('render-process-gone')?.({}, { reason: 'crashed' });
+    windows[1].webHandlers.get('did-finish-load')?.();
+
+    expect(windows[1].webContents.send).toHaveBeenCalledWith(
+      'runtime:snapshot',
+      expect.objectContaining({
+        kind: 'agent-completed',
+        agentRunId: 'run-1',
+        response: 'Recovered answer',
+        generation: 2,
+        revision: 1,
+      }),
+    );
+  });
+
   it('clears cancelled runs silently without flashing a cancelled card', async () => {
-    const { send } = createWindowMock();
-    electronMock.BrowserWindow.mockImplementation(() => windowless(send));
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
     const shell = await createShell('cancelled-silent');
     shell.prepare();
 

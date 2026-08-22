@@ -7,7 +7,7 @@ describe('Agent presenters', () => {
     resetMocks();
   });
 
-  function resetMocks(): void {
+  function resetMocks() {
     shell.beginAgentRun.mockClear();
     shell.clearAgentRun.mockClear();
     shell.showAgentStatus.mockClear();
@@ -16,6 +16,7 @@ describe('Agent presenters', () => {
     shell.showAgentCompleted.mockClear();
     shell.showAgentFailed.mockClear();
     showToast.mockClear();
+    hideToast.mockClear();
   }
 
   const shell = {
@@ -28,6 +29,7 @@ describe('Agent presenters', () => {
     showAgentFailed: vi.fn(),
   };
   const showToast = vi.fn();
+  const hideToast = vi.fn();
 
   it('projects run events onto the runtime shell', async () => {
     const { createRuntimeShellPresenter } = await import(`../agent-presentation?test=${Date.now()}-shell`);
@@ -70,7 +72,7 @@ describe('Agent presenters', () => {
 
   it('keeps the legacy toast contract for the rollback window', async () => {
     const { createLegacyToastPresenter } = await import(`../agent-presentation?test=${Date.now()}-legacy`);
-    const presenter = createLegacyToastPresenter(showToast);
+    const presenter = createLegacyToastPresenter(showToast, hideToast);
 
     presenter.beginRun();
     expect(showToast).not.toHaveBeenCalled();
@@ -126,7 +128,9 @@ describe('Agent presenters', () => {
     presenter.failed('run-1', 'Provider failed');
     expect(showToast).toHaveBeenLastCalledWith({ kind: 'failed', agentRunId: 'run-1', error: 'Provider failed' });
 
+    showToast.mockClear();
     presenter.cancelled('run-1');
-    expect(showToast).toHaveBeenLastCalledWith({ kind: 'cancelled', agentRunId: 'run-1' });
+    expect(showToast).not.toHaveBeenCalled();
+    expect(hideToast).toHaveBeenCalledTimes(1);
   });
 });

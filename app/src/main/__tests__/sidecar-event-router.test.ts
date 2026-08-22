@@ -15,11 +15,7 @@ const getConfig = vi.fn(() => ({
   },
 }));
 
-interface RouterDepsHarness {
-  presenter: Record<'beginRun' | 'status' | 'streaming' | 'approval' | 'completed' | 'failed' | 'cancelled', ReturnType<typeof vi.fn>>;
-}
-
-const harness: RouterDepsHarness = {
+const harness = {
   presenter: {
     beginRun: vi.fn(),
     status: vi.fn(),
@@ -31,7 +27,7 @@ const harness: RouterDepsHarness = {
   },
 };
 
- describe('SidecarEventRouter', () => {
+describe('SidecarEventRouter', () => {
   let send: ReturnType<typeof vi.fn>;
   let getSettingsWindow: ReturnType<typeof vi.fn>;
   let getActiveAgentRunId: ReturnType<typeof vi.fn>;

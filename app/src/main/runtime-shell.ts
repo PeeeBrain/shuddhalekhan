@@ -334,6 +334,9 @@ export class RuntimeShell {
     arguments: unknown;
     expiresAt: string;
   }): void {
+    const expiresAtMs = new Date(approval.expiresAt).getTime();
+    if (!Number.isFinite(expiresAtMs)) return;
+
     this.clearAgentTimer('status');
     // An approval supersedes point-in-time status but keeps the live stream
     // alive beneath it, so resolving or expiring never flashes empty state.
@@ -341,7 +344,6 @@ export class RuntimeShell {
     if (this.agentApproval && this.agentApproval.approvalId !== approval.approvalId) {
       this.clearAgentTimer('approval');
     }
-    const expiresAtMs = new Date(approval.expiresAt).getTime();
     this.agentApproval = {
       agentRunId: approval.agentRunId,
       approvalId: approval.approvalId,
@@ -401,10 +403,14 @@ export class RuntimeShell {
 
   /** Applies renderer-measured content growth for streamed/completed cards. */
   handleAgentCardSize(contentHeight: number): void {
+    if (!Number.isFinite(contentHeight)) return;
     const presentingCompleted = this.agentTerminal?.phase === 'completed' && !this.hasActiveTransients();
     const streaming = this.agentApproval === null && this.agentStream !== null;
     if (!presentingCompleted && !streaming) return;
-    const nextContentHeight = Math.ceil(contentHeight);
+    const nextContentHeight = Math.min(
+      AGENT_RESPONSE_MAX_HEIGHT,
+      Math.max(AGENT_RESPONSE_BASE_HEIGHT, Math.ceil(contentHeight)),
+    );
     if (!presentingCompleted && nextContentHeight <= this.agentResponseHeight + AGENT_RESIZE_STEP) {
       return;
     }
@@ -725,6 +731,7 @@ export class RuntimeShell {
     // recreated renderer replays the latest derived snapshot.
     this.windows.destroy();
     this.prepare();
+    if (this.derive().kind !== 'idle') this.republish();
     this.onCrash?.(reason);
   }
 }

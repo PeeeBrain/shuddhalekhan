@@ -158,7 +158,7 @@ export interface RendererToMainInvokeChannels {
     approvalId: string,
     decision: 'approved' | 'denied',
     message?: string
-  ) => void;
+  ) => Promise<void>;
   'mcp:test-server': (serverId: string) => Promise<void>;
   'mcp:get-status-snapshot': () => Promise<McpStatusSnapshot>;
   'app:get-info': () => Promise<AppInfo>;
