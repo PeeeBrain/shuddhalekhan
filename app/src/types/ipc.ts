@@ -117,6 +117,8 @@ export interface RendererToMainSendChannels {
     sequence: number,
   ) => void;
   'runtime:recovery-action': (action: DictationRecoveryAction) => void;
+  'runtime:agent-card-size': (height: number) => void;
+  'runtime:agent-dismiss': () => void;
   'agent-toast:content-size': (height: number) => void;
   'agent-toast:dismiss': () => void;
 }
@@ -232,7 +234,22 @@ export type RuntimePresentationState =
       recordingSessionId: string | null;
       message: string;
       recoveryActions: DictationRecoveryAction[];
-    };
+    }
+  | { kind: 'agent-status'; agentRunId: string | null; message: string }
+  | { kind: 'agent-streaming'; agentRunId: string; response: string }
+  | {
+      kind: 'agent-approval';
+      agentRunId: string;
+      approvalId: string;
+      serverId: string;
+      serverDisplayName?: string;
+      toolName: string;
+      modelToolName: string;
+      arguments: unknown;
+      expiresAt: string;
+    }
+  | { kind: 'agent-completed'; agentRunId: string; response: string; toolSummary: string[] }
+  | { kind: 'agent-failed'; agentRunId: string | null; message: string };
 
 export type RuntimePresentationSnapshot = {
   generation: number;

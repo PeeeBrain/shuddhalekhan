@@ -257,3 +257,259 @@ describe('Batch Dictation runtime shell', () => {
     );
   });
 });
+
+describe('Agent Mode runtime shell presentation', () => {
+  beforeEach(() => {
+    resetElectronMock();
+    electronMock.screen.getPrimaryDisplay.mockReturnValue({
+      workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      workAreaSize: { width: 1920, height: 1080 },
+    });
+  });
+
+  function createWindowMock(overrides: Record<string, unknown> = {}) {
+    const send = vi.fn();
+    return {
+      send,
+      window: {
+        webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+        loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+        isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
+        setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+        setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+        hide: vi.fn(), destroy: vi.fn(),
+        ...overrides,
+      },
+    };
+  }
+
+  function snapshotsOf(send: ReturnType<typeof vi.fn>): Array<{ kind: string; revision: number } & Record<string, unknown>> {
+    return (send.mock.calls as unknown[][])
+      .filter((call: unknown[]) => call[0] === 'runtime:snapshot')
+      .map((call: unknown[]) => call[1] as { kind: string; revision: number } & Record<string, unknown>);
+  }
+
+  function windowless(send: ReturnType<typeof vi.fn>): Record<string, unknown> {
+    return {
+      webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+      loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
+      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+      setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+      hide: vi.fn(), destroy: vi.fn(),
+    };
+  }
+
+  function createShell(moduleSuffix: string, timers?: { setTimeoutFn: typeof setTimeout; clearTimeoutFn: typeof clearTimeout }) {
+    return import(`../runtime-shell?test=${Date.now()}-${moduleSuffix}`).then(({ RuntimeShell }) => new RuntimeShell(undefined, timers));
+  }
+
+  it('projects agent status as a transient snapshot and returns to idle after the status window', async () => {
+    const timers: Array<{ fn: () => void; delay: number }> = [];
+    const setTimeoutFn = vi.fn((fn: () => void, delay: number) => {
+      timers.push({ fn, delay });
+      return timers.length - 1;
+    }) as unknown as typeof setTimeout;
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('agent-status', { setTimeoutFn, clearTimeoutFn: vi.fn() as unknown as typeof clearTimeout });
+    shell.prepare();
+
+    shell.showAgentStatus('run-1', 'Checking recent messages');
+
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'agent-status',
+      agentRunId: 'run-1',
+      message: 'Checking recent messages',
+      generation: 1,
+    });
+    expect(window.setFocusable).toHaveBeenLastCalledWith(false);
+    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true });
+    expect(window.showInactive).toHaveBeenCalled();
+
+    timers.length = 0;
+    shell.showAgentStatus('run-1', 'Reading messages');
+    expect(timers).toHaveLength(1);
+    (timers[0].fn as () => void)();
+
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'idle' });
+    expect(window.hide).toHaveBeenCalled();
+  });
+
+  it('ignores blank streamed prefixes and publishes non-empty streams once per content change', async () => {
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('agent-streaming');
+    shell.prepare();
+
+    shell.showAgentStreaming('run-1', '   \n');
+    expect(snapshotsOf(send)).toEqual([]);
+
+    shell.showAgentStreaming('run-1', 'Here');
+    shell.showAgentStreaming('run-1', 'Here is what I found.');
+    shell.showAgentStreaming('run-1', 'Here is what I found.');
+
+    const snapshots = snapshotsOf(send);
+    expect(snapshots.map((snapshot) => snapshot.kind)).toEqual(['agent-streaming', 'agent-streaming']);
+    expect(snapshots.map((snapshot) => snapshot.revision)).toEqual([1, 2]);
+    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true });
+  });
+
+  it('ranks a pending approval above status and falls back to the surviving stream after expiry', async () => {
+    const timers: Array<{ fn: () => void; delay: number }> = [];
+    const setTimeoutFn = vi.fn((fn: () => void, delay: number) => {
+      timers.push({ fn, delay });
+      return timers.length - 1;
+    }) as unknown as typeof setTimeout;
+    const { send } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => windowless(send));
+    const shell = await createShell('agent-approval-priority', { setTimeoutFn, clearTimeoutFn: vi.fn() as unknown as typeof clearTimeout });
+    shell.prepare();
+
+    shell.showAgentStreaming('run-1', 'Draft ready for review');
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      serverDisplayName: 'Gmail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: { to: 'a@example.com' },
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    const snapshots = snapshotsOf(send);
+    expect(snapshots.at(-1)).toMatchObject({ kind: 'agent-approval', approvalId: 'approval-1' });
+
+    const expiryTimer = timers.at(-1);
+    expect(expiryTimer?.delay).toBeLessThanOrEqual(30000);
+    expiryTimer?.fn();
+
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-streaming', response: 'Draft ready for review' });
+  });
+
+  it('presents the approval card interactable and keyboard-capable without stealing focus', async () => {
+    const win = windowless(createWindowMock().send);
+    electronMock.BrowserWindow.mockImplementation(() => win);
+    const shell = await createShell('approval-policy');
+    shell.prepare();
+
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    // Focusable so a deliberate click can type denial feedback, but shown
+    // inactive; pointer input enabled for the controls.
+    expect(win.setFocusable).toHaveBeenLastCalledWith(true);
+    expect(win.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
+    expect(win.showInactive).toHaveBeenCalled();
+    expect(win.hide).not.toHaveBeenCalled();
+  });
+
+  it('retires a pending approval once post-decision run activity arrives', async () => {
+    const { send } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => windowless(send));
+    const shell = await createShell('approval-resolved');
+    shell.prepare();
+
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    // The sidecar blocks while awaiting the decision, so any later event
+    // proves the user (or expiry) resolved it.
+    shell.showAgentStatus('run-1', 'Using tools: mail.send_message');
+
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-status' });
+    expect(snapshotsOf(send).filter((snapshot) => snapshot.kind === 'agent-approval')).toHaveLength(1);
+  });
+
+  it('lets a dictation recording preempt an approval visually and restores it after capture finishes', async () => {
+    const win = windowless(createWindowMock().send);
+    const send = (win.webContents as { send: ReturnType<typeof vi.fn> }).send;
+    electronMock.BrowserWindow.mockImplementation(() => win);
+    const shell = await createShell('dictation-preempts-approval');
+    shell.prepare();
+    shell.markReady();
+    shell.beginCapture({
+      recordingSessionId: 'session-2', sequence: 1, revision: 1,
+      capabilities: { batch: true as const, streaming: false },
+    });
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+    const envelope = {
+      recordingSessionId: 'session-2', sequence: 1, revision: 1,
+      capabilities: { batch: true as const, streaming: false },
+    };
+    shell.show('dictation', 'session-2', envelope);
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'recording', intent: 'dictation' });
+
+    shell.finish();
+
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-approval', approvalId: 'approval-1' });
+    expect(win.hide).not.toHaveBeenCalled();
+  });
+
+  it('invalidates prior run presentation when an agent recording starts but not when dictation starts', async () => {
+    const win = windowless(createWindowMock().send);
+    const send = (win.webContents as { send: ReturnType<typeof vi.fn> }).send;
+    electronMock.BrowserWindow.mockImplementation(() => win);
+    const shell = await createShell('run-invalidation');
+    shell.prepare();
+    shell.markReady();
+    const envelope = {
+      recordingSessionId: 'session-a', sequence: 1, revision: 1,
+      capabilities: { batch: true as const, streaming: false },
+    };
+
+    // Surviving stream from a finished run.
+    shell.showAgentCompleted('run-old', 'Previous answer', []);
+    shell.beginCapture(envelope);
+    shell.show('dictation', 'session-a', envelope);
+    shell.finish();
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-completed' });
+
+    // A new Agent recording invalidates it: nothing resurfaces afterwards.
+    const nextEnvelope = {
+      recordingSessionId: 'session-b', sequence: 1, revision: 1,
+      capabilities: { batch: true as const, streaming: false },
+    };
+    shell.beginCapture(nextEnvelope);
+    shell.show('agent', 'session-b', nextEnvelope);
+    shell.finish();
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'idle' });
+  });
+
+  it('clears cancelled runs silently without flashing a cancelled card', async () => {
+    const { send } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => windowless(send));
+    const shell = await createShell('cancelled-silent');
+    shell.prepare();
+
+    shell.showAgentStatus('run-1', 'Checking mail');
+    shell.clearAgentRun();
+
+    const kinds = snapshotsOf(send).map((snapshot) => snapshot.kind);
+    expect(kinds).toEqual(['agent-status', 'idle']);
+  });
+});
+

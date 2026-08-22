@@ -108,6 +108,15 @@ const runtimeShellFinish = vi.fn();
 const runtimeShellShowFailure = vi.fn();
 const runtimeShellShowProcessing = vi.fn();
 const runtimeShellSetCrashHandler = vi.fn();
+const runtimeShellBeginAgentRun = vi.fn();
+const runtimeShellClearAgentRun = vi.fn();
+const runtimeShellShowAgentStatus = vi.fn();
+const runtimeShellShowAgentStreaming = vi.fn();
+const runtimeShellShowAgentApproval = vi.fn();
+const runtimeShellShowAgentCompleted = vi.fn();
+const runtimeShellShowAgentFailed = vi.fn();
+const runtimeShellDismissAgentCard = vi.fn();
+const runtimeShellHandleAgentCardSize = vi.fn();
 const applyDictationFormatter = vi.fn();
 
 // Mock RecordingSession
@@ -184,6 +193,15 @@ mock.module('../runtime-shell', () => ({
     showFailure = runtimeShellShowFailure;
     showProcessing = runtimeShellShowProcessing;
     setCrashHandler = runtimeShellSetCrashHandler;
+    beginAgentRun = runtimeShellBeginAgentRun;
+    clearAgentRun = runtimeShellClearAgentRun;
+    showAgentStatus = runtimeShellShowAgentStatus;
+    showAgentStreaming = runtimeShellShowAgentStreaming;
+    showAgentApproval = runtimeShellShowAgentApproval;
+    showAgentCompleted = runtimeShellShowAgentCompleted;
+    showAgentFailed = runtimeShellShowAgentFailed;
+    dismissAgentCard = runtimeShellDismissAgentCard;
+    handleAgentCardSize = runtimeShellHandleAgentCardSize;
   },
 }));
 mock.module('../dictation-formatter', () => ({ applyDictationFormatter }));
@@ -327,6 +345,15 @@ describe('main process IPC orchestration', () => {
     runtimeShellShowFailure.mockClear();
     runtimeShellShowProcessing.mockClear();
     runtimeShellSetCrashHandler.mockClear();
+    runtimeShellBeginAgentRun.mockClear();
+    runtimeShellClearAgentRun.mockClear();
+    runtimeShellShowAgentStatus.mockClear();
+    runtimeShellShowAgentStreaming.mockClear();
+    runtimeShellShowAgentApproval.mockClear();
+    runtimeShellShowAgentCompleted.mockClear();
+    runtimeShellShowAgentFailed.mockClear();
+    runtimeShellDismissAgentCard.mockClear();
+    runtimeShellHandleAgentCardSize.mockClear();
     applyDictationFormatter.mockReset();
     applyDictationFormatter.mockResolvedValue({ kind: 'success', text: 'formatted text' });
     resetDictationResultDeliveryForTests();
@@ -373,6 +400,8 @@ describe('main process IPC orchestration', () => {
       'agent-toast:content-size',
       'agent-toast:dismiss',
       'audio-devices',
+      'runtime:agent-card-size',
+      'runtime:agent-dismiss',
       'runtime:recovery-action',
       'surface-paint-proxy',
     ]);
@@ -755,6 +784,89 @@ describe('main process IPC orchestration', () => {
       arguments: { query: 'current events' },
       expiresAt: '2026-05-09T16:35:24.399Z',
     });
+  });
+
+  it('projects approval requests onto the shared agent shell when it is enabled', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+
+    await import(`../index?test=${Date.now()}-shell-approval`);
+
+    const result = {
+      text: 'transcribed text',
+      intent: 'agent' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
+    const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
+
+    expect(runtimeShellBeginAgentRun).toHaveBeenCalledTimes(1);
+
+    agentEventHandler?.({
+      type: 'approval:requested',
+      agentRunId: activeRunId,
+      approvalId: 'approval-1',
+      serverId: 'exa',
+      toolName: 'web_search_exa',
+      modelToolName: 'exa__web_search_exa',
+      arguments: { query: 'current events' },
+      expiresAt: '2026-05-09T16:35:24.399Z',
+    });
+
+    expect(runtimeShellShowAgentApproval).toHaveBeenCalledWith(expect.objectContaining({
+      agentRunId: activeRunId,
+      approvalId: 'approval-1',
+    }));
+    expect(showAgentToast).not.toHaveBeenCalled();
+  });
+
+  it('shows one persistent shell failure when the sidecar exits unexpectedly', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+
+    await import(`../index?test=${Date.now()}-shell-gen-exit`);
+
+    agentManagerDeps?.onGenerationExit?.();
+
+    expect(runtimeShellShowAgentFailed).toHaveBeenCalledTimes(1);
+    expect(runtimeShellShowAgentFailed).toHaveBeenCalledWith(null, 'Agent runtime stopped unexpectedly. Try Agent Mode again.');
+    expect(showAgentToast).not.toHaveBeenCalled();
+  });
+
+  it('keeps the legacy Agent toast window when SHUDDHALEKHAN_DISABLE_AGENT_SHELL is set', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    process.env.SHUDDHALEKHAN_DISABLE_AGENT_SHELL = '1';
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+
+    try {
+      await import(`../index?test=${Date.now()}-agent-shell-rollback`);
+
+      const result = {
+        text: 'transcribed text',
+        intent: 'agent' as const,
+        targetSnapshot: defaultTargetSnapshot,
+      };
+      await sessionOptions.onResult(result);
+      const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
+
+      agentEventHandler?.({
+        type: 'approval:requested',
+        agentRunId: activeRunId,
+        approvalId: 'approval-1',
+        serverId: 'exa',
+        toolName: 'web_search_exa',
+        modelToolName: 'exa__web_search_exa',
+        arguments: { query: 'current events' },
+        expiresAt: '2026-05-09T16:35:24.399Z',
+      });
+
+      expect(runtimeShellShowAgentApproval).not.toHaveBeenCalled();
+      expect(showAgentToast).toHaveBeenCalledWith(expect.objectContaining({ kind: 'status', message: 'Waiting for approval: exa.web_search_exa' }));
+      expect(showAgentToast).toHaveBeenCalledWith(expect.objectContaining({ kind: 'approval', approvalId: 'approval-1' }));
+    } finally {
+      delete process.env.SHUDDHALEKHAN_DISABLE_AGENT_SHELL;
+    }
   });
 
   it('proxies config, device, update, and recording pill events without restarting sidecar for audio config', async () => {

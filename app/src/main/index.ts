@@ -49,6 +49,8 @@ import {
 } from './performance/scenario-driver';
 import { transcribe as transcribeLocalFixture } from './whisper';
 import { RuntimeShell } from './runtime-shell';
+import { createLegacyToastPresenter, createRuntimeShellPresenter } from './agent-presentation';
+import type { AgentPresenter } from './agent-presentation';
 import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
 import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 import { outerTrimTranscript } from '../shared/live-dictation';
@@ -66,6 +68,16 @@ let shellPillReadyEmitted = false;
 let startPerformanceScenario = async (): Promise<void> => undefined;
 const performanceDriverEnabled = isPerformanceScenarioDriverEnabled(process.env);
 const performanceDriverConfig = parsePerformanceScenarioDriverConfig(process.env);
+const runtimeGates = parseMaintainerRuntimeGates(process.env);
+const runtimeShell = runtimeGates.runtimeShell
+  ? new RuntimeShell()
+  : null;
+// The shared shell presents Agent Mode only when both the runtime shell and
+// the Agent surface are enabled; otherwise the legacy toast window remains.
+const usesAgentShell = runtimeShell !== null && runtimeGates.agentShell;
+const agentPresenter: AgentPresenter = usesAgentShell && runtimeShell
+  ? createRuntimeShellPresenter(runtimeShell)
+  : createLegacyToastPresenter((state) => showAgentToast(state));
 const agentTerminalWaiters = new Map<string, () => void>();
 const surfacePaintWaiters = new Map<string, Array<() => void>>();
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
@@ -88,12 +100,18 @@ function resetMcpStatusSnapshot(): void {
 // A runtime-generation boundary invalidates every live server status.
 function notifyAgentRuntimeStopped(message: string): void {
   resetMcpStatusSnapshot();
+  if (usesAgentShell) {
+    // One persistent failure card for unexpected loss; replacement,
+    // disablement, and shutdown never reach this path.
+    runtimeShell?.showAgentFailed(activeAgentRunId, message);
+    return;
+  }
   showAgentToast({ kind: 'config', message });
 }
 const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
   getActiveAgentRunId: () => activeAgentRunId,
-  showAgentToast,
+  presenter: agentPresenter,
   openExternal: shell.openExternal,
   mergeDiscoveredTools,
   getConfig,
@@ -117,10 +135,6 @@ const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
     }
   },
 });
-const runtimeGates = parseMaintainerRuntimeGates(process.env);
-const runtimeShell = runtimeGates.runtimeShell
-  ? new RuntimeShell()
-  : null;
 const recordingSession = new RecordingSession({
   runtimeGates,
   ...(runtimeShell ? { runtimeShell } : {}),
@@ -454,13 +468,23 @@ function handleAgentTranscript(text: string): void {
   void startAgentRun(text, getConfig());
 }
 
+function showAgentConfigNotice(message: string): void {
+  if (usesAgentShell) {
+    runtimeShell?.showAgentStatus(null, message);
+    return;
+  }
+  showAgentToast({ kind: 'config', message });
+}
+
 function startAgentRun(text: string, config: AppConfig): Promise<void> {
   if (!config.agent.enabled) {
     console.warn('Ignoring Agent Mode transcript because Agent Mode is disabled');
-    showAgentToast({ kind: 'config', message: 'Agent Mode is disabled. Open Settings to enable it.' });
+    showAgentConfigNotice('Agent Mode is disabled. Open Settings to enable it.');
     return Promise.resolve();
   }
 
+  // A new run invalidates any prior run presentation before cancellation.
+  agentPresenter.beginRun();
   if (activeAgentRunId) {
     agentTerminalWaiters.get(activeAgentRunId)?.();
     agentTerminalWaiters.delete(activeAgentRunId);
@@ -746,6 +770,15 @@ ipcMain.on('runtime:recovery-action', (_event, action) => {
   void handleRuntimeRecoveryAction(action).catch((err) => {
     console.error('Failed to handle runtime recovery action:', err);
   });
+});
+
+ipcMain.on('runtime:agent-card-size', (_event, height: number) => {
+  runtimeShell?.handleAgentCardSize(height);
+});
+
+ipcMain.on('runtime:agent-dismiss', () => {
+  hideAgentToast();
+  runtimeShell?.dismissAgentCard();
 });
 
 ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: string) => {

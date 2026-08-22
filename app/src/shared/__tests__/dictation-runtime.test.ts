@@ -123,9 +123,10 @@ describe('Dictation config normalization', () => {
 });
 
 describe('maintainer runtime gates', () => {
-  it('enables the runtime shell, streaming, and direct-Unicode paths by default', () => {
+  it('enables the runtime shell, agent shell, streaming, and direct-Unicode paths by default', () => {
     expect(parseMaintainerRuntimeGates({})).toEqual({
       runtimeShell: true,
+      agentShell: true,
       streaming: true,
       directUnicode: true,
     });
@@ -136,6 +137,15 @@ describe('maintainer runtime gates', () => {
       SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL: '1',
     })).toEqual({
       runtimeShell: false,
+      agentShell: true,
+      streaming: true,
+      directUnicode: true,
+    });
+    expect(parseMaintainerRuntimeGates({
+      SHUDDHALEKHAN_DISABLE_AGENT_SHELL: '1',
+    })).toEqual({
+      runtimeShell: true,
+      agentShell: false,
       streaming: true,
       directUnicode: true,
     });
@@ -143,6 +153,7 @@ describe('maintainer runtime gates', () => {
       SHUDDHALEKHAN_DISABLE_STREAMING: '1',
     })).toEqual({
       runtimeShell: true,
+      agentShell: true,
       streaming: false,
       directUnicode: true,
     });
@@ -150,6 +161,7 @@ describe('maintainer runtime gates', () => {
       SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE: '1',
     })).toEqual({
       runtimeShell: true,
+      agentShell: true,
       streaming: true,
       directUnicode: false,
     });
@@ -166,6 +178,7 @@ describe('maintainer runtime gates', () => {
     expect(getDictationCombinationError(combination)).toBeNull();
     expect(getDictationRuntimeError(combination, {
       runtimeShell: true,
+      agentShell: true,
       streaming: false,
       directUnicode: true,
     })).toBe('Live Dictation is disabled by a local maintainer switch.');
@@ -181,6 +194,7 @@ describe('maintainer runtime gates', () => {
 
     expect(getDictationRuntimeError(combination, {
       runtimeShell: true,
+      agentShell: true,
       streaming: true,
       directUnicode: false,
     })).toBe('Direct-Unicode insertion is disabled by a local maintainer switch.');

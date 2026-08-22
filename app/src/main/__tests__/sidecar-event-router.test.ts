@@ -15,11 +15,26 @@ const getConfig = vi.fn(() => ({
   },
 }));
 
-describe('SidecarEventRouter', () => {
+interface RouterDepsHarness {
+  presenter: Record<'beginRun' | 'status' | 'streaming' | 'approval' | 'completed' | 'failed' | 'cancelled', ReturnType<typeof vi.fn>>;
+}
+
+const harness: RouterDepsHarness = {
+  presenter: {
+    beginRun: vi.fn(),
+    status: vi.fn(),
+    streaming: vi.fn(),
+    approval: vi.fn(),
+    completed: vi.fn(),
+    failed: vi.fn(),
+    cancelled: vi.fn(),
+  },
+};
+
+ describe('SidecarEventRouter', () => {
   let send: ReturnType<typeof vi.fn>;
   let getSettingsWindow: ReturnType<typeof vi.fn>;
   let getActiveAgentRunId: ReturnType<typeof vi.fn>;
-  let showAgentToast: ReturnType<typeof vi.fn>;
   let openExternal: ReturnType<typeof vi.fn>;
   let recordMcpStatus: ReturnType<typeof vi.fn>;
   let router: import('../sidecar-event-router').SidecarEventRouter;
@@ -32,17 +47,17 @@ describe('SidecarEventRouter', () => {
       isDestroyed: vi.fn(() => false),
     }));
     getActiveAgentRunId = vi.fn(() => 'run-1');
-    showAgentToast = vi.fn();
     openExternal = vi.fn(async () => undefined);
     recordMcpStatus = vi.fn(() => ({
       revision: 7,
       servers: [{ serverId: 'mail', status: 'connected', message: 'ready' }],
     }));
     mergeDiscoveredTools.mockClear();
+    for (const fn of Object.values(harness.presenter)) fn.mockClear();
     router = createSidecarEventRouter({
       getSettingsWindow,
       getActiveAgentRunId,
-      showAgentToast,
+      presenter: harness.presenter,
       openExternal,
       mergeDiscoveredTools,
       getConfig,
@@ -118,38 +133,18 @@ describe('SidecarEventRouter', () => {
     expect(mergeDiscoveredTools).toHaveBeenCalledWith('mail', tools);
   });
 
-  it('maps agent status, streaming, completion, failure, and cancellation to toasts', () => {
+  it('maps agent status, streaming, completion, failure, and cancellation onto the presenter', () => {
     router.handle({ type: 'agent:status', agentRunId: 'run-1', status: 'Checking mail' });
     router.handle({ type: 'agent:response-delta', agentRunId: 'run-1', delta: 'Done', response: 'Done' });
     router.handle({ type: 'agent:completed', agentRunId: 'run-1', response: 'Finished', toolSummary: ['Read 3 messages'] });
     router.handle({ type: 'agent:failed', agentRunId: 'run-1', error: 'Provider failed' });
     router.handle({ type: 'agent:cancelled', agentRunId: 'run-1' });
 
-    expect(showAgentToast).toHaveBeenNthCalledWith(1, {
-      kind: 'status',
-      agentRunId: 'run-1',
-      message: 'Checking mail',
-    });
-    expect(showAgentToast).toHaveBeenNthCalledWith(2, {
-      kind: 'streaming',
-      agentRunId: 'run-1',
-      response: 'Done',
-    });
-    expect(showAgentToast).toHaveBeenNthCalledWith(3, {
-      kind: 'completed',
-      agentRunId: 'run-1',
-      response: 'Finished',
-      toolSummary: ['Read 3 messages'],
-    });
-    expect(showAgentToast).toHaveBeenNthCalledWith(4, {
-      kind: 'failed',
-      agentRunId: 'run-1',
-      error: 'Provider failed',
-    });
-    expect(showAgentToast).toHaveBeenNthCalledWith(5, {
-      kind: 'cancelled',
-      agentRunId: 'run-1',
-    });
+    expect(harness.presenter.status).toHaveBeenCalledWith('run-1', 'Checking mail');
+    expect(harness.presenter.streaming).toHaveBeenCalledWith('run-1', 'Done');
+    expect(harness.presenter.completed).toHaveBeenCalledWith('run-1', 'Finished', ['Read 3 messages']);
+    expect(harness.presenter.failed).toHaveBeenCalledWith('run-1', 'Provider failed');
+    expect(harness.presenter.cancelled).toHaveBeenCalledWith('run-1');
   });
 
   it('records Agent terminal outcomes when no response delta arrives', () => {
@@ -232,7 +227,7 @@ describe('SidecarEventRouter', () => {
     resetPerformanceMarkerCollectorForTests();
   });
 
-  it('shows both waiting status and approval details when approval is requested', () => {
+  it('presents one approval card per request without redundant waiting status', () => {
     router.handle({
       type: 'approval:requested',
       agentRunId: 'run-1',
@@ -244,13 +239,11 @@ describe('SidecarEventRouter', () => {
       expiresAt: '2026-05-11T12:00:00.000Z',
     });
 
-    expect(showAgentToast).toHaveBeenNthCalledWith(1, {
-      kind: 'status',
-      agentRunId: 'run-1',
-      message: 'Waiting for approval: mail.send_email',
-    });
-    expect(showAgentToast).toHaveBeenNthCalledWith(2, {
-      kind: 'approval',
+    // The waiting indicator belongs to the presentation layer, not the router:
+    // the shared shell shows the approval itself, while the legacy presenter
+    // synthesizes its own preceding status toast.
+    expect(harness.presenter.approval).toHaveBeenCalledTimes(1);
+    expect(harness.presenter.approval).toHaveBeenCalledWith({
       agentRunId: 'run-1',
       approvalId: 'approval-1',
       serverId: 'mail',
@@ -260,5 +253,18 @@ describe('SidecarEventRouter', () => {
       arguments: { to: 'a@example.com' },
       expiresAt: '2026-05-11T12:00:00.000Z',
     });
+    expect(harness.presenter.status).not.toHaveBeenCalled();
+  });
+
+  it('drops stale run events before they reach the presenter', () => {
+    getActiveAgentRunId.mockReturnValue('run-current');
+
+    router.handle({ type: 'agent:status', agentRunId: 'run-stale', status: 'Late news' });
+    router.handle({ type: 'agent:response-delta', agentRunId: 'run-stale', delta: 'x', response: 'x' });
+    router.handle({ type: 'approval:requested', agentRunId: 'run-stale', approvalId: 'a', serverId: 's', toolName: 't', modelToolName: 's__t', arguments: {}, expiresAt: '2026-05-11T12:00:00.000Z' });
+
+    expect(harness.presenter.status).not.toHaveBeenCalled();
+    expect(harness.presenter.streaming).not.toHaveBeenCalled();
+    expect(harness.presenter.approval).not.toHaveBeenCalled();
   });
 });
