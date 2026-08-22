@@ -50,7 +50,6 @@ import {
 import { transcribe as transcribeLocalFixture } from './whisper';
 import { RuntimeShell } from './runtime-shell';
 import { createLegacyToastPresenter, createRuntimeShellPresenter } from './agent-presentation';
-import type { AgentPresenter } from './agent-presentation';
 import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
 import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 import { outerTrimTranscript } from '../shared/live-dictation';
@@ -75,7 +74,7 @@ const runtimeShell = runtimeGates.runtimeShell
 // The shared shell presents Agent Mode only when both the runtime shell and
 // the Agent surface are enabled; otherwise the legacy toast window remains.
 const usesAgentShell = runtimeShell !== null && runtimeGates.agentShell;
-const agentPresenter: AgentPresenter = usesAgentShell && runtimeShell
+const agentPresenter = usesAgentShell && runtimeShell
   ? createRuntimeShellPresenter(runtimeShell)
   : createLegacyToastPresenter((state) => showAgentToast(state), hideAgentToast);
 const agentTerminalWaiters = new Map<string, () => void>();

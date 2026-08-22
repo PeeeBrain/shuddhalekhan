@@ -367,7 +367,7 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
         <span
           className={
             timerUrgent
-              ? 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-destructive motion-safe:animate-pulse'
+              ? 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-destructive'
               : 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-warning'
           }
         >

@@ -338,13 +338,11 @@ export class RuntimeShell {
     if (!Number.isFinite(expiresAtMs)) return;
 
     this.clearAgentTimer('status');
+    this.clearAgentTimer('approval');
     // An approval supersedes point-in-time status but keeps the live stream
     // alive beneath it, so resolving or expiring never flashes empty state.
     this.agentStatus = null;
-    if (this.agentApproval && this.agentApproval.approvalId !== approval.approvalId) {
-      this.clearAgentTimer('approval');
-    }
-    this.agentApproval = {
+    const approvalFact = {
       agentRunId: approval.agentRunId,
       approvalId: approval.approvalId,
       serverId: approval.serverId,
@@ -354,10 +352,11 @@ export class RuntimeShell {
       arguments: approval.arguments,
       expiresAtMs,
     };
+    this.agentApproval = approvalFact;
     const delay = Math.max(0, expiresAtMs - Date.now());
     this.approvalTimer = this.timers.setTimeoutFn(() => {
       this.approvalTimer = null;
-      if (this.agentApproval?.approvalId !== approval.approvalId) return;
+      if (this.agentApproval !== approvalFact) return;
       this.agentApproval = null;
       this.republish();
     }, delay);

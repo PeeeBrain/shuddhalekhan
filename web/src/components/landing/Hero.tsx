@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion, useScroll, useTransform } from 'motion/react';
+import type { MotionProps } from 'motion/react';
 import { ArrowRight, Check, Mic } from 'lucide-react';
 import { LatestWindowsDownloadLink } from '@/components/LatestWindowsDownloadLink';
 import { Button } from '@/components/ui/button';
@@ -10,11 +11,15 @@ const EASE_OUT_EXPO = [0.16, 1, 0.3, 1] as const;
 const TRANSCRIPT_PHRASE = 'Hey Sarah, just pushed the auth fix to staging. Can you take a look?';
 
 /* Staggered mount choreography for everything above the fold. */
-const ENTER = (delay: number) => ({
-  initial: { opacity: 0, y: 32 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.9, delay, ease: EASE_OUT_EXPO },
-});
+const STATIC_ENTER = { initial: false } satisfies MotionProps;
+
+const ENTER = (delay: number, reduceMotion: boolean) => reduceMotion
+  ? STATIC_ENTER
+  : {
+      initial: { opacity: 0, y: 32 },
+      animate: { opacity: 1, y: 0 },
+      transition: { duration: 0.9, delay, ease: EASE_OUT_EXPO },
+    } satisfies MotionProps;
 
 const HERO_CHECKS = ['No subscription', 'Works offline', 'Bring your own keys'];
 
@@ -82,7 +87,7 @@ export function Hero() {
       />
 
       <div className="relative mx-auto max-w-6xl px-6 text-center">
-        <motion.div {...ENTER(0)}>
+        <motion.div {...ENTER(0, reduceMotion)}>
           <Badge
             variant="outline"
             className="h-7 gap-2 rounded-full border-white/12 bg-white/[0.04] px-3.5 text-xs font-medium text-muted-foreground"
@@ -93,19 +98,19 @@ export function Hero() {
         </motion.div>
 
         <motion.h1
-          {...ENTER(0.08)}
+          {...ENTER(0.08, reduceMotion)}
           className="mx-auto mt-7 max-w-3xl text-balance text-5xl leading-[1.05] font-semibold tracking-[-0.03em] sm:text-6xl md:text-7xl"
         >
           Say it once.
           <span className="block text-muted-foreground">Typed everywhere.</span>
         </motion.h1>
 
-        <motion.p {...ENTER(0.16)} className="mx-auto mt-6 max-w-xl text-balance text-base leading-relaxed text-muted-foreground sm:text-lg">
+        <motion.p {...ENTER(0.16, reduceMotion)} className="mx-auto mt-6 max-w-xl text-balance text-base leading-relaxed text-muted-foreground sm:text-lg">
           Shuddhalekhan transcribes your voice with Whisper, cleans it up, and types it into the app you’re
           already using. Free and open source, no subscription.
         </motion.p>
 
-        <motion.div {...ENTER(0.24)} className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+        <motion.div {...ENTER(0.24, reduceMotion)} className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button
             asChild
             className="h-12 rounded-full bg-foreground px-7 text-sm font-semibold text-primary-foreground shadow-[0_8px_30px_rgba(0,0,0,0.45)] transition-[background-color,transform] duration-300 hover:bg-white active:scale-[0.98]"
@@ -129,7 +134,7 @@ export function Hero() {
           </Button>
         </motion.div>
 
-        <motion.div {...ENTER(0.32)} className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
+        <motion.div {...ENTER(0.32, reduceMotion)} className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-muted-foreground">
           {HERO_CHECKS.map((item) => (
             <span key={item} className="flex items-center gap-1.5">
               <Check className="size-3.5 text-voice" aria-hidden="true" />
@@ -184,13 +189,13 @@ export function Hero() {
           {/* Recording pill straddling the window edge, like the real overlay.
               Outer div owns centering so Motion can own transform during the entrance. */}
           <div className="absolute -bottom-6 left-1/2 -translate-x-1/2">
-            <motion.div {...(reduceMotion ? { initial: false } : ENTER(0.5))}>
+            <motion.div {...ENTER(0.5, reduceMotion)}>
               <RecordingPill reduceMotion={reduceMotion} />
             </motion.div>
           </div>
         </div>
 
-        <motion.p {...ENTER(0.62)} className="mx-auto mt-16 max-w-md text-sm text-muted-foreground">
+        <motion.p {...ENTER(0.62, reduceMotion)} className="mx-auto mt-16 max-w-md text-sm text-muted-foreground">
           Hold the global shortcut, say what you need, and clean text shows up at your cursor.
         </motion.p>
       </div>

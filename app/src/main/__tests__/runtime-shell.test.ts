@@ -378,6 +378,57 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-streaming', response: 'Draft ready for review' });
   });
 
+  it('replaces the expiry timer when the same approval is rescheduled', async () => {
+    const timers: Array<{ fn: () => void; delay: number }> = [];
+    const setTimeoutFn = vi.fn((fn: () => void, delay: number) => {
+      timers.push({ fn, delay });
+      return timers.length;
+    }) as unknown as typeof setTimeout;
+    const clearTimeoutFn = vi.fn() as unknown as typeof clearTimeout;
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('approval-rescheduled', { setTimeoutFn, clearTimeoutFn });
+    shell.prepare();
+    shell.showAgentStreaming('run-1', 'Draft ready for review');
+
+    const firstExpiry = new Date(Date.now() + 30000).toISOString();
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: firstExpiry,
+    });
+    const firstTimer = timers[0];
+
+    const secondExpiry = new Date(Date.now() + 60000).toISOString();
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: secondExpiry,
+    });
+
+    expect(clearTimeoutFn).toHaveBeenCalledWith(1);
+    firstTimer.fn();
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'agent-approval',
+      approvalId: 'approval-1',
+      expiresAt: secondExpiry,
+    });
+
+    timers[1].fn();
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'agent-streaming',
+      response: 'Draft ready for review',
+    });
+  });
+
   it('ignores approvals with invalid expiry timestamps', async () => {
     const setTimeoutFn = vi.fn() as unknown as typeof setTimeout;
     const { send, window } = createWindowMock();
