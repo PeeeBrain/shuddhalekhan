@@ -465,6 +465,17 @@ export class RuntimeShell {
 
   private derive(): RuntimePresentationState {
     if (this.activeRecording) return this.activeRecording;
+    if (this.processingSessionId) {
+      return { kind: 'processing', recordingSessionId: this.processingSessionId };
+    }
+    if (this.dictationFailure) {
+      return {
+        kind: 'failure',
+        recordingSessionId: this.dictationFailure.recordingSessionId,
+        message: this.dictationFailure.message,
+        recoveryActions: this.dictationFailure.recoveryActions,
+      };
+    }
 
     if (this.agentApproval) {
       const approval = this.agentApproval;
@@ -479,9 +490,6 @@ export class RuntimeShell {
         arguments: approval.arguments,
         expiresAt: new Date(approval.expiresAtMs).toISOString(),
       };
-    }
-    if (this.processingSessionId) {
-      return { kind: 'processing', recordingSessionId: this.processingSessionId };
     }
 
     const terminal = this.newestTerminal();

@@ -577,6 +577,46 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(win.hide).not.toHaveBeenCalled();
   });
 
+  it('keeps Dictation processing and failure ahead of a pending Agent approval', async () => {
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('dictation-terminal-precedence');
+    shell.prepare();
+
+    shell.showAgentApproval({
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    shell.showProcessing('session-1');
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'processing',
+      recordingSessionId: 'session-1',
+    });
+    shell.finish();
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'agent-approval',
+      approvalId: 'approval-1',
+    });
+
+    shell.showFailure('session-1', 'Paste failed', ['retry-paste']);
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'failure',
+      recordingSessionId: 'session-1',
+      message: 'Paste failed',
+    });
+    shell.finish();
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'agent-approval',
+      approvalId: 'approval-1',
+    });
+  });
+
   it('invalidates prior run presentation when an agent recording starts but not when dictation starts', async () => {
     const { send, window: win } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => win);
