@@ -1,37 +1,81 @@
-import { Download } from 'lucide-react';
+import { motion, useReducedMotion, useScroll, useTransform } from 'motion/react';
+import { useRef } from 'react';
 import { LatestWindowsDownloadLink } from '@/components/LatestWindowsDownloadLink';
+import { Button } from '@/components/ui/button';
+import { Reveal } from '@/components/motion/Reveal';
+import { Logomark } from '@/components/brand/Logo';
 
 export function Cta() {
+  const sectionRef = useRef<HTMLElement>(null);
+  const reduceMotion = useReducedMotion();
+  const { scrollYProgress } = useScroll({ target: sectionRef, offset: ['start end', 'start center'] });
+
+  // The closing glow gathers strength as the CTA approaches.
+  const glowOpacity = useTransform(scrollYProgress, [0, 1], [0.25, 1]);
+
   return (
     <>
-      <section className="relative z-10 border-t border-zinc-800/60 px-6 py-20">
-        <div className="relative mx-auto max-w-6xl overflow-hidden rounded-3xl border border-indigo-400/20 bg-[#10111a] px-6 py-14 text-center sm:px-12">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(129,140,248,0.16),transparent_58%)]" />
-          <div className="relative">
-            <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-indigo-300">Your voice. Your computer. Your rules.</div>
-            <h2 className="mx-auto mt-4 max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-5xl">Stop paying monthly to type with your voice.</h2>
-            <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">Download Shuddhalekhan and start dictating across Windows. Free, open source, and yours to configure.</p>
-            <LatestWindowsDownloadLink className="mx-auto mt-8 flex h-12 w-fit items-center gap-2 rounded-full bg-white px-7 text-sm font-semibold text-zinc-950 transition hover:bg-indigo-100 active:scale-95">
-              <Download className="size-4" /> Download for Windows
-            </LatestWindowsDownloadLink>
-            <div className="mt-4 text-[11px] text-zinc-500">Windows 10/11 · x64</div>
-          </div>
-        </div>
+      <section id="download" ref={sectionRef} className="relative scroll-mt-20 overflow-hidden px-6 py-32 md:py-44">
+        <motion.div
+          aria-hidden="true"
+          style={{ opacity: reduceMotion ? 1 : glowOpacity }}
+          className="pointer-events-none absolute top-[-180px] left-1/2 h-[520px] w-[900px] -translate-x-1/2 bg-[radial-gradient(closest-side,rgba(133,146,255,0.16),transparent)]"
+        />
+
+        <Reveal className="relative mx-auto max-w-2xl text-center">
+          <p className="font-mono text-[11px] font-medium tracking-[0.24em] text-voice uppercase">
+            Your computer. Your rules.
+          </p>
+          <h2 className="mt-5 text-balance text-4xl font-semibold tracking-[-0.03em] sm:text-6xl">
+            Stop paying monthly to type with your voice.
+          </h2>
+          <p className="mx-auto mt-5 max-w-md text-pretty leading-relaxed text-muted-foreground">
+            Download Shuddhalekhan, point it at a Whisper server, and start dictating in any app. Free and open
+            source.
+          </p>
+          <Button
+            asChild
+            className="mx-auto mt-9 h-12 rounded-full bg-foreground px-8 text-sm font-semibold text-primary-foreground transition-[background-color,transform] duration-300 hover:bg-white active:scale-[0.98]"
+          >
+            <LatestWindowsDownloadLink>Download for Windows</LatestWindowsDownloadLink>
+          </Button>
+          <div className="mt-4 font-mono text-[11px] text-zinc-500">Windows 10 / 11 · x64 · installer auto-updates</div>
+        </Reveal>
       </section>
 
-      {/* Minimal Footer */}
-      <footer className="relative z-10 border-t border-zinc-900 bg-[#07080a] py-8 text-center text-[11px] text-zinc-500 font-mono">
-        <div className="mx-auto max-w-6xl px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>Shuddhalekhan · Free &amp; Open Source Desktop App</div>
-          <div className="flex items-center gap-5">
-            <a href="https://github.com/PeeeBrain/shuddhalekhan/releases/latest" target="_blank" rel="noreferrer" className="hover:text-zinc-300 transition">Releases</a>
-            <a href="https://github.com/PeeeBrain/shuddhalekhan/issues" target="_blank" rel="noreferrer" className="hover:text-zinc-300 transition">Report an issue</a>
-            <a href="https://github.com/PeeeBrain/shuddhalekhan" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:text-zinc-300 transition">
-              <svg className="size-3.5 fill-current" viewBox="0 0 1024 1024" aria-hidden="true">
-                <path fillRule="evenodd" d="M512 0C229.12 0 0 229.12 0 512c0 226.56 146.56 417.92 350.08 485.76 25.6 4.48 35.2-10.88 35.2-24.32 0-12.16-.64-52.48-.64-95.36-128.64 23.68-161.92-31.36-172.16-60.16-5.76-14.72-30.72-60.16-52.48-72.32-17.92-9.6-43.52-33.28-.64-33.92 40.32-.64 69.12 37.12 78.72 52.48 46.08 77.44 119.68 55.68 149.12 42.24 4.48-33.28 17.92-55.68 32.64-68.48-113.92-12.8-232.96-56.96-232.96-252.8 0-55.68 19.84-101.76 52.48-137.6-5.12-12.8-23.04-65.28 5.12-135.68 0 0 42.88-13.44 140.8 52.48 40.96-11.52 84.48-17.28 128-17.28s87.04 5.76 128 17.28c97.92-66.56 140.8-52.48 140.8-52.48 28.16 70.4 10.24 122.88 5.12 135.68 32.64 35.84 52.48 81.28 52.48 137.6 0 196.48-119.68 240-233.6 252.8 18.56 16 34.56 46.72 34.56 94.72 0 68.48-.64 123.52-.64 140.8 0 13.44 9.6 29.44 35.2 24.32C877.44 929.92 1024 737.92 1024 512 1024 229.12 794.88 0 512 0" clipRule="evenodd" />
-              </svg>
-              GitHub
-            </a>
+      <footer className="relative border-t border-white/[0.06]">
+        <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 py-14 md:flex-row md:items-start md:justify-between">
+          <div className="max-w-xs">
+            <Logomark className="size-8" />
+            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+              Free &amp; open source voice dictation for Windows. Speak freely.
+            </p>
+          </div>
+
+          <nav className="flex gap-16" aria-label="Footer">
+            <div>
+              <div className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">Project</div>
+              <ul className="mt-4 space-y-2.5 text-sm">
+                <li><a className="text-zinc-300 transition-colors hover:text-white" href="https://github.com/PeeeBrain/shuddhalekhan/releases/latest" target="_blank" rel="noreferrer">Releases</a></li>
+                <li><a className="text-zinc-300 transition-colors hover:text-white" href="https://github.com/PeeeBrain/shuddhalekhan/issues" target="_blank" rel="noreferrer">Report an issue</a></li>
+                <li><a className="text-zinc-300 transition-colors hover:text-white" href="https://github.com/PeeeBrain/shuddhalekhan" target="_blank" rel="noreferrer">GitHub</a></li>
+              </ul>
+            </div>
+            <div>
+              <div className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">Page</div>
+              <ul className="mt-4 space-y-2.5 text-sm">
+                <li><a className="text-zinc-300 transition-colors hover:text-white" href="#how-it-works">How it works</a></li>
+                <li><a className="text-zinc-300 transition-colors hover:text-white" href="#agent-mode">Agent mode</a></li>
+                <li><a className="text-zinc-300 transition-colors hover:text-white" href="#why-open-source">Why open source</a></li>
+              </ul>
+            </div>
+          </nav>
+        </div>
+
+        <div className="border-t border-white/[0.05]">
+          <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-6 py-6 font-mono text-[11px] text-zinc-600 sm:flex-row">
+            <span>Shuddhalekhan · MIT licensed</span>
+            <span>शुद्धलेखन · correct writing</span>
           </div>
         </div>
       </footer>

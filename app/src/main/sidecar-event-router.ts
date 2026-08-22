@@ -1,12 +1,13 @@
 import type { BrowserWindow } from 'electron';
 import type { SidecarEvent } from '../agent/protocol';
 import type { McpServerRuntimeStatus, McpStatusSnapshot } from '../types/ipc';
+import type { AgentPresenter } from './agent-presentation';
 import { emitPerformanceMarker } from './performance/marker-collector';
 
 interface SidecarEventRouterDeps {
   getSettingsWindow: () => BrowserWindow | null;
   getActiveAgentRunId: () => string | null;
-  showAgentToast: (state: Parameters<typeof import('./agent-toast-window').showAgentToast>[0]) => void;
+  presenter: AgentPresenter;
   openExternal: (url: string) => Promise<unknown>;
   mergeDiscoveredTools: (serverId: string, tools: Extract<SidecarEvent, { type: 'mcp:tools-discovered' }>['tools']) => void;
   getConfig: () => { agent: { mcpServers: Array<{ id: string; displayName: string }> } };
@@ -71,7 +72,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
     },
     'agent:status': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId}: ${event.status}`);
-      deps.showAgentToast({ kind: 'status', agentRunId: event.agentRunId, message: event.status });
+      deps.presenter.status(event.agentRunId, event.status);
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
     }),
     'agent:provider-request-started': whenActive((event) => {
@@ -82,7 +83,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
         firstDeltaRuns.add(event.agentRunId);
         emitPerformanceMarker('agent.response.first-delta', { agentRunId: event.agentRunId });
       }
-      deps.showAgentToast({ kind: 'streaming', agentRunId: event.agentRunId, response: event.response });
+      deps.presenter.streaming(event.agentRunId, event.response);
     }),
     'approval:requested': whenActive((event) => {
       emitPerformanceMarker('approval.requested', {
@@ -90,15 +91,11 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
         serverId: event.serverId,
       });
       console.log(`Agent run ${event.agentRunId} requested approval for ${event.serverId}:${event.toolName}`);
+      // The waiting indicator belongs to the presentation layer; presenters
+      // decide whether an explicit status precedes the approval card.
       const mcpServers = deps.getConfig().agent.mcpServers;
       const server = mcpServers.find((s) => s.id === event.serverId);
-      deps.showAgentToast({
-        kind: 'status',
-        agentRunId: event.agentRunId,
-        message: `Waiting for approval: ${event.serverId}.${event.toolName}`,
-      });
-      deps.showAgentToast({
-        kind: 'approval',
+      deps.presenter.approval({
         agentRunId: event.agentRunId,
         approvalId: event.approvalId,
         serverId: event.serverId,
@@ -113,12 +110,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       emitPerformanceMarker('agent.completed', { agentRunId: event.agentRunId });
       firstDeltaRuns.delete(event.agentRunId);
       console.log(`Agent run ${event.agentRunId} completed: ${event.response}`);
-      deps.showAgentToast({
-        kind: 'completed',
-        agentRunId: event.agentRunId,
-        response: event.response,
-        toolSummary: event.toolSummary,
-      });
+      deps.presenter.completed(event.agentRunId, event.response, event.toolSummary);
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
       deps.onAgentTerminal?.(event.agentRunId);
     }),
@@ -126,7 +118,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       emitPerformanceMarker('agent.failed', { agentRunId: event.agentRunId });
       firstDeltaRuns.delete(event.agentRunId);
       console.error(`Agent run ${event.agentRunId} failed: ${event.error}`);
-      deps.showAgentToast({ kind: 'failed', agentRunId: event.agentRunId, error: event.error });
+      deps.presenter.failed(event.agentRunId, event.error);
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
       deps.onAgentTerminal?.(event.agentRunId);
     }),
@@ -134,7 +126,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       emitPerformanceMarker('agent.cancelled', { agentRunId: event.agentRunId });
       firstDeltaRuns.delete(event.agentRunId);
       console.log(`Agent run ${event.agentRunId} cancelled`);
-      deps.showAgentToast({ kind: 'cancelled', agentRunId: event.agentRunId });
+      deps.presenter.cancelled(event.agentRunId);
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
       deps.onAgentTerminal?.(event.agentRunId);
     }),

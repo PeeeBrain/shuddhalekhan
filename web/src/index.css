@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 @theme inline {
   --color-background: var(--background);
@@ -18,42 +17,106 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* Brand signals — one hue per voice, taken from the real recording pill */
+  --color-voice: var(--voice);
+  --color-agent: var(--agent);
 }
 
+/*
+ * Ink & Signal — Shuddhalekhan design language
+ * Canvas: layered near-black ink. Type: Inter, off-white, tight display tracking.
+ * Signals: periwinkle = dictation, coral = agent mode. Nothing else gets color.
+ */
 :root {
-  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   color: var(--foreground);
   background: var(--background);
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  --radius: 0.75rem;
-  --background: #07080a;
-  --foreground: #f4f4f5;
-  --card: #18181b;
-  --card-foreground: #f4f4f5;
-  --primary: #8592ff;
-  --primary-foreground: #07080a;
-  --secondary: #27272a;
-  --secondary-foreground: #f4f4f5;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
-  --accent: #27272a;
-  --accent-foreground: #f4f4f5;
-  --destructive: #f43f5e;
-  --border: #27272a;
-  --input: #27272a;
-  --ring: #8592ff;
+  text-rendering: optimizelegibility;
+  -webkit-font-smoothing: antialiased;
+
+  --background: #060609;
+  --foreground: #f5f5f7;
+  --card: #0c0c12;
+  --card-foreground: #f5f5f7;
+  --primary: #f5f5f7;
+  --primary-foreground: #0a0a10;
+  --secondary: #16161d;
+  --secondary-foreground: #f5f5f7;
+  --muted: #16161d;
+  --muted-foreground: #8b8b96;
+  --accent: #16161d;
+  --accent-foreground: #f5f5f7;
+  --destructive: #ff6a6a;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.1);
+  --ring: rgba(133, 146, 255, 0.6);
+
+  --voice: #8592ff;
+  --agent: #ff6a6a;
+
+  /* Shared motion vocabulary */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 html {
   scroll-behavior: smooth;
 }
 
-@keyframes fadeIn {
+::selection {
+  background: rgba(133, 146, 255, 0.32);
+  color: #ffffff;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply m-0 min-w-80 bg-background text-foreground antialiased;
+
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  button,
+  a {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+}
+
+/* ---- Motion primitives (compositor-only: transform + opacity) ---- */
+
+@keyframes caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-caret {
+  animation: caret-blink 1.1s steps(1) 6;
+}
+
+/* Recording-pill level bars — pure CSS loop, no JS re-renders */
+@keyframes eq-bar {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+.eq-bar {
+  transform-origin: center;
+  animation: eq-bar 1.4s ease-in-out 3;
+}
+
+@keyframes live-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.animate-live-dot {
+  animation: live-dot 2s ease-in-out 3;
+}
+
+@keyframes content-in {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -64,21 +127,26 @@ html {
   }
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.animate-content-in {
+  animation: content-in 0.24s var(--ease-out-expo) both;
 }
 
-@layer base {
-  * {
-    @apply border-border outline-ring/50;
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 
-  body {
-    @apply m-0 min-w-80 bg-[#07080a] text-zinc-100 antialiased;
+  .animate-caret,
+  .animate-live-dot {
+    animation: none;
   }
 
-  button,
-  a {
-    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  .animate-content-in {
+    animation: none;
+  }
+
+  .eq-bar {
+    animation: none;
+    transform: scaleY(0.6);
   }
 }

@@ -104,6 +104,7 @@ export function getTranscriptionTransportCapabilities(
 
 export interface MaintainerRuntimeGates {
   runtimeShell: boolean;
+  agentShell: boolean;
   streaming: boolean;
   directUnicode: boolean;
 }
@@ -113,6 +114,8 @@ export function parseMaintainerRuntimeGates(
 ): MaintainerRuntimeGates {
   return {
     runtimeShell: env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL !== '1',
+    // Restores the legacy Agent toast window as a local maintainer rollback.
+    agentShell: env.SHUDDHALEKHAN_DISABLE_AGENT_SHELL !== '1',
     streaming: env.SHUDDHALEKHAN_DISABLE_STREAMING !== '1',
     directUnicode: env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE !== '1',
   };

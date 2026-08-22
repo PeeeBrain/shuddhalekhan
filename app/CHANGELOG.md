@@ -57,6 +57,11 @@ tags and commit history, not from this file. Keep new entries under
 - Fixed stored Agent Mode credentials being misread as environment-variable credentials after settings were normalized or the app restarted.
 
 ### Agent Mode
+- Agent Mode now shares the startup-warmed runtime shell with Dictation: live status, non-empty response streaming, tool approvals, completion, and failures present as one revision-safe quiet card at the bottom of the screen instead of a separate toast window.
+- A new Agent command invalidates the previous run's presentation; Dictation recordings visually preempt a running Agent without cancelling it, and stale events never flash outdated cards.
+- Tool approvals remain sequential and expire on schedule, activate only after deliberate clicks (denial feedback survives Dictation preemption), and continue to require a sidecar decision.
+- Unexpected Agent runtime loss now shows one persistent dismissible failure; replacing a run, disabling Agent Mode, and shutting down stay silent.
+- Setting `SHUDDHALEKHAN_DISABLE_AGENT_SHELL=1` restores the legacy separate Agent toast window as a local maintainer rollback.
 - Agent Mode now keeps enabled MCP servers connected between voice commands. A run waits up to five seconds for pending connections, then continues with the available tools and reports how many servers are unavailable.
 - Local stdio MCP servers now launch without a shell or console window, receive their declared environment variables plus a small non-secret OS baseline (PATH, system directories), keep bounded redacted diagnostics, and get five seconds to exit after stdin closes.
 - The Agent sidecar and every ordinary child process now share a kill-on-close Windows Job Object. Disabling Agent Mode or quitting the app waits for graceful cleanup before Windows enforces process-tree termination.
@@ -81,6 +86,9 @@ tags and commit history, not from this file. Keep new entries under
 - Added inline keyboard capture for letters, numbers, punctuation, function/navigation keys, ordinary modifier chords, and modifier-only combinations, including accessible cancellation, clear, conflict, and disruptive-binding confirmation states.
 - Configured triggers now suppress their down, repeat, and release behavior while unrelated keys pass through; left/right modifiers normalize to shared Ctrl, Alt, Shift, and Win identities.
 - Added a session-only Pause Global Shortcuts control to Settings and the tray. Pausing blocks only new sessions and resets when the app restarts.
+
+### Website
+- Redesigned the landing page with a coherent "Ink & Signal" design language: near-black ink canvas, Inter display typography, periwinkle/coral signal hues matching the real recording pill, scroll-reveal choreography via Motion, and an inline SVG logomark and favicon replacing the generic raster logo.
 
 ### Deferred Scope
 - Progressive paste and provider SDK realtime integrations remain deferred to v2.
