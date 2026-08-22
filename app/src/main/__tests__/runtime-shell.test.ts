@@ -323,8 +323,10 @@ describe('Agent Mode runtime shell presentation', () => {
       message: 'Checking recent messages',
       generation: 1,
     });
+    // Cards accept pointer input so long responses can scroll; they never
+    // take keyboard focus.
     expect(window.setFocusable).toHaveBeenLastCalledWith(false);
-    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true });
+    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
     expect(window.showInactive).toHaveBeenCalled();
 
     timers.length = 0;
@@ -352,7 +354,7 @@ describe('Agent Mode runtime shell presentation', () => {
     const snapshots = snapshotsOf(send);
     expect(snapshots.map((snapshot) => snapshot.kind)).toEqual(['agent-streaming', 'agent-streaming']);
     expect(snapshots.map((snapshot) => snapshot.revision)).toEqual([1, 2]);
-    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(true, { forward: true });
+    expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
   });
 
   it('ranks a pending approval above status and falls back to the surviving stream after expiry', async () => {
@@ -410,6 +412,25 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(win.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
     expect(win.showInactive).toHaveBeenCalled();
     expect(win.hide).not.toHaveBeenCalled();
+  });
+
+  it('grows streamed and completed cards toward measured content within the clamp', async () => {
+    const win = windowless(createWindowMock().send);
+    electronMock.BrowserWindow.mockImplementation(() => win);
+    const shell = await createShell('card-growth');
+    shell.prepare();
+
+    shell.showAgentCompleted('run-1', 'Long answer', []);
+    // Renderer reports the natural content height (chrome included).
+    shell.handleAgentCardSize(460);
+
+    const boundsCalls = ((win.setBounds as ReturnType<typeof vi.fn>).mock.calls as unknown[][])
+      .map((call) => call[0] as { width: number; height: number });
+    expect(boundsCalls.at(-1)).toMatchObject({ width: 520, height: 460 });
+
+    // Content beyond the clamp stops growing; the body scrolls instead.
+    shell.handleAgentCardSize(900);
+    expect(((win.setBounds as ReturnType<typeof vi.fn>).mock.calls as unknown[][]).at(-1)?.[0]).toMatchObject({ width: 520, height: 520 });
   });
 
   it('retires a pending approval once post-decision run activity arrives', async () => {

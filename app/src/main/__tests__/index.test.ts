@@ -869,6 +869,35 @@ describe('main process IPC orchestration', () => {
     }
   });
 
+  it('dismisses a presented agent terminal card through the runtime IPC channel', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+
+    await import(`../index?test=${Date.now()}-shell-dismiss`);
+
+    const result = {
+      text: 'transcribed text',
+      intent: 'agent' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    };
+    await sessionOptions.onResult(result);
+    const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
+
+    agentEventHandler?.({
+      type: 'agent:completed',
+      agentRunId: activeRunId,
+      response: 'Finished',
+      toolSummary: [],
+    });
+    expect(runtimeShellShowAgentCompleted).toHaveBeenCalledTimes(1);
+
+    ipcListeners.get('runtime:agent-dismiss')?.({});
+
+    expect(runtimeShellDismissAgentCard).toHaveBeenCalledTimes(1);
+    expect(hideAgentToast).toHaveBeenCalled();
+  });
+
   it('proxies config, device, update, and recording pill events without restarting sidecar for audio config', async () => {
     recordingSessionGetAudioWebContents.mockReturnValue({ send: vi.fn() });
     

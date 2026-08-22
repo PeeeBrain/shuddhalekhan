@@ -586,14 +586,17 @@ export class RuntimeShell {
           interactive: state.recoveryActions.length > 0,
         };
       case 'agent-status':
-        return { width: AGENT_CARD_WIDTH, height: AGENT_STATUS_HEIGHT, focusable: false, interactive: false };
       case 'agent-streaming':
       case 'agent-completed':
+        // Pointer input stays enabled so long responses scroll and controls
+        // receive clicks; focusable remains false so cards never steal focus.
         return {
           width: AGENT_CARD_WIDTH,
-          height: Math.min(this.agentResponseHeight, AGENT_RESPONSE_MAX_HEIGHT),
+          height: state.kind === 'agent-status'
+            ? AGENT_STATUS_HEIGHT
+            : Math.min(this.agentResponseHeight, AGENT_RESPONSE_MAX_HEIGHT),
           focusable: false,
-          interactive: false,
+          interactive: true,
         };
       case 'agent-approval':
         // Approval controls accept deliberate clicks and keyboard input, but

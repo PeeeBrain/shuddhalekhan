@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   DictationRecoveryAction,
@@ -48,9 +48,7 @@ export function RuntimeShellSurface() {
     case 'agent-status':
       return (
         <AgentCard tone="primary" kicker="Agent" live={{ role: 'status', 'aria-live': 'polite' }}>
-          <AgentBody>
-            {isThinkingMessage(snapshot.message) ? <ThinkingDots /> : snapshot.message}
-          </AgentBody>
+          {isThinkingMessage(snapshot.message) ? <ThinkingDots /> : snapshot.message}
         </AgentCard>
       );
     case 'agent-streaming':
@@ -61,12 +59,11 @@ export function RuntimeShellSurface() {
           live={undefined}
           announcement="Agent response is streaming"
           growRef
+          measureKey={snapshot.revision}
         >
-          <AgentBody>
-            <div aria-live="off" className="break-words">
-              {renderMarkdown(snapshot.response)}
-            </div>
-          </AgentBody>
+          <div aria-live="off" className="break-words">
+            {renderMarkdown(snapshot.response)}
+          </div>
         </AgentCard>
       );
     case 'agent-completed':
@@ -76,6 +73,7 @@ export function RuntimeShellSurface() {
           kicker="Complete"
           live={{ role: 'status', 'aria-live': 'polite' }}
           growRef
+          measureKey={snapshot.revision}
           actions={
             <Button
               type="button"
@@ -87,21 +85,19 @@ export function RuntimeShellSurface() {
             </Button>
           }
         >
-          <AgentBody>
-            <div className="break-words">{renderMarkdown(snapshot.response)}</div>
-            {snapshot.toolSummary.length > 0 ? (
-              <ul className="mt-3 flex flex-wrap gap-1.5 p-0">
-                {snapshot.toolSummary.slice(0, 3).map((item) => (
-                  <li
-                    key={item}
-                    className="max-w-full rounded-full border border-border bg-muted px-2 py-0.5 text-xs break-words text-muted-foreground"
-                  >
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </AgentBody>
+          <div className="break-words">{renderMarkdown(snapshot.response)}</div>
+          {snapshot.toolSummary.length > 0 ? (
+            <ul className="mt-3 flex flex-wrap gap-1.5 p-0">
+              {snapshot.toolSummary.slice(0, 3).map((item) => (
+                <li
+                  key={item}
+                  className="max-w-full rounded-full border border-border bg-muted px-2 py-0.5 text-xs break-words text-muted-foreground"
+                >
+                  {item}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </AgentCard>
       );
     case 'agent-failed':
@@ -121,7 +117,7 @@ export function RuntimeShellSurface() {
             </Button>
           }
         >
-          <AgentBody>{snapshot.message}</AgentBody>
+          {snapshot.message}
         </AgentCard>
       );
     case 'agent-approval':
@@ -241,6 +237,7 @@ function AgentCard({
   live,
   announcement,
   growRef,
+  measureKey,
   actions,
   children,
 }: {
@@ -251,27 +248,48 @@ function AgentCard({
   announcement?: string;
   /** Reports natural content height so main can grow the window within its clamp. */
   growRef?: boolean;
+  /** Changing this re-measures; stream deltas arrive as new revisions. */
+  measureKey?: number;
   actions?: ReactNode;
   children: ReactNode;
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  const publishSize = () => {
+    const card = cardRef.current;
+    if (!card) return;
+    const body = bodyRef.current;
+    // The scrollable body absorbs overflow, so chrome height must be added
+    // from the card box while content height comes from the body scroll box.
+    const measuredHeight = body
+      ? card.scrollHeight - body.clientHeight + body.scrollHeight
+      : card.scrollHeight;
+    window.electronAPI?.send('runtime:agent-card-size', measuredHeight);
+  };
+
+  useLayoutEffect(() => {
+    if (!growRef) return undefined;
+    let frame = 0;
+    frame = window.requestAnimationFrame(publishSize);
+    return () => window.cancelAnimationFrame(frame);
+  }, [growRef, measureKey]);
 
   useEffect(() => {
     if (!growRef) return undefined;
-    const element = cardRef.current;
-    if (!element) return undefined;
+    const card = cardRef.current;
+    const body = bodyRef.current;
+    if (!card || !body) return undefined;
     let frame = 0;
-    const publishSize = () => {
+    const schedulePublish = () => {
       window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        // scrollHeight grows with overflow but never reports shrinkage at the
-        // current window size; main enforces the completed-card no-shrink rule.
-        window.electronAPI?.send('runtime:agent-card-size', element.scrollHeight + 2);
-      });
+      frame = window.requestAnimationFrame(publishSize);
     };
-    publishSize();
-    const observer = new ResizeObserver(publishSize);
-    observer.observe(element);
+    // Window-driven size changes resize the card box; observe both so
+    // clamped growth and later shrinks keep the report current.
+    const observer = new ResizeObserver(schedulePublish);
+    observer.observe(card);
+    observer.observe(body);
     return () => {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
@@ -290,7 +308,12 @@ function AgentCard({
       <header className="mb-3 flex min-h-[10px] items-center justify-between gap-3">
         <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{kicker}</span>
       </header>
-      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+      <div
+        ref={bodyRef}
+        className="min-h-0 flex-1 overflow-y-auto break-words text-sm leading-relaxed text-muted-foreground"
+      >
+        {children}
+      </div>
       {actions ? (
         <div className="mt-3 flex flex-shrink-0 justify-end gap-2 border-t border-border/60 pt-3">
           {actions}
@@ -306,14 +329,6 @@ const toneClass = {
   success: 'border-l-success',
   destructive: 'border-l-destructive',
 } as const;
-
-function AgentBody({ children }: { children: ReactNode }) {
-  return (
-    <div className="min-h-0 flex-1 overflow-auto break-words text-sm leading-relaxed text-muted-foreground">
-      {children}
-    </div>
-  );
-}
 
 function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
   // Remounted per approvalId via key; drafts persist across preemption in a

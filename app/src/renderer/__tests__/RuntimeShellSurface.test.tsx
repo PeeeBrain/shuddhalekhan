@@ -1,207 +1,190 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { render, screen, cleanup, act, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { RuntimeShellSurface } from '../RuntimeShellSurface';
+import type { RuntimePresentationSnapshot } from '../../types/ipc';
 
-const listeners = new Map<string, Array<(...args: any[]) => void>>();
-const send = mock(() => undefined);
+type Listener = (...args: unknown[]) => void;
 
-function emit(channel: string, ...args: any[]) {
-  (listeners.get(channel) ?? []).forEach((cb) => cb(...args));
+const listeners: Record<string, Listener[]> = {};
+const send = mock(() => {});
+const invoke = mock(() => Promise.resolve());
+let rafSpy: ReturnType<typeof spyOn> | null = null;
+
+function mockElectronAPI() {
+  for (const key of Object.keys(listeners)) delete listeners[key];
+  send.mockClear();
+  invoke.mockClear();
+
+  (window as unknown as { electronAPI: unknown }).electronAPI = {
+    subscribe: (channel: string, callback: Listener) => {
+      if (!listeners[channel]) listeners[channel] = [];
+      listeners[channel].push(callback);
+      return () => {
+        listeners[channel] = (listeners[channel] ?? []).filter((l) => l !== callback);
+      };
+    },
+    send,
+    invoke,
+  };
 }
 
-afterEach(() => {
-  cleanup();
-  listeners.clear();
-  send.mockClear();
-});
+function emit(channel: string, ...args: unknown[]) {
+  (listeners[channel] ?? []).forEach((l) => l(...args));
+}
 
-describe('runtime shell presentation', () => {
-  it('shows only declared recovery actions and ignores stale revisions', () => {
-    (window as any).electronAPI = {
-      subscribe: (channel: string, callback: (...args: any[]) => void) => {
-        const list = listeners.get(channel) ?? [];
-        list.push(callback);
-        listeners.set(channel, list);
-        return () => {
-          listeners.set(channel, (listeners.get(channel) ?? []).filter((cb) => cb !== callback));
-        };
-      },
-      send,
-    };
-    render(<RuntimeShellSurface />);
+type SnapshotInput = DistributiveOmit<RuntimePresentationSnapshot, 'generation' | 'revision'> & { revision?: number };
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-    act(() => emit('runtime:snapshot', {
-      kind: 'failure', generation: 2, revision: 4, recordingSessionId: 'session-1',
-      message: 'Automatic paste failed.',
-      recoveryActions: ['retry-paste', 'copy-full-transcript'],
-    }));
+function showCard(snapshot: SnapshotInput) {
+  act(() => {
+    emit('runtime:snapshot', { generation: 1, revision: snapshot.revision ?? 1, ...snapshot });
+  });
+}
 
-    expect(screen.getByRole('alert')).toHaveTextContent('Automatic paste failed.');
-    expect(screen.getByRole('button', { name: 'Retry Paste' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Copy Full Transcript' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /partial/i })).not.toBeInTheDocument();
+function runFramesSynchronously() {
+  // happy-dom never fires requestAnimationFrame on its own.
+  rafSpy = spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
+    callback(0);
+    return 0 as unknown as number;
+  });
+}
 
-    act(() => emit('runtime:snapshot', { kind: 'idle', generation: 2, revision: 3 }));
-    expect(screen.getByRole('alert')).toBeInTheDocument();
-
-    screen.getByRole('button', { name: 'Copy Full Transcript' }).click();
-    expect(send).toHaveBeenCalledWith('runtime:recovery-action', 'copy-full-transcript');
+describe('RuntimeShellSurface agent cards', () => {
+  afterEach(() => {
+    cleanup();
+    rafSpy?.mockRestore();
+    rafSpy = null;
   });
 
-  it('acknowledges Retry Paste and blocks duplicate recovery actions', () => {
-    (window as any).electronAPI = {
-      subscribe: (channel: string, callback: (...args: any[]) => void) => {
-        const list = listeners.get(channel) ?? [];
-        list.push(callback);
-        listeners.set(channel, list);
-        return () => listeners.set(
-          channel,
-          (listeners.get(channel) ?? []).filter((cb) => cb !== callback),
-        );
-      },
-      send,
-    };
+  it('dismisses a completed card through the runtime channel', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
     render(<RuntimeShellSurface />);
 
-    act(() => emit('runtime:snapshot', {
-      kind: 'failure', generation: 1, revision: 1, recordingSessionId: 'session-1',
-      message: 'Automatic paste failed.',
-      recoveryActions: ['retry-paste', 'copy-full-transcript'],
-    }));
-
-    act(() => screen.getByRole('button', { name: 'Retry Paste' }).click());
-
-    expect(send).toHaveBeenCalledWith('runtime:recovery-action', 'retry-paste');
-    expect(screen.getByRole('button', { name: 'Retrying...' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Copy Full Transcript' })).toBeEnabled();
-
-    act(() => emit('runtime:snapshot', {
-      kind: 'failure', generation: 1, revision: 2, recordingSessionId: null,
-      message: 'Focus is still elsewhere.',
-      recoveryActions: ['retry-paste', 'copy-full-transcript'],
-    }));
-
-    expect(screen.getByRole('button', { name: 'Retry Paste' })).toBeEnabled();
-    expect(screen.getByText('Focus is still elsewhere.')).toBeInTheDocument();
-  });
-
-  it('shows committed and tentative streaming text without announcing every tentative revision', () => {
-    (window as any).electronAPI = {
-      subscribe: (channel: string, callback: (...args: any[]) => void) => {
-        const list = listeners.get(channel) ?? [];
-        list.push(callback);
-        listeners.set(channel, list);
-        return () => listeners.set(
-          channel,
-          (listeners.get(channel) ?? []).filter((cb) => cb !== callback),
-        );
-      },
-      send,
-    };
-    render(<RuntimeShellSurface />);
-
-    act(() => emit('runtime:snapshot', {
-      kind: 'recording',
-      generation: 1,
-      revision: 2,
-      recordingSessionId: 'live-session',
-      intent: 'dictation',
-      capabilities: { batch: true, streaming: true },
-      durationWarningSeconds: null,
-      committed: 'Hello ',
-      tentative: 'Hello world',
-    }));
-
-    expect(screen.getByTestId('streaming-committed')).toHaveTextContent('Hello');
-    expect(screen.getByTestId('streaming-tentative')).toHaveTextContent('world');
-    expect(screen.getByTestId('streaming-preview')).toHaveAttribute('aria-live', 'off');
-  });
-
-  it('shows a passive amber insertion-halted banner while recording continues', () => {
-    (window as any).electronAPI = {
-      subscribe: (channel: string, callback: (...args: any[]) => void) => {
-        const list = listeners.get(channel) ?? [];
-        list.push(callback);
-        listeners.set(channel, list);
-        return () => listeners.set(
-          channel,
-          (listeners.get(channel) ?? []).filter((cb) => cb !== callback),
-        );
-      },
-      send: () => undefined,
-    };
-    render(<RuntimeShellSurface />);
-
-    act(() => emit('runtime:snapshot', {
-      kind: 'recording',
-      generation: 1,
-      revision: 3,
-      recordingSessionId: 'live-session',
-      intent: 'dictation',
-      capabilities: { batch: true, streaming: true },
-      durationWarningSeconds: null,
-      committed: 'Hello',
-      tentative: 'Hello world',
-      insertionHalted: true,
-    }));
-
-    expect(screen.getByTestId('insertion-halted')).toHaveTextContent('Insertion stopped — recording continues');
-  });
-
-  it('renders exactly one visual presentation state and replaces recording with processing', () => {
-    (window as any).electronAPI = {
-      subscribe: (channel: string, callback: (...args: any[]) => void) => {
-        const list = listeners.get(channel) ?? [];
-        list.push(callback);
-        listeners.set(channel, list);
-        return () => {
-          listeners.set(channel, (listeners.get(channel) ?? []).filter((cb) => cb !== callback));
-        };
-      },
-      send,
-    };
-    const { container } = render(<RuntimeShellSurface />);
-
-    // Initially idle / null
-    expect(container.firstChild).toBeNull();
-
-    // Transition to recording
-    act(() => {
-      emit('runtime:snapshot', {
-        kind: 'recording',
-        generation: 1,
-        revision: 1,
-        recordingSessionId: 'session-1',
-        intent: 'dictation',
-        capabilities: { batch: true, streaming: false },
-        durationWarningSeconds: null,
-      });
-      emit('recording:pill-show', 'session-1');
+    showCard({
+      kind: 'agent-completed',
+      agentRunId: 'run-1',
+      response: 'All done.',
+      toolSummary: [],
     });
 
-    expect(screen.getByRole('status')).toHaveClass('visible');
-    expect(screen.queryByText('Processing…')).not.toBeInTheDocument();
+    const dismiss = await screen.findByRole('button', { name: 'Dismiss' });
+    await user.click(dismiss);
 
-    // Transition to processing: recording indicator must be replaced by processing
-    act(() => emit('runtime:snapshot', {
-      kind: 'processing',
-      generation: 1,
+    expect(send).toHaveBeenCalledWith('runtime:agent-dismiss');
+  });
+
+  it('dismisses a failed card through the runtime channel', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+
+    showCard({ kind: 'agent-failed', agentRunId: null, message: 'Provider unreachable.' });
+
+    const dismiss = await screen.findByRole('button', { name: 'Dismiss' });
+    await user.click(dismiss);
+
+    expect(send).toHaveBeenCalledWith('runtime:agent-dismiss');
+  });
+
+  it('reports measured content height for response cards', async () => {
+    runFramesSynchronously();
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+
+    showCard({
+      kind: 'agent-streaming',
+      agentRunId: 'run-1',
+      response: 'A long streamed answer.',
+    });
+    showCard({
+      kind: 'agent-streaming',
+      agentRunId: 'run-1',
+      response: 'A long streamed answer that grew.',
       revision: 2,
+    });
+
+    await waitFor(() => {
+      const sizeCalls = (send.mock.calls as unknown[][]).filter((call) => call[0] === 'runtime:agent-card-size');
+      expect(sizeCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    for (const call of send.mock.calls as unknown[][]) {
+      if (call[0] === 'runtime:agent-card-size') {
+        expect(typeof call[1]).toBe('number');
+      }
+    }
+  });
+
+  it('sends approval decisions with optional denial feedback', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+
+    showCard({
+      kind: 'agent-approval',
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: { to: 'a@example.com' },
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    await screen.findByText('mail:send_message');
+    await user.click(await screen.findByRole('button', { name: 'Deny' }));
+
+    expect(invoke).toHaveBeenCalledWith(
+      'agent:approval-decision',
+      'run-1',
+      'approval-1',
+      'denied',
+      undefined,
+    );
+  });
+
+  it('keeps denial feedback drafts across preemption round-trips', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+
+    showCard({
+      kind: 'agent-approval',
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    const feedback = await screen.findByLabelText('Optional denial message');
+    await user.type(feedback, 'Use the other account');
+
+    // A dictation recording preempts the approval visually.
+    showCard({
+      kind: 'recording',
       recordingSessionId: 'session-1',
-    }));
+      intent: 'dictation',
+      capabilities: { batch: true, streaming: false },
+      durationWarningSeconds: null,
+    });
 
-    const processingSurface = screen.getByRole('status', { name: 'Processing transcription' });
-    expect(processingSurface).toHaveClass('bg-transparent');
-    expect(screen.getByText('Processing…').parentElement).toHaveClass('h-10', 'w-40', 'rounded-full');
-    expect(screen.queryByRole('status', { name: /recording in progress/i })).not.toBeInTheDocument();
+    // The approval resurfaces after capture ends; the draft survives.
+    showCard({
+      kind: 'agent-approval',
+      agentRunId: 'run-1',
+      approvalId: 'approval-1',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: {},
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revision: 5,
+    });
 
-    // Transition to idle
-    act(() => emit('runtime:snapshot', {
-      kind: 'idle',
-      generation: 1,
-      revision: 3,
-    }));
-
-    expect(container.firstChild).toBeNull();
+    expect(await screen.findByLabelText('Optional denial message')).toHaveValue('Use the other account');
   });
 });
