@@ -127,6 +127,25 @@ describe('RecordingSession', () => {
     expect(session.isActive()).toBe(true);
   });
 
+  it('notifies the owner after a recording start is accepted', () => {
+    const onBegin = vi.fn();
+    session = new RecordingSessionCtor({
+      audioCapture: audioStream,
+      showRecordingPill,
+      hideRecordingPill,
+      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onBegin,
+    });
+
+    expect(session.begin('agent')).toBe(true);
+
+    expect(onBegin).toHaveBeenCalledWith('agent');
+    expect(onBegin).toHaveBeenCalledTimes(1);
+  });
+
   it('attaches opaque session identity, revision, and provider capabilities to recording presentation', () => {
     session.begin('dictation');
 

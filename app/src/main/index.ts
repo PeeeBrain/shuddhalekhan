@@ -139,6 +139,9 @@ const recordingSession = new RecordingSession({
   ...(runtimeShell ? { runtimeShell } : {}),
   isAgentModeEnabled: () => cachedAgentEnabled,
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
+  onBegin: (intent) => {
+    if (intent === 'agent') invalidateActiveAgentRun();
+  },
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
   getDictationMode: () => getConfig().dictation.mode,
@@ -475,6 +478,16 @@ function showAgentConfigNotice(message: string): void {
   showAgentToast({ kind: 'config', message });
 }
 
+function invalidateActiveAgentRun(): void {
+  agentPresenter.beginRun();
+  const previousRunId = activeAgentRunId;
+  activeAgentRunId = null;
+  if (!previousRunId) return;
+  agentTerminalWaiters.get(previousRunId)?.();
+  agentTerminalWaiters.delete(previousRunId);
+  agentSidecar.cancelRun(previousRunId);
+}
+
 function startAgentRun(text: string, config: AppConfig): Promise<void> {
   if (!config.agent.enabled) {
     console.warn('Ignoring Agent Mode transcript because Agent Mode is disabled');
@@ -482,26 +495,21 @@ function startAgentRun(text: string, config: AppConfig): Promise<void> {
     return Promise.resolve();
   }
 
-  // A new run invalidates any prior run presentation before cancellation.
-  agentPresenter.beginRun();
-  if (activeAgentRunId) {
-    agentTerminalWaiters.get(activeAgentRunId)?.();
-    agentTerminalWaiters.delete(activeAgentRunId);
-    agentSidecar.cancelRun(activeAgentRunId);
-  }
-
-  activeAgentRunId = randomUUID();
+  // A new run invalidates any prior run before replacement events can arrive.
+  invalidateActiveAgentRun();
+  const agentRunId = randomUUID();
+  activeAgentRunId = agentRunId;
   const terminal = new Promise<void>((resolve) => {
-    agentTerminalWaiters.set(activeAgentRunId!, resolve);
+    agentTerminalWaiters.set(agentRunId, resolve);
   });
   agentSidecar.startRun(
-    activeAgentRunId,
+    agentRunId,
     text,
     config,
     getAgentSidecarApiKey(config, credentialVault),
   );
-  console.log(`Started Agent Mode run ${activeAgentRunId}`);
-  getSettingsWindow()?.webContents.send('audit:run-updated', activeAgentRunId);
+  console.log(`Started Agent Mode run ${agentRunId}`);
+  getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);
   return terminal;
 }
 

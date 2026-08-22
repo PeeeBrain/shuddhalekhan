@@ -821,6 +821,31 @@ describe('main process IPC orchestration', () => {
     expect(showAgentToast).not.toHaveBeenCalled();
   });
 
+  it('cancels the active run when a new Agent recording starts and drops its late events', async () => {
+    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+
+    await import(`../index?test=${Date.now()}-agent-recording-invalidates-run`);
+    await sessionOptions.onResult({
+      text: 'first command',
+      intent: 'agent' as const,
+      targetSnapshot: defaultTargetSnapshot,
+    });
+    const previousRunId = agentStartRun.mock.calls[0]?.[0] as string;
+    runtimeShellShowAgentStatus.mockClear();
+
+    sessionOptions.onBegin('agent');
+    agentEventHandler?.({
+      type: 'agent:status',
+      agentRunId: previousRunId,
+      status: 'Late status',
+    });
+
+    expect(agentCancelRun).toHaveBeenCalledWith(previousRunId);
+    expect(runtimeShellShowAgentStatus).not.toHaveBeenCalled();
+  });
+
   it('shows one persistent shell failure when the sidecar exits unexpectedly', async () => {
     delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
 

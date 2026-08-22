@@ -500,6 +500,27 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(((win.setBounds as ReturnType<typeof vi.fn>).mock.calls as unknown[][]).at(-1)?.[0]).toMatchObject({ width: 520, height: 520 });
   });
 
+  it('ignores Agent card sizes while another presentation is visible', async () => {
+    const { window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('card-size-visible-state');
+    shell.prepare();
+
+    shell.showAgentStreaming('run-1', 'Long answer');
+    shell.showFailure('session-1', 'Paste failed');
+    window.setBounds.mockClear();
+
+    shell.handleAgentCardSize(460);
+
+    expect(window.setBounds).not.toHaveBeenCalled();
+    shell.finish();
+    shell.handleAgentCardSize(460);
+    expect(window.setBounds).toHaveBeenLastCalledWith(
+      expect.objectContaining({ width: 520, height: 460 }),
+      false,
+    );
+  });
+
   it('retires a pending approval once post-decision run activity arrives', async () => {
     const { send, window } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => window);

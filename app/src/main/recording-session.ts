@@ -230,6 +230,7 @@ export interface RecordingSessionOptions {
   getReadinessError?: () => Error | null;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
   onError?: (error: Error) => void;
+  onBegin?: (intent: RecordingIntent) => void;
 
   audioCapture?: AudioCapture;
   runtimeShell?: RuntimeShellBackend;
@@ -304,6 +305,7 @@ export class RecordingSession {
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
+  private onBeginCallback?: (intent: RecordingIntent) => void;
   private getSelectedDeviceId?: () => string | null;
 
   constructor(options: RecordingSessionOptions) {
@@ -357,6 +359,7 @@ export class RecordingSession {
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
     this.onResultCallback = options.onResult;
     this.onErrorCallback = options.onError;
+    this.onBeginCallback = options.onBegin;
     this.getSelectedDeviceId = options.getSelectedDeviceId;
   }
 
@@ -453,6 +456,7 @@ export class RecordingSession {
       recordingSessionId: run.id,
       surface: intent,
     });
+    this.onBeginCallback?.(intent);
 
     const deviceId = this.getSelectedDeviceId?.();
     console.log(`Starting recording session. Device: ${deviceId ?? 'default'}`);

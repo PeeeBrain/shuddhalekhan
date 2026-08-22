@@ -403,9 +403,9 @@ export class RuntimeShell {
   /** Applies renderer-measured content growth for streamed/completed cards. */
   handleAgentCardSize(contentHeight: number): void {
     if (!Number.isFinite(contentHeight)) return;
-    const presentingCompleted = this.agentTerminal?.phase === 'completed' && !this.hasActiveTransients();
-    const streaming = this.agentApproval === null && this.agentStream !== null;
-    if (!presentingCompleted && !streaming) return;
+    const state = this.derive();
+    const presentingCompleted = state.kind === 'agent-completed';
+    if (!presentingCompleted && state.kind !== 'agent-streaming') return;
     const nextContentHeight = Math.min(
       AGENT_RESPONSE_MAX_HEIGHT,
       Math.max(AGENT_RESPONSE_BASE_HEIGHT, Math.ceil(contentHeight)),
@@ -419,7 +419,7 @@ export class RuntimeShell {
     this.agentResponseHeight = Math.max(this.agentResponseHeight, nextContentHeight);
     const win = this.windows.get();
     if (!win || win.isDestroyed()) return;
-    this.applyGeometry(win, this.derive());
+    this.applyGeometry(win, state);
   }
 
   updateDurationWarning(remainingSeconds: number | null): void {
@@ -664,12 +664,6 @@ export class RuntimeShell {
     if (this.agentApproval === null && this.agentStream !== null) return 'streaming';
     if (this.agentTerminal?.phase === 'completed') return 'completed';
     return null;
-  }
-
-  private hasActiveTransients(): boolean {
-    return this.agentStatus !== null
-      || this.agentStream !== null
-      || this.agentApproval !== null;
   }
 
   private invalidateAgentPresentation(): void {
