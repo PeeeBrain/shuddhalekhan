@@ -355,8 +355,8 @@ export class RuntimeShell {
     this.agentApproval = approvalFact;
     const delay = Math.max(0, expiresAtMs - Date.now());
     this.approvalTimer = this.timers.setTimeoutFn(() => {
-      this.approvalTimer = null;
       if (this.agentApproval !== approvalFact) return;
+      this.approvalTimer = null;
       this.agentApproval = null;
       this.republish();
     }, delay);

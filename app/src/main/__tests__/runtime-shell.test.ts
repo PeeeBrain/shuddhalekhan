@@ -422,11 +422,9 @@ describe('Agent Mode runtime shell presentation', () => {
       expiresAt: secondExpiry,
     });
 
-    timers[1].fn();
-    expect(snapshotsOf(send).at(-1)).toMatchObject({
-      kind: 'agent-streaming',
-      response: 'Draft ready for review',
-    });
+    shell.clearAgentRun();
+    expect(clearTimeoutFn).toHaveBeenLastCalledWith(2);
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'idle' });
   });
 
   it('ignores approvals with invalid expiry timestamps', async () => {
