@@ -1,21 +1,27 @@
 import { Header } from '@/components/landing/Header';
 import { Hero } from '@/components/landing/Hero';
-import { HowItWorks } from '@/components/landing/HowItWorks';
+import { DictationSection } from '@/components/landing/DictationSection';
 import { AgentSection } from '@/components/landing/AgentSection';
+import { Principles } from '@/components/landing/Principles';
 import { Story } from '@/components/landing/Story';
 import { Cta } from '@/components/landing/Cta';
 
 export function LandingPage() {
   return (
-    <div className="min-h-screen bg-[#07080a] text-zinc-100 font-sans selection:bg-zinc-700 selection:text-white">
-      {/* Ambient background glow - static subtle glow without strobing pulse */}
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[1200px] h-[450px] bg-gradient-to-b from-indigo-500/10 via-purple-500/5 to-transparent blur-3xl pointer-events-none" />
-
+    <div className="relative min-h-screen overflow-x-clip bg-background text-foreground antialiased">
+      {/* Page-level vignette keeps edges ink-dark so signal glows read as intentional */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-40 bg-[linear-gradient(to_bottom,transparent_92%,rgba(0,0,0,0.5)),linear-gradient(to_right,black,transparent_6%,transparent_94%,black)] opacity-60"
+      />
       <Header />
-      <Hero />
-      <HowItWorks />
-      <AgentSection />
-      <Story />
+      <main>
+        <Hero />
+        <DictationSection />
+        <AgentSection />
+        <Principles />
+        <Story />
+      </main>
       <Cta />
     </div>
   );

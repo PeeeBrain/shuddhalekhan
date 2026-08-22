@@ -29,4 +29,9 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Vendored shadcn/ui output legitimately exports variants alongside components.
+    files: ['src/components/ui/**/*.{ts,tsx}'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
 );
