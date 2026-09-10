@@ -622,6 +622,7 @@ describe('runAgent', () => {
     expect(streamTextMock.mock.calls[0]?.[0].providerOptions).toEqual({});
 
     const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
+    expect(providerConfig.headers?.['x-opencode-session']).toBeUndefined();
     expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
       messages: [],
       reasoning: { effort: 'low' },
@@ -665,6 +666,10 @@ describe('runAgent', () => {
       messages: [],
       thinking: { type: 'enabled' },
       reasoning_effort: 'high',
+    });
+    expect(providerConfig.headers).toMatchObject({
+      'x-opencode-session': 'run-1',
+      'User-Agent': 'shuddhalekhan-agent/1.0',
     });
   });
 

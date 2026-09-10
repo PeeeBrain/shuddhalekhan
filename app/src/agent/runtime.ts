@@ -112,7 +112,15 @@ function looksLikeRawApiKey(value: string): boolean {
 
 function getProviderHeaders(
   baseUrl: string,
+  sessionId: string,
 ): Record<string, string> | undefined {
+  if (baseUrl.includes("opencode.ai")) {
+    return {
+      "x-opencode-session": sessionId,
+      "User-Agent": "shuddhalekhan-agent/1.0",
+    };
+  }
+
   if (!baseUrl.includes("openrouter.ai")) return undefined;
 
   return {
@@ -338,7 +346,7 @@ function normalizeFinalResponse(
 }
 
 export async function runAgent(
-  _agentRunId: string,
+  agentRunId: string,
   transcript: string,
   config: AppConfig,
   tools: Record<string, Tool>,
@@ -407,7 +415,7 @@ export async function runAgent(
       name: "shuddhalekhan",
       baseURL: provider.baseUrl,
       apiKey,
-      headers: getProviderHeaders(provider.baseUrl),
+      headers: getProviderHeaders(provider.baseUrl, agentRunId),
       transformRequestBody: (args) =>
         applyDefaultReasoningOptions(
           args,
