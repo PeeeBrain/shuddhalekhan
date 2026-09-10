@@ -733,6 +733,25 @@ describe('Settings section reachability', () => {
     expect(screen.getByText('Try a dictation (Ctrl + Win)')).toBeInTheDocument();
   });
 
+  it('points fresh Live Dictation setups at WhisperLiveKit readiness in the checklist', async () => {
+    const config = baseConfig({ setupChecklistDismissed: false });
+    renderSettings({
+      config: {
+        ...config,
+        transcription: {
+          ...config.transcription,
+          activeProvider: 'whisper-live-kit',
+        },
+      },
+    });
+    await waitForLoaded();
+
+    expect(
+      screen.getByText('Start WhisperLiveKit and check readiness'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Set Whisper endpoint')).toBeNull();
+  });
+
   it('dismisses the first-run setup checklist through config persistence', async () => {
     const { settingsIpc } = renderSettings({
       config: baseConfig({ setupChecklistDismissed: false }),

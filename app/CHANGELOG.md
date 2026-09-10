@@ -8,6 +8,8 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Dictation Runtime
+- Live Dictation is now the out-of-the-box default for genuinely new installations, together with Toggle activation and the WhisperLiveKit provider. The promoted identity is written as an explicit stored choice on first run, so it survives restarts. Every pre-existing store — including legacy v4 stores that predate dictation modes — keeps Batch Dictation and its own shortcuts and provider; nothing is silently re-modeed by an upgrade.
+- The first-run setup checklist now points streaming setups at WhisperLiveKit readiness instead of the local whisper.cpp endpoint.
 - Live Dictation (beta) now dispatches committed WhisperLiveKit text through ordered `KEYEVENTF_UNICODE` insertion into the exact original target window, with keyboard-release gating, whitespace projection, fail-closed target validation, and certainty-based recovery when Windows accepts zero, all, or only part of a delta.
 - Fixed modifier-only recording shortcuts leaking a Windows-key release that could move focus before insertion. Recovery buttons now accept clicks without activating Shuddhalekhan, so Retry Paste checks and pastes into the app that still owns focus.
 - WhisperLiveKit Live Dictation now shows committed and tentative text during recording. When live Unicode insertion cannot dispatch anything, stop still falls back once to a single exact-target clipboard paste of the complete transcript; streaming failures still fall back once to WhisperLiveKit batch transcription from the retained recording.

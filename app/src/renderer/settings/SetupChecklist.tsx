@@ -17,9 +17,14 @@ export function SetupChecklist({
   onNavigate,
   persistence,
 }: SetupChecklistProps) {
-  const whisperComplete =
-    config.whisperUrl !== '' &&
-    config.whisperUrl !== 'http://localhost:8080/inference';
+  // Fresh installs default to Live Dictation against WhisperLiveKit, so the
+  // first-run endpoint item tracks the streaming provider instead of the
+  // legacy local whisper.cpp endpoint.
+  const usesStreamingProvider = config.transcription.activeProvider === 'whisper-live-kit';
+  const whisperComplete = usesStreamingProvider
+    ? (config.transcription.providers.whisperLiveKit?.baseUrl.trim().length ?? 0) > 0
+    : config.whisperUrl !== '' &&
+      config.whisperUrl !== 'http://localhost:8080/inference';
   const micComplete = config.selectedDeviceId !== null && config.selectedDeviceId !== '';
 
   const items: Array<{
@@ -28,7 +33,7 @@ export function SetupChecklist({
     action?: () => void;
   }> = [
     {
-      label: 'Set Whisper endpoint',
+      label: usesStreamingProvider ? 'Start WhisperLiveKit and check readiness' : 'Set Whisper endpoint',
       done: whisperComplete,
       action: () => onNavigate('transcription'),
     },

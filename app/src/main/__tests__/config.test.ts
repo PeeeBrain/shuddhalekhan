@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { normalize } from 'path';
+import { join, normalize } from 'path';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
@@ -55,6 +55,13 @@ describe('config store', () => {
     storeOptions.length = 0;
   });
 
+  /** Declare that a config store file already existed on disk before this boot. */
+  function givenExistingStoreFile(): void {
+    existsSync.mockImplementation(
+      (path: unknown) => path === normalize(join('/home/tester', 'Shuddhalekhan', 'shuddhalekhan-config.json')),
+    );
+  }
+
   it('uses a stable store directory instead of package-derived userData', async () => {
     existsSync.mockReturnValue(false);
     await import(`../config?test=${Date.now()}-stable-store-path`);
@@ -80,22 +87,21 @@ describe('config store', () => {
     );
   });
 
-  it('returns defaults when no legacy config exists', async () => {
+  it('seeds promoted Live Dictation defaults for a genuinely new installation', async () => {
+    // No store file on disk and no legacy ~/.speech-2-text config.
     existsSync.mockReturnValue(false);
-    const { getConfig } = await import(`../config?test=${Date.now()}-1`);
+    const { getConfig } = await import(`../config?test=${Date.now()}-fresh-install`);
 
-    expect(getConfig().transcription).toEqual({
-      activeProvider: 'local-whisper-cpp',
-      providers: {
-        localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
-        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
-        azureSpeech: { endpoint: '', region: '' },
-        googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
-        nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
-        whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
-      },
+    expect(getConfig().transcription.activeProvider).toBe('whisper-live-kit');
+    expect(getConfig().transcription.providers.whisperLiveKit).toEqual({
+      baseUrl: 'http://localhost:8000',
+      auth: 'none',
     });
+    expect(getConfig().dictation).toEqual({ mode: 'live', formatter: null });
+    expect(getConfig().shortcuts.dictation.activationMode).toBe('toggle');
+    expect(getConfig().shortcuts.dictation.binding).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
+    // Agent Mode keeps its historical default; promotion only touches dictation.
+    expect(getConfig().shortcuts.agent.activationMode).toBe('push-to-talk');
     expect(getConfig()).toMatchObject({
       whisperUrl: 'http://localhost:8080/inference',
       selectedDeviceId: null,
@@ -106,7 +112,6 @@ describe('config store', () => {
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
       recordingActivationMode: 'push-to-talk',
-      dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
         provider: {
@@ -120,6 +125,14 @@ describe('config store', () => {
         mcpServers: [],
       },
     });
+    // The promoted identity is materialized as an explicit stored choice so a
+    // later boot can never re-read it as an implicit legacy default.
+    expect(storeData.get('dictation')).toEqual({ mode: 'live', formatter: null });
+    expect(storeData.get('shortcuts')).toMatchObject({
+      dictation: { activationMode: 'toggle' },
+      agent: { activationMode: 'push-to-talk' },
+    });
+    expect(storeData.get('transcription')).toMatchObject({ activeProvider: 'whisper-live-kit' });
   });
 
   it('tracks the last viewed release notes without exposing it as user config', async () => {
@@ -168,7 +181,7 @@ describe('config store', () => {
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
       recordingActivationMode: 'push-to-talk',
-      dictation: { mode: 'batch', formatter: null },
+      dictation: { mode: 'live', formatter: null },
       agent: {
         enabled: false,
         provider: {
@@ -183,7 +196,7 @@ describe('config store', () => {
   });
 
   it('migrates an existing whisperUrl into the active local provider without setup', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     storeData.set('whisperUrl', 'http://existing.test/inference');
 
     const { getConfig } = await import(`../config?test=${Date.now()}-provider-migration`);
@@ -203,7 +216,7 @@ describe('config store', () => {
   });
 
   it('retains local provider settings in the provider-specific configuration', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-provider-retention`);
 
     setConfig('transcription', {
@@ -225,7 +238,7 @@ describe('config store', () => {
   });
 
   it('retains inactive Microsoft Azure Speech configuration', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-azure-retention`);
     const transcription = getConfig().transcription;
 
@@ -510,7 +523,7 @@ describe('config store', () => {
   });
 
   it('defaults to the explicit Ctrl+Win and Alt+Win bindings', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-defaults`);
 
     expect(getConfig().shortcuts).toEqual({
@@ -526,7 +539,7 @@ describe('config store', () => {
   });
 
   it('seeds both intent activation modes from the shared mode during migration', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     storeData.set('recordingActivationMode', 'toggle');
 
     const { getConfig } = await import(`../config?test=${Date.now()}-shortcut-migration`);
@@ -538,7 +551,7 @@ describe('config store', () => {
   });
 
   it('keeps shortcut migration idempotent across repeated startups', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     storeData.set('recordingActivationMode', 'toggle');
 
     const first = await import(`../config?test=${Date.now()}-shortcut-idempotent-a`);
@@ -617,7 +630,7 @@ describe('config store', () => {
   });
 
   it('normalizes a supported pre-mode store to Batch Dictation without rewriting other references', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
     for (const [key, value] of Object.entries(fixture.default ?? fixture)) {
       if (key === 'default') continue;
@@ -671,7 +684,7 @@ describe('config store', () => {
   });
 
   it('keeps Dictation mode migration idempotent across two startups', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
     for (const [key, value] of Object.entries(fixture.default ?? fixture)) {
       if (key === 'default') continue;
@@ -718,7 +731,7 @@ describe('config store', () => {
   });
 
   it('rejects Live Dictation when the provider cannot stream or activation is not Toggle', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-live`);
 
     expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
@@ -738,7 +751,7 @@ describe('config store', () => {
   });
 
   it('rejects Corrected Dictation without a formatter profile', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-corrected`);
 
     expect(() => setConfig('dictation', { mode: 'corrected', formatter: null })).toThrow(
@@ -748,7 +761,7 @@ describe('config store', () => {
   });
 
   it('persists Corrected Dictation when a formatter profile is present', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-persist-corrected`);
 
     setConfig('dictation', {
@@ -775,7 +788,7 @@ describe('config store', () => {
   });
 
   it('rejects Corrected Dictation without processing consent', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-consent`);
 
     expect(() => setConfig('dictation', {
@@ -792,7 +805,7 @@ describe('config store', () => {
   });
 
   it('rejects unsafe remote formatter profiles', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-formatter-safety`);
 
     expect(() => setConfig('dictation', {
@@ -858,7 +871,7 @@ describe('config store', () => {
   });
 
   it('preserves Batch Dictation and Agent-only config when maintainer gates are off', async () => {
-    existsSync.mockReturnValue(false);
+    givenExistingStoreFile();
     const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
     for (const [key, value] of Object.entries(fixture.default ?? fixture)) {
       if (key === 'default') continue;

@@ -5,7 +5,7 @@ import { existsSync, readFileSync, unlinkSync } from 'fs';
 import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig, TranscriptionProviderId } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
-import { DEFAULT_DICTATION_CONFIG, getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig } from '../shared/dictation-runtime';
+import { getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
 import { preparePersistentStoreDirectory } from './store-path';
 import { isolatePerformanceDriverConfig } from './performance/scenario-driver';
 
@@ -18,10 +18,23 @@ type StoreConfig = Omit<AppConfig, 'dictation'> & {
 };
 
 const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:8080/inference';
+const CONFIG_STORE_FILENAME = 'shuddhalekhan-config.json';
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_OPENAI_MODEL = '';
+
+/**
+ * Resolve the install-time dictation identity before the store is created:
+ * a missing config file is a genuinely new installation and receives the
+ * promoted Live Dictation setup, while any pre-existing file keeps the
+ * historical Batch/push-to-talk/local-Whisper defaults. The check must run
+ * before electron-store creates the file on first run.
+ */
+const storeDirectory = preparePersistentStoreDirectory();
+const storeFileExisted = existsSync(join(storeDirectory, CONFIG_STORE_FILENAME));
+const installDefaults = resolveInstallDefaults(storeFileExisted);
+
 const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
-  activeProvider: 'local-whisper-cpp',
+  activeProvider: installDefaults.transcriptionProviderId,
   providers: {
     localWhisperCpp: { endpoint: DEFAULT_LOCAL_ENDPOINT },
     openai: { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
@@ -35,7 +48,7 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
 
 const store = new Store<StoreConfig>({
   name: 'shuddhalekhan-config',
-  cwd: preparePersistentStoreDirectory(),
+  cwd: storeDirectory,
   defaults: {
     whisperUrl: DEFAULT_LOCAL_ENDPOINT,
     transcription: DEFAULT_TRANSCRIPTION,
@@ -50,8 +63,14 @@ const store = new Store<StoreConfig>({
     },
     setupChecklistDismissed: false,
     recordingActivationMode: 'push-to-talk',
-    shortcuts: DEFAULT_SHORTCUTS,
-    dictation: DEFAULT_DICTATION_CONFIG,
+    shortcuts: {
+      dictation: {
+        binding: DEFAULT_SHORTCUTS.dictation.binding,
+        activationMode: installDefaults.dictationActivationMode,
+      },
+      agent: DEFAULT_SHORTCUTS.agent,
+    },
+    dictation: { mode: installDefaults.dictationMode, formatter: null },
     agent: {
       enabled: false,
       provider: {
@@ -153,12 +172,18 @@ function maybeMigrateShortcutsConfig(): void {
 
   const sharedMode = store.get('recordingActivationMode') === 'toggle' ? 'toggle' : 'push-to-talk';
   const stored = store.get('shortcuts');
+  // Upgraded stores have no stored per-intent modes, so both intents keep
+  // deriving from the legacy shared mode. Fresh installs have no historical
+  // shared mode to honor and seed the promoted dictation activation instead.
+  const dictationActivation = storeFileExisted
+    ? sharedMode
+    : installDefaults.dictationActivationMode;
   store.set('shortcuts', {
     dictation: {
       binding: stored?.dictation?.binding !== undefined
         ? stored.dictation.binding
         : DEFAULT_SHORTCUTS.dictation.binding,
-      activationMode: sharedMode,
+      activationMode: dictationActivation,
     },
     agent: {
       binding: stored?.agent?.binding !== undefined
@@ -172,10 +197,16 @@ function maybeMigrateShortcutsConfig(): void {
 
 maybeMigrateShortcutsConfig();
 
+/**
+ * Materialize the dictation block so the resolved install default becomes an
+ * explicit stored choice: new installs lock in Live Dictation, upgraded stores
+ * lock in Batch — both immune to later default changes and never silently
+ * flipped by a restart.
+ */
 function persistNormalizedDictation(): void {
   const stored = store.get('dictation');
   const normalized = normalizeDictationConfig(stored);
-  if (JSON.stringify(stored ?? null) !== JSON.stringify(normalized)) {
+  if (stored === undefined || JSON.stringify(stored ?? null) !== JSON.stringify(normalized)) {
     store.set('dictation', normalized);
   }
 }
