@@ -22,7 +22,7 @@ const { values } = parseArgs({
 });
 
 if (!values.textB64) {
-  console.error('--text-b64 is required');
+  console.error('--textB64 is required');
   process.exit(2);
 }
 

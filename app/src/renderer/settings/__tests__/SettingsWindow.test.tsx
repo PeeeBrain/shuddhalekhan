@@ -17,6 +17,7 @@ import type {
   UpdateStatus,
   VersionReleaseNotes,
   CredentialStatus,
+  TranscriptionReadiness,
 } from '../../../types/ipc';
 import { SettingsWindow } from '../../SettingsWindow';
 
@@ -90,6 +91,7 @@ interface MockSettingsIpcOptions {
   credentialStatus?: CredentialStatus;
   releaseNotes?: VersionReleaseNotes | null;
   mcpStatusSnapshot?: import('../../../types/ipc').McpStatusSnapshot;
+  transcriptionReadiness?: TranscriptionReadiness;
 }
 
 function createMockSettingsIpc(
@@ -114,7 +116,7 @@ function createMockSettingsIpc(
     testMcpServer: mock(() => Promise.resolve()),
     getMcpStatusSnapshot: mock(() => Promise.resolve(options.mcpStatusSnapshot ?? { revision: 0, servers: [] })),
     checkTranscriptionServer: mock(() => Promise.resolve(true)),
-    checkTranscriptionReadiness: mock(() => Promise.resolve({
+    checkTranscriptionReadiness: mock(() => Promise.resolve(options.transcriptionReadiness ?? {
       providerId: 'whisper-live-kit' as const,
       state: 'ready' as const,
       message: 'WhisperLiveKit is ready for Batch Dictation.',
@@ -750,6 +752,47 @@ describe('Settings section reachability', () => {
       screen.getByText('Start WhisperLiveKit and check readiness'),
     ).toBeInTheDocument();
     expect(screen.queryByText('Set Whisper endpoint')).toBeNull();
+  });
+
+  it('marks the streaming checklist item Done only when WhisperLiveKit readiness is ready', async () => {
+    const config = baseConfig({ setupChecklistDismissed: false });
+    renderSettings({
+      config: {
+        ...config,
+        transcription: { ...config.transcription, activeProvider: 'whisper-live-kit' },
+      },
+    });
+    await waitForLoaded();
+
+    const item = screen.getByText('Start WhisperLiveKit and check readiness').closest('button');
+    expect(item).not.toBeNull();
+    await waitFor(() => {
+      expect(within(item as HTMLElement).getByText('Done')).toBeInTheDocument();
+    });
+  });
+
+  it('keeps the streaming checklist item To do when WhisperLiveKit readiness is unavailable', async () => {
+    const config = baseConfig({ setupChecklistDismissed: false });
+    renderSettings({
+      config: {
+        ...config,
+        transcription: { ...config.transcription, activeProvider: 'whisper-live-kit' },
+      },
+      transcriptionReadiness: {
+        providerId: 'whisper-live-kit',
+        state: 'unavailable',
+        message: 'Unable to reach WhisperLiveKit.',
+        checkedAt: null,
+      },
+    });
+    await waitForLoaded();
+
+    const item = screen.getByText('Start WhisperLiveKit and check readiness').closest('button');
+    expect(item).not.toBeNull();
+    await waitFor(() => {
+      expect(within(item as HTMLElement).getByText('To do')).toBeInTheDocument();
+    });
+    expect(within(item as HTMLElement).queryByText('Done')).toBeNull();
   });
 
   it('dismisses the first-run setup checklist through config persistence', async () => {

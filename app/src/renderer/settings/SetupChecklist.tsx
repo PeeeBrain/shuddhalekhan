@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { Tag } from './ui/rows';
-import type { AppConfig } from '../../types/ipc';
+import type { AppConfig, TranscriptionReadiness } from '../../types/ipc';
 import type { SettingsSectionId } from './settings-nav';
 import type { SettingsPersistence } from './use-settings-persistence';
 import { formatBinding } from '../../shared/shortcut-bindings';
@@ -10,19 +10,21 @@ interface SetupChecklistProps {
   config: AppConfig;
   onNavigate: (section: SettingsSectionId) => void;
   persistence: SettingsPersistence;
+  whisperLiveKitReadiness?: TranscriptionReadiness | null;
 }
 
 export function SetupChecklist({
   config,
   onNavigate,
   persistence,
+  whisperLiveKitReadiness = null,
 }: SetupChecklistProps) {
   // Fresh installs default to Live Dictation against WhisperLiveKit, so the
   // first-run endpoint item tracks the streaming provider instead of the
   // legacy local whisper.cpp endpoint.
   const usesStreamingProvider = config.transcription.activeProvider === 'whisper-live-kit';
   const whisperComplete = usesStreamingProvider
-    ? (config.transcription.providers.whisperLiveKit?.baseUrl.trim().length ?? 0) > 0
+    ? whisperLiveKitReadiness?.state === 'ready'
     : config.whisperUrl !== '' &&
       config.whisperUrl !== 'http://localhost:8080/inference';
   const micComplete = config.selectedDeviceId !== null && config.selectedDeviceId !== '';

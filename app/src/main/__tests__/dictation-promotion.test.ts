@@ -54,6 +54,9 @@ mock.module('fs', () => ({
 const STABLE_CONFIG_PATH = normalize(
   join('/home/tester', 'Shuddhalekhan', 'shuddhalekhan-config.json'),
 );
+const LEGACY_CONFIG_PATH = normalize(
+  join('/home/tester', '.speech-2-text', 'config.json'),
+);
 
 function givenStoreFileOnDisk(exists: boolean): void {
   existsSync.mockImplementation((path: unknown) => exists && path === STABLE_CONFIG_PATH);
@@ -154,6 +157,27 @@ describe('Live Dictation promotion', () => {
         activationMode: 'push-to-talk',
       });
       expect(config.whisperUrl).toBe('http://legacy.test/inference');
+    });
+
+    it('treats a legacy-only ~/.speech-2-text install as an upgrade, not a new install', async () => {
+      // No stable store file exists, but a legacy config does: this is an
+      // upgrade and must keep the historical Batch/push-to-talk/local defaults.
+      existsSync.mockImplementation((path: unknown) => path === LEGACY_CONFIG_PATH);
+      readFileSync.mockReturnValue(JSON.stringify({
+        whisper_url: 'http://legacy-only.test/inference',
+        selected_device: 'legacy-mic',
+        remove_filler_words: false,
+      }));
+
+      const { getConfig } = await bootConfig('legacy-only');
+      const config = getConfig();
+
+      expect(config.dictation).toEqual({ mode: 'batch', formatter: null });
+      expect(config.transcription.activeProvider).toBe('local-whisper-cpp');
+      expect(config.shortcuts.dictation.activationMode).toBe('push-to-talk');
+      expect(config.whisperUrl).toBe('http://legacy-only.test/inference');
+      expect(config.selectedDeviceId).toBe('legacy-mic');
+      expect(config.removeFillerWords).toBe(false);
     });
 
     it.each([

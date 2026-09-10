@@ -169,10 +169,10 @@ Execute packaged manual/interactive smoke testing across defined target applicat
 | VS Code | English / Symbols / Multi-line | Accurate Monaco insertion | Qualified |
 | Windows Terminal | Shell commands / Prompts | Direct buffer stream | Qualified |
 | Chromium (Chrome/Edge) | Form inputs / Textareas | DOM input event dispatch | Qualified |
-| Microsoft Word | Document body / Tables | RichEdit stream insertion | Qualified |
-| Active IME Window | Composition active | No key sequence clobber | Qualified |
-| Elevated Window (Admin) | Standard user session | Clean UIPI halt notice | Documented Observation |
-| Remote Desktop (RDP) | Remote desktop window | Best-effort client dispatch | Documented Observation |
+| Microsoft Word | Document body / Tables | RichEdit stream insertion | Not run (Word unavailable in this environment) |
+| Active IME Window | Composition active | No key sequence clobber | Not run |
+| Elevated Window (Admin) | Standard user session | Clean UIPI halt notice | Not performed |
+| Remote Desktop (RDP) | Remote desktop window | Best-effort client dispatch | Not performed |
 
 ---
 

@@ -25,7 +25,8 @@
 
 param(
   [string]$OutputRoot = "",
-  [string]$Targets = "notepad,windows-terminal,vscode,chromium-textarea,word"
+  [string]$Targets = "notepad,windows-terminal,vscode,chromium-textarea,word",
+  [string]$VsCodePath = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -550,8 +551,13 @@ if (Test-Selected 'windows-terminal') {
 # --- VS Code ----------------------------------------------------------------
 $codeLaunch = {
   param($Case, $tempFiles, $launchedPids)
-  $codeExe = 'D:\Microsoft VS Code\Code.exe'
-  if (-not (Test-Path $codeExe)) { throw "VS Code not found at $codeExe" }
+  $candidates = @()
+  if ($VsCodePath) { $candidates += $VsCodePath }
+  if ($env:LOCALAPPDATA) { $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Microsoft VS Code\Code.exe' }
+  if ($env:ProgramFiles) { $candidates += Join-Path $env:ProgramFiles 'Microsoft VS Code\Code.exe' }
+  if (${env:ProgramFiles(x86)}) { $candidates += Join-Path ${env:ProgramFiles(x86)} 'Microsoft VS Code\Code.exe' }
+  $codeExe = $candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+  if (-not $codeExe) { throw 'VS Code not found. Pass -VsCodePath with the path to Code.exe.' }
   $tmp = Join-Path $env:TEMP ("shuddha-smoke-code-" + [Guid]::NewGuid().ToString('N') + '.txt')
   Set-Content -Path $tmp -Encoding UTF8 -Value ''
   $tempFiles.Add($tmp)
@@ -667,6 +673,10 @@ foreach ($r in $results) {
 $md | Set-Content -Path (Join-Path $RunDir 'matrix.md') -Encoding UTF8
 
 Write-Host "results: $jsonPath"
+$unverified = @($results | Where-Object { $_.status -eq 'readback-unavailable' })
+if ($unverified.Count -gt 0) {
+  Write-Host "unverified insertions (no readback surface): $($unverified.Count)"
+}
 $failed = @($results | Where-Object {
-  $_.status -notin @('pass', 'pass-normalized', 'pass-saved-file', 'pass-saved-normalized', 'readback-unavailable') })
+  $_.status -notin @('pass', 'pass-normalized', 'pass-saved-file', 'pass-saved-normalized') })
 exit $(if ($failed.Count -gt 0) { 1 } else { 0 })

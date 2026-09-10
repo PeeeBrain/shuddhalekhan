@@ -24,14 +24,18 @@ const DEFAULT_OPENAI_MODEL = '';
 
 /**
  * Resolve the install-time dictation identity before the store is created:
- * a missing config file is a genuinely new installation and receives the
- * promoted Live Dictation setup, while any pre-existing file keeps the
- * historical Batch/push-to-talk/local-Whisper defaults. The check must run
- * before electron-store creates the file on first run.
+ * an installation with no config on disk receives the promoted Live Dictation
+ * setup, while any pre-existing installation keeps the historical
+ * Batch/push-to-talk/local-Whisper defaults. Legacy `~/.speech-2-text` installs
+ * have no stable store file yet but are still upgrades, so they must not be
+ * promoted. The checks must run before electron-store creates the file on first
+ * run.
  */
 const storeDirectory = preparePersistentStoreDirectory();
+const legacyConfigPath = join(app.getPath('home'), '.speech-2-text', 'config.json');
 const storeFileExisted = existsSync(join(storeDirectory, CONFIG_STORE_FILENAME));
-const installDefaults = resolveInstallDefaults(storeFileExisted);
+const existingInstallationExisted = storeFileExisted || existsSync(legacyConfigPath);
+const installDefaults = resolveInstallDefaults(existingInstallationExisted);
 
 const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
   activeProvider: installDefaults.transcriptionProviderId,
@@ -88,12 +92,9 @@ const store = new Store<StoreConfig>({
 
 // Migrate old config from ~/.speech-2-text/config.json on first run
 function maybeMigrateLegacyConfig(): void {
-  const legacyDir = join(app.getPath('home'), '.speech-2-text');
-  const legacyPath = join(legacyDir, 'config.json');
-
-  if (existsSync(legacyPath) && !store.get('migrated')) {
+  if (existsSync(legacyConfigPath) && !store.get('migrated')) {
     try {
-      const raw = readFileSync(legacyPath, 'utf-8');
+      const raw = readFileSync(legacyConfigPath, 'utf-8');
       const legacy = JSON.parse(raw);
 
       if (legacy.whisper_url) store.set('whisperUrl', legacy.whisper_url);
@@ -105,7 +106,7 @@ function maybeMigrateLegacyConfig(): void {
       store.set('migrated', true);
       // Clean up legacy file
       try {
-        unlinkSync(legacyPath);
+        unlinkSync(legacyConfigPath);
       } catch {
         // ignore cleanup failure
       }
@@ -175,7 +176,7 @@ function maybeMigrateShortcutsConfig(): void {
   // Upgraded stores have no stored per-intent modes, so both intents keep
   // deriving from the legacy shared mode. Fresh installs have no historical
   // shared mode to honor and seed the promoted dictation activation instead.
-  const dictationActivation = storeFileExisted
+  const dictationActivation = existingInstallationExisted
     ? sharedMode
     : installDefaults.dictationActivationMode;
   store.set('shortcuts', {
