@@ -4,6 +4,8 @@ import { resolve } from 'path';
 const projectRoot = resolve(import.meta.dir, '..', '..', '..');
 const repositoryRoot = resolve(projectRoot, '..');
 
+const workflowPaths = ['.github/workflows/ci.yml', '.github/workflows/release.yml'];
+
 async function readProjectFile(relativePath: string): Promise<string> {
   const file = Bun.file(resolve(projectRoot, relativePath));
   return await file.text();
@@ -79,20 +81,24 @@ describe('toolchain configuration', () => {
     expect(isAtLeastNode(engines!.node, { major: 22, minor: 12, patch: 0 })).toBe(true);
   });
 
-  it('pins CI to the same Bun version as the repository packageManager', async () => {
-    const ciSource = await readRepositoryFile('.github/workflows/ci.yml');
-    const bunVersion = ciSource.match(/bun-version:\s*(\S+)/)?.[1];
-    expect(bunVersion).toBeDefined();
-
+  it('pins CI and release workflows to the repository packageManager Bun version', async () => {
     const manifest = JSON.parse(await readRepositoryFile('package.json')) as {
       packageManager?: string;
     };
-    expect(manifest.packageManager).toBe(`bun@${bunVersion}`);
+
+    for (const workflow of workflowPaths) {
+      const source = await readRepositoryFile(workflow);
+      const bunVersion = source.match(/bun-version:\s*(\S+)/)?.[1];
+      expect(bunVersion).toBeDefined();
+      expect(manifest.packageManager).toBe(`bun@${bunVersion}`);
+    }
   });
 
-  it('runs CI on Bun without an external Node setup step', async () => {
-    const ciSource = await readRepositoryFile('.github/workflows/ci.yml');
-    expect(ciSource).not.toMatch(/actions\/setup-node/);
+  it('runs CI and release workflows on Bun without an external Node setup step', async () => {
+    for (const workflow of workflowPaths) {
+      const source = await readRepositoryFile(workflow);
+      expect(source).not.toMatch(/actions\/setup-node/);
+    }
   });
 
   it('pins local development to a compatible Node version via .nvmrc', async () => {
