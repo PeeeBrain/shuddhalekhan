@@ -2,7 +2,7 @@ import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, ShortcutsConfig, TranscriptionConfig, TranscriptionProviderId } from '../types/ipc';
+import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, RecordingActivationMode, ShortcutsConfig, TranscriptionConfig, TranscriptionProviderId } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
 import { getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
@@ -15,6 +15,8 @@ type StoreConfig = Omit<AppConfig, 'dictation'> & {
   transcriptionMigrated?: boolean;
   shortcutsMigrated?: boolean;
   lastSeenReleaseNotesVersion?: string;
+  /** Legacy shared activation mode, read only by the shortcuts migration. */
+  recordingActivationMode?: RecordingActivationMode;
 };
 
 const DEFAULT_LOCAL_ENDPOINT = 'http://localhost:8080/inference';
@@ -66,7 +68,6 @@ const store = new Store<StoreConfig>({
       overrides: {},
     },
     setupChecklistDismissed: false,
-    recordingActivationMode: 'push-to-talk',
     shortcuts: {
       dictation: {
         binding: DEFAULT_SHORTCUTS.dictation.binding,
@@ -217,9 +218,6 @@ persistNormalizedDictation();
 export function getConfig(): AppConfig {
   const agent = store.get('agent');
   const mcpServers = normalizeMcpServers(agent?.mcpServers);
-  const recordingActivationMode = store.get('recordingActivationMode') === 'toggle'
-    ? 'toggle'
-    : 'push-to-talk';
 
   const storedTranscription = store.get('transcription');
   const localEndpoint = storedTranscription?.providers?.localWhisperCpp?.endpoint
@@ -250,7 +248,6 @@ export function getConfig(): AppConfig {
     dictionary: store.get('dictionary') ?? [],
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
-    recordingActivationMode,
     shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
     dictation: normalizeDictationConfig(store.get('dictation')),
     agent: {

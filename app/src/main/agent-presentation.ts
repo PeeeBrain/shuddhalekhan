@@ -1,5 +1,3 @@
-import type { AgentToastState } from '../types/ipc';
-
 export interface AgentApprovalPresentation {
   agentRunId: string;
   approvalId: string;
@@ -13,8 +11,7 @@ export interface AgentApprovalPresentation {
 
 /**
  * Semantic Agent Mode presentation boundary. The sidecar event router emits
- * run events here; the selected presenter projects them onto either the
- * shared runtime shell or the legacy toast window.
+ * run events here; the presenter projects them onto the shared runtime shell.
  */
 export interface AgentPresenter {
   /** Invalidates any prior run presentation before a replacement run starts. */
@@ -47,48 +44,5 @@ export function createRuntimeShellPresenter(shell: RuntimeShellPresenterTarget):
     completed: (agentRunId, response, toolSummary) => shell.showAgentCompleted(agentRunId, response, toolSummary),
     failed: (agentRunId, message) => shell.showAgentFailed(agentRunId, message),
     cancelled: () => shell.clearAgentRun(),
-  };
-}
-
-export function createLegacyToastPresenter(
-  showToast: (state: AgentToastState) => void,
-  hideToast: () => void,
-): AgentPresenter {
-  return {
-    // The legacy window has no run-invalidation concept; toasts replace each other.
-    beginRun: () => undefined,
-    status: (agentRunId, message) => {
-      if (!agentRunId) return;
-      showToast({ kind: 'status', agentRunId, message });
-    },
-    streaming: (agentRunId, response) => showToast({ kind: 'streaming', agentRunId, response }),
-    approval: (request) => {
-      // Legacy windows show one toast at a time; preserve the waiting status
-      // that preceded the approval card before the shared shell existed.
-      showToast({
-        kind: 'status',
-        agentRunId: request.agentRunId,
-        message: `Waiting for approval: ${request.serverId}.${request.toolName}`,
-      });
-      showToast({
-        kind: 'approval',
-        agentRunId: request.agentRunId,
-        approvalId: request.approvalId,
-        serverId: request.serverId,
-        ...(request.serverDisplayName ? { serverDisplayName: request.serverDisplayName } : {}),
-        toolName: request.toolName,
-        modelToolName: request.modelToolName,
-        arguments: request.arguments,
-        expiresAt: request.expiresAt,
-      });
-    },
-    completed: (agentRunId, response, toolSummary) => {
-      showToast({ kind: 'completed', agentRunId, response, toolSummary });
-    },
-    failed: (agentRunId, message) => {
-      if (!agentRunId) return;
-      showToast({ kind: 'failed', agentRunId, error: message });
-    },
-    cancelled: () => hideToast(),
   };
 }

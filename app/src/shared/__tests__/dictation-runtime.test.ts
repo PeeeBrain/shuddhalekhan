@@ -2,12 +2,10 @@ import { describe, expect, it } from 'bun:test';
 import {
   createRecordingPresentationEnvelope,
   getDictationCombinationError,
-  getDictationRuntimeError,
   getFormatterProfileError,
   getFormatterCredentialError,
   getTranscriptionTransportCapabilities,
   normalizeDictationConfig,
-  parseMaintainerRuntimeGates,
 } from '../dictation-runtime';
 
 describe('Dictation config normalization', () => {
@@ -122,85 +120,6 @@ describe('Dictation config normalization', () => {
   });
 });
 
-describe('maintainer runtime gates', () => {
-  it('enables the runtime shell, agent shell, streaming, and direct-Unicode paths by default', () => {
-    expect(parseMaintainerRuntimeGates({})).toEqual({
-      runtimeShell: true,
-      agentShell: true,
-      streaming: true,
-      directUnicode: true,
-    });
-  });
-
-  it('disables each local path independently without a remote rollout switch', () => {
-    expect(parseMaintainerRuntimeGates({
-      SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL: '1',
-    })).toEqual({
-      runtimeShell: false,
-      agentShell: true,
-      streaming: true,
-      directUnicode: true,
-    });
-    expect(parseMaintainerRuntimeGates({
-      SHUDDHALEKHAN_DISABLE_AGENT_SHELL: '1',
-    })).toEqual({
-      runtimeShell: true,
-      agentShell: false,
-      streaming: true,
-      directUnicode: true,
-    });
-    expect(parseMaintainerRuntimeGates({
-      SHUDDHALEKHAN_DISABLE_STREAMING: '1',
-    })).toEqual({
-      runtimeShell: true,
-      agentShell: true,
-      streaming: false,
-      directUnicode: true,
-    });
-    expect(parseMaintainerRuntimeGates({
-      SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE: '1',
-    })).toEqual({
-      runtimeShell: true,
-      agentShell: true,
-      streaming: true,
-      directUnicode: false,
-    });
-  });
-
-  it('keeps Live Dictation unavailable when streaming is locally disabled', () => {
-    const combination = {
-      mode: 'live' as const,
-      activationMode: 'toggle' as const,
-      capabilities: { batch: true as const, streaming: true },
-      formatter: null,
-    };
-
-    expect(getDictationCombinationError(combination)).toBeNull();
-    expect(getDictationRuntimeError(combination, {
-      runtimeShell: true,
-      agentShell: true,
-      streaming: false,
-      directUnicode: true,
-    })).toBe('Live Dictation is disabled by a local maintainer switch.');
-  });
-
-  it('keeps direct-Unicode gating independent from persisted combination validity', () => {
-    const combination = {
-      mode: 'live' as const,
-      activationMode: 'toggle' as const,
-      capabilities: { batch: true as const, streaming: true },
-      formatter: null,
-    };
-
-    expect(getDictationRuntimeError(combination, {
-      runtimeShell: true,
-      agentShell: true,
-      streaming: true,
-      directUnicode: false,
-    })).toBe('Direct-Unicode insertion is disabled by a local maintainer switch.');
-  });
-});
-
 describe('recording presentation envelope', () => {
   it('carries session identity, revision, capabilities, and a typed outcome without replacing the session id', () => {
     const envelope = createRecordingPresentationEnvelope({
@@ -216,5 +135,14 @@ describe('recording presentation envelope', () => {
     expect(envelope.revision).toBe(2);
     expect(envelope.capabilities).toEqual({ batch: true, streaming: false });
     expect(envelope.outcome).toEqual({ kind: 'completed' });
+  });
+});
+
+describe('runtime gate contraction', () => {
+  it('no longer exports maintainer runtime gates or their runtime error helper', async () => {
+    const runtimeModule = await import(`../dictation-runtime?contracted=${Date.now()}`);
+
+    expect('parseMaintainerRuntimeGates' in runtimeModule).toBe(false);
+    expect('getDictationRuntimeError' in runtimeModule).toBe(false);
   });
 });

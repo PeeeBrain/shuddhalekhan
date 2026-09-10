@@ -3,7 +3,6 @@ import { app, BrowserWindow, dialog, ipcMain, session, shell, Notification, powe
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
-import { showAgentToast, hideAgentToast, handleAgentToastContentSize } from './agent-toast-window';
 import {
   getConfig,
   getLastSeenReleaseNotesVersion,
@@ -49,9 +48,8 @@ import {
 } from './performance/scenario-driver';
 import { transcribe as transcribeLocalFixture } from './whisper';
 import { RuntimeShell } from './runtime-shell';
-import { createLegacyToastPresenter, createRuntimeShellPresenter } from './agent-presentation';
+import { createRuntimeShellPresenter } from './agent-presentation';
 import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
-import { parseMaintainerRuntimeGates } from '../shared/dictation-runtime';
 import { outerTrimTranscript } from '../shared/live-dictation';
 import { applyDictationFormatter } from './dictation-formatter';
 import { getDictationFormatterApiKey } from './dictation-formatter-credential';
@@ -67,16 +65,8 @@ let shellPillReadyEmitted = false;
 let startPerformanceScenario = async (): Promise<void> => undefined;
 const performanceDriverEnabled = isPerformanceScenarioDriverEnabled(process.env);
 const performanceDriverConfig = parsePerformanceScenarioDriverConfig(process.env);
-const runtimeGates = parseMaintainerRuntimeGates(process.env);
-const runtimeShell = runtimeGates.runtimeShell
-  ? new RuntimeShell()
-  : null;
-// The shared shell presents Agent Mode only when both the runtime shell and
-// the Agent surface are enabled; otherwise the legacy toast window remains.
-const usesAgentShell = runtimeShell !== null && runtimeGates.agentShell;
-const agentPresenter = usesAgentShell && runtimeShell
-  ? createRuntimeShellPresenter(runtimeShell)
-  : createLegacyToastPresenter((state) => showAgentToast(state), hideAgentToast);
+const runtimeShell = new RuntimeShell();
+const agentPresenter = createRuntimeShellPresenter(runtimeShell);
 const agentTerminalWaiters = new Map<string, () => void>();
 const surfacePaintWaiters = new Map<string, Array<() => void>>();
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
@@ -99,13 +89,9 @@ function resetMcpStatusSnapshot(): void {
 // A runtime-generation boundary invalidates every live server status.
 function notifyAgentRuntimeStopped(message: string): void {
   resetMcpStatusSnapshot();
-  if (usesAgentShell) {
-    // One persistent failure card for unexpected loss; replacement,
-    // disablement, and shutdown never reach this path.
-    runtimeShell?.showAgentFailed(activeAgentRunId, message);
-    return;
-  }
-  showAgentToast({ kind: 'config', message });
+  // One persistent failure card for unexpected loss; replacement,
+  // disablement, and shutdown never reach this path.
+  runtimeShell.showAgentFailed(activeAgentRunId, message);
 }
 const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
@@ -135,8 +121,7 @@ const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
   },
 });
 const recordingSession = new RecordingSession({
-  runtimeGates,
-  ...(runtimeShell ? { runtimeShell } : {}),
+  runtimeShell,
   isAgentModeEnabled: () => cachedAgentEnabled,
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   onBegin: (intent) => {
@@ -167,7 +152,7 @@ const recordingSession = new RecordingSession({
   onResult: routeRecordingResult,
   onError: showTranscriptionError,
 });
-runtimeShell?.setCrashHandler((reason) => recordingSession.markRuntimeShellCrashed(reason));
+runtimeShell.setCrashHandler((reason) => recordingSession.markRuntimeShellCrashed(reason));
 const performanceScenarioDriver = createPerformanceScenarioDriver(
   performanceDriverConfig,
   {
@@ -434,12 +419,6 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
   }
 }
 
-function finishRecording(): void {
-  void recordingSession.end().catch((err) => {
-    console.error('Recording end failed:', err instanceof Error ? `${err.name}: ${err.message}` : String(err));
-  });
-}
-
 // Never leave global shortcut activation suspended after capture ends.
 setSettingsWindowClosedHandler(() => keyboardHook.setCaptureSuspended(false));
 
@@ -456,14 +435,7 @@ function showTranscriptionError(err: unknown): void {
   const message = getSafeTranscriptionFailureMessage(err);
   const detail = err instanceof Error ? `${err.name}: ${err.message}` : 'Unknown failure';
   console.error(`Transcription failed (${detail}):`, message);
-  if (runtimeShell) {
-    runtimeShell.showFailure(null, message);
-    return;
-  }
-  showAgentToast({
-    kind: 'transcription-failed',
-    message,
-  });
+  runtimeShell.showFailure(null, message);
 }
 
 function handleAgentTranscript(text: string): void {
@@ -471,11 +443,7 @@ function handleAgentTranscript(text: string): void {
 }
 
 function showAgentConfigNotice(message: string): void {
-  if (usesAgentShell) {
-    runtimeShell?.showAgentStatus(null, message);
-    return;
-  }
-  showAgentToast({ kind: 'config', message });
+  runtimeShell.showAgentStatus(null, message);
 }
 
 function invalidateActiveAgentRun(): void {
@@ -575,15 +543,6 @@ async function showBundledReleaseNotesAfterInstall(): Promise<void> {
 
 // IPC handlers
 registerCredentialIpcHandlers(ipcMain, credentialVault);
-
-ipcMain.handle('audio:start-recording', () => {
-  recordingSession.begin('dictation');
-});
-
-ipcMain.handle('audio:stop-recording', async () => {
-  finishRecording();
-  return 'stopped';
-});
 
 ipcMain.handle('audio:get-devices', async () => {
   const webContents = recordingSession.getAudioWebContents();
@@ -765,14 +724,6 @@ ipcMain.on('audio-devices', (_event, devices: AudioDevice[]) => {
   updateAudioDevices(devices);
 });
 
-ipcMain.on('agent-toast:content-size', (_event, height: number) => {
-  handleAgentToastContentSize(height);
-});
-
-ipcMain.on('agent-toast:dismiss', () => {
-  hideAgentToast();
-});
-
 ipcMain.on('runtime:recovery-action', (_event, action) => {
   void handleRuntimeRecoveryAction(action).catch((err) => {
     console.error('Failed to handle runtime recovery action:', err);
@@ -784,7 +735,6 @@ ipcMain.on('runtime:agent-card-size', (_event, height: number) => {
 });
 
 ipcMain.on('runtime:agent-dismiss', () => {
-  hideAgentToast();
   runtimeShell?.dismissAgentCard();
 });
 

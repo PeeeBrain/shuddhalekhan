@@ -7,6 +7,14 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Runtime Shell
+- Removed the legacy Agent toast window, hidden audio window, and standalone recording-pill window. Agent status, approvals, and final responses now appear only as cards in the persistent runtime shell, and the shell owns recording presentation.
+- Removed the local maintainer rollback switches (`SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL`, `SHUDDHALEKHAN_DISABLE_AGENT_SHELL`, `SHUDDHALEKHAN_DISABLE_STREAMING`, `SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE`) together with their legacy IPC channels, renderer routes, and fallback paths.
+- Removed the deprecated `recordingActivationMode` config alias from the public config surface; existing installs still seed per-intent activation modes from it once during migration.
+
+### Agent Mode
+- Agent runs now identify themselves to OpenCode Go with a stable `x-opencode-session` per run and a Shuddhalekhan `User-Agent`, so Console Go requests route correctly instead of failing with `MissingSessionID`.
+
 ### Dictation Runtime
 - Live Dictation is now the out-of-the-box default for genuinely new installations, together with Toggle activation and the WhisperLiveKit provider. The promoted identity is written as an explicit stored choice on first run, so it survives restarts. Every pre-existing store keeps its own shortcuts and provider: a store that predates the dictation block resolves to Batch Dictation, and an existing Batch, Live, or Corrected selection is preserved unchanged. Nothing silently changes the saved mode during an upgrade.
 - The first-run setup checklist now points streaming setups at WhisperLiveKit readiness instead of the local whisper.cpp endpoint, and marks that step done only after an actual readiness check reports Ready.

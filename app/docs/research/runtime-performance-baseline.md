@@ -17,7 +17,7 @@ The implementation for #176 lives under `app/scripts/performance/`, with the pac
 
 - `app/src/main/index.ts` has no operational-ready or performance event contract. Agent Mode starts `AgentSidecarManager` during app startup when enabled.
 - `RecordingSession.start()` prewarms the recording pill. The hidden audio `BrowserWindow` is created on first `begin()` and then retained. The agent toast is also retained after first use; Settings is a singleton only while open. A post-use run can therefore contain four BrowserWindows.
-- `ProductionAudioCapture` sets `backgroundThrottling: false`; its renderer opens the microphone on each recording, creates a 16 kHz `AudioContext`, and receives 4096-sample blocks.
+- `RuntimeShell` sets `backgroundThrottling: false`; its renderer opens the microphone on each recording, creates a 16 kHz `AudioContext`, and receives 4096-sample blocks.
 - Current completion is `stop -> WAV encode -> Transcriber.transcribe -> inject`; there are no first-token or stable-commit events yet.
 - The sidecar is a hidden child process using JSONL. It emits `sidecar:ready`, MCP status/tool discovery, response deltas, approvals, and terminal events, but its PID and spawn time are not exposed.
 - Enabled MCP servers connect concurrently on every sidecar `config:update`. The stdio transport owns further subprocesses; HTTP servers are external.

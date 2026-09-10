@@ -1,19 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { join, normalize } from 'path';
 import { installElectronMock, resetElectronMock } from '../../test/electron-mock';
-import {
-  getDictationRuntimeError,
-  getTranscriptionTransportCapabilities,
-  parseMaintainerRuntimeGates,
-} from '../../shared/dictation-runtime';
 import { validateProviderReadiness } from '../transcription';
 
 /**
  * Promotion fixtures for Live Dictation becoming the out-of-the-box default.
  * Proves the distinction between genuinely new installations (promoted
  * Live/Toggle/WhisperLiveKit identity), every class of pre-existing store
- * (never silently re-modeed), factory resets, and maintainer feature-off
- * switches that block runtime paths without corrupting saved configuration.
+ * (never silently re-modeed), factory resets, and saved-mode integrity
+ * across startup cycles.
  */
 
 const vi = { fn: mock, mock: mock.module };
@@ -239,80 +234,6 @@ describe('Live Dictation promotion', () => {
       ).toThrow('Live Dictation requires a streaming-capable provider.');
       expect(getConfig().transcription.activeProvider).toBe('whisper-live-kit');
       expect(getConfig().dictation.mode).toBe('live');
-    });
-  });
-
-  describe('maintainer feature-off switches', () => {
-    function withEnv(name: string, value: string | undefined, run: () => void): void {
-      const previous = process.env[name];
-      try {
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
-        run();
-      } finally {
-        if (previous === undefined) delete process.env[name];
-        else process.env[name] = previous;
-      }
-    }
-
-    it('blocks live insertion at runtime without corrupting the saved configuration', async () => {
-      givenStoreFileOnDisk(true);
-      storeData.set('dictation', { mode: 'live', formatter: null });
-      storeData.set('shortcutsMigrated', true);
-      storeData.set('shortcuts', {
-        dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
-        agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
-      });
-      storeData.set('transcriptionMigrated', true);
-      storeData.set('transcription', {
-        activeProvider: 'whisper-live-kit',
-        providers: { whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' } },
-      });
-
-      const { getConfig } = await bootConfig('feature-off');
-      const savedConfig = getConfig();
-      expect(savedConfig.dictation.mode).toBe('live');
-
-      withEnv('SHUDDHALEKHAN_DISABLE_STREAMING', '1', () => {
-        const input = {
-          mode: savedConfig.dictation.mode,
-          activationMode: savedConfig.shortcuts.dictation.activationMode,
-          capabilities: getTranscriptionTransportCapabilities(savedConfig.transcription.activeProvider),
-          formatter: savedConfig.dictation.formatter,
-        };
-        expect(getDictationRuntimeError(input, parseMaintainerRuntimeGates(process.env))).toBe(
-          'Live Dictation is disabled by a local maintainer switch.',
-        );
-      });
-
-      // With the switch removed, the same stored configuration runs again.
-      expect(
-        getDictationRuntimeError(
-          {
-            mode: savedConfig.dictation.mode,
-            activationMode: savedConfig.shortcuts.dictation.activationMode,
-            capabilities: getTranscriptionTransportCapabilities(savedConfig.transcription.activeProvider),
-            formatter: savedConfig.dictation.formatter,
-          },
-          parseMaintainerRuntimeGates(process.env),
-        ),
-      ).toBeNull();
-      expect(getConfig()).toEqual(savedConfig);
-    });
-
-    it('blocks direct-Unicode insertion independently of the saved combination', () => {
-      const validCombination = {
-        mode: 'live' as const,
-        activationMode: 'toggle' as const,
-        capabilities: { batch: true, streaming: true } as const,
-        formatter: null,
-      };
-      withEnv('SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE', '1', () => {
-        expect(
-          getDictationRuntimeError(validCombination, parseMaintainerRuntimeGates(process.env)),
-        ).toBe('Direct-Unicode insertion is disabled by a local maintainer switch.');
-      });
-      expect(getDictationRuntimeError(validCombination, parseMaintainerRuntimeGates(process.env))).toBeNull();
     });
   });
 });
