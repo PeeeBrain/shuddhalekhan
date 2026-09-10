@@ -97,7 +97,7 @@ export function renderMarkdown(markdown: string): ReactNode {
 
 function renderInlineMarkdown(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<)]+)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -117,6 +117,12 @@ function renderInlineMarkdown(text: string): ReactNode[] {
       nodes.push(<strong key={nodes.length} className="font-semibold text-foreground">{token.slice(2, -2)}</strong>);
     } else if (token.startsWith('*')) {
       nodes.push(<em key={nodes.length} className="italic">{token.slice(1, -1)}</em>);
+    } else if (token.startsWith('http')) {
+      nodes.push(
+        <a key={nodes.length} href={token} className="text-primary underline underline-offset-2">
+          {token}
+        </a>
+      );
     } else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
       const href = link?.[2] ?? '#';

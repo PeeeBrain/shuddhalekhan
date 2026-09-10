@@ -126,10 +126,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
 
   const selectSection = (id: SettingsSectionId) => {
     setActiveSection(id);
-    const index = getNavSectionIndex(id);
-    requestAnimationFrame(() => {
-      tabRefs.current[index]?.focus();
-    });
+    tabRefs.current[getNavSectionIndex(id)]?.focus();
   };
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {

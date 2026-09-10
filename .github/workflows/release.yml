@@ -51,15 +51,35 @@ jobs:
       - name: Test
         run: bun test
 
-      - name: Prepare release notes from the changelog
+      - name: Generate release notes from merged pull requests
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $tag = '${{ steps.release_version.outputs.tag }}'
           $version = '${{ steps.release_version.outputs.version }}'
+          $previousTag = git describe --tags --abbrev=0 "$tag^" 2>$null
+
+          if ($LASTEXITCODE -ne 0 -or -not $previousTag) {
+            Write-Host 'No previous release tag found; generating notes from full history.'
+            $notes = gh api "repos/${{ github.repository }}/releases/generate-notes" `
+              -f "tag_name=$tag" --jq .body
+          } else {
+            Write-Host "Generating release notes for $previousTag..$tag."
+            $notes = gh api "repos/${{ github.repository }}/releases/generate-notes" `
+              -f "tag_name=$tag" -f "previous_tag_name=$previousTag" --jq .body
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to generate release notes from merged pull requests.'
+          }
+
+          $notesText = $notes -join "`n"
           $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          bun run --cwd app release-notes:prepare -- `
-            --version $version `
-            --markdown-output $notesFile `
-            --json-output release-notes.json
+          Set-Content -Path $notesFile -Value $notesText -Encoding utf8
+          @{ version = $version; notes = $notesText } |
+            ConvertTo-Json |
+            Set-Content -Path 'app/release-notes.json' -Encoding utf8
 
       - name: Build
         run: bun run --cwd app build

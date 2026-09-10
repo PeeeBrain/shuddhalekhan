@@ -9,6 +9,9 @@ const destroy = vi.fn();
 const isDestroyed = vi.fn(() => false);
 const loadURL = vi.fn();
 const loadFile = vi.fn();
+const webContentsOn = vi.fn();
+const getURL = vi.fn(() => 'http://localhost:5173/#/settings');
+const setWindowOpenHandler = vi.fn();
 const BrowserWindow = vi.fn(() => ({
   loadURL,
   loadFile,
@@ -16,6 +19,11 @@ const BrowserWindow = vi.fn(() => ({
   once,
   destroy,
   isDestroyed,
+  webContents: {
+    on: webContentsOn,
+    getURL,
+    setWindowOpenHandler,
+  },
 }));
 
 installElectronMock();
@@ -32,6 +40,9 @@ describe('createSingletonWindow', () => {
     once.mockClear();
     destroy.mockClear();
     isDestroyed.mockReturnValue(false);
+    webContentsOn.mockClear();
+    getURL.mockClear();
+    setWindowOpenHandler.mockClear();
   });
 
   it('creates one BrowserWindow and reuses it while alive', async () => {
@@ -123,5 +134,44 @@ describe('createSingletonWindow', () => {
     const win = windows.create();
 
     expect(onCreated).toHaveBeenCalledWith(win);
+  });
+
+  it('opens external links in the browser instead of navigating app windows', async () => {
+    const { createSingletonWindow } = await import(`../window-factory?test=${Date.now()}-5`);
+    const windows = createSingletonWindow({
+      route: 'settings',
+      options: { width: 960, height: 680 },
+    });
+    windows.create();
+
+    const openHandler = setWindowOpenHandler.mock.calls[0]?.[0] as (details: {
+      url: string;
+    }) => { action: string };
+    expect(openHandler({ url: 'https://github.com/PeeeBrain/shuddhalekhan/pull/1' })).toEqual({
+      action: 'deny',
+    });
+    expect(electronMock.shell.openExternal).toHaveBeenCalledWith(
+      'https://github.com/PeeeBrain/shuddhalekhan/pull/1',
+    );
+
+    const navigate = webContentsOn.mock.calls.find(
+      (call: unknown[]) => call[0] === 'will-navigate',
+    )?.[1] as (event: { preventDefault: () => void }, url: string) => void;
+
+    const externalEvent = { preventDefault: vi.fn() };
+    navigate(externalEvent, 'https://github.com/PeeeBrain/shuddhalekhan/pull/2');
+    expect(externalEvent.preventDefault).toHaveBeenCalled();
+    expect(electronMock.shell.openExternal).toHaveBeenCalledWith(
+      'https://github.com/PeeeBrain/shuddhalekhan/pull/2',
+    );
+
+    const reloadEvent = { preventDefault: vi.fn() };
+    navigate(reloadEvent, 'http://localhost:5173/#/settings');
+    expect(reloadEvent.preventDefault).not.toHaveBeenCalled();
+
+    const unsafeEvent = { preventDefault: vi.fn() };
+    navigate(unsafeEvent, 'javascript:alert(1)');
+    expect(unsafeEvent.preventDefault).toHaveBeenCalled();
+    expect(electronMock.shell.openExternal).toHaveBeenCalledTimes(2);
   });
 });
