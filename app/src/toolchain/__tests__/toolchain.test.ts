@@ -79,22 +79,20 @@ describe('toolchain configuration', () => {
     expect(isAtLeastNode(engines!.node, { major: 22, minor: 12, patch: 0 })).toBe(true);
   });
 
-  it('pins CI to a compatible Node version', async () => {
+  it('pins CI to the same Bun version as the repository packageManager', async () => {
     const ciSource = await readRepositoryFile('.github/workflows/ci.yml');
-    expect(ciSource).toMatch(/node-version(?:-file)?:/);
+    const bunVersion = ciSource.match(/bun-version:\s*(\S+)/)?.[1];
+    expect(bunVersion).toBeDefined();
 
-    const explicitVersionMatch = ciSource.match(/node-version:\s*(.+)/);
-    const versionFileMatch = ciSource.match(/node-version-file:\s*(.+)/);
+    const manifest = JSON.parse(await readRepositoryFile('package.json')) as {
+      packageManager?: string;
+    };
+    expect(manifest.packageManager).toBe(`bun@${bunVersion}`);
+  });
 
-    if (explicitVersionMatch) {
-      expect(isAtLeastNode(explicitVersionMatch[1].trim(), { major: 22, minor: 12, patch: 0 })).toBe(true);
-    } else if (versionFileMatch) {
-      const versionFile = versionFileMatch[1].trim();
-      const versionFileContents = (await readRepositoryFile(versionFile)).trim();
-      expect(isAtLeastNode(versionFileContents, { major: 22, minor: 12, patch: 0 })).toBe(true);
-    } else {
-      throw new Error('CI does not specify a Node version or version file');
-    }
+  it('runs CI on Bun without an external Node setup step', async () => {
+    const ciSource = await readRepositoryFile('.github/workflows/ci.yml');
+    expect(ciSource).not.toMatch(/actions\/setup-node/);
   });
 
   it('pins local development to a compatible Node version via .nvmrc', async () => {
