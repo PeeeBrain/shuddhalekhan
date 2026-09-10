@@ -41,6 +41,7 @@ describe('createSingletonWindow', () => {
     destroy.mockClear();
     isDestroyed.mockReturnValue(false);
     webContentsOn.mockClear();
+    getURL.mockReturnValue('http://localhost:5173/#/settings');
     getURL.mockClear();
     setWindowOpenHandler.mockClear();
   });
@@ -169,9 +170,36 @@ describe('createSingletonWindow', () => {
     navigate(reloadEvent, 'http://localhost:5173/#/settings');
     expect(reloadEvent.preventDefault).not.toHaveBeenCalled();
 
+    const sameOriginEvent = { preventDefault: vi.fn() };
+    navigate(sameOriginEvent, 'http://localhost:5173/#/other?tab=1');
+    expect(sameOriginEvent.preventDefault).not.toHaveBeenCalled();
+
     const unsafeEvent = { preventDefault: vi.fn() };
     navigate(unsafeEvent, 'javascript:alert(1)');
     expect(unsafeEvent.preventDefault).toHaveBeenCalled();
     expect(electronMock.shell.openExternal).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps file reloads in-app and blocks other file navigations', async () => {
+    getURL.mockReturnValue('file:///C:/app/renderer/index.html');
+    const { createSingletonWindow } = await import(`../window-factory?test=${Date.now()}-6`);
+    const windows = createSingletonWindow({
+      route: 'settings',
+      options: { width: 960, height: 680 },
+    });
+    windows.create();
+
+    const navigate = webContentsOn.mock.calls.find(
+      (call: unknown[]) => call[0] === 'will-navigate',
+    )?.[1] as (event: { preventDefault: () => void }, url: string) => void;
+
+    const reloadEvent = { preventDefault: vi.fn() };
+    navigate(reloadEvent, 'file:///C:/app/renderer/index.html#/settings');
+    expect(reloadEvent.preventDefault).not.toHaveBeenCalled();
+
+    const otherFileEvent = { preventDefault: vi.fn() };
+    navigate(otherFileEvent, 'file:///C:/Windows/System32/calc.exe');
+    expect(otherFileEvent.preventDefault).toHaveBeenCalled();
+    expect(electronMock.shell.openExternal).not.toHaveBeenCalled();
   });
 });

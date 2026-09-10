@@ -68,10 +68,24 @@ function installExternalLinkHandling(window: BrowserWindow): void {
   });
 
   window.webContents.on('will-navigate', (event, url) => {
-    if (url === window.webContents.getURL()) return;
+    if (isSameOriginNavigation(url, window.webContents.getURL())) return;
     event.preventDefault();
     openExternalUrl(url);
   });
+}
+
+/** Reloads and same-origin route changes stay in-app; everything else opens externally. */
+function isSameOriginNavigation(target: string, current: string): boolean {
+  try {
+    const targetUrl = new URL(target);
+    const currentUrl = new URL(current);
+    if (currentUrl.protocol === 'file:') {
+      return targetUrl.protocol === 'file:' && targetUrl.pathname === currentUrl.pathname;
+    }
+    return targetUrl.origin === currentUrl.origin;
+  } catch {
+    return false;
+  }
 }
 
 function openExternalUrl(url: string): void {

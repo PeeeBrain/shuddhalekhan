@@ -31,4 +31,12 @@ describe('renderMarkdown', () => {
       }),
     ).toHaveAttribute('href', 'https://github.com/PeeeBrain/shuddhalekhan/compare/v4.5.6...v4.5.7');
   });
+
+  it('keeps trailing sentence punctuation out of bare URL links', () => {
+    render(<div>{renderMarkdown('See https://example.com.')}</div>);
+
+    const link = screen.getByRole('link', { name: 'https://example.com' });
+    expect(link).toHaveAttribute('href', 'https://example.com');
+    expect(link.parentElement?.textContent).toBe('See https://example.com.');
+  });
 });

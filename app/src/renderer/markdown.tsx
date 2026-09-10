@@ -97,7 +97,7 @@ export function renderMarkdown(markdown: string): ReactNode {
 
 function renderInlineMarkdown(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<)]+)/g;
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<)]*[^\s<).,;:!?'"])/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
