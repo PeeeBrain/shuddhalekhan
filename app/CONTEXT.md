@@ -42,6 +42,8 @@ A deep module that owns the complete audio-capture lifecycle: keyboard hook, run
 ### Dictation
 The act of converting captured audio into text and injecting it into the currently focused application. Its global shortcut and Push to Talk or Toggle behavior are configurable; `Ctrl + Win` is the default binding. Synonymous with "transcription mode" in user-facing language.
 
+Install-time defaults are resolved from config-file existence: a genuinely new installation (no stable store and no legacy `~/.speech-2-text` config on disk) is seeded with Live Dictation, Toggle activation, and WhisperLiveKit as an explicit stored choice; any pre-existing installation keeps its historical Batch Dictation and provider. A store without a dictation block resolves to Batch, an explicit stored Batch/Live/Corrected choice is preserved unchanged, and a legacy-only install is never treated as new. Missing streaming configuration surfaces setup guidance and never silently flips a persisted mode.
+
 ### Agent (Jarvis)
 The local AI assistant that receives transcribed prompts, interprets them, and can execute tools. Its global shortcut and activation behavior are configured independently from Dictation; `Alt + Win` is the default binding.
 

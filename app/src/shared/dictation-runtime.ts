@@ -19,6 +19,40 @@ export const DEFAULT_DICTATION_CONFIG: DictationConfig = {
   formatter: null,
 };
 
+/** Out-of-the-box dictation identity resolved once per installation. */
+export interface InstallDictationDefaults {
+  dictationMode: DictationMode;
+  dictationActivationMode: RecordingActivationMode;
+  transcriptionProviderId: TranscriptionProviderId;
+}
+
+/**
+ * Promoted first-run experience: Live Dictation with Toggle activation against
+ * WhisperLiveKit. Only ever applied when no configuration store exists yet.
+ */
+export const PROMOTED_INSTALL_DEFAULTS: InstallDictationDefaults = {
+  dictationMode: 'live',
+  dictationActivationMode: 'toggle',
+  transcriptionProviderId: 'whisper-live-kit',
+};
+
+/** Pre-promotion behavior kept for every store that already existed on disk. */
+export const LEGACY_INSTALL_DEFAULTS: InstallDictationDefaults = {
+  dictationMode: 'batch',
+  dictationActivationMode: 'push-to-talk',
+  transcriptionProviderId: 'local-whisper-cpp',
+};
+
+/**
+ * Resolve install-time defaults from store-file existence. An absent store file
+ * means a genuinely new installation; any existing file — including legacy v4
+ * stores that predate dictation modes — keeps the historical defaults so no
+ * user ever wakes up in a different dictation mode than the one they chose.
+ */
+export function resolveInstallDefaults(configStoreExists: boolean): InstallDictationDefaults {
+  return configStoreExists ? LEGACY_INSTALL_DEFAULTS : PROMOTED_INSTALL_DEFAULTS;
+}
+
 const DICTATION_MODES = new Set<DictationMode>(['batch', 'live', 'corrected']);
 const TRANSCRIPTION_TRANSPORT_CAPABILITIES = {
   'local-whisper-cpp': { batch: true, streaming: false },

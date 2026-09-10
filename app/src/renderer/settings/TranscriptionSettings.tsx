@@ -365,6 +365,24 @@ export function TranscriptionSettings({
   const { commit, fieldErrors } = persistence;
   const provider = config.transcription.activeProvider;
   const [dictationModeError, setDictationModeError] = useState<string | undefined>();
+  // WhisperLiveKit readiness is owned here so the first-run checklist can only
+  // mark the streaming step done from an actual readiness result.
+  const [whisperLiveKitReadiness, setWhisperLiveKitReadiness] =
+    useState<TranscriptionReadiness | null>(null);
+
+  useEffect(() => {
+    if (provider !== 'whisper-live-kit') return;
+    const off = settingsIpc.onTranscriptionReadinessChanged(setWhisperLiveKitReadiness);
+    void settingsIpc.checkTranscriptionReadiness().then(setWhisperLiveKitReadiness).catch(() => {
+      setWhisperLiveKitReadiness({
+        providerId: 'whisper-live-kit',
+        state: 'unavailable',
+        message: 'Unable to check WhisperLiveKit readiness.',
+        checkedAt: new Date().toISOString(),
+      });
+    });
+    return () => off?.();
+  }, [settingsIpc, provider]);
   const dictation = config.dictation ?? { mode: 'batch' as const, formatter: null };
   const storedDictationModeError = getAppConfigDictationError({
     ...config,
@@ -420,7 +438,12 @@ export function TranscriptionSettings({
         description="Configure where recordings are transcribed and how language is handled."
       />
       {!config.setupChecklistDismissed ? (
-        <SetupChecklist config={config} onNavigate={onNavigate} persistence={persistence} />
+        <SetupChecklist
+          config={config}
+          onNavigate={onNavigate}
+          persistence={persistence}
+          whisperLiveKitReadiness={whisperLiveKitReadiness}
+        />
       ) : null}
       <div className="rounded-lg border border-border/60 bg-card px-6">
         <ProviderSelector
@@ -460,6 +483,8 @@ export function TranscriptionSettings({
             config={config}
             persistence={persistence}
             settingsIpc={settingsIpc}
+            readiness={whisperLiveKitReadiness}
+            onReadinessChange={setWhisperLiveKitReadiness}
           />
         ) : null}
 
@@ -1088,33 +1113,24 @@ function WhisperLiveKitSection({
   config,
   persistence,
   settingsIpc,
-}: Props) {
+  readiness,
+  onReadinessChange,
+}: Props & {
+  readiness: TranscriptionReadiness | null;
+  onReadinessChange: (readiness: TranscriptionReadiness | null) => void;
+}) {
   const { commit, fieldErrors } = persistence;
-  const [readiness, setReadiness] = useState<TranscriptionReadiness | null>(null);
   const provider = config.transcription.providers.whisperLiveKit ?? {
     baseUrl: 'http://localhost:8000',
     auth: 'none' as const,
   };
   const save = (next: typeof provider, field: string) => {
-    setReadiness(null);
+    onReadinessChange(null);
     return commit('transcription', {
       ...config.transcription,
       providers: { ...config.transcription.providers, whisperLiveKit: next },
     }, field);
   };
-
-  useEffect(() => {
-    const off = settingsIpc.onTranscriptionReadinessChanged(setReadiness);
-    void settingsIpc.checkTranscriptionReadiness().then(setReadiness).catch(() => {
-      setReadiness({
-        providerId: 'whisper-live-kit',
-        state: 'unavailable',
-        message: 'Unable to check WhisperLiveKit readiness.',
-        checkedAt: new Date().toISOString(),
-      });
-    });
-    return () => off?.();
-  }, [settingsIpc]);
 
   return (
     <>
@@ -1153,7 +1169,7 @@ function WhisperLiveKitSection({
           variant="secondary"
           size="sm"
           disabled={readiness?.state === 'checking'}
-          onClick={() => void settingsIpc.checkTranscriptionReadiness().then(setReadiness)}
+          onClick={() => void settingsIpc.checkTranscriptionReadiness().then(onReadinessChange)}
         >
           {readiness?.state === 'checking' ? 'Checking...' : 'Check readiness'}
         </Button>
