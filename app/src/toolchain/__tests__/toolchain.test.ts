@@ -4,6 +4,8 @@ import { resolve } from 'path';
 const projectRoot = resolve(import.meta.dir, '..', '..', '..');
 const repositoryRoot = resolve(projectRoot, '..');
 
+const workflowPaths = ['.github/workflows/ci.yml', '.github/workflows/release.yml'];
+
 async function readProjectFile(relativePath: string): Promise<string> {
   const file = Bun.file(resolve(projectRoot, relativePath));
   return await file.text();
@@ -79,21 +81,23 @@ describe('toolchain configuration', () => {
     expect(isAtLeastNode(engines!.node, { major: 22, minor: 12, patch: 0 })).toBe(true);
   });
 
-  it('pins CI to a compatible Node version', async () => {
-    const ciSource = await readRepositoryFile('.github/workflows/ci.yml');
-    expect(ciSource).toMatch(/node-version(?:-file)?:/);
+  it('pins CI and release workflows to the repository packageManager Bun version', async () => {
+    const manifest = JSON.parse(await readRepositoryFile('package.json')) as {
+      packageManager?: string;
+    };
 
-    const explicitVersionMatch = ciSource.match(/node-version:\s*(.+)/);
-    const versionFileMatch = ciSource.match(/node-version-file:\s*(.+)/);
+    for (const workflow of workflowPaths) {
+      const source = await readRepositoryFile(workflow);
+      const bunVersion = source.match(/bun-version:\s*(\S+)/)?.[1];
+      expect(bunVersion).toBeDefined();
+      expect(manifest.packageManager).toBe(`bun@${bunVersion}`);
+    }
+  });
 
-    if (explicitVersionMatch) {
-      expect(isAtLeastNode(explicitVersionMatch[1].trim(), { major: 22, minor: 12, patch: 0 })).toBe(true);
-    } else if (versionFileMatch) {
-      const versionFile = versionFileMatch[1].trim();
-      const versionFileContents = (await readRepositoryFile(versionFile)).trim();
-      expect(isAtLeastNode(versionFileContents, { major: 22, minor: 12, patch: 0 })).toBe(true);
-    } else {
-      throw new Error('CI does not specify a Node version or version file');
+  it('runs CI and release workflows on Bun without an external Node setup step', async () => {
+    for (const workflow of workflowPaths) {
+      const source = await readRepositoryFile(workflow);
+      expect(source).not.toMatch(/actions\/setup-node/);
     }
   });
 

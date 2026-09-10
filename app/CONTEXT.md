@@ -7,6 +7,7 @@
 ## Package Manager
 - **Primary**: `bun` — chosen for install/build speed.
 - **Fallback**: `pnpm` — to be adopted if `bun` causes resolution or native-addon issues (e.g., `koffi`).
+- **Dev toolchain**: CI and local tooling run entirely on Bun (install, typecheck, lint, test, build, native deps). There is no external Node setup step in CI. Node remains only as Electron's bundled runtime in the packaged app; the `engines.node` and `.nvmrc` entries document the Electron/Vite compatibility floor, not a Bun-toolchain dependency.
 
 ## Build Tool
 - **Frontend + Main + Preload**: `electron-vite` (Vite-based, preserves existing frontend build pipeline).

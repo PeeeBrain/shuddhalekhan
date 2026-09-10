@@ -10,13 +10,13 @@
     "dev": "bun run dev:app",
     "dev:app": "bun run --cwd app dev",
     "dev:web": "bun run --cwd web dev",
-    "typecheck": "bun run --cwd app typecheck && bun run --cwd web typecheck",
-    "lint": "bun run --cwd app lint && bun run --cwd web lint",
-    "lint:fix": "bun run --cwd app lint:fix && bun run --cwd web lint:fix",
+    "typecheck": "bun run --parallel --filter \"@shuddhalekhan/*\" typecheck",
+    "lint": "bun run --parallel --filter \"@shuddhalekhan/*\" lint",
+    "lint:fix": "bun run --parallel --filter \"@shuddhalekhan/*\" lint:fix",
     "test": "bun run --cwd app test"
   },
   "engines": {
     "node": ">=22.12.0"
   },
-  "packageManager": "bun@1.3.14"
+  "packageManager": "bun@1.4.2"
 }
