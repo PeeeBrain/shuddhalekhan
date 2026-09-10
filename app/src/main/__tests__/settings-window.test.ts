@@ -25,7 +25,7 @@ const BrowserWindow = vi.fn(() => ({
   isDestroyed,
   loadURL,
   loadFile,
-  webContents: { send },
+  webContents: { send, on: vi.fn(), getURL: vi.fn(() => ''), setWindowOpenHandler: vi.fn() },
 }));
 
 installElectronMock();

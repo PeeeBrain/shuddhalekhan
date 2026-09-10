@@ -21,6 +21,7 @@ describe('Batch Dictation runtime shell', () => {
       webContents: {
         send,
         on: vi.fn(),
+        setWindowOpenHandler: vi.fn(),
         isLoading: vi.fn(() => true),
       },
       loadURL,
@@ -57,7 +58,7 @@ describe('Batch Dictation runtime shell', () => {
   it('publishes complete monotonic recording, processing, failure, and idle snapshots', async () => {
     const send = vi.fn();
     const window = {
-      webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+      webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
       loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
       isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
       setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
@@ -103,7 +104,7 @@ describe('Batch Dictation runtime shell', () => {
   it('ignores late streaming previews after failure clears the active recording', async () => {
     const send = vi.fn();
     const window = {
-      webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+      webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
       loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
       isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => true),
       setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
@@ -133,7 +134,7 @@ describe('Batch Dictation runtime shell', () => {
   it('preserves insertion-halted state across later streaming previews', async () => {
     const send = vi.fn();
     const window = {
-      webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+      webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
       loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
       isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
       setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
@@ -163,7 +164,7 @@ describe('Batch Dictation runtime shell', () => {
     let visible = true;
     const setTimeoutFn = vi.fn();
     const window = {
-      webContents: { send: vi.fn(), on: vi.fn(), isLoading: vi.fn(() => false) },
+      webContents: { send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
       loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
       isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => visible),
       setPosition: vi.fn(), setAlwaysOnTop: vi.fn(),
@@ -188,7 +189,7 @@ describe('Batch Dictation runtime shell', () => {
   it('accepts returned audio only for the current generation, session, and sequence', async () => {
     const send = vi.fn();
     const window = {
-      webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+      webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
       loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
       isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
       setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
@@ -221,7 +222,7 @@ describe('Batch Dictation runtime shell', () => {
       const window = {
         handlers, webHandlers,
         webContents: {
-          send: vi.fn(), isLoading: vi.fn(() => true),
+          send: vi.fn(), isLoading: vi.fn(() => true), setWindowOpenHandler: vi.fn(),
           on: vi.fn((event: string, handler: (...args: any[]) => void) => webHandlers.set(event, handler)),
         },
         loadURL: vi.fn(), loadFile: vi.fn(),
@@ -271,7 +272,7 @@ describe('Agent Mode runtime shell presentation', () => {
     return {
       send,
       window: {
-        webContents: { send, on: vi.fn(), isLoading: vi.fn(() => false) },
+        webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
         loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
         isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
         setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
@@ -654,6 +655,7 @@ describe('Agent Mode runtime shell presentation', () => {
         webContents: {
           send: vi.fn(),
           isLoading: vi.fn(() => true),
+          setWindowOpenHandler: vi.fn(),
           on: vi.fn((event: string, handler: (...args: unknown[]) => void) => webHandlers.set(event, handler)),
         },
         loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),

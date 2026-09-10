@@ -18,7 +18,6 @@
     "lint:fix": "eslint . --fix",
     "test": "bun test",
     "test:watch": "bun test --watch",
-    "release-notes:prepare": "bun scripts/prepare-release-notes.ts",
     "verify:whisper": "bun scripts/verify-whisper-endpoint.ts",
     "test:transcription-quality": "bun scripts/transcription-quality.ts",
     "typecheck": "tsc --noEmit"
