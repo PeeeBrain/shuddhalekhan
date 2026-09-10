@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { createSingletonWindow } from './window-factory';
+import { loadAppIcon } from './app-icon';
 import { emitPerformanceMarker } from './performance/marker-collector';
 
 let closedHandler: (() => void) | null = null;
@@ -19,6 +20,7 @@ const settingsWindow = createSingletonWindow({
     resizable: true,
     show: false,
     title: 'Shuddhalekhan Settings',
+    icon: loadAppIcon(),
     backgroundColor: '#0f1115',
   },
   onCreated: (window) => {

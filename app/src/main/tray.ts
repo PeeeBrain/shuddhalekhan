@@ -1,6 +1,5 @@
-import { Tray, Menu, nativeImage, app } from 'electron';
-import { join } from 'path';
-import { existsSync } from 'fs';
+import { Tray, Menu, app } from 'electron';
+import { loadAppIcon } from './app-icon';
 import { getConfig, setConfig } from './config';
 import type { AudioDevice, UpdateStatus } from '../types/ipc';
 
@@ -41,7 +40,7 @@ export function createTray(handlers: TrayHandlers): Tray {
   toggleShortcutsPauseHandler = handlers.onTogglePause ?? null;
   shortcutsPaused = isShortcutsPausedHandler?.() ?? false;
 
-  const icon = loadTrayIcon();
+  const icon = loadAppIcon();
   
   tray = new Tray(icon.resize({ width: 16, height: 16 }));
   tray.setToolTip(`Shuddhalekhan v${app.getVersion()}`);
@@ -182,33 +181,3 @@ export function getTray(): Tray | null {
   return tray;
 }
 
-function loadTrayIcon(): Electron.NativeImage {
-  const candidatePaths = app.isPackaged
-    ? [
-        join(process.resourcesPath, 'icons', 'tray-icon.ico'),
-        join(app.getAppPath(), 'icons', 'tray-icon.ico'),
-      ]
-    : [
-        join(app.getAppPath(), 'icons', 'tray-icon.ico'),
-      ];
-
-  for (const iconPath of candidatePaths) {
-    if (!existsSync(iconPath)) continue;
-
-    const icon = nativeImage.createFromPath(iconPath);
-    if (!icon.isEmpty()) {
-      return icon;
-    }
-  }
-
-  return nativeImage.createFromDataURL(
-    'data:image/svg+xml;charset=utf-8,' +
-      encodeURIComponent(`
-        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-          <rect width="32" height="32" rx="8" fill="#141417"/>
-          <path d="M10 16h12" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
-          <path d="M16 8v16" stroke="#646cff" stroke-width="3" stroke-linecap="round"/>
-        </svg>
-      `)
-  );
-}
