@@ -673,6 +673,79 @@ describe('runAgent', () => {
     });
   });
 
+  it('matches the OpenCode host case-insensitively', async () => {
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+    const callbacks = makeCallbacks();
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        provider: {
+          ...baseConfig.agent.provider,
+          baseUrl: 'https://OPENCODE.AI/zen/go/v1',
+          model: 'deepseek-v4-flash',
+          apiKeySource: 'stored' as const,
+        },
+      },
+    };
+
+    await runAgent(
+      'run-1',
+      'hello',
+      config as never,
+      {},
+      new AbortController().signal,
+      callbacks,
+      'stored-agent-secret',
+    );
+
+    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
+    expect(providerConfig.headers).toMatchObject({
+      'x-opencode-session': 'run-1',
+      'User-Agent': 'shuddhalekhan-agent/1.0',
+    });
+  });
+
+  it('does not send OpenCode headers to a lookalike host', async () => {
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [],
+      toolCalls: [],
+      toolResults: [],
+    }));
+    const callbacks = makeCallbacks();
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        provider: {
+          ...baseConfig.agent.provider,
+          baseUrl: 'https://not-opencode.ai/v1',
+          model: 'deepseek-v4-flash',
+          apiKeySource: 'stored' as const,
+        },
+      },
+    };
+
+    await runAgent(
+      'run-1',
+      'hello',
+      config as never,
+      {},
+      new AbortController().signal,
+      callbacks,
+      'stored-agent-secret',
+    );
+
+    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
+    expect(providerConfig.headers).toBeUndefined();
+  });
+
   it('calls onCancelled when aborted', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     streamTextMock.mockImplementation(() => {

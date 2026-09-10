@@ -110,18 +110,30 @@ function looksLikeRawApiKey(value: string): boolean {
   return /^sk-[A-Za-z0-9_-]/.test(value.trim());
 }
 
+function getBaseUrlHostname(baseUrl: string): string | null {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+// Provider-specific identification headers are only sent to exact hosts we
+// recognize; substring matching would leak them to lookalike domains.
 function getProviderHeaders(
   baseUrl: string,
   sessionId: string,
 ): Record<string, string> | undefined {
-  if (baseUrl.includes("opencode.ai")) {
+  const hostname = getBaseUrlHostname(baseUrl);
+
+  if (hostname === "opencode.ai") {
     return {
       "x-opencode-session": sessionId,
       "User-Agent": "shuddhalekhan-agent/1.0",
     };
   }
 
-  if (!baseUrl.includes("openrouter.ai")) return undefined;
+  if (hostname !== "openrouter.ai") return undefined;
 
   return {
     "HTTP-Referer": "https://github.com/parthashirolkar/shuddhalekhan",
