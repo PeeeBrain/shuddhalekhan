@@ -16,6 +16,7 @@ const isDestroyed = vi.fn(() => false);
 const loadURL = vi.fn();
 const loadFile = vi.fn();
 const send = vi.fn();
+const appIcon = { isEmpty: vi.fn(() => false), resize: vi.fn() };
 const BrowserWindow = vi.fn(() => ({
   show,
   focus,
@@ -33,6 +34,8 @@ describe('settings window', () => {
   beforeEach(() => {
     delete process.env.VITE_DEV_SERVER_URL;
     resetElectronMock();
+    electronMock.nativeImage.createFromPath.mockImplementation(() => appIcon);
+    electronMock.nativeImage.createFromDataURL.mockImplementation(() => appIcon);
     electronMock.BrowserWindow.mockImplementation(BrowserWindow);
     BrowserWindow.mockClear();
     show.mockClear();
@@ -60,6 +63,7 @@ describe('settings window', () => {
       resizable: true,
       show: false,
       title: 'Shuddhalekhan Settings',
+      icon: appIcon,
       backgroundColor: '#0f1115',
     }));
     expect(loadURL).toHaveBeenCalledWith('http://localhost:5173/#/settings');

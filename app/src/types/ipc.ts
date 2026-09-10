@@ -85,12 +85,9 @@ export interface McpServerConfig {
 }
 
 export interface RendererToMainSendChannels {
-  'audio-window-ready': () => void;
   'audio-stream-ready': () => void;
   'audio-capture-started': () => void;
-  'audio-capture-failed': () => void;
   'surface-paint-proxy': (surface: string, correlationId?: string) => void;
-  'audio-data-ready': (audioData: ArrayBuffer) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
   'runtime:audio-chunk': (
@@ -119,8 +116,6 @@ export interface RendererToMainSendChannels {
   'runtime:recovery-action': (action: DictationRecoveryAction) => void;
   'runtime:agent-card-size': (height: number) => void;
   'runtime:agent-dismiss': () => void;
-  'agent-toast:content-size': (height: number) => void;
-  'agent-toast:dismiss': () => void;
 }
 
 export interface DictationTargetSnapshot {
@@ -144,8 +139,6 @@ export type InjectResult =
   | { kind: 'error'; message: string };
 
 export interface RendererToMainInvokeChannels {
-  'audio:start-recording': () => void;
-  'audio:stop-recording': () => Promise<string>;
   'audio:get-devices': () => Promise<AudioDevice[]>;
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
@@ -178,17 +171,12 @@ export interface RendererToMainInvokeChannels {
 }
 
 export interface MainToRendererChannels {
-  'audio:start-recording': () => void;
-  'audio:stop-recording': () => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;
   'recording:pill-show': (recordingSessionId?: string, envelope?: RecordingPresentationEnvelope) => void;
   'recording:pill-hide': () => void;
   'recording:duration-warning': (remainingSeconds: number | null) => void;
-  'recording:started': () => void;
-  'recording:stopped': () => void;
   'audio:level-changed': (level: number) => void;
-  'agent-toast:update': (state: AgentToastState) => void;
   'mcp:status-snapshot': (snapshot: McpStatusSnapshot) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
   'settings:navigate': (section: 'about') => void;
@@ -266,52 +254,6 @@ export type McpStatusSnapshot = {
   revision: number;
   servers: McpServerRuntimeStatus[];
 };
-
-export type AgentToastState =
-  | {
-      kind: 'status';
-      agentRunId: string;
-      message: string;
-    }
-  | {
-      kind: 'streaming';
-      agentRunId: string;
-      response: string;
-    }
-  | {
-      kind: 'approval';
-      agentRunId: string;
-      approvalId: string;
-      serverId: string;
-      serverDisplayName?: string;
-      toolName: string;
-      modelToolName: string;
-      arguments: unknown;
-      expiresAt: string;
-    }
-  | {
-      kind: 'completed';
-      agentRunId: string;
-      response: string;
-      toolSummary: string[];
-    }
-  | {
-      kind: 'failed';
-      agentRunId: string;
-      error: string;
-    }
-  | {
-      kind: 'cancelled';
-      agentRunId: string;
-    }
-  | {
-      kind: 'config';
-      message: string;
-    }
-  | {
-      kind: 'transcription-failed';
-      message: string;
-    };
 
 export interface PasteStrategyConfig {
   default: PasteStrategy;
@@ -440,8 +382,6 @@ export interface AppConfig {
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
   setupChecklistDismissed: boolean;
-  /** @deprecated Seed value for per-intent activation modes; read shortcuts instead. */
-  recordingActivationMode: RecordingActivationMode;
   shortcuts: ShortcutsConfig;
   dictation: DictationConfig;
   agent: {

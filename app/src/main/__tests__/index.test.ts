@@ -12,12 +12,6 @@ const powerMonitorListeners = new Map<string, (...args: any[]) => unknown>();
 const clipboardText = { value: 'original' };
 const send = vi.fn();
 const isDestroyed = vi.fn(() => false);
-const showRecordingPill = vi.fn();
-const hideRecordingPill = vi.fn();
-const getRecordingPillWindow = vi.fn(() => ({
-  webContents: { send },
-  isDestroyed,
-}));
 const setConfig = vi.fn();
 const getLastSeenReleaseNotesVersion = vi.fn(() => null);
 const setLastSeenReleaseNotesVersion = vi.fn();
@@ -96,9 +90,6 @@ const agentCancelRun = vi.fn();
 const agentSendApprovalDecision = vi.fn();
 const credentialVault = { read: vi.fn(() => null) };
 const registerCredentialIpcHandlers = vi.fn();
-const showAgentToast = vi.fn();
-const hideAgentToast = vi.fn();
-const handleAgentToastContentSize = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
 let agentManagerDeps: {
   onLifecycleError?: (error: { reason: string }) => void;
@@ -150,7 +141,6 @@ mock.module('../native/clipboard', () => ({
   getClipboardSequenceNumber,
 }));
 mock.module('../native/target', () => ({ captureForegroundTarget }));
-mock.module('../recording-pill', () => ({ showRecordingPill, hideRecordingPill, getRecordingPillWindow }));
 mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler }));
 mock.module('../tray', () => ({
   createTray: vi.fn((handlers: typeof trayHandlers) => {
@@ -170,7 +160,6 @@ mock.module('../config', () => ({
 mock.module('../credential-vault', () => ({ credentialVault }));
 mock.module('../credential-ipc', () => ({ registerCredentialIpcHandlers }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
-mock.module('../agent-toast-window', () => ({ showAgentToast, hideAgentToast, handleAgentToastContentSize }));
 mock.module('../agent-sidecar', () => ({
   AgentSidecarManager: class {
     constructor(onEvent: (event: any) => void, deps?: {
@@ -264,7 +253,6 @@ describe('main process IPC orchestration', () => {
   });
 
   beforeEach(async () => {
-    process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = '1';
     ipcHandlers.clear();
     ipcListeners.clear();
     appListeners.clear();
@@ -301,8 +289,6 @@ describe('main process IPC orchestration', () => {
     });
     send.mockClear();
     isDestroyed.mockReturnValue(false);
-    showRecordingPill.mockClear();
-    hideRecordingPill.mockClear();
     recordingSessionCancel.mockClear();
     setConfig.mockClear();
     getLastSeenReleaseNotesVersion.mockClear();
@@ -336,9 +322,6 @@ describe('main process IPC orchestration', () => {
     agentSendApprovalDecision.mockClear();
     credentialVault.read.mockReset();
     credentialVault.read.mockReturnValue(null);
-    showAgentToast.mockClear();
-    hideAgentToast.mockClear();
-    handleAgentToastContentSize.mockClear();
     agentEventHandler = null;
     agentManagerDeps = null;
     runtimeShellFinish.mockClear();
@@ -377,8 +360,6 @@ describe('main process IPC orchestration', () => {
       'app:get-release-notes',
       'audio:get-devices',
       'audio:select-device',
-      'audio:start-recording',
-      'audio:stop-recording',
       'audit:get-run-detail',
       'audit:get-runs',
       'clipboard:inject-text',
@@ -397,8 +378,6 @@ describe('main process IPC orchestration', () => {
       'updater:get-status',
     ]);
     expect([...ipcListeners.keys()].sort()).toEqual([
-      'agent-toast:content-size',
-      'agent-toast:dismiss',
       'audio-devices',
       'runtime:agent-card-size',
       'runtime:agent-dismiss',
@@ -421,13 +400,13 @@ describe('main process IPC orchestration', () => {
     expect(keyboardSetCaptureSuspended.mock.calls).toEqual([[true], [false]]);
   });
 
-  it('shows transcription failures through a sanitized non-blocking toast', () => {
+  it('shows transcription failures through a sanitized runtime shell failure card', () => {
     sessionOptions.onError(new Error('token=super-secret'));
 
-    expect(showAgentToast).toHaveBeenCalledWith({
-      kind: 'transcription-failed',
-      message: 'Transcription failed unexpectedly. Check provider settings and try again.',
-    });
+    expect(runtimeShellShowFailure).toHaveBeenCalledWith(
+      null,
+      'Transcription failed unexpectedly. Check provider settings and try again.',
+    );
     expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
   });
 
@@ -470,16 +449,6 @@ describe('main process IPC orchestration', () => {
     expect(send).toHaveBeenCalledWith('transcription:readiness-changed', expect.objectContaining({
       state: 'unavailable',
     }));
-  });
-
-  it('starts recording when audio:start-recording is invoked', () => {
-    ipcHandlers.get('audio:start-recording')?.({});
-    expect(recordingSessionBegin).toHaveBeenCalledWith('dictation');
-  });
-
-  it('stops recording when audio:stop-recording is invoked', async () => {
-    await ipcHandlers.get('audio:stop-recording')?.({});
-    expect(recordingSessionEnd).toHaveBeenCalled();
   });
 
   it('transcribes completed audio and restores the clipboard after paste', async () => {
@@ -577,7 +546,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('does not treat an equal-length Batch fallback as already inserted live text', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     await import(`../index?test=${Date.now()}-live-content-mismatch`);
 
     await sessionOptions.onResult({
@@ -629,7 +597,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('stores Recognized So Far and shows recovery after terminal Live failure', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     await import(`../index?test=${Date.now()}-recognized-so-far`);
 
     await sessionOptions.onResult({
@@ -659,7 +626,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('hides the recovery shell before Retry Paste validates the target', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     ipcListeners.clear();
     captureForegroundTarget.mockReturnValueOnce({
       ...defaultTargetSnapshot,
@@ -693,7 +659,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('ignores duplicate retry-paste recovery actions while injection is in flight', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     ipcListeners.clear();
     captureForegroundTarget.mockReturnValueOnce({
       ...defaultTargetSnapshot,
@@ -727,7 +692,7 @@ describe('main process IPC orchestration', () => {
     expect(simulatePaste).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a config toast instead of starting the sidecar when Agent Mode is disabled', async () => {
+  it('shows an agent status message instead of starting the sidecar when Agent Mode is disabled', async () => {
     const result = {
       text: 'transcribed text',
       intent: 'agent' as const,
@@ -736,58 +701,13 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
 
     expect(agentStartRun).not.toHaveBeenCalled();
-    expect(showAgentToast).toHaveBeenCalledWith({
-      kind: 'config',
-      message: 'Agent Mode is disabled. Open Settings to enable it.',
-    });
-  });
-
-  it('shows explicit approval status and approval toast when a tool asks for HITL', async () => {
-    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
-    getConfig.mockReturnValue(config);
-
-    // Re-import to pick up config change
-    await import(`../index?test=${Date.now()}-hitl-toast`);
-
-    const result = {
-      text: 'transcribed text',
-      intent: 'agent' as const,
-      targetSnapshot: defaultTargetSnapshot,
-    };
-    await sessionOptions.onResult(result);
-    const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
-    showAgentToast.mockClear();
-
-    agentEventHandler?.({
-      type: 'approval:requested',
-      agentRunId: activeRunId,
-      approvalId: 'approval-1',
-      serverId: 'exa',
-      toolName: 'web_search_exa',
-      modelToolName: 'exa__web_search_exa',
-      arguments: { query: 'current events' },
-      expiresAt: '2026-05-09T16:35:24.399Z',
-    });
-
-    expect(showAgentToast).toHaveBeenNthCalledWith(1, {
-      kind: 'status',
-      agentRunId: activeRunId,
-      message: 'Waiting for approval: exa.web_search_exa',
-    });
-    expect(showAgentToast).toHaveBeenNthCalledWith(2, {
-      kind: 'approval',
-      agentRunId: activeRunId,
-      approvalId: 'approval-1',
-      serverId: 'exa',
-      toolName: 'web_search_exa',
-      modelToolName: 'exa__web_search_exa',
-      arguments: { query: 'current events' },
-      expiresAt: '2026-05-09T16:35:24.399Z',
-    });
+    expect(runtimeShellShowAgentStatus).toHaveBeenCalledWith(
+      null,
+      'Agent Mode is disabled. Open Settings to enable it.',
+    );
   });
 
   it('projects approval requests onto the shared agent shell when it is enabled', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
     getConfig.mockReturnValue(config);
 
@@ -818,11 +738,9 @@ describe('main process IPC orchestration', () => {
       agentRunId: activeRunId,
       approvalId: 'approval-1',
     }));
-    expect(showAgentToast).not.toHaveBeenCalled();
   });
 
   it('cancels the active run when a new Agent recording starts and drops its late events', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
     getConfig.mockReturnValue(config);
 
@@ -847,7 +765,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('shows one persistent shell failure when the sidecar exits unexpectedly', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
 
     await import(`../index?test=${Date.now()}-shell-gen-exit`);
 
@@ -855,47 +772,9 @@ describe('main process IPC orchestration', () => {
 
     expect(runtimeShellShowAgentFailed).toHaveBeenCalledTimes(1);
     expect(runtimeShellShowAgentFailed).toHaveBeenCalledWith(null, 'Agent runtime stopped unexpectedly. Try Agent Mode again.');
-    expect(showAgentToast).not.toHaveBeenCalled();
-  });
-
-  it('keeps the legacy Agent toast window when SHUDDHALEKHAN_DISABLE_AGENT_SHELL is set', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
-    process.env.SHUDDHALEKHAN_DISABLE_AGENT_SHELL = '1';
-    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
-    getConfig.mockReturnValue(config);
-
-    try {
-      await import(`../index?test=${Date.now()}-agent-shell-rollback`);
-
-      const result = {
-        text: 'transcribed text',
-        intent: 'agent' as const,
-        targetSnapshot: defaultTargetSnapshot,
-      };
-      await sessionOptions.onResult(result);
-      const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
-
-      agentEventHandler?.({
-        type: 'approval:requested',
-        agentRunId: activeRunId,
-        approvalId: 'approval-1',
-        serverId: 'exa',
-        toolName: 'web_search_exa',
-        modelToolName: 'exa__web_search_exa',
-        arguments: { query: 'current events' },
-        expiresAt: '2026-05-09T16:35:24.399Z',
-      });
-
-      expect(runtimeShellShowAgentApproval).not.toHaveBeenCalled();
-      expect(showAgentToast).toHaveBeenCalledWith(expect.objectContaining({ kind: 'status', message: 'Waiting for approval: exa.web_search_exa' }));
-      expect(showAgentToast).toHaveBeenCalledWith(expect.objectContaining({ kind: 'approval', approvalId: 'approval-1' }));
-    } finally {
-      delete process.env.SHUDDHALEKHAN_DISABLE_AGENT_SHELL;
-    }
   });
 
   it('dismisses a presented agent terminal card through the runtime IPC channel', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
     getConfig.mockReturnValue(config);
 
@@ -920,7 +799,6 @@ describe('main process IPC orchestration', () => {
     ipcListeners.get('runtime:agent-dismiss')?.({});
 
     expect(runtimeShellDismissAgentCard).toHaveBeenCalledTimes(1);
-    expect(hideAgentToast).toHaveBeenCalled();
   });
 
   it('proxies config, device, update, and recording pill events without restarting sidecar for audio config', async () => {
@@ -940,20 +818,16 @@ describe('main process IPC orchestration', () => {
     ipcHandlers.get('audio:select-device')?.({}, 'mic-1');
     ipcHandlers.get('updater:check')?.({});
     ipcListeners.get('audio-devices')?.({}, [{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
-    ipcListeners.get('agent-toast:content-size')?.({}, 280);
-    ipcListeners.get('agent-toast:dismiss')?.({});
 
     expect(setConfig).toHaveBeenCalledWith('whisperUrl', 'http://new');
     expect(agentStart).not.toHaveBeenCalled();
     expect(agentStop).not.toHaveBeenCalled();
     expect(openSettingsWindow).toHaveBeenCalled();
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
-    expect(hideAgentToast).toHaveBeenCalled();
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
     expect(recordingSessionUpdateDevice).toHaveBeenCalledWith('mic-1');
     expect(checkForUpdates).toHaveBeenCalled();
     expect(updateAudioDevices).toHaveBeenCalledWith([{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
-    expect(handleAgentToastContentSize).toHaveBeenCalledWith(280);
   });
 
   it('applies sidecar lifecycle policy for Agent Mode config changes', async () => {
@@ -1024,22 +898,13 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a config toast when sidecar containment fails', () => {
+  it('shows a persistent failure card when sidecar containment fails', () => {
     agentManagerDeps?.onLifecycleError?.({ reason: 'job-assignment-failed' });
 
-    expect(showAgentToast).toHaveBeenCalledWith({
-      kind: 'config',
-      message: 'Agent runtime could not start securely. Check the logs and try again.',
-    });
-  });
-
-  it('shows a config toast when the sidecar exits unexpectedly', () => {
-    agentManagerDeps?.onGenerationExit?.();
-
-    expect(showAgentToast).toHaveBeenCalledWith({
-      kind: 'config',
-      message: 'Agent runtime stopped unexpectedly. Try Agent Mode again.',
-    });
+    expect(runtimeShellShowAgentFailed).toHaveBeenCalledWith(
+      null,
+      'Agent runtime could not start securely. Check the logs and try again.',
+    );
   });
 
   it('fails active recording closed on screen lock and suspend', async () => {
@@ -1145,7 +1010,7 @@ describe('main process IPC orchestration', () => {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
-    expect(notificationShow).toHaveBeenCalledTimes(1);
+    expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
 
     simulatePaste.mockReturnValue({ acceptedEvents: 4 });
     await trayHandlers.onPasteLastTranscript?.();
@@ -1198,7 +1063,7 @@ describe('main process IPC orchestration', () => {
     expect(notificationShow).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a distinct recovery notification when the clipboard changes during dictation', async () => {
+  it('shows a recovery failure card when the clipboard changes during dictation', async () => {
     getClipboardSequenceNumber.mockReturnValueOnce(1).mockReturnValueOnce(2);
 
     const result = {
@@ -1209,16 +1074,11 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    expect(notificationShow).toHaveBeenCalledTimes(1);
-    expect(electronMock.Notification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        body: expect.stringContaining('Clipboard changed during dictation'),
-      })
-    );
+    expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
+    expect(runtimeShellShowFailure.mock.calls[0]?.[1]).toContain('Clipboard changed before Shuddhalekhan could paste the transcript.');
   });
 
   it('injects corrected formatter output on success', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     ipcListeners.clear();
     await import(`../index?test=${Date.now()}-corrected-success`);
     applyDictationFormatter.mockResolvedValueOnce({ kind: 'success', text: 'buy eggs' });
@@ -1251,7 +1111,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('inserts raw text and shows degraded notice when formatting fails', async () => {
-    delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
     ipcListeners.clear();
     await import(`../index?test=${Date.now()}-corrected-fallback`);
     applyDictationFormatter.mockResolvedValueOnce({

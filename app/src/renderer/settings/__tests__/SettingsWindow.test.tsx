@@ -49,7 +49,6 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: true,
-    recordingActivationMode: 'push-to-talk',
     shortcuts: {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
       agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },

@@ -136,25 +136,6 @@ export function getTranscriptionTransportCapabilities(
   return { ...TRANSCRIPTION_TRANSPORT_CAPABILITIES[providerId] };
 }
 
-export interface MaintainerRuntimeGates {
-  runtimeShell: boolean;
-  agentShell: boolean;
-  streaming: boolean;
-  directUnicode: boolean;
-}
-
-export function parseMaintainerRuntimeGates(
-  env: NodeJS.ProcessEnv,
-): MaintainerRuntimeGates {
-  return {
-    runtimeShell: env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL !== '1',
-    // Restores the legacy Agent toast window as a local maintainer rollback.
-    agentShell: env.SHUDDHALEKHAN_DISABLE_AGENT_SHELL !== '1',
-    streaming: env.SHUDDHALEKHAN_DISABLE_STREAMING !== '1',
-    directUnicode: env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE !== '1',
-  };
-}
-
 export function getFormatterProfileError(
   formatter: DictationFormatterProfile | null,
 ): string | null {
@@ -237,21 +218,6 @@ export function getDictationCombinationError(input: DictationCombinationInput): 
     return getFormatterCredentialError(input.formatter);
   }
 
-  return null;
-}
-
-export function getDictationRuntimeError(
-  input: DictationCombinationInput,
-  gates: MaintainerRuntimeGates,
-): string | null {
-  const combinationError = getDictationCombinationError(input);
-  if (combinationError) return combinationError;
-  if (input.mode === 'live' && !gates.streaming) {
-    return 'Live Dictation is disabled by a local maintainer switch.';
-  }
-  if (input.mode === 'live' && !gates.directUnicode) {
-    return 'Direct-Unicode insertion is disabled by a local maintainer switch.';
-  }
   return null;
 }
 

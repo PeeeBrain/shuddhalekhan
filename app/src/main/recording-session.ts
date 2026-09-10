@@ -11,19 +11,10 @@ import type {
 import {
   createRecordingPresentationEnvelope,
   getTranscriptionTransportCapabilities,
-  parseMaintainerRuntimeGates,
-  type MaintainerRuntimeGates,
 } from '../shared/dictation-runtime';
 import { keyboardHook } from './native/keyboard';
 import { DEFAULT_SHORTCUTS } from '../shared/shortcut-bindings';
 import { captureForegroundTarget } from './native/target';
-import {
-  getRecordingPillWindow,
-  hideRecordingPill,
-  prepareRecordingPillWindow,
-  showRecordingPill,
-  updateRecordingDurationWarning,
-} from './recording-pill';
 import { localWhisperCppTranscriber } from './whisper';
 import {
   TranscriptionFailure,
@@ -35,7 +26,6 @@ import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from 
 import { LiveDictationController } from './live-dictation-controller';
 import { sendUnicodeText } from './native/unicode-input';
 import { LIVE_KEYBOARD_RELEASE_GRACE_MS } from '../shared/live-dictation';
-import { createSingletonWindow } from './window-factory';
 import { emitPerformanceMarker } from './performance/marker-collector';
 import { RuntimeShell } from './runtime-shell';
 
@@ -91,121 +81,6 @@ export interface RuntimeShellBackend extends AudioCapture {
   consumeAudioEvent(generation: number, recordingSessionId: string, sequence: number): boolean;
 }
 
-export class ProductionAudioCapture implements AudioCapture {
-  private windowController: ReturnType<typeof createSingletonWindow>;
-  private isReady = false;
-  private prepared = false;
-  private pendingBegin = false;
-
-  constructor(
-    private readonly onCrash?: (reason: string) => void
-  ) {
-    this.windowController = createSingletonWindow({
-      route: 'audio',
-      options: {
-        width: 1,
-        height: 1,
-        show: false,
-        frame: false,
-        transparent: true,
-        skipTaskbar: true,
-        focusable: false,
-        webPreferences: {
-          backgroundThrottling: false,
-        },
-      },
-      onCreated: (win) => {
-        win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
-          console.error(`Audio window failed to load: ${errorCode} ${errorDescription}`);
-        });
-        win.webContents.on('render-process-gone', (_event, details) => {
-          console.error(`Audio window render process gone: ${details.reason}`);
-          this.handleCrash(details.reason);
-        });
-      },
-    });
-  }
-
-  prepare(): void {
-    if (this.prepared) return;
-    this.windowController.create();
-    this.prepared = true;
-  }
-
-  markReady(): void {
-    this.isReady = true;
-    if (this.pendingBegin) {
-      this.pendingBegin = false;
-      this.sendStart();
-    }
-  }
-
-  markCrashed(reason: string): void {
-    this.handleCrash(reason);
-  }
-
-  private handleCrash(reason: string): void {
-    this.isReady = false;
-    this.prepared = false;
-    this.pendingBegin = false;
-    this.onCrash?.(reason);
-  }
-
-  beginCapture(): void {
-    if (!this.isReady) {
-      this.pendingBegin = true;
-      return;
-    }
-    this.sendStart();
-  }
-
-  endCapture(): boolean {
-    this.pendingBegin = false;
-    const win = this.windowController.get();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('audio:stop-recording');
-      return true;
-    }
-    return false;
-  }
-
-  cancelCapture(): void {
-    this.pendingBegin = false;
-    const win = this.windowController.get();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('audio:stop-recording');
-    }
-  }
-
-  setSelectedDevice(deviceId: string | null): void {
-    this.isReady = false;
-    this.pendingBegin = false;
-    const win = this.windowController.get();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('audio:recreate-stream', deviceId);
-    }
-  }
-
-  destroy(): void {
-    this.windowController.destroy();
-    this.isReady = false;
-    this.prepared = false;
-    this.pendingBegin = false;
-  }
-
-  getWebContents(): import('electron').WebContents | null {
-    const win = this.windowController.get();
-    return win && !win.isDestroyed() ? win.webContents : null;
-  }
-
-  private sendStart(): void {
-    const win = this.windowController.get();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('audio:start-recording');
-    }
-  }
-}
-
 export interface KeyboardHook {
   start(options: {
     onStart: (intent: RecordingIntent) => boolean | void;
@@ -232,20 +107,11 @@ export interface RecordingSessionOptions {
   onError?: (error: Error) => void;
   onBegin?: (intent: RecordingIntent) => void;
 
-  audioCapture?: AudioCapture;
   runtimeShell?: RuntimeShellBackend;
-  runtimeGates?: MaintainerRuntimeGates;
   keyboardHook?: KeyboardHook;
   transcriber?: Transcriber;
   getTranscriber?: () => Transcriber;
   captureTarget?: () => DictationTargetSnapshot | null;
-  showRecordingPill?: (
-    intent: RecordingIntent,
-    recordingSessionId?: string,
-    envelope?: RecordingPresentationEnvelope,
-  ) => void;
-  hideRecordingPill?: () => void;
-  updateDurationWarning?: (remainingSeconds: number | null) => void;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
 }
@@ -298,8 +164,6 @@ export class RecordingSession {
   private finishPresentationFn: (() => void) | null;
   private showFailureFn: ((recordingSessionId: string | null, message: string) => void) | null;
   private runtimeShellBackend: RuntimeShellBackend | null;
-  private streamingEnabled: boolean;
-  private directUnicodeEnabled: boolean;
   private setTimeoutFn: typeof setTimeout;
   private clearTimeoutFn: typeof clearTimeout;
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
@@ -312,16 +176,9 @@ export class RecordingSession {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
     this.getRecordingActivationMode = options.getRecordingActivationMode ?? (() => 'push-to-talk');
     this.getShortcutBinding = options.getShortcutBinding ?? ((intent) => DEFAULT_SHORTCUTS[intent].binding);
-    const runtimeGates = options.runtimeGates ?? parseMaintainerRuntimeGates(process.env);
-    const useRuntimeShell = runtimeGates.runtimeShell && !options.audioCapture;
-    this.streamingEnabled = runtimeGates.streaming;
-    this.directUnicodeEnabled = runtimeGates.directUnicode;
-    const runtimeShell = useRuntimeShell
-      ? options.runtimeShell ?? new RuntimeShell((reason) => this.handleAudioRendererCrash(reason))
-      : null;
-    this.audioCapture = options.audioCapture ?? runtimeShell ?? new ProductionAudioCapture(
-      (reason) => this.handleAudioRendererCrash(reason)
-    );
+    const runtimeShell = options.runtimeShell
+      ?? new RuntimeShell((reason) => this.handleAudioRendererCrash(reason));
+    this.audioCapture = runtimeShell;
     this.keyboardHook = options.keyboardHook ?? keyboardHook;
     const defaultTranscriber = options.transcriber ?? localWhisperCppTranscriber;
     this.getTranscriber = options.getTranscriber ?? (() => defaultTranscriber);
@@ -334,26 +191,14 @@ export class RecordingSession {
     this.getDictationMode = options.getDictationMode ?? (() => 'batch');
     this.getReadinessError = options.getReadinessError ?? (() => null);
     this.captureTarget = options.captureTarget ?? captureForegroundTarget;
-    this.showRecordingPillFn = options.showRecordingPill
-      ?? (runtimeShell ? runtimeShell.show.bind(runtimeShell) : showRecordingPill);
-    this.hideRecordingPillFn = options.hideRecordingPill
-      ?? (runtimeShell ? runtimeShell.hide.bind(runtimeShell) : hideRecordingPill);
-    this.updateDurationWarningFn = options.updateDurationWarning
-      ?? (runtimeShell
-        ? runtimeShell.updateDurationWarning.bind(runtimeShell)
-        : updateRecordingDurationWarning);
-    this.preparePresentationFn = runtimeShell
-      ? runtimeShell.prepare.bind(runtimeShell)
-      : prepareRecordingPillWindow;
-    this.updateAudioLevelFn = runtimeShell
-      ? runtimeShell.updateAudioLevel.bind(runtimeShell)
-      : (level) => {
-          const pill = getRecordingPillWindow();
-          if (pill && !pill.isDestroyed()) pill.webContents.send('audio:level-changed', level);
-        };
-    this.showProcessingFn = runtimeShell ? runtimeShell.showProcessing.bind(runtimeShell) : null;
-    this.finishPresentationFn = runtimeShell ? runtimeShell.finish.bind(runtimeShell) : null;
-    this.showFailureFn = runtimeShell ? runtimeShell.showFailure.bind(runtimeShell) : null;
+    this.showRecordingPillFn = runtimeShell.show.bind(runtimeShell);
+    this.hideRecordingPillFn = runtimeShell.hide.bind(runtimeShell);
+    this.updateDurationWarningFn = runtimeShell.updateDurationWarning.bind(runtimeShell);
+    this.preparePresentationFn = runtimeShell.prepare.bind(runtimeShell);
+    this.updateAudioLevelFn = runtimeShell.updateAudioLevel.bind(runtimeShell);
+    this.showProcessingFn = runtimeShell.showProcessing.bind(runtimeShell);
+    this.finishPresentationFn = runtimeShell.finish.bind(runtimeShell);
+    this.showFailureFn = runtimeShell.showFailure.bind(runtimeShell);
     this.runtimeShellBackend = runtimeShell;
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
@@ -406,18 +251,8 @@ export class RecordingSession {
         this.onErrorCallback?.(error);
         return false;
       }
-      if (!this.directUnicodeEnabled) {
-        const error = new Error('Direct-Unicode insertion is disabled by a local maintainer switch.');
-        emitPerformanceMarker('recording.begin.rejected', {
-          recordingSessionId,
-          surface: intent,
-          reason: 'live-direct-unicode-disabled',
-        });
-        this.onErrorCallback?.(error);
-        return false;
-      }
       if (!this.canStartLiveStreaming(transcriber)) {
-        const error = new Error('Live Dictation requires a streaming-capable provider and runtime shell.');
+        const error = new Error('Live Dictation requires a streaming-capable provider.');
         emitPerformanceMarker('recording.begin.rejected', {
           recordingSessionId,
           surface: intent,
@@ -569,15 +404,6 @@ export class RecordingSession {
     return this.activeRun !== null && this.activeRun.state === 'recording';
   }
 
-  markAudioWindowReady(): void {
-    this.audioCapture.markReady?.();
-  }
-
-  markAudioWindowCrashed(reason: string): void {
-    this.audioCapture.markCrashed?.(reason);
-    this.handleAudioRendererCrash(reason);
-  }
-
   markRuntimeShellCrashed(reason: string): void {
     this.handleAudioRendererCrash(reason);
   }
@@ -710,11 +536,8 @@ export class RecordingSession {
     // still start immediately if the user invokes a shortcut during loading.
     this.preparePresentationFn();
 
-    ipcMain.on('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.on('audio-capture-started', this.handleAudioCaptureStarted);
-    ipcMain.on('audio-capture-failed', this.handleAudioCaptureFailed);
-    ipcMain.on('audio-data-ready', this.handleAudioDataReady);
     ipcMain.on('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.on('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
     ipcMain.on('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
@@ -726,11 +549,8 @@ export class RecordingSession {
 
   stop(): void {
     this.clearDurationTimers();
-    ipcMain.off('audio-window-ready', this.handleAudioWindowReady);
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.off('audio-capture-started', this.handleAudioCaptureStarted);
-    ipcMain.off('audio-capture-failed', this.handleAudioCaptureFailed);
-    ipcMain.off('audio-data-ready', this.handleAudioDataReady);
     ipcMain.off('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.off('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
     ipcMain.off('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
@@ -750,9 +570,7 @@ export class RecordingSession {
   }
 
   private canStartLiveStreaming(transcriber: Transcriber): boolean {
-    return this.streamingEnabled
-      && this.runtimeShellBackend !== null
-      && typeof transcriber.startStreaming === 'function';
+    return typeof transcriber.startStreaming === 'function';
   }
 
   private startStreamingIfEligible(run: RecordingRunContext): boolean {
@@ -760,7 +578,6 @@ export class RecordingSession {
     if (run.intent === 'dictation' && (
       this.getDictationMode() !== 'live'
       || this.getRecordingActivationMode('dictation') !== 'toggle'
-      || !this.directUnicodeEnabled
     )) return false;
 
     const startStreaming = run.transcriber.startStreaming;
@@ -981,10 +798,6 @@ export class RecordingSession {
     return this.keyboardHook.isKeyboardClear?.() ?? false;
   }
 
-  private handleAudioWindowReady = (): void => {
-    this.audioCapture.prepare();
-  };
-
   private handleAudioStreamReady = (): void => {
     emitPerformanceMarker('audio-stream.ready', {
       recordingSessionId: this.activeRun?.id,
@@ -998,20 +811,6 @@ export class RecordingSession {
       recordingSessionId: this.activeRun.id,
       surface: this.activeRun.intent,
     });
-  };
-
-  private handleAudioCaptureFailed = (): void => {
-    this.failActiveCapture();
-  };
-
-  private handleAudioDataReady = async (_event: unknown, audioData: ArrayBuffer): Promise<void> => {
-    const data = new Uint8Array(audioData);
-    console.log(`Audio data ready: ${data.byteLength} bytes`);
-    try {
-      await this.complete(data);
-    } catch {
-      // Defensively catch in async ipcMain.on listener
-    }
   };
 
   private handleRuntimeAudioChunk = async (

@@ -51,7 +51,7 @@ describe('Batch Dictation runtime shell', () => {
       skipTaskbar: true,
     }));
     expect(loadURL).toHaveBeenCalledWith('http://localhost:5173/#/runtime');
-    expect(send).not.toHaveBeenCalledWith('audio:start-recording');
+    expect(send.mock.calls.map((call: unknown[]) => call[0])).not.toContain('runtime:audio-start');
   });
 
   it('publishes complete monotonic recording, processing, failure, and idle snapshots', async () => {

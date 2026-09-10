@@ -111,7 +111,6 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
-      recordingActivationMode: 'push-to-talk',
       agent: {
         enabled: false,
         provider: {
@@ -149,19 +148,11 @@ describe('config store', () => {
     expect(getConfig()).not.toHaveProperty('lastSeenReleaseNotesVersion');
   });
 
-  it('defaults recording activation to push-to-talk', async () => {
+  it('does not expose the retired shared activation mode', async () => {
     existsSync.mockReturnValue(false);
-    const { getConfig } = await import(`../config?test=${Date.now()}-activation-default`);
+    const { getConfig } = await import(`../config?test=${Date.now()}-retired-activation-mode`);
 
-    expect(getConfig().recordingActivationMode).toBe('push-to-talk');
-  });
-
-  it('falls back to push-to-talk for an invalid stored activation mode', async () => {
-    existsSync.mockReturnValue(false);
-    const { getConfig } = await import(`../config?test=${Date.now()}-activation-invalid`);
-    storeData.set('recordingActivationMode', 'unsupported');
-
-    expect(getConfig().recordingActivationMode).toBe('push-to-talk');
+    expect('recordingActivationMode' in getConfig()).toBe(false);
   });
 
   it('sets typed config values', async () => {
@@ -180,7 +171,6 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
-      recordingActivationMode: 'push-to-talk',
       dictation: { mode: 'live', formatter: null },
       agent: {
         enabled: false,
@@ -307,7 +297,6 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
-      recordingActivationMode: 'push-to-talk',
       dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
@@ -339,7 +328,6 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
-      recordingActivationMode: 'push-to-talk',
       dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
@@ -870,50 +858,33 @@ describe('config store', () => {
     expect(getConfig().dictation.mode).toBe('live');
   });
 
-  it('preserves Batch Dictation and Agent-only config when maintainer gates are off', async () => {
+  it('preserves Batch Dictation and Agent-only config from a legacy store', async () => {
     givenExistingStoreFile();
     const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
     for (const [key, value] of Object.entries(fixture.default ?? fixture)) {
       if (key === 'default') continue;
       storeData.set(key, value);
     }
-    const previous = {
-      shell: process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL,
-      streaming: process.env.SHUDDHALEKHAN_DISABLE_STREAMING,
-      unicode: process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE,
-    };
-    process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = '1';
-    process.env.SHUDDHALEKHAN_DISABLE_STREAMING = '1';
-    process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = '1';
 
-    try {
-      const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-feature-off`);
-      const config = getConfig();
-      expect(config.dictation.mode).toBe('batch');
-      expect(config.agent.enabled).toBe(true);
-      expect(config.agent.mcpServers[0]?.id).toBe('mail');
-      expect(config.agent.provider.apiKeyEnvVar).toBe('OPENROUTER_API_KEY');
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-legacy-batch-preserved`);
+    const config = getConfig();
+    expect(config.dictation.mode).toBe('batch');
+    expect(config.agent.enabled).toBe(true);
+    expect(config.agent.mcpServers[0]?.id).toBe('mail');
+    expect(config.agent.provider.apiKeyEnvVar).toBe('OPENROUTER_API_KEY');
 
-      setConfig('shortcuts', {
-        dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
-        agent: config.shortcuts.agent,
-      });
-      expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
-        'Live Dictation requires a streaming-capable provider.',
-      );
-      expect(getConfig().dictation.mode).toBe('batch');
-      expect(getConfig().agent.enabled).toBe(true);
-    } finally {
-      if (previous.shell === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
-      else process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = previous.shell;
-      if (previous.streaming === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_STREAMING;
-      else process.env.SHUDDHALEKHAN_DISABLE_STREAMING = previous.streaming;
-      if (previous.unicode === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE;
-      else process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = previous.unicode;
-    }
+    setConfig('shortcuts', {
+      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
+      agent: config.shortcuts.agent,
+    });
+    expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
+      'Live Dictation requires a streaming-capable provider.',
+    );
+    expect(getConfig().dictation.mode).toBe('batch');
+    expect(getConfig().agent.enabled).toBe(true);
   });
 
-  it('preserves an explicitly selected mode when future runtime paths are locally disabled', async () => {
+  it('preserves an explicitly selected Corrected Dictation mode', async () => {
     existsSync.mockReturnValue(false);
     storeData.set('dictation', {
       mode: 'corrected',
@@ -925,34 +896,17 @@ describe('config store', () => {
         processingConsent: true,
       },
     });
-    const previous = {
-      shell: process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL,
-      streaming: process.env.SHUDDHALEKHAN_DISABLE_STREAMING,
-      unicode: process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE,
-    };
-    process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = '1';
-    process.env.SHUDDHALEKHAN_DISABLE_STREAMING = '1';
-    process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = '1';
 
-    try {
-      const { getConfig } = await import(`../config?test=${Date.now()}-dictation-gates-preserve-mode`);
-      expect(getConfig().dictation).toEqual({
-        mode: 'corrected',
-        formatter: {
-          baseUrl: 'http://127.0.0.1:11434/v1',
-          model: 'formatter',
-          apiKeyEnvVar: '',
-          apiKeySource: 'environment',
-          processingConsent: true,
-        },
-      });
-    } finally {
-      if (previous.shell === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL;
-      else process.env.SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL = previous.shell;
-      if (previous.streaming === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_STREAMING;
-      else process.env.SHUDDHALEKHAN_DISABLE_STREAMING = previous.streaming;
-      if (previous.unicode === undefined) delete process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE;
-      else process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = previous.unicode;
-    }
+    const { getConfig } = await import(`../config?test=${Date.now()}-corrected-mode-preserved`);
+    expect(getConfig().dictation).toEqual({
+      mode: 'corrected',
+      formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        model: 'formatter',
+        apiKeyEnvVar: '',
+        apiKeySource: 'environment',
+        processingConsent: true,
+      },
+    });
   });
 });

@@ -7,6 +7,14 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Runtime Shell
+- Removed the legacy Agent toast window, hidden audio window, and standalone recording-pill window. Agent status, approvals, and final responses now appear only as cards in the persistent runtime shell, and the shell owns recording presentation.
+- Removed the local maintainer rollback switches (`SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL`, `SHUDDHALEKHAN_DISABLE_AGENT_SHELL`, `SHUDDHALEKHAN_DISABLE_STREAMING`, `SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE`) together with their legacy IPC channels, renderer routes, and fallback paths.
+- Removed the deprecated `recordingActivationMode` config alias from the public config surface; existing installs still seed per-intent activation modes from it once during migration.
+
+### Agent Mode
+- Agent runs now identify themselves to OpenCode Go with a stable `x-opencode-session` per run and a Shuddhalekhan `User-Agent`, so Console Go requests route correctly instead of failing with `MissingSessionID`.
+
 ### Dictation Runtime
 - Live Dictation is now the out-of-the-box default for genuinely new installations, together with Toggle activation and the WhisperLiveKit provider. The promoted identity is written as an explicit stored choice on first run, so it survives restarts. Every pre-existing store keeps its own shortcuts and provider: a store that predates the dictation block resolves to Batch Dictation, and an existing Batch, Live, or Corrected selection is preserved unchanged. Nothing silently changes the saved mode during an upgrade.
 - The first-run setup checklist now points streaming setups at WhisperLiveKit readiness instead of the local whisper.cpp endpoint, and marks that step done only after an actual readiness check reports Ready.
@@ -18,11 +26,9 @@ tags and commit history, not from this file. Keep new entries under
 - Corrected Dictation is an opt-in finalize-once mode that makes one bounded, no-tools formatter call after recognition, with independent formatter settings, local/remote disclosure, processing consent, and complete raw-text fallback when formatting is unavailable or unsafe.
 - Runtime events carry generation, session, sequence, and revision identity so crashes, cancellation, replacement, lock/suspend, and shutdown cannot replay stale audio or trigger late insertion.
 - Successful Dictation remains silent. Failed insertion offers only certainty-safe exact-target Retry Paste and full-transcript copy actions through Last Transcript.
-- Setting `SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL=1` restores the legacy audio-window and recording-pill path as a local maintainer rollback.
 - Added explicit Batch, Live, and Corrected Dictation modes in persisted config. Existing installations normalize to Batch Dictation without changing provider, shortcuts, activation, MCP, or credential references.
 - Transcription settings now show the selected Dictation mode and reject unsupported Live or Corrected combinations instead of silently switching behavior.
 - Recording sessions and the recording pill can carry opaque session identity, monotonic sequence/revision metadata, provider capabilities, and typed terminal outcomes while preserving existing message meanings.
-- Added local maintainer kill-switch contracts for the runtime shell, streaming, and direct-Unicode paths without coupling them to persisted user settings.
 
 ### Updates
 - Update prompts now show a preview of the target version's release notes, with the complete notes available in Settings.
@@ -63,7 +69,6 @@ tags and commit history, not from this file. Keep new entries under
 - A new Agent command invalidates the previous run's presentation; Dictation recordings visually preempt a running Agent without cancelling it, and stale events never flash outdated cards.
 - Tool approvals remain sequential and expire on schedule, activate only after deliberate clicks (denial feedback survives Dictation preemption), and continue to require a sidecar decision.
 - Unexpected Agent runtime loss now shows one persistent dismissible failure; replacing a run, disabling Agent Mode, and shutting down stay silent.
-- Setting `SHUDDHALEKHAN_DISABLE_AGENT_SHELL=1` restores the legacy separate Agent toast window as a local maintainer rollback.
 - Agent Mode now keeps enabled MCP servers connected between voice commands. A run waits up to five seconds for pending connections, then continues with the available tools and reports how many servers are unavailable.
 - Local stdio MCP servers now launch without a shell or console window, receive their declared environment variables plus a small non-secret OS baseline (PATH, system directories), keep bounded redacted diagnostics, and get five seconds to exit after stdin closes.
 - The Agent sidecar and every ordinary child process now share a kill-on-close Windows Job Object. Disabling Agent Mode or quitting the app waits for graceful cleanup before Windows enforces process-tree termination.

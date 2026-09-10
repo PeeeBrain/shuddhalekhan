@@ -25,7 +25,6 @@ const config: AppConfig = {
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
-  recordingActivationMode: 'push-to-talk',
   shortcuts: {
     dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
     agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
@@ -91,14 +90,14 @@ describe('settings IPC adapter', () => {
 
   it('saves config and forwards actions without exposing channel names to callers', async () => {
     await ipc.setConfig('agent', config.agent);
-    await ipc.setConfig('recordingActivationMode', 'toggle');
+    await ipc.setConfig('removeFillerWords', false);
     await ipc.testMcpServer('mail');
     await ipc.checkTranscriptionServer();
     await ipc.checkTranscriptionReadiness();
     await ipc.checkForUpdates();
 
     expect(invoke).toHaveBeenCalledWith('config:set', 'agent', config.agent);
-    expect(invoke).toHaveBeenCalledWith('config:set', 'recordingActivationMode', 'toggle');
+    expect(invoke).toHaveBeenCalledWith('config:set', 'removeFillerWords', false);
     expect(invoke).toHaveBeenCalledWith('mcp:test-server', 'mail');
     expect(invoke).toHaveBeenCalledWith('transcription:check-server');
     expect(invoke).toHaveBeenCalledWith('transcription:check-readiness');

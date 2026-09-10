@@ -15,8 +15,6 @@ describe('Agent presenters', () => {
     shell.showAgentApproval.mockClear();
     shell.showAgentCompleted.mockClear();
     shell.showAgentFailed.mockClear();
-    showToast.mockClear();
-    hideToast.mockClear();
   }
 
   const shell = {
@@ -28,8 +26,6 @@ describe('Agent presenters', () => {
     showAgentCompleted: vi.fn(),
     showAgentFailed: vi.fn(),
   };
-  const showToast = vi.fn();
-  const hideToast = vi.fn();
 
   it('projects run events onto the runtime shell', async () => {
     const { createRuntimeShellPresenter } = await import(`../agent-presentation?test=${Date.now()}-shell`);
@@ -70,67 +66,9 @@ describe('Agent presenters', () => {
     expect(shell.clearAgentRun).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the legacy toast contract for the rollback window', async () => {
-    const { createLegacyToastPresenter } = await import(`../agent-presentation?test=${Date.now()}-legacy`);
-    const presenter = createLegacyToastPresenter(showToast, hideToast);
+  it('no longer exports the legacy toast presenter', async () => {
+    const presentationModule = await import(`../agent-presentation?test=${Date.now()}-contracted`);
 
-    presenter.beginRun();
-    expect(showToast).not.toHaveBeenCalled();
-
-    presenter.status('run-1', 'Checking recent messages');
-    expect(showToast).toHaveBeenLastCalledWith({
-      kind: 'status',
-      agentRunId: 'run-1',
-      message: 'Checking recent messages',
-    });
-
-    presenter.streaming('run-1', 'Here is what I found.');
-    expect(showToast).toHaveBeenLastCalledWith({
-      kind: 'streaming',
-      agentRunId: 'run-1',
-      response: 'Here is what I found.',
-    });
-
-    const expiresAt = new Date(Date.now() + 30000).toISOString();
-    showToast.mockClear();
-    presenter.approval({
-      agentRunId: 'run-1',
-      approvalId: 'approval-1',
-      serverId: 'mail',
-      serverDisplayName: 'Gmail',
-      toolName: 'send_message',
-      modelToolName: 'mail__send_message',
-      arguments: { to: 'a@example.com' },
-      expiresAt,
-    });
-    // Legacy windows show one toast at a time: the waiting status precedes the
-    // approval card exactly as before the shared shell existed.
-    expect(showToast).toHaveBeenNthCalledWith(1, {
-      kind: 'status',
-      agentRunId: 'run-1',
-      message: 'Waiting for approval: mail.send_message',
-    });
-    expect(showToast).toHaveBeenNthCalledWith(2, {
-      kind: 'approval',
-      agentRunId: 'run-1',
-      approvalId: 'approval-1',
-      serverId: 'mail',
-      serverDisplayName: 'Gmail',
-      toolName: 'send_message',
-      modelToolName: 'mail__send_message',
-      arguments: { to: 'a@example.com' },
-      expiresAt,
-    });
-
-    presenter.completed('run-1', 'Done', []);
-    expect(showToast).toHaveBeenLastCalledWith({ kind: 'completed', agentRunId: 'run-1', response: 'Done', toolSummary: [] });
-
-    presenter.failed('run-1', 'Provider failed');
-    expect(showToast).toHaveBeenLastCalledWith({ kind: 'failed', agentRunId: 'run-1', error: 'Provider failed' });
-
-    showToast.mockClear();
-    presenter.cancelled('run-1');
-    expect(showToast).not.toHaveBeenCalled();
-    expect(hideToast).toHaveBeenCalledTimes(1);
+    expect('createLegacyToastPresenter' in presentationModule).toBe(false);
   });
 });

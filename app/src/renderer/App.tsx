@@ -9,18 +9,16 @@ import {
   startRecording,
   stopRecording,
 } from './audio-capture';
-import { RecordingPopup } from './RecordingPopup';
 import { SettingsWindow } from './SettingsWindow';
-import { AgentToast } from './AgentToast';
 import { RuntimeShellSurface } from './RuntimeShellSurface';
-import type { RecordingIntent, RuntimeAudioCommand } from '../types/ipc';
+import type { RuntimeAudioCommand } from '../types/ipc';
 
 async function sendAudioDevices(): Promise<void> {
   const devices = await enumerateDevices();
   window.electronAPI?.send('audio-devices', devices);
 }
 
-export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
+export function AudioWindow() {
   const startPromiseRef = useRef<Promise<void> | null>(null);
   const commandRef = useRef<RuntimeAudioCommand | null>(null);
 
@@ -38,43 +36,6 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
   }, []);
 
   useEffect(() => {
-    if (runtime) return undefined;
-    const unsubscribe = window.electronAPI.subscribe('audio:start-recording', () => {
-      startPromiseRef.current = startRecording()
-        .then(() => {
-          window.electronAPI?.send('audio-capture-started');
-          void sendAudioDevices().catch((err) => {
-            console.error('Failed to refresh audio devices after recording started:', err);
-          });
-        })
-        .catch((err) => {
-          console.error('Failed to start recording:', err);
-          window.electronAPI?.send('audio-capture-failed');
-        })
-        .finally(() => {
-          startPromiseRef.current = null;
-        });
-    });
-    return unsubscribe;
-  }, [runtime]);
-
-  useEffect(() => {
-    if (runtime) return undefined;
-    const unsubscribe = window.electronAPI.subscribe('audio:stop-recording', async () => {
-      try {
-        await startPromiseRef.current;
-        const audioData = stopRecording();
-        window.electronAPI?.send('audio-data-ready', audioData.buffer);
-      } catch (err) {
-        console.error('Failed to stop recording:', err);
-        window.electronAPI?.send('audio-capture-failed');
-      }
-    });
-    return unsubscribe;
-  }, [runtime]);
-
-  useEffect(() => {
-    if (!runtime) return undefined;
     const unsubscribeStart = window.electronAPI.subscribe('runtime:audio-start', (command) => {
       commandRef.current = command;
       startPromiseRef.current = startRecording(command.streaming ? {
@@ -158,7 +119,7 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
       if (commandRef.current) stopRecording();
       commandRef.current = null;
     };
-  }, [runtime]);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('audio:recreate-stream', (deviceId: string | null) => {
@@ -167,10 +128,6 @@ export function AudioWindow({ runtime = false }: { runtime?: boolean }) {
       });
     });
     return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    window.electronAPI?.send('audio-window-ready');
   }, []);
 
   return null;
@@ -205,25 +162,15 @@ function useSurfacePaintProxy(surface: string): void {
 
 function App() {
   const hash = window.location.hash.replace(/^#\/?/, '');
-  const surface = hash.startsWith('recording') || hash === 'runtime'
+  const surface = hash === 'runtime'
     ? 'recording'
     : hash.split('?')[0] || 'unknown';
   useSurfacePaintProxy(surface);
 
-  if (hash.startsWith('recording')) {
-    const params = new URLSearchParams(hash.split('?')[1] ?? '');
-    const mode = params.get('mode') === 'agent' ? 'agent' : 'dictation';
-    return <RecordingPopup initialMode={mode as RecordingIntent} />;
-  }
-
-  if (hash === 'audio') {
-    return <AudioWindow />;
-  }
-
   if (hash === 'runtime') {
     return (
       <>
-        <AudioWindow runtime />
+        <AudioWindow />
         <RuntimeShellSurface />
       </>
     );
@@ -231,10 +178,6 @@ function App() {
 
   if (hash === 'settings') {
     return <SettingsWindow />;
-  }
-
-  if (hash === 'agent-toast') {
-    return <AgentToast />;
   }
 
   return null;

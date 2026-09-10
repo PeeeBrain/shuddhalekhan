@@ -32,13 +32,13 @@
 ## Core Concepts
 
 ### Recording Pill
-The small floating UI window displayed at the bottom-center of the screen while recording is active. Rendered as a rounded pill shape with animated audio level bars. Exists in two visual modes:
+The small floating pill surface displayed at the bottom-center of the screen by the runtime shell while recording is active. Rendered as a rounded pill shape with animated audio level bars. Exists in two visual modes:
 
 - **Transcription Mode** — Blue-hued pill (border glow, shadow) indicating standard speech-to-text recording.
 - **Agent Mode** — Red-hued pill indicating the recording will be routed to the AI agent for tool execution. Discontinued during the v3 Electron port and revived in v4 as the visual state for `Alt + Win` agent commands.
 
 ### Recording Session
-A deep module that owns the complete audio-capture lifecycle: keyboard hook, runtime-shell audio commands, recording presentation, and transcription. Callers use three verbs — `begin(intent)`, `end()`, `cancel()` — and receive `{ text, intent }` on completion. The session hides renderer readiness, generation/session validation, modifier-state tracking, and process-crash recovery behind its seam. Dictation/Agent routing (clipboard paste vs. sidecar dispatch) stays in the Electron main orchestrator, not inside the session. A local maintainer gate retains the former hidden-audio-window and recording-pill pair as a temporary rollback path.
+A deep module that owns the complete audio-capture lifecycle: keyboard hook, runtime-shell audio commands, recording presentation, and transcription. Callers use three verbs — `begin(intent)`, `end()`, `cancel()` — and receive `{ text, intent }` on completion. The session hides renderer readiness, generation/session validation, modifier-state tracking, and process-crash recovery behind its seam. Dictation/Agent routing (clipboard paste vs. sidecar dispatch) stays in the Electron main orchestrator, not inside the session.
 
 ### Dictation
 The act of converting captured audio into text and injecting it into the currently focused application. Its global shortcut and Push to Talk or Toggle behavior are configurable; `Ctrl + Win` is the default binding. Synonymous with "transcription mode" in user-facing language.
@@ -52,7 +52,7 @@ The agent runtime runs in a separate local sidecar process managed by Electron. 
 
 Agent Mode is single-flight in v4: only one active agent run may exist at a time. Holding `Alt + Win` while an agent run is active cancels the previous run gracefully, closes any pending approval UI, and starts a new recording/run. Cancellation must release model and MCP resources cleanly so local providers such as Ollama remain reachable for the next run.
 
-Agent Mode presents through the same persistent runtime shell as Dictation. Main owns concurrent Agent facts (transient status, non-empty streamed response, one sequential approval, terminal completion/failure) and derives a single presentation snapshot with the established priority: recording, approval, newest post-capture processing, newest terminal result, non-empty streaming, transient status, idle. Every snapshot carries shell generation plus monotonic revision so stale events never repaint. A new Agent recording invalidates the prior run's presentation; Dictation recordings preempt Agent cards visually without cancelling the surviving run; cancelled runs clear silently. Unexpected sidecar loss shows exactly one persistent dismissible failure. `SHUDDHALEKHAN_DISABLE_AGENT_SHELL=1` restores the former separate Agent toast window as a maintainer rollback.
+Agent Mode presents through the same persistent runtime shell as Dictation. Main owns concurrent Agent facts (transient status, non-empty streamed response, one sequential approval, terminal completion/failure) and derives a single presentation snapshot with the established priority: recording, approval, newest post-capture processing, newest terminal result, non-empty streaming, transient status, idle. Every snapshot carries shell generation plus monotonic revision so stale events never repaint. A new Agent recording invalidates the prior run's presentation; Dictation recordings preempt Agent cards visually without cancelling the surviving run; cancelled runs clear silently. Unexpected sidecar loss shows exactly one persistent dismissible failure.
 
 Cancellation is state-aware. Before tool execution, cancellation stops the run without external side effects. During tool execution, cancellation aborts model streaming and requests MCP/tool abortion where supported; if a tool call cannot be aborted, the sidecar waits for it to settle but does not feed the result back into the cancelled loop. After tool execution, any completed side effect is still recorded in the audit trail, but stale results cannot update the current run or UI.
 
@@ -208,7 +208,7 @@ The runtime renderer acquires the selected microphone for each recording and sto
 HTTP client that sends recorded WAV audio to a configurable Whisper API endpoint (e.g., a local `whisper.cpp` server) and returns transcribed text.
 
 ### Approval Window
-Toast-style approval notification displayed when the Agent requests to execute a sensitive tool. Requires explicit user confirmation before proceeding, and may include an optional denial message that is returned to the agent loop as feedback.
+Approval card displayed in the runtime shell when the Agent requests to execute a sensitive tool. Requires explicit user confirmation before proceeding, and may include an optional denial message that is returned to the agent loop as feedback.
 
 ### Agent Response Window
-Temporary toast-style notification that displays the Agent's final response after its reasoning and tool loop completes. Agent responses are visual-only in v4, are not read aloud by default, and are not injected into the focused application by default.
+Terminal result card displayed in the runtime shell that shows the Agent's final response after its reasoning and tool loop completes. Agent responses are visual-only in v4, are not read aloud by default, and are not injected into the focused application by default.

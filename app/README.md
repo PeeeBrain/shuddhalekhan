@@ -196,6 +196,6 @@ Agent Mode writes a local SQLite audit database named `agent-audit.sqlite` under
 - Agent Mode defaults to `Alt+Win`, can be configured independently, and remains dormant while Agent Mode is disabled.
 - The tray menu supports microphone selection, transcription cleanup toggling, Settings, manual update checks, and exit.
 - Recording popup is bottom-center and pill-shaped, with a distinct Agent Mode visual state.
-- Agent responses and approvals appear as toast windows near the bottom-right of the primary display.
+- Agent responses and approvals appear as cards inside the persistent runtime shell at the bottom-center of the primary display.
 - Active configuration is stored with `electron-store` under the `shuddhalekhan-config` store name.
 - Updates are packaged with Electron Builder and checked with `electron-updater`.
