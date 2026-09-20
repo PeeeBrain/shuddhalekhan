@@ -1,15 +1,8 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-
-export type TranscriptionProviderId =
-  | 'local-whisper-cpp'
-  | 'openai'
-  | 'azure-speech'
-  | 'google-cloud-speech-v2'
-  | 'nvidia-speech-nim'
-  | 'custom-open-ai-compatible'
-  | 'whisper-live-kit';
+import type { TranscriptionProviderId } from '../types/ipc';
+export type { TranscriptionProviderId } from '../types/ipc';
 
 export interface TranscriptionCapabilities {
   translation: boolean;

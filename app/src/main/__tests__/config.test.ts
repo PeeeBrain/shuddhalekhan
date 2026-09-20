@@ -87,17 +87,18 @@ describe('config store', () => {
     );
   });
 
-  it('seeds promoted Live Dictation defaults for a genuinely new installation', async () => {
+  it('seeds Managed Local onboarding defaults for a genuinely new installation', async () => {
     // No store file on disk and no legacy ~/.speech-2-text config.
     existsSync.mockReturnValue(false);
     const { getConfig } = await import(`../config?test=${Date.now()}-fresh-install`);
 
-    expect(getConfig().transcription.activeProvider).toBe('whisper-live-kit');
+    expect(getConfig().transcription.activeProvider).toBe('managed-local');
     expect(getConfig().transcription.providers.whisperLiveKit).toEqual({
       baseUrl: 'http://localhost:8000',
       auth: 'none',
     });
-    expect(getConfig().dictation).toEqual({ mode: 'live', formatter: null });
+    expect(getConfig().dictation).toEqual({ mode: 'batch', formatter: null });
+    expect(getConfig().onboarding).toEqual({ status: 'pending' });
     expect(getConfig().shortcuts.dictation.activationMode).toBe('toggle');
     expect(getConfig().shortcuts.dictation.binding).toEqual({ keyCode: null, modifiers: ['ctrl', 'win'] });
     // Agent Mode keeps its historical default; promotion only touches dictation.
@@ -126,12 +127,12 @@ describe('config store', () => {
     });
     // The promoted identity is materialized as an explicit stored choice so a
     // later boot can never re-read it as an implicit legacy default.
-    expect(storeData.get('dictation')).toEqual({ mode: 'live', formatter: null });
+    expect(storeData.get('dictation')).toEqual({ mode: 'batch', formatter: null });
     expect(storeData.get('shortcuts')).toMatchObject({
       dictation: { activationMode: 'toggle' },
       agent: { activationMode: 'push-to-talk' },
     });
-    expect(storeData.get('transcription')).toMatchObject({ activeProvider: 'whisper-live-kit' });
+    expect(storeData.get('transcription')).toMatchObject({ activeProvider: 'managed-local' });
   });
 
   it('tracks the last viewed release notes without exposing it as user config', async () => {
@@ -171,7 +172,8 @@ describe('config store', () => {
       dictionary: [],
       pasteStrategy: { default: 'ctrl-v', overrides: {} },
       setupChecklistDismissed: false,
-      dictation: { mode: 'live', formatter: null },
+      onboarding: { status: 'pending' },
+      dictation: { mode: 'batch', formatter: null },
       agent: {
         enabled: false,
         provider: {

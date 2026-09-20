@@ -26,8 +26,8 @@ const DEFAULT_OPENAI_MODEL = '';
 
 /**
  * Resolve the install-time dictation identity before the store is created:
- * an installation with no config on disk receives the promoted Live Dictation
- * setup, while any pre-existing installation keeps the historical
+ * an installation with no config on disk receives Managed Local onboarding,
+ * while any pre-existing installation keeps the historical
  * Batch/push-to-talk/local-Whisper defaults. Legacy `~/.speech-2-text` installs
  * have no stable store file yet but are still upgrades, so they must not be
  * promoted. The checks must run before electron-store creates the file on first
@@ -68,6 +68,7 @@ const store = new Store<StoreConfig>({
       overrides: {},
     },
     setupChecklistDismissed: false,
+    onboarding: { status: existingInstallationExisted ? 'complete' : 'pending' },
     shortcuts: {
       dictation: {
         binding: DEFAULT_SHORTCUTS.dictation.binding,
@@ -201,7 +202,7 @@ maybeMigrateShortcutsConfig();
 
 /**
  * Materialize the dictation block so the resolved install default becomes an
- * explicit stored choice: new installs lock in Live Dictation, upgraded stores
+ * explicit stored choice: new installs lock in Managed Local Batch, upgraded stores
  * lock in Batch — both immune to later default changes and never silently
  * flipped by a restart.
  */
@@ -248,6 +249,9 @@ export function getConfig(): AppConfig {
     dictionary: store.get('dictionary') ?? [],
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
+    onboarding: store.get('onboarding')?.status === 'pending'
+      ? { status: 'pending' }
+      : { status: 'complete' },
     shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
     dictation: normalizeDictationConfig(store.get('dictation')),
     agent: {
@@ -334,7 +338,8 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
 }
 
 function isTranscriptionProviderId(value: unknown): value is TranscriptionProviderId {
-  return value === 'local-whisper-cpp'
+  return value === 'managed-local'
+    || value === 'local-whisper-cpp'
     || value === 'openai'
     || value === 'azure-speech'
     || value === 'google-cloud-speech-v2'

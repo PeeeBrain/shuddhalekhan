@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { join } from 'path';
 import { app, BrowserWindow, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
@@ -50,6 +51,12 @@ import { transcribe as transcribeLocalFixture } from './whisper';
 import { RuntimeShell } from './runtime-shell';
 import { createRuntimeShellPresenter } from './agent-presentation';
 import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
+import { preparePersistentStoreDirectory } from './store-path';
+import {
+  configureManagedLocal,
+  getManagedLocalModelManager,
+  managedLocalTranscriber,
+} from './managed-local';
 import { outerTrimTranscript } from '../shared/live-dictation';
 import { applyDictationFormatter } from './dictation-formatter';
 import { getDictationFormatterApiKey } from './dictation-formatter-credential';
@@ -237,6 +244,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     if (live.hasAcceptedEvents || live.uncertain) {
       const uncertain = live.uncertain || !fullyDispatched;
       markLastTranscriptInjected(uncertain ? 'uncertain' : 'dispatched');
+      if (!uncertain) completeOnboarding();
       if (uncertain) {
         const message = !fullyDispatched
           ? 'Live Dictation stopped before the full transcript was inserted.'
@@ -261,6 +269,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     const injectResult = await injectIntoFocusedApp(fallbackText, result.targetSnapshot);
     if (injectResult.kind === 'input-dispatched') {
       markLastTranscriptInjected('dispatched');
+      completeOnboarding();
       return;
     }
     markLastTranscriptInjected('failed');
@@ -304,6 +313,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   const injectResult = await injectIntoFocusedApp(text, result.targetSnapshot);
   if (injectResult.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
+    completeOnboarding();
     if (formatterDegraded) showFormatterDegradedNotice();
     runtimeShell?.finish();
     return;
@@ -319,6 +329,13 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   } else {
     showRecoveryNotification(injectResult);
   }
+}
+
+function completeOnboarding(): void {
+  if (getConfig().onboarding.status === 'complete') return;
+  setConfig('onboarding', { status: 'complete' });
+  setConfig('setupChecklistDismissed', true);
+  getSettingsWindow()?.webContents.send('onboarding:completed');
 }
 
 function showFormatterDegradedNotice(): void {
@@ -610,6 +627,19 @@ ipcMain.handle('transcription:check-server', async () => {
 ipcMain.handle('transcription:check-readiness', async () => {
   const config = getConfig();
   const provider = config.transcription.activeProvider;
+  if (provider === 'managed-local') {
+    const state = await getManagedLocalModelManager().getState();
+    return {
+      providerId: provider,
+      state: state.kind === 'ready' ? 'ready' as const : 'unavailable' as const,
+      message: state.kind === 'ready'
+        ? 'Local speech recognition is ready and works offline.'
+        : state.kind === 'error'
+          ? state.message
+          : 'Install the recommended local speech model to start Dictation.',
+      checkedAt: new Date().toISOString(),
+    };
+  }
   if (provider !== 'whisper-live-kit') {
     return {
       providerId: provider,
@@ -634,6 +664,38 @@ ipcMain.handle('transcription:check-readiness', async () => {
   );
   getSettingsWindow()?.webContents.send('transcription:readiness-changed', readiness);
   return readiness;
+});
+
+function managedLocalSnapshot() {
+  const manager = getManagedLocalModelManager();
+  return manager.getState().then((state) => ({
+    model: {
+      id: manager.manifest.id,
+      name: manager.manifest.name,
+      downloadBytes: manager.manifest.downloadBytes,
+      installedBytes: manager.manifest.installedBytes,
+      languages: [...manager.manifest.languages],
+    },
+    state,
+  }));
+}
+
+ipcMain.handle('managed-local:get-model', managedLocalSnapshot);
+ipcMain.handle('managed-local:install-model', async () => {
+  const manager = getManagedLocalModelManager();
+  await manager.install();
+  try {
+    await managedLocalTranscriber.warmup();
+  } catch (error) {
+    manager.reportFailure('Local speech recognition could not load. Repair the model and try again.');
+    throw error;
+  }
+  return managedLocalSnapshot();
+});
+ipcMain.handle('managed-local:delete-model', async () => {
+  await managedLocalTranscriber.shutdown();
+  await getManagedLocalModelManager().delete();
+  return managedLocalSnapshot();
 });
 
 ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
@@ -764,6 +826,13 @@ if (!gotSingleInstanceLock) {
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(permission === 'media');
     });
+    configureManagedLocal({
+      root: join(preparePersistentStoreDirectory(), 'models'),
+      onStateChanged: (state) => {
+        emitPerformanceMarker('managed-local.model-state', { modelId: state.modelId, state: state.kind });
+        getSettingsWindow()?.webContents.send('managed-local:model-state-changed', state);
+      },
+    });
 
     recordingSession.start();
     const failClosed = () => { void recordingSession.cancel(); };
@@ -795,6 +864,7 @@ if (!gotSingleInstanceLock) {
         getAgentSidecarApiKey(startupConfig, credentialVault),
       );
     }
+    if (startupConfig.onboarding.status === 'pending') openSettingsWindow();
 
     if (!performanceDriverEnabled) {
       setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
@@ -821,7 +891,7 @@ if (!gotSingleInstanceLock) {
     quitCleanupStarted = true;
     void recordingSession.cancel();
     recordingSession.stop();
-    void agentSidecar.stop().finally(() => {
+    void Promise.all([agentSidecar.stop(), managedLocalTranscriber.shutdown()]).finally(() => {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;

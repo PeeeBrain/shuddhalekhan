@@ -41,6 +41,7 @@ describe('Dictation config normalization', () => {
 
   it('keeps every provider batch-capable and exposes streaming only for WhisperLiveKit', () => {
     for (const providerId of [
+      'managed-local',
       'local-whisper-cpp',
       'openai',
       'azure-speech',

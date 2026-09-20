@@ -231,6 +231,8 @@ describe('main process IPC orchestration', () => {
     task: 'transcribe',
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
+    setupChecklistDismissed: true,
+    onboarding: { status: 'complete' },
     dictation: { mode: 'batch', formatter: null },
     shortcuts: {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
@@ -365,6 +367,9 @@ describe('main process IPC orchestration', () => {
       'clipboard:inject-text',
       'config:get',
       'config:set',
+      'managed-local:delete-model',
+      'managed-local:get-model',
+      'managed-local:install-model',
       'mcp:get-status-snapshot',
       'mcp:test-server',
       'settings:open',
@@ -466,11 +471,23 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('original');
   });
 
+  it('completes onboarding only after a real Dictation is inserted', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, onboarding: { status: 'pending' } });
+
+    await sessionOptions.onResult({
+      text: 'onboarding dictation',
+      intent: 'dictation',
+      targetSnapshot: defaultTargetSnapshot,
+    });
+
+    expect(setConfig).toHaveBeenCalledWith('onboarding', { status: 'complete' });
+    expect(setConfig).toHaveBeenCalledWith('setupChecklistDismissed', true);
+    expect(send).toHaveBeenCalledWith('onboarding:completed');
+  });
+
   it('routes agent recordings to the sidecar without injecting text', async () => {
     const config = {
-      whisperUrl: 'http://localhost:8080/inference',
-      selectedDeviceId: null,
-      removeFillerWords: true,
+      ...baseConfig,
       agent: {
         enabled: true,
         provider: {

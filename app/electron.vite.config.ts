@@ -7,11 +7,17 @@ export default defineConfig({
   main: {
     build: {
       lib: {
-        entry: resolve('src/main/index.ts'),
+        entry: {
+          index: resolve('src/main/index.ts'),
+          'local-stt': resolve('src/main/local-stt.ts'),
+        },
         formats: ['cjs'],
-        fileName: () => 'index.cjs',
+        fileName: (_format, entryName) => `${entryName}.cjs`,
       },
       sourcemap: true,
+      rollupOptions: {
+        external: ['sherpa-onnx-node'],
+      },
     },
   },
   preload: {

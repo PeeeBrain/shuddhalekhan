@@ -4,9 +4,9 @@ import { installElectronMock, resetElectronMock } from '../../test/electron-mock
 import { validateProviderReadiness } from '../transcription';
 
 /**
- * Promotion fixtures for Live Dictation becoming the out-of-the-box default.
+ * Promotion fixtures for Managed Local becoming the out-of-the-box default.
  * Proves the distinction between genuinely new installations (promoted
- * Live/Toggle/WhisperLiveKit identity), every class of pre-existing store
+ * Batch/Toggle/Managed Local identity), every class of pre-existing store
  * (never silently re-modeed), factory resets, and saved-mode integrity
  * across startup cycles.
  */
@@ -61,7 +61,7 @@ async function bootConfig(tag: string) {
   return import(`../config?promotion=${tag}-${Date.now()}-${Math.random()}`);
 }
 
-describe('Live Dictation promotion', () => {
+describe('Managed local Dictation promotion', () => {
   afterAll(() => {
     mock.restore();
   });
@@ -77,13 +77,14 @@ describe('Live Dictation promotion', () => {
   });
 
   describe('fresh installations', () => {
-    it('defaults to Live Dictation, Toggle activation, and WhisperLiveKit', async () => {
+    it('defaults to Batch Dictation, Toggle activation, and Managed Local', async () => {
       givenStoreFileOnDisk(false);
       const { getConfig } = await bootConfig('fresh');
 
-      expect(getConfig().dictation).toEqual({ mode: 'live', formatter: null });
+      expect(getConfig().dictation).toEqual({ mode: 'batch', formatter: null });
       expect(getConfig().shortcuts.dictation.activationMode).toBe('toggle');
-      expect(getConfig().transcription.activeProvider).toBe('whisper-live-kit');
+      expect(getConfig().transcription.activeProvider).toBe('managed-local');
+      expect(getConfig().onboarding).toEqual({ status: 'pending' });
       // Promotion never touches Agent Mode.
       expect(getConfig().shortcuts.agent.activationMode).toBe('push-to-talk');
       expect(getConfig().agent.enabled).toBe(false);
@@ -92,15 +93,15 @@ describe('Live Dictation promotion', () => {
     it('keeps the promoted identity across a restart once it exists on disk', async () => {
       givenStoreFileOnDisk(false);
       const first = await bootConfig('fresh-restart-a');
-      expect(first.getConfig().dictation.mode).toBe('live');
+      expect(first.getConfig().dictation.mode).toBe('batch');
 
       givenStoreFileOnDisk(true);
       const second = await bootConfig('fresh-restart-b');
-      expect(second.getConfig().dictation.mode).toBe('live');
+      expect(second.getConfig().dictation.mode).toBe('batch');
       expect(second.getConfig().shortcuts.dictation.activationMode).toBe('toggle');
-      expect(second.getConfig().transcription.activeProvider).toBe('whisper-live-kit');
+      expect(second.getConfig().transcription.activeProvider).toBe('managed-local');
       // The stored choice is explicit, so the second boot did not rewrite it.
-      expect(storeData.get('dictation')).toEqual({ mode: 'live', formatter: null });
+      expect(storeData.get('dictation')).toEqual({ mode: 'batch', formatter: null });
     });
   });
 
@@ -115,9 +116,9 @@ describe('Live Dictation promotion', () => {
       storeData.clear();
       givenStoreFileOnDisk(false);
       const after = await bootConfig('reset-after');
-      expect(after.getConfig().dictation).toEqual({ mode: 'live', formatter: null });
+      expect(after.getConfig().dictation).toEqual({ mode: 'batch', formatter: null });
       expect(after.getConfig().shortcuts.dictation.activationMode).toBe('toggle');
-      expect(after.getConfig().transcription.activeProvider).toBe('whisper-live-kit');
+      expect(after.getConfig().transcription.activeProvider).toBe('managed-local');
     });
   });
 
@@ -147,6 +148,7 @@ describe('Live Dictation promotion', () => {
       // historical behavior was Batch, and it must stay Batch.
       expect(config.dictation).toEqual({ mode: 'batch', formatter: null });
       expect(config.transcription.activeProvider).toBe('openai');
+      expect(config.onboarding).toEqual({ status: 'complete' });
       expect(config.shortcuts.dictation).toEqual({
         binding: { keyCode: 82, modifiers: ['ctrl'] },
         activationMode: 'push-to-talk',
@@ -210,6 +212,11 @@ describe('Live Dictation promotion', () => {
     it('reports actionable WhisperLiveKit guidance while keeping the stored Live mode', async () => {
       givenStoreFileOnDisk(false);
       const first = await bootConfig('guidance-fresh');
+      first.setConfig('transcription', {
+        ...first.getConfig().transcription,
+        activeProvider: 'whisper-live-kit',
+      });
+      first.setConfig('dictation', { mode: 'live', formatter: null });
 
       // Simulate an unreachable/unconfigured WhisperLiveKit deployment.
       storeData.set('task', 'translate');
@@ -225,6 +232,11 @@ describe('Live Dictation promotion', () => {
     it('rejects switching away from the streaming provider while Live mode is selected', async () => {
       givenStoreFileOnDisk(false);
       const { getConfig, setConfig } = await bootConfig('guidance-provider-guard');
+      setConfig('transcription', {
+        ...getConfig().transcription,
+        activeProvider: 'whisper-live-kit',
+      });
+      setConfig('dictation', { mode: 'live', formatter: null });
 
       expect(() =>
         setConfig('transcription', {

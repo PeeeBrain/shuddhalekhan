@@ -26,6 +26,7 @@ import type {
   FormatterApiKeySource,
   TranscriptionProviderId,
   TranscriptionReadiness,
+  ManagedLocalModelSnapshot,
 } from '../../types/ipc';
 import {
   getAppConfigDictationError,
@@ -65,6 +66,7 @@ const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: Pro
   {
     label: 'Local',
     options: [
+      { value: 'managed-local', label: 'Managed Local', description: 'Private local speech recognition managed by Shuddhalekhan.' },
       { value: 'local-whisper-cpp', label: 'Local whisper.cpp', description: 'Private whisper.cpp-compatible inference endpoint.' },
     ],
   },
@@ -211,6 +213,8 @@ function providerCredentialKind(
 function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderId): boolean {
   const providers = config.transcription.providers;
   switch (provider) {
+    case 'managed-local':
+      return true;
     case 'local-whisper-cpp':
       return Boolean(providers.localWhisperCpp.endpoint.trim());
     case 'openai':
@@ -341,6 +345,7 @@ function validateHeaderName(value: string): string | null {
 }
 
 const PRIVACY_MESSAGES: Record<TranscriptionProviderId, string> = {
+  'managed-local': 'Recorded audio stays on this device and is transcribed by Shuddhalekhan local speech recognition.',
   'local-whisper-cpp': 'Recorded audio is sent to the configured local endpoint for transcription.',
   'openai': 'Recorded audio is sent to OpenAI for transcription. Review OpenAI\'s data handling policies.',
   'azure-speech': 'Recorded audio is sent to Microsoft Azure Speech for transcription. Review Microsoft\'s data handling policies.',
@@ -406,7 +411,8 @@ export function TranscriptionSettings({
     }
     setDictationModeError(undefined);
     await commit('transcription', nextTranscription, FIELD_ID_PROVIDER);
-    if ((nextProvider === 'azure-speech'
+    if ((nextProvider === 'managed-local'
+      || nextProvider === 'azure-speech'
       || nextProvider === 'google-cloud-speech-v2'
       || nextProvider === 'whisper-live-kit') && config.task === 'translate') {
       await commit('task', 'transcribe', FIELD_ID_TASK);
@@ -446,13 +452,29 @@ export function TranscriptionSettings({
         />
       ) : null}
       <div className="rounded-lg border border-border/60 bg-card px-6">
-        <ProviderSelector
-          config={config}
-          value={provider}
-          settingsIpc={settingsIpc}
-          error={fieldErrors[FIELD_ID_PROVIDER]}
-          onChange={handleProviderChange}
-        />
+        {provider === 'managed-local' ? (
+          <>
+            <ManagedLocalSection settingsIpc={settingsIpc} />
+            <details className="border-b border-border/70 py-4">
+              <summary className="cursor-pointer text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Advanced providers</summary>
+              <ProviderSelector
+                config={config}
+                value={provider}
+                settingsIpc={settingsIpc}
+                error={fieldErrors[FIELD_ID_PROVIDER]}
+                onChange={handleProviderChange}
+              />
+            </details>
+          </>
+        ) : (
+          <ProviderSelector
+            config={config}
+            value={provider}
+            settingsIpc={settingsIpc}
+            error={fieldErrors[FIELD_ID_PROVIDER]}
+            onChange={handleProviderChange}
+          />
+        )}
 
         {provider === 'local-whisper-cpp' ? (
           <LocalWhisperSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
@@ -531,10 +553,12 @@ export function TranscriptionSettings({
                   : provider === 'google-cloud-speech-v2'
                     ? 'Translate speech to English (not supported by Google synchronous recognition)'
                     : 'Translate speech to English',
-              disabled: provider === 'azure-speech' || provider === 'google-cloud-speech-v2' || provider === 'whisper-live-kit',
+              disabled: provider === 'managed-local' || provider === 'azure-speech' || provider === 'google-cloud-speech-v2' || provider === 'whisper-live-kit',
             },
           ]}
-          description={provider === 'whisper-live-kit'
+          description={provider === 'managed-local'
+            ? 'Managed Local supports transcription. Corrected Dictation can format its finalized local transcript.'
+            : provider === 'whisper-live-kit'
             ? 'WhisperLiveKit batch transcription supports transcription only. Shuddhalekhan does not send translation requests.'
             : provider === 'azure-speech'
               ? 'Azure Fast Transcription supports transcription only. Translation is not sent to another service.'
@@ -548,12 +572,18 @@ export function TranscriptionSettings({
         <SelectRow
           label="Spoken language"
           value={config.language}
-          options={provider === 'google-cloud-speech-v2'
+          options={provider === 'managed-local'
+            ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
+              ? { ...option, label: 'Automatic language detection' }
+              : { ...option, disabled: true })
+            : provider === 'google-cloud-speech-v2'
             ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
               ? { ...option, label: 'Auto-detect (not supported by Google synchronous recognition)', disabled: true }
               : option)
             : WHISPER_LANGUAGES}
-          description={provider === 'google-cloud-speech-v2'
+          description={provider === 'managed-local'
+            ? 'The installed model detects its supported European languages automatically.'
+            : provider === 'google-cloud-speech-v2'
             ? 'Choose an explicit language. Shuddhalekhan does not substitute the Windows language.'
             : undefined}
           errorId={useId()}
@@ -562,15 +592,82 @@ export function TranscriptionSettings({
         />
         <DictionaryRow
           dictionary={config.dictionary}
-          disabled={provider === 'whisper-live-kit'}
-          description={provider === 'whisper-live-kit'
-            ? 'WhisperLiveKit does not support dictionary hints. Saved words stay available for other providers.'
+          disabled={provider === 'managed-local' || provider === 'whisper-live-kit'}
+          description={provider === 'managed-local'
+            ? 'Managed Local does not support dictionary hints. Saved words stay available for other providers.'
+            : provider === 'whisper-live-kit'
+              ? 'WhisperLiveKit does not support dictionary hints. Saved words stay available for other providers.'
             : undefined}
           error={fieldErrors[FIELD_ID_DICTIONARY]}
           onChange={(next) => commit('dictionary', next, FIELD_ID_DICTIONARY)}
         />
       </div>
       <PrivacyNote provider={provider} />
+    </div>
+  );
+}
+
+function ManagedLocalSection({ settingsIpc }: { settingsIpc: SettingsSectionProps['settingsIpc'] }) {
+  const [snapshot, setSnapshot] = useState<ManagedLocalModelSnapshot | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void settingsIpc.getManagedLocalModel().then(setSnapshot).catch(() => {
+      setError('Could not check the local speech model.');
+    });
+    const off = settingsIpc.onManagedLocalModelStateChanged((state) => {
+      setSnapshot((current) => current ? { ...current, state } : current);
+    });
+    return () => off?.();
+  }, [settingsIpc]);
+
+  const install = async () => {
+    setError('');
+    try {
+      setSnapshot(await settingsIpc.installManagedLocalModel());
+    } catch (installError) {
+      setError(installError instanceof Error ? installError.message : 'Model installation failed.');
+      void settingsIpc.getManagedLocalModel().then(setSnapshot);
+    }
+  };
+
+  const remove = async () => {
+    setError('');
+    try {
+      setSnapshot(await settingsIpc.deleteManagedLocalModel());
+    } catch {
+      setError('Could not delete the local speech model. Retry.');
+    }
+  };
+
+  return (
+    <div className="border-b border-border/70 py-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium">Local speech model</p>
+          {snapshot ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {snapshot.model.name} · {Math.round(snapshot.model.downloadBytes / 1_000_000)} MB download · {snapshot.model.languages.length} languages
+            </p>
+          ) : <p className="mt-1 text-xs text-muted-foreground">Checking status…</p>}
+        </div>
+        {snapshot?.state.kind === 'ready' ? (
+          <Button variant="outline" size="sm" onClick={() => void remove()}>Delete model</Button>
+        ) : snapshot?.state.kind === 'downloading' || snapshot?.state.kind === 'installing' ? null : (
+          <Button size="sm" onClick={() => void install()}>
+            {snapshot?.state.kind === 'error'
+              ? snapshot.state.action === 'resume' ? 'Resume' : snapshot.state.action === 'repair' ? 'Repair' : 'Retry'
+              : 'Install'}
+          </Button>
+        )}
+      </div>
+      {snapshot?.state.kind === 'downloading' ? (
+        <p className="mt-3 text-xs" role="status">Downloading… {Math.round(snapshot.state.downloadedBytes / snapshot.state.totalBytes * 100)}%</p>
+      ) : null}
+      {snapshot?.state.kind === 'installing' ? <p className="mt-3 text-xs" role="status">Verifying and installing…</p> : null}
+      {snapshot?.state.kind === 'ready' ? <p className="mt-3 text-xs text-emerald-500">Ready offline</p> : null}
+      {snapshot?.state.kind === 'error' ? <p className="mt-3 text-xs text-destructive" role="alert">{snapshot.state.message}</p> : null}
+      {error ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
     </div>
   );
 }

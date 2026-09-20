@@ -49,6 +49,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: true,
+    onboarding: { status: 'complete' },
     shortcuts: {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
       agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
@@ -130,6 +131,20 @@ function createMockSettingsIpc(
     onNavigateRequested: mock(() => undefined),
     onMcpStatusSnapshot: mock(() => undefined),
     onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
+    getManagedLocalModel: mock(() => Promise.resolve({
+      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
+      state: { kind: 'missing' as const, modelId: 'test' },
+    })),
+    installManagedLocalModel: mock(() => Promise.resolve({
+      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
+      state: { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' },
+    })),
+    deleteManagedLocalModel: mock(() => Promise.resolve({
+      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
+      state: { kind: 'missing' as const, modelId: 'test' },
+    })),
+    onManagedLocalModelStateChanged: mock(() => undefined),
+    onOnboardingCompleted: mock(() => undefined),
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
     getAuditRunDetail: mock(() => Promise.resolve(options.auditRunDetail ?? [])),
     onAuditRunUpdated: mock((_callback: (runId: string) => void) => undefined),
@@ -160,6 +175,17 @@ function tabByLabel(label: string) {
 }
 
 describe('Settings navigation', () => {
+  it('guides fresh installs through local model setup before normal settings', async () => {
+    renderSettings({ config: baseConfig({
+      onboarding: { status: 'pending' },
+      transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+    }) });
+
+    expect(await screen.findByRole('heading', { name: 'Set up Dictation' })).toBeInTheDocument();
+    expect(await screen.findByText('Recommended local speech model')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Transcription' })).toBeNull();
+  });
+
   it('groups destinations into Dictation, Agent, and System with no General', async () => {
     renderSettings();
     await waitForLoaded();
@@ -311,7 +337,7 @@ describe('Settings section reachability', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
 
     const options = await screen.findAllByRole('option');
-    expect(options).toHaveLength(7);
+    expect(options).toHaveLength(8);
     for (const name of [
       'Local whisper.cpp',
       'OpenAI',

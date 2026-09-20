@@ -27,13 +27,13 @@ export interface InstallDictationDefaults {
 }
 
 /**
- * Promoted first-run experience: Live Dictation with Toggle activation against
- * WhisperLiveKit. Only ever applied when no configuration store exists yet.
+ * First-run experience: Batch Dictation with Toggle activation against the
+ * app-managed local runtime. Only applied when no configuration store exists.
  */
 export const PROMOTED_INSTALL_DEFAULTS: InstallDictationDefaults = {
-  dictationMode: 'live',
+  dictationMode: 'batch',
   dictationActivationMode: 'toggle',
-  transcriptionProviderId: 'whisper-live-kit',
+  transcriptionProviderId: 'managed-local',
 };
 
 /** Pre-promotion behavior kept for every store that already existed on disk. */
@@ -55,6 +55,7 @@ export function resolveInstallDefaults(configStoreExists: boolean): InstallDicta
 
 const DICTATION_MODES = new Set<DictationMode>(['batch', 'live', 'corrected']);
 const TRANSCRIPTION_TRANSPORT_CAPABILITIES = {
+  'managed-local': { batch: true, streaming: false },
   'local-whisper-cpp': { batch: true, streaming: false },
   openai: { batch: true, streaming: false },
   'azure-speech': { batch: true, streaming: false },
