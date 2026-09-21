@@ -84,6 +84,17 @@ jobs:
       - name: Build
         run: bun run --cwd app build
 
+      - name: Create draft GitHub release
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.release_version.outputs.tag }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --draft --title '${{ steps.release_version.outputs.version }}'
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Package and publish Electron app
         run: bun run --cwd app dist -- --publish always
         env:
