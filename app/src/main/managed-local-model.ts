@@ -98,11 +98,15 @@ export function createManagedLocalModelManager({
       if (resumeAt !== manifest.downloadBytes) {
         const response = await fetchArtifact(manifest.artifactUrl, {
           headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : {},
+          signal: AbortSignal.timeout(30 * 60_000),
         });
         if (!response.ok || !response.body) {
           throw new Error(`Model download failed with HTTP ${response.status}.`);
         }
         const append = resumeAt > 0 && response.status === 206;
+        if (append && !response.headers.get('Content-Range')?.startsWith(`bytes ${resumeAt}-`)) {
+          throw new Error('The model server returned an invalid download range. Retry the download.');
+        }
         const file = await open(partialPath, append ? 'a' : 'w');
         let downloadedBytes = append ? resumeAt : 0;
         try {
@@ -110,8 +114,12 @@ export function createManagedLocalModelManager({
           while (true) {
             const chunk = await reader.read();
             if (chunk.done) break;
-            await file.write(chunk.value);
             downloadedBytes += chunk.value.byteLength;
+            if (downloadedBytes > manifest.downloadBytes) {
+              await reader.cancel();
+              throw new Error('The model download was larger than expected. Retry the download.');
+            }
+            await file.write(chunk.value);
             publish({
               kind: 'downloading',
               modelId: manifest.id,
@@ -138,12 +146,14 @@ export function createManagedLocalModelManager({
         throw new Error('The model archive is missing required files. Repair the installation.');
       }
       await rejectLinks(extractedPath);
-      await rm(installPath, { recursive: true, force: true });
-      await rename(extractedPath, installPath);
+      await replaceDirectory(extractedPath, installPath);
       await rm(stagingPath, { recursive: true, force: true });
       await rm(partialPath, { force: true });
       publish({ kind: 'ready', modelId: manifest.id, path: installPath });
     } catch (error) {
+      if (error instanceof Error && error.message.includes('larger than expected')) {
+        await rm(partialPath, { force: true });
+      }
       await rm(stagingPath, { recursive: true, force: true });
       const message = error instanceof Error ? error.message : 'Model installation failed.';
       const action = await fileSize(partialPath) > 0 ? 'resume' : 'retry';
@@ -173,6 +183,20 @@ export function createManagedLocalModelManager({
       publish({ kind: 'error', modelId: manifest.id, message, action: 'repair' });
     },
   };
+}
+
+export async function replaceDirectory(replacementPath: string, currentPath: string): Promise<void> {
+  const backupPath = `${currentPath}.backup`;
+  await rm(backupPath, { recursive: true, force: true });
+  const hadCurrent = await pathExists(currentPath);
+  if (hadCurrent) await rename(currentPath, backupPath);
+  try {
+    await rename(replacementPath, currentPath);
+  } catch (error) {
+    if (hadCurrent) await rename(backupPath, currentPath);
+    throw error;
+  }
+  await rm(backupPath, { recursive: true, force: true });
 }
 
 export function validateArchiveEntries(entries: string[]): void {
@@ -228,6 +252,15 @@ async function fileSize(path: string): Promise<number> {
     return (await stat(path)).size;
   } catch {
     return 0;
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

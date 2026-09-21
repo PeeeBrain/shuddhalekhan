@@ -45,11 +45,15 @@ export function Onboarding({
 
   const startMicrophoneCheck = async () => {
     setMicState('checking');
+    let stream: MediaStream | null = null;
+    let context: AudioContext | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const context = new AudioContext();
-      const source = context.createMediaStreamSource(stream);
-      const analyser = context.createAnalyser();
+      const acquiredStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = acquiredStream;
+      const audioContext = new AudioContext();
+      context = audioContext;
+      const source = audioContext.createMediaStreamSource(acquiredStream);
+      const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
       const values = new Uint8Array(analyser.frequencyBinCount);
@@ -60,10 +64,12 @@ export function Onboarding({
       }, 100);
       micCleanup.current = () => {
         window.clearInterval(timer);
-        stream.getTracks().forEach((track) => track.stop());
-        void context.close();
+        acquiredStream.getTracks().forEach((track) => track.stop());
+        void audioContext.close();
       };
     } catch {
+      stream?.getTracks().forEach((track) => track.stop());
+      if (context) void context.close();
       setMicState('error');
     }
   };

@@ -105,7 +105,11 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       setActiveSection(section);
     });
     const offOnboarding = settingsIpc.onOnboardingCompleted(() => {
-      setConfigState((current) => current ? { ...current, onboarding: { status: 'complete' } } : current);
+      setConfigState((current) => current ? {
+        ...current,
+        onboarding: { status: 'complete' },
+        setupChecklistDismissed: true,
+      } : current);
     });
 
     return () => {
@@ -130,7 +134,11 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     );
   }
 
-  if (config.onboarding.status === 'pending' && !showAdvancedDuringOnboarding) {
+  if (
+    config.onboarding.status === 'pending'
+    && config.transcription.activeProvider === 'managed-local'
+    && !showAdvancedDuringOnboarding
+  ) {
     return <Onboarding config={config} settingsIpc={settingsIpc} onOpenAdvanced={() => setShowAdvancedDuringOnboarding(true)} />;
   }
 

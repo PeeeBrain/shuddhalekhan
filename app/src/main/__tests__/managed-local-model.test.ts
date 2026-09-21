@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { createHash } from 'crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   createManagedLocalModelManager,
+  replaceDirectory,
   validateArchiveEntries,
   type ManagedLocalModelManifest,
 } from '../managed-local-model';
@@ -75,7 +76,10 @@ describe('managed local model lifecycle', () => {
       manifest,
       fetchArtifact: async (_url, init) => {
         range = new Headers(init.headers).get('Range') ?? '';
-        return new Response(archive.slice(3), { status: 206 });
+        return new Response(archive.slice(3), {
+          status: 206,
+          headers: { 'Content-Range': `bytes 3-${archive.byteLength - 1}/${archive.byteLength}` },
+        });
       },
       extractArchive: async (_archivePath, stagingPath) => {
         const extracted = join(stagingPath, manifest.archiveRoot);
@@ -88,6 +92,33 @@ describe('managed local model lifecycle', () => {
 
     expect(range).toBe('bytes=3-');
     expect((await manager.getState()).kind).toBe('ready');
+  });
+
+  it('rejects a download that exceeds the pinned artifact size', async () => {
+    const root = await tempRoot();
+    const archive = new TextEncoder().encode('archive');
+    const manager = createManagedLocalModelManager({
+      root,
+      manifest: manifestFor(archive),
+      fetchArtifact: async (_url, init) => {
+        expect(init.signal).toBeInstanceOf(AbortSignal);
+        return new Response('archive-too-large', { status: 200 });
+      },
+    });
+
+    await expect(manager.install()).rejects.toThrow('larger than expected');
+    await expect(access(join(root, 'test-model-1.partial'))).rejects.toThrow();
+  });
+
+  it('restores the current installation when replacement promotion fails', async () => {
+    const root = await tempRoot();
+    const current = join(root, 'current');
+    await mkdir(current);
+    await writeFile(join(current, 'tokens.txt'), 'current');
+
+    await expect(replaceDirectory(join(root, 'missing'), current)).rejects.toThrow();
+
+    expect(await readFile(join(current, 'tokens.txt'), 'utf8')).toBe('current');
   });
 
   it('removes a corrupt download and offers retry', async () => {
