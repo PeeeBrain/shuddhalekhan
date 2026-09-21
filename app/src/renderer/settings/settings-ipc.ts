@@ -10,6 +10,8 @@ import type {
   CredentialKind,
   CredentialStatus,
   TranscriptionReadiness,
+  ManagedLocalModelSnapshot,
+  ManagedLocalModelState,
 } from '../../types/ipc';
 
 type Unsubscribe = () => void;
@@ -26,6 +28,11 @@ export interface SettingsIpc {
   checkTranscriptionServer: () => Promise<boolean>;
   checkTranscriptionReadiness: () => Promise<TranscriptionReadiness>;
   onTranscriptionReadinessChanged: (callback: (readiness: TranscriptionReadiness) => void) => Unsubscribe | undefined;
+  getManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
+  installManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
+  deleteManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
+  onManagedLocalModelStateChanged: (callback: (state: ManagedLocalModelState) => void) => Unsubscribe | undefined;
+  onOnboardingCompleted: (callback: () => void) => Unsubscribe | undefined;
   getShortcutsPaused: () => Promise<boolean>;
   setShortcutsPaused: (paused: boolean) => Promise<boolean>;
   beginShortcutCapture: () => Promise<void>;
@@ -71,6 +78,11 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     onNavigateRequested: (callback) => electronAPI?.subscribe('settings:navigate', callback),
     onMcpStatusSnapshot: (callback) => electronAPI?.subscribe('mcp:status-snapshot', callback),
     onTranscriptionReadinessChanged: (callback) => electronAPI?.subscribe('transcription:readiness-changed', callback),
+    getManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:get-model'),
+    installManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:install-model'),
+    deleteManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:delete-model'),
+    onManagedLocalModelStateChanged: (callback) => electronAPI?.subscribe('managed-local:model-state-changed', callback),
+    onOnboardingCompleted: (callback) => electronAPI?.subscribe('onboarding:completed', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),
     onAuditRunUpdated: (callback) => electronAPI?.subscribe('audit:run-updated', callback),

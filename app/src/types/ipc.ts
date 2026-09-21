@@ -168,6 +168,9 @@ export interface RendererToMainInvokeChannels {
   'credential:save': (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
   'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
   'transcription:check-readiness': () => Promise<TranscriptionReadiness>;
+  'managed-local:get-model': () => Promise<ManagedLocalModelSnapshot>;
+  'managed-local:install-model': () => Promise<ManagedLocalModelSnapshot>;
+  'managed-local:delete-model': () => Promise<ManagedLocalModelSnapshot>;
 }
 
 export interface MainToRendererChannels {
@@ -193,6 +196,8 @@ export interface MainToRendererChannels {
   ) => void;
   'runtime:snapshot': (snapshot: RuntimePresentationSnapshot) => void;
   'transcription:readiness-changed': (readiness: TranscriptionReadiness) => void;
+  'managed-local:model-state-changed': (state: ManagedLocalModelState) => void;
+  'onboarding:completed': () => void;
 }
 
 export interface RuntimeAudioCommand {
@@ -261,6 +266,7 @@ export interface PasteStrategyConfig {
 }
 
 export type TranscriptionProviderId =
+  | 'managed-local'
   | 'local-whisper-cpp'
   | 'openai'
   | 'azure-speech'
@@ -336,6 +342,26 @@ export interface TranscriptionReadiness {
   checkedAt: string | null;
 }
 
+export interface ManagedLocalModelMetadata {
+  id: string;
+  name: string;
+  downloadBytes: number;
+  installedBytes: number;
+  languages: string[];
+}
+
+export type ManagedLocalModelState =
+  | { kind: 'missing'; modelId: string }
+  | { kind: 'downloading'; modelId: string; downloadedBytes: number; totalBytes: number }
+  | { kind: 'installing'; modelId: string }
+  | { kind: 'ready'; modelId: string; path: string }
+  | { kind: 'error'; modelId: string; message: string; action: 'retry' | 'resume' | 'repair' };
+
+export interface ManagedLocalModelSnapshot {
+  model: ManagedLocalModelMetadata;
+  state: ManagedLocalModelState;
+}
+
 export type DictationMode = 'batch' | 'live' | 'corrected';
 
 export interface DictationFormatterProfile {
@@ -382,6 +408,7 @@ export interface AppConfig {
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
   setupChecklistDismissed: boolean;
+  onboarding: { status: 'pending' | 'complete' };
   shortcuts: ShortcutsConfig;
   dictation: DictationConfig;
   agent: {

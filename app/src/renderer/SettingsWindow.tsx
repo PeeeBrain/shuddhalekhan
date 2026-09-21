@@ -38,6 +38,7 @@ import { AboutSettings } from './settings/AboutSettings';
 import { McpSettings } from './settings/McpSettings';
 import { AuditHistorySettings } from './settings/AuditHistorySettings';
 import type { SettingsIpc } from './settings/settings-ipc';
+import { Onboarding } from './settings/Onboarding';
 
 interface SettingsWindowProps {
   settingsIpc?: SettingsIpc;
@@ -62,6 +63,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     DEFAULT_SETTINGS_SECTION,
   );
   const [config, setConfigState] = useState<AppConfig | null>(null);
+  const [showAdvancedDuringOnboarding, setShowAdvancedDuringOnboarding] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [bundledReleaseNotes, setBundledReleaseNotes] =
@@ -102,11 +104,19 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     const offNavigate = settingsIpc.onNavigateRequested((section) => {
       setActiveSection(section);
     });
+    const offOnboarding = settingsIpc.onOnboardingCompleted(() => {
+      setConfigState((current) => current ? {
+        ...current,
+        onboarding: { status: 'complete' },
+        setupChecklistDismissed: true,
+      } : current);
+    });
 
     return () => {
       offUpdater?.();
       offNavigate?.();
       offMcpSnapshot?.();
+      offOnboarding?.();
     };
   }, [settingsIpc]);
 
@@ -122,6 +132,14 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
         <p className="text-muted-foreground">Loading settings...</p>
       </main>
     );
+  }
+
+  if (
+    config.onboarding.status === 'pending'
+    && config.transcription.activeProvider === 'managed-local'
+    && !showAdvancedDuringOnboarding
+  ) {
+    return <Onboarding config={config} settingsIpc={settingsIpc} onOpenAdvanced={() => setShowAdvancedDuringOnboarding(true)} />;
   }
 
   const selectSection = (id: SettingsSectionId) => {

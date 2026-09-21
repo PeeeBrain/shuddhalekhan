@@ -39,6 +39,7 @@ const BASE_CONFIG: AppConfig = {
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   setupChecklistDismissed: false,
+  onboarding: { status: 'complete' },
   shortcuts: {
     dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
     agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
@@ -544,6 +545,16 @@ describe('Microsoft Azure Speech provider', () => {
 });
 
 describe('getTranscriber provider selection', () => {
+  it('returns the isolated managed local transcriber for managed-local', async () => {
+    const { getTranscriber } = await import('../providers');
+    const config = {
+      ...BASE_CONFIG,
+      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'managed-local' as const },
+    };
+
+    expect(getTranscriber(config, createVault({})).id).toBe('managed-local');
+  });
+
   it('returns the local whisper transcriber for local-whisper-cpp', async () => {
     const { getTranscriber } = await import('../providers');
     const config: AppConfig = {

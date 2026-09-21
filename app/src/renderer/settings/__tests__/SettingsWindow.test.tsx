@@ -49,6 +49,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
     setupChecklistDismissed: true,
+    onboarding: { status: 'complete' },
     shortcuts: {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
       agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
@@ -91,6 +92,8 @@ interface MockSettingsIpcOptions {
   releaseNotes?: VersionReleaseNotes | null;
   mcpStatusSnapshot?: import('../../../types/ipc').McpStatusSnapshot;
   transcriptionReadiness?: TranscriptionReadiness;
+  managedLocalModelReady?: boolean;
+  registerOnboardingCompleted?: (callback: () => void) => void;
 }
 
 function createMockSettingsIpc(
@@ -130,6 +133,25 @@ function createMockSettingsIpc(
     onNavigateRequested: mock(() => undefined),
     onMcpStatusSnapshot: mock(() => undefined),
     onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
+    getManagedLocalModel: mock(() => Promise.resolve({
+      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
+      state: options.managedLocalModelReady
+        ? { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' }
+        : { kind: 'missing' as const, modelId: 'test' },
+    })),
+    installManagedLocalModel: mock(() => Promise.resolve({
+      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
+      state: { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' },
+    })),
+    deleteManagedLocalModel: mock(() => Promise.resolve({
+      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
+      state: { kind: 'missing' as const, modelId: 'test' },
+    })),
+    onManagedLocalModelStateChanged: mock(() => undefined),
+    onOnboardingCompleted: mock((callback: () => void) => {
+      options.registerOnboardingCompleted?.(callback);
+      return undefined;
+    }),
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
     getAuditRunDetail: mock(() => Promise.resolve(options.auditRunDetail ?? [])),
     onAuditRunUpdated: mock((_callback: (runId: string) => void) => undefined),
@@ -160,6 +182,74 @@ function tabByLabel(label: string) {
 }
 
 describe('Settings navigation', () => {
+  it('guides fresh installs through local model setup before normal settings', async () => {
+    renderSettings({ config: baseConfig({
+      onboarding: { status: 'pending' },
+      transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+    }) });
+
+    expect(await screen.findByRole('heading', { name: 'Set up Dictation' })).toBeInTheDocument();
+    expect(await screen.findByText('Recommended local speech model')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Transcription' })).toBeNull();
+  });
+
+  it('opens normal settings when a pending user selected an advanced provider', async () => {
+    renderSettings({ config: baseConfig({ onboarding: { status: 'pending' } }) });
+
+    await waitForLoaded();
+    expect(screen.queryByRole('heading', { name: 'Set up Dictation' })).toBeNull();
+  });
+
+  it('stops the microphone when onboarding setup fails after access is granted', async () => {
+    const stop = mock(() => {});
+    const mediaDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+    const audioContext = Object.getOwnPropertyDescriptor(globalThis, 'AudioContext');
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: mock(async () => ({ getTracks: () => [{ stop }] })) },
+    });
+    Object.defineProperty(globalThis, 'AudioContext', {
+      configurable: true,
+      value: function AudioContext() { throw new Error('setup failed'); },
+    });
+
+    try {
+      renderSettings({
+        config: baseConfig({
+          onboarding: { status: 'pending' },
+          transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+        }),
+        managedLocalModelReady: true,
+      });
+      fireEvent.click(await screen.findByRole('button', { name: 'Start microphone check' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Microphone access failed');
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      if (mediaDevices) Object.defineProperty(navigator, 'mediaDevices', mediaDevices);
+      else Reflect.deleteProperty(navigator, 'mediaDevices');
+      if (audioContext) Object.defineProperty(globalThis, 'AudioContext', audioContext);
+      else Reflect.deleteProperty(globalThis, 'AudioContext');
+    }
+  });
+
+  it('dismisses the setup checklist when onboarding completes', async () => {
+    let complete!: () => void;
+    renderSettings({
+      config: baseConfig({
+        onboarding: { status: 'pending' },
+        setupChecklistDismissed: false,
+        transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+      }),
+      registerOnboardingCompleted: (callback) => { complete = callback; },
+    });
+    await screen.findByRole('heading', { name: 'Set up Dictation' });
+
+    act(() => complete());
+
+    await waitForLoaded();
+    expect(screen.queryByRole('region', { name: 'First-run setup' })).toBeNull();
+  });
+
   it('groups destinations into Dictation, Agent, and System with no General', async () => {
     renderSettings();
     await waitForLoaded();
@@ -311,7 +401,7 @@ describe('Settings section reachability', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
 
     const options = await screen.findAllByRole('option');
-    expect(options).toHaveLength(7);
+    expect(options).toHaveLength(8);
     for (const name of [
       'Local whisper.cpp',
       'OpenAI',

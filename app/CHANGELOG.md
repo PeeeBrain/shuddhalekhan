@@ -16,8 +16,9 @@ tags and commit history, not from this file. Keep new entries under
 - Agent runs now identify themselves to OpenCode Go with a stable `x-opencode-session` per run and a Shuddhalekhan `User-Agent`, so Console Go requests route correctly instead of failing with `MissingSessionID`.
 
 ### Dictation Runtime
-- Live Dictation is now the out-of-the-box default for genuinely new installations, together with Toggle activation and the WhisperLiveKit provider. The promoted identity is written as an explicit stored choice on first run, so it survives restarts. Every pre-existing store keeps its own shortcuts and provider: a store that predates the dictation block resolves to Batch Dictation, and an existing Batch, Live, or Corrected selection is preserved unchanged. Nothing silently changes the saved mode during an upgrade.
-- The first-run setup checklist now points streaming setups at WhisperLiveKit readiness instead of the local whisper.cpp endpoint, and marks that step done only after an actual readiness check reports Ready.
+- Fresh installations now use Managed Local Batch Dictation with Toggle activation. Shuddhalekhan downloads, verifies, installs, and loads a recommended local speech model without Docker, Python, CUDA, or a separate speech server; existing installations keep their provider, mode, shortcut, activation, and recognition settings.
+- First-run onboarding now guides model installation, a live default-microphone check, shortcut use, and one real Dictation. Setup completes only after the transcript is inserted into the original target application.
+- Local speech recognition runs in a crash-isolated Electron utility process, restarts after a failure, and works offline after model installation. Model downloads resume, verify a pinned SHA-256 hash, reject unsafe archive entries, promote atomically, and can be deleted from Settings.
 - Live Dictation (beta) now dispatches committed WhisperLiveKit text through ordered `KEYEVENTF_UNICODE` insertion into the exact original target window, with keyboard-release gating, whitespace projection, fail-closed target validation, and certainty-based recovery when Windows accepts zero, all, or only part of a delta.
 - Fixed modifier-only recording shortcuts leaking a Windows-key release that could move focus before insertion. Recovery buttons now accept clicks without activating Shuddhalekhan, so Retry Paste checks and pastes into the app that still owns focus.
 - WhisperLiveKit Live Dictation now shows committed and tentative text during recording. When live Unicode insertion cannot dispatch anything, stop still falls back once to a single exact-target clipboard paste of the complete transcript; streaming failures still fall back once to WhisperLiveKit batch transcription from the retained recording.
@@ -42,6 +43,7 @@ tags and commit history, not from this file. Keep new entries under
 - Development startup now installs Electron's binary on first use, matching Electron 42+'s lazy-download lifecycle.
 
 ### Transcription Providers
+- Added Managed Local as the consumer-facing default provider. Advanced local, cloud, NVIDIA NIM, WhisperLiveKit, and custom providers remain available in Transcription settings.
 - WhisperLiveKit batch requests now fail with a recoverable timeout instead of waiting indefinitely when the service stops responding.
 - Added WhisperLiveKit as an explicit self-hosted Batch Dictation provider with derived REST/health/WebSocket endpoints, optional secure bearer authentication, loopback/remote endpoint safety validation, and bounded health plus PCM handshake readiness checks.
 - Added Google Cloud Speech-to-Text v2 synchronous recognition with secure service-account import, Advanced Application Default Credentials, model and location configuration, language mapping, and inline phrase hints.

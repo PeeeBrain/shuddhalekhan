@@ -43,7 +43,11 @@ A deep module that owns the complete audio-capture lifecycle: keyboard hook, run
 ### Dictation
 The act of converting captured audio into text and injecting it into the currently focused application. Its global shortcut and Push to Talk or Toggle behavior are configurable; `Ctrl + Win` is the default binding. Synonymous with "transcription mode" in user-facing language.
 
-Install-time defaults are resolved from config-file existence: a genuinely new installation (no stable store and no legacy `~/.speech-2-text` config on disk) is seeded with Live Dictation, Toggle activation, and WhisperLiveKit as an explicit stored choice; any pre-existing installation keeps its historical Batch Dictation and provider. A store without a dictation block resolves to Batch, an explicit stored Batch/Live/Corrected choice is preserved unchanged, and a legacy-only install is never treated as new. Missing streaming configuration surfaces setup guidance and never silently flips a persisted mode.
+Install-time defaults are resolved from config-file existence: a genuinely new installation (no stable store and no legacy `~/.speech-2-text` config on disk) is seeded with Managed Local Batch Dictation and Toggle activation as an explicit stored choice; any pre-existing installation keeps its historical Dictation mode, provider, shortcuts, and recognition settings. A store without a dictation block resolves to Batch, an explicit stored Batch/Live/Corrected choice is preserved unchanged, and a legacy-only install is never treated as new.
+
+Managed Local owns one pinned model manifest outside the renderer, stores verified model files under app data, and runs sherpa-onnx inference in an Electron utility process. Electron main retains recording-session and exact-target insertion ownership. The utility process receives structured load/transcribe messages and returns only readiness, content-free timing diagnostics, failures, and the final transcript. It is restarted on the next request after a crash. Managed Local is Batch-only; Corrected Dictation may format its finalized transcript, while Live remains limited to providers with the committed/tentative streaming contract.
+
+Fresh installs remain in guided onboarding until a real Dictation is successfully inserted. Onboarding recommends the pinned model, shows size and language coverage, performs a live default-microphone check, explains the configured shortcut, and observes completion from the existing insertion result. Advanced provider settings remain reachable without changing the saved onboarding state.
 
 ### Agent (Jarvis)
 The local AI assistant that receives transcribed prompts, interprets them, and can execute tools. Its global shortcut and activation behavior are configured independently from Dictation; `Alt + Win` is the default binding.
@@ -164,7 +168,7 @@ Agent Mode v4 uses an OpenAI-compatible chat/model provider configuration for th
 
 Agent Mode configuration requires a real settings window rather than tray-only UI. The settings design should remain modern, restrained, and consistent with Shuddhalekhan's existing UI; it should avoid card-heavy dashboard patterns and use focused settings sections for audio, agent provider configuration, MCP server registry, Gmail preset/OAuth status, and per-tool approval policies.
 
-The app remains tray-first. The settings window opens only when the user chooses Settings from the tray menu, and it is not shown on app startup. Closing settings returns Shuddhalekhan to background/tray operation.
+The app remains tray-first after setup. A fresh install opens guided onboarding on startup until one real Dictation succeeds; completed and upgraded installations open Settings only from the tray. Closing Settings returns Shuddhalekhan to background/tray operation.
 
 ## UI Architecture Decisions
 

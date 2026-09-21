@@ -12,6 +12,7 @@ import { localWhisperCppTranscriber } from './whisper';
 import { createAzureSpeechTranscriber } from './azure-speech';
 import { createGoogleCloudSpeechTranscriber } from './google-cloud-speech';
 import { createWhisperLiveKitTranscriber } from './whisper-live-kit';
+import { managedLocalTranscriber } from './managed-local';
 import type { AppConfig } from '../types/ipc';
 
 type CredentialReader = { read: (id: string) => string | null };
@@ -37,6 +38,8 @@ export function getTranscriber(
   vault: CredentialReader,
 ): Transcriber {
   const provider = config.transcription.activeProvider;
+
+  if (provider === 'managed-local') return managedLocalTranscriber;
 
   if (provider === 'openai') {
     return createOpenAiTranscriber(config, vault);
