@@ -368,20 +368,20 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
       data-tone="warning"
       className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border/40 border-l-2 border-l-warning bg-card text-card-foreground"
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <h1 className="text-sm font-semibold leading-snug text-foreground">Approval required</h1>
-          <p
-            className={
-              timerUrgent
-                ? 'text-right text-xs font-medium tabular-nums text-destructive'
-                : 'text-right text-xs font-medium tabular-nums text-warning'
-            }
-          >
-            {secondsLeft}s
-          </p>
-        </div>
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
+        <h1 className="text-sm font-semibold leading-snug text-foreground">Approval required</h1>
+        <p
+          className={
+            timerUrgent
+              ? 'text-right text-xs font-medium tabular-nums text-destructive'
+              : 'text-right text-xs font-medium tabular-nums text-warning'
+          }
+        >
+          {secondsLeft}s
+        </p>
+      </div>
 
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
         <div className="space-y-1.5">
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Requested action</p>
           <h2 className="break-words text-sm font-semibold leading-snug text-foreground line-clamp-3">

@@ -76,7 +76,7 @@ export function McpSettings({
           {saveError}
         </div>
       ) : null}
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
         <SettingsPanel
           aria-label={editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}
           className="overflow-hidden"

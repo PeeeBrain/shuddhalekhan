@@ -62,7 +62,7 @@ export function AboutSettings({
         <SettingsPanel aria-labelledby="release-notes-heading">
           <SettingsPanelHeader
             eyebrow="Release notes"
-            title="What&apos;s new"
+            title="What's new"
             description={releaseNotes.map((release) => `v${release.version}`).join(', ')}
           />
           <div className="px-6 py-4 text-sm leading-relaxed text-foreground">

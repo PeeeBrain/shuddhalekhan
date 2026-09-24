@@ -173,7 +173,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   return (
     <main className="settings-root relative flex h-screen overflow-hidden bg-background text-foreground">
       <aside
-        className="flex w-60 shrink-0 flex-col border-r border-border/60 bg-background px-3 py-5"
+        className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border/60 bg-background px-3 py-5"
         aria-label="Settings sections"
       >
         <div className="mb-6 px-2.5">
@@ -216,7 +216,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
             </div>
           ) : (
             <ScrollArea className="h-full min-h-0 flex-1">
-              <div className="mx-auto w-full max-w-3xl px-8 py-8">
+              <div className="mx-auto w-full max-w-4xl px-8 py-8">
                 {activeSection === 'transcription' ? (
                   <TranscriptionSettings {...sectionProps} />
                 ) : null}
