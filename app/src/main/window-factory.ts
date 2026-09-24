@@ -101,8 +101,9 @@ function openExternalUrl(url: string): void {
 }
 
 function loadRendererRoute(window: BrowserWindow, route: string): void {
-  if (process.env.VITE_DEV_SERVER_URL) {
-    window.loadURL(`${process.env.VITE_DEV_SERVER_URL}#/${route}`);
+  const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    window.loadURL(`${devServerUrl}#/${route}`);
   } else if (!app.isPackaged) {
     window.loadURL(`http://localhost:5173/#/${route}`);
   } else {
