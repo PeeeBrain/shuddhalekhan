@@ -101,7 +101,7 @@ function openExternalUrl(url: string): void {
 }
 
 function loadRendererRoute(window: BrowserWindow, route: string): void {
-  const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+  const devServerUrl = process.env.ELECTRON_RENDERER_URL || process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
     window.loadURL(`${devServerUrl}#/${route}`);
   } else if (!app.isPackaged) {

@@ -103,6 +103,7 @@ describe('createSingletonWindow', () => {
 
   it('prefers the electron-vite dev server URL over the fallback', async () => {
     process.env.ELECTRON_RENDERER_URL = 'http://localhost:5174/';
+    process.env.VITE_DEV_SERVER_URL = 'http://localhost:5173/';
     const { createSingletonWindow } = await import(`../window-factory?test=${Date.now()}-2b`);
     const windows = createSingletonWindow({
       route: 'settings',

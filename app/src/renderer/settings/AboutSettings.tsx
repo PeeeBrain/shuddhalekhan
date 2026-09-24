@@ -61,6 +61,7 @@ export function AboutSettings({
       {releaseNotes.length > 0 ? (
         <SettingsPanel aria-labelledby="release-notes-heading">
           <SettingsPanelHeader
+            id="release-notes-heading"
             eyebrow="Release notes"
             title="What's new"
             description={releaseNotes.map((release) => `v${release.version}`).join(', ')}

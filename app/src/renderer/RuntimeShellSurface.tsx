@@ -384,7 +384,7 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
         <div className="space-y-1.5">
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Requested action</p>
-          <h2 className="break-words text-sm font-semibold leading-snug text-foreground line-clamp-3">
+          <h2 className="break-words text-sm font-semibold leading-snug text-foreground">
             {(snapshot.serverDisplayName || snapshot.serverId)}:{snapshot.toolName}
           </h2>
           {snapshot.serverDisplayName ? (
