@@ -1,54 +1,78 @@
 @import "tailwindcss";
 
 @theme inline {
-  /* Arctic Steel — cool, calm, cohesive dark theme */
-  --color-background: hsl(215 16% 7%);
-  --color-foreground: hsl(210 20% 96%);
+  /* Lampblack & Cinnabar — warm ink, paper text, seal-red agent */
+  --color-background: hsl(28 10% 6.5%);
+  --color-foreground: hsl(42 24% 93%);
 
-  --color-card: hsl(215 14% 10%);
-  --color-card-foreground: hsl(210 20% 96%);
+  --color-card: hsl(28 8% 9%);
+  --color-card-foreground: hsl(42 24% 93%);
 
-  --color-popover: hsl(215 14% 10%);
-  --color-popover-foreground: hsl(210 20% 96%);
+  --color-popover: hsl(28 8% 9%);
+  --color-popover-foreground: hsl(42 24% 93%);
 
-  --color-primary: hsl(195 65% 65%);
-  --color-primary-foreground: hsl(215 16% 7%);
+  --color-primary: hsl(213 55% 64%);
+  --color-primary-foreground: hsl(28 12% 7%);
 
-  --color-secondary: hsl(215 12% 14%);
-  --color-secondary-foreground: hsl(210 15% 90%);
+  --color-secondary: hsl(30 6% 14%);
+  --color-secondary-foreground: hsl(40 16% 90%);
 
-  --color-muted: hsl(215 10% 18%);
-  --color-muted-foreground: hsl(215 8% 55%);
+  --color-muted: hsl(30 6% 18%);
+  --color-muted-foreground: hsl(35 8% 58%);
 
-  --color-accent: hsl(215 12% 14%);
-  --color-accent-foreground: hsl(210 15% 90%);
+  --color-accent: hsl(30 6% 14%);
+  --color-accent-foreground: hsl(40 16% 90%);
 
   --color-destructive: hsl(355 55% 60%);
-  --color-destructive-foreground: hsl(210 20% 96%);
+  --color-destructive-foreground: hsl(42 24% 93%);
 
-  --color-border: hsl(215 10% 20%);
-  --color-input: hsl(215 10% 20%);
-  --color-ring: hsl(195 65% 65%);
+  --color-border: hsl(30 7% 21%);
+  --color-input: hsl(30 7% 21%);
+  --color-ring: hsl(213 55% 64%);
 
-  --color-agent: hsl(355 55% 60%);
-  --color-agent-foreground: hsl(210 20% 96%);
+  --color-agent: hsl(10 62% 58%);
+  --color-agent-foreground: hsl(42 24% 93%);
 
-  --color-agent-accent: hsl(12 48% 62%);
-  --color-agent-accent-foreground: hsl(215 16% 7%);
+  --color-agent-accent: hsl(22 70% 60%);
+  --color-agent-accent-foreground: hsl(28 10% 7%);
 
-  --color-canvas: hsl(216 22% 5.5%);
+  --color-canvas: hsl(28 12% 5%);
 
-  --color-success: hsl(165 45% 55%);
-  --color-success-foreground: hsl(215 16% 7%);
+  --color-success: hsl(152 40% 55%);
+  --color-success-foreground: hsl(28 10% 7%);
 
-  --color-warning: hsl(35 70% 60%);
-  --color-warning-foreground: hsl(215 16% 7%);
+  --color-warning: hsl(38 65% 58%);
+  --color-warning-foreground: hsl(28 10% 7%);
 
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.625rem;
   --radius-xl: 0.75rem;
   --animate-thinking-dot: thinking-dot 1.4s ease-in-out infinite;
+}
+
+.settings-panel {
+  @apply relative grid gap-2;
+}
+
+.settings-panel-muted {
+  @apply rounded-lg bg-muted/20 px-4 py-3;
+}
+
+.settings-nav-item {
+  @apply relative flex min-h-11 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground outline-none transition-colors;
+}
+
+.settings-nav-item:hover {
+  @apply bg-muted/25 text-foreground;
+}
+
+.settings-nav-item[data-active="true"] {
+  @apply bg-secondary text-foreground;
+}
+
+.settings-nav-item:focus-visible {
+  @apply ring-2 ring-ring ring-offset-2 ring-offset-background;
 }
 
 @keyframes thinking-dot {
@@ -119,4 +143,40 @@
   .save-toast-enter {
     animation: save-toast-enter 180ms ease-out;
   }
+}
+
+.processing-bars {
+  @apply flex h-5 items-center gap-[3px];
+}
+
+.processing-bar {
+  @apply h-full w-[3px] rounded-full bg-current;
+  transform: scaleY(var(--bar-scale, 1));
+  will-change: transform;
+}
+
+.processing-bar:nth-child(1) { --bar-scale: 0.4; }
+.processing-bar:nth-child(2) { --bar-scale: 0.7; }
+.processing-bar:nth-child(3) { --bar-scale: 1; }
+.processing-bar:nth-child(4) { --bar-scale: 0.7; }
+.processing-bar:nth-child(5) { --bar-scale: 0.4; }
+
+@keyframes processing-bar {
+  0%, 100% {
+    transform: scaleY(0.25);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .processing-bar {
+    animation: processing-bar 1.15s ease-in-out infinite;
+  }
+
+  .processing-bar:nth-child(2) { animation-delay: 140ms; }
+  .processing-bar:nth-child(3) { animation-delay: 280ms; }
+  .processing-bar:nth-child(4) { animation-delay: 420ms; }
+  .processing-bar:nth-child(5) { animation-delay: 560ms; }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
   DictationRecoveryAction,
@@ -47,7 +47,10 @@ export function RuntimeShellSurface() {
       return <FailureView snapshot={snapshot} retrying={retrying} setRetrying={setRetrying} />;
     case 'agent-status':
       return (
-        <AgentCard tone="primary" kicker="Agent" live={{ role: 'status', 'aria-live': 'polite' }}>
+        <AgentCard
+          tone="primary"
+          live={{ role: 'status', 'aria-live': 'polite' }}
+        >
           {isThinkingMessage(snapshot.message) ? <ThinkingDots /> : snapshot.message}
         </AgentCard>
       );
@@ -55,7 +58,6 @@ export function RuntimeShellSurface() {
       return (
         <AgentCard
           tone="primary"
-          kicker="Agent"
           live={undefined}
           announcement="Agent response is streaming"
           growRef
@@ -70,7 +72,6 @@ export function RuntimeShellSurface() {
       return (
         <AgentCard
           tone="success"
-          kicker="Complete"
           live={{ role: 'status', 'aria-live': 'polite' }}
           growRef
           measureKey={snapshot.revision}
@@ -87,16 +88,19 @@ export function RuntimeShellSurface() {
         >
           <div className="break-words">{renderMarkdown(snapshot.response)}</div>
           {snapshot.toolSummary.length > 0 ? (
-            <ul className="mt-3 flex flex-wrap gap-1.5 p-0">
-              {snapshot.toolSummary.slice(0, 3).map((item) => (
-                <li
-                  key={item}
-                  className="max-w-full rounded-full border border-border bg-muted px-2 py-0.5 text-xs break-words text-muted-foreground"
-                >
-                  {item}
-                </li>
-              ))}
-            </ul>
+            <div className="mt-4 border-t border-border/60 pt-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Tool activity</p>
+              <ul className="flex flex-wrap gap-1.5 p-0">
+                {snapshot.toolSummary.slice(0, 3).map((item) => (
+                  <li
+                    key={item}
+                    className="max-w-full break-words rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground"
+                  >
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
         </AgentCard>
       );
@@ -104,7 +108,6 @@ export function RuntimeShellSurface() {
       return (
         <AgentCard
           tone="destructive"
-          kicker="Failed"
           live={{ role: 'alert' }}
           actions={
             <Button
@@ -138,7 +141,7 @@ function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnap
   const hasPreview = committed.length > 0 || tentativeSuffix.length > 0 || snapshot.insertionHalted;
 
   return (
-    <main className="flex h-screen w-screen flex-col items-center justify-center gap-2 overflow-hidden bg-transparent">
+    <main className="flex h-screen w-screen flex-col items-center justify-center gap-3 overflow-hidden bg-transparent">
       <div className="h-[52px] w-[172px] shrink-0">
         <RecordingPopup
           key={snapshot.recordingSessionId}
@@ -150,17 +153,17 @@ function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnap
         <p
           data-testid="streaming-preview"
           aria-live="off"
-          className="m-0 max-h-12 w-[488px] overflow-hidden rounded-lg border border-white/10 bg-[rgba(20,20,23,0.96)] px-3 py-2 text-sm leading-5 shadow-lg"
+          className="m-0 max-h-12 w-[488px] overflow-hidden rounded-lg border border-border/70 bg-card px-3.5 py-2.5 text-sm leading-5 text-foreground"
         >
           {snapshot.insertionHalted ? (
-            <span data-testid="insertion-halted" className="mb-1 block text-xs font-medium text-amber-300">
+            <span data-testid="insertion-halted" className="mb-1 block text-xs font-semibold text-warning">
               Insertion stopped — recording continues
             </span>
           ) : null}
-          <span data-testid="streaming-committed" className="text-white/90">
+          <span data-testid="streaming-committed" className="text-foreground">
             {committed}
           </span>
-          <span data-testid="streaming-tentative" className="text-white/45">
+          <span data-testid="streaming-tentative" className="text-muted-foreground">
             {tentativeSuffix}
           </span>
         </p>
@@ -177,15 +180,15 @@ function ProcessingView() {
       aria-live="polite"
       className="flex h-screen w-screen items-center justify-center bg-transparent"
     >
-      <div
-        className="flex h-10 w-40 items-center justify-center gap-2 rounded-full border border-[rgba(133,146,255,0.42)] text-[11px] font-medium text-white/70 shadow-[inset_0_0_14px_rgba(100,108,255,0.16),inset_0_0_28px_rgba(100,108,255,0.06)]"
-        style={{ background: 'rgba(20, 20, 23, 0.96)' }}
-      >
-        <span
-          aria-hidden="true"
-          className="h-1.5 w-1.5 rounded-full bg-[#8592ff] shadow-[0_0_6px_rgba(133,146,255,0.65)]"
-        />
-        <span>Processing…</span>
+      <div className="flex h-10 w-40 items-center justify-center gap-2 rounded-full border border-border bg-card text-primary">
+        <span aria-hidden="true" className="processing-bars">
+          <span className="processing-bar" />
+          <span className="processing-bar" />
+          <span className="processing-bar" />
+          <span className="processing-bar" />
+          <span className="processing-bar" />
+        </span>
+        <p className="text-xs font-medium tracking-wide">Processing…</p>
       </div>
     </main>
   );
@@ -201,11 +204,16 @@ function FailureView({
   setRetrying: (value: boolean) => void;
 }) {
   return (
-    <main role="alert" className="flex h-screen w-screen flex-col rounded-lg border border-border border-l-4 border-l-destructive bg-card p-4 text-card-foreground shadow-xl">
-      <h1 className="text-sm font-semibold">Dictation needs attention</h1>
-      <p className="mt-2 flex-1 overflow-auto text-sm text-muted-foreground">{snapshot.message}</p>
+    <main
+      role="alert"
+      data-tone="destructive"
+      className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border/40 border-l-2 border-l-destructive bg-card text-card-foreground"
+    >
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
+        <p className="text-sm leading-relaxed text-foreground">{snapshot.message}</p>
+      </div>
       {snapshot.recoveryActions.length ? (
-        <div className="mt-3 flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-border/60 px-4 pb-3 pt-3">
           {snapshot.recoveryActions.map((action) => (
             <Button
               key={action}
@@ -233,7 +241,6 @@ function FailureView({
  */
 function AgentCard({
   tone,
-  kicker,
   live,
   announcement,
   growRef,
@@ -242,7 +249,6 @@ function AgentCard({
   children,
 }: {
   tone: 'primary' | 'warning' | 'success' | 'destructive';
-  kicker: string;
   live?: { role?: 'alert' | 'status'; 'aria-live'?: 'polite' };
   /** Polite one-shot announcement used instead of live regions for token streams. */
   announcement?: string;
@@ -300,22 +306,20 @@ function AgentCard({
     <main
       ref={cardRef}
       {...live}
-      className={`flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border border-l-4 bg-card p-4 text-card-foreground shadow-xl ${toneClass[tone]}`}
+      data-tone={tone}
+      className={`flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border/40 border-l-2 bg-card text-card-foreground ${toneClass[tone]}`}
     >
       {announcement ? (
         <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
       ) : null}
-      <header className="mb-3 flex min-h-[10px] items-center justify-between gap-3">
-        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{kicker}</span>
-      </header>
       <div
         ref={bodyRef}
-        className="min-h-0 flex-1 overflow-y-auto break-words text-sm leading-relaxed text-muted-foreground"
+        className="min-h-0 flex-1 overflow-y-auto break-words px-4 py-4 text-sm leading-relaxed text-foreground"
       >
         {children}
       </div>
       {actions ? (
-        <div className="mt-3 flex flex-shrink-0 justify-end gap-2 border-t border-border/60 pt-3">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-4 pb-3 pt-3">
           {actions}
         </div>
       ) : null}
@@ -336,6 +340,7 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
   const [message, setMessage] = useState(() => approvalDrafts.get(snapshot.approvalId) ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const feedbackId = useId();
 
   // Countdown ticks only while the approval is presented.
   useEffect(() => {
@@ -360,57 +365,71 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
   return (
     <main
       role="alert"
-      className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border border-l-4 border-l-warning bg-card p-4 text-card-foreground shadow-xl"
+      data-tone="warning"
+      className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border/40 border-l-2 border-l-warning bg-card text-card-foreground"
     >
-      <header className="mb-3 flex items-center justify-between gap-3">
-        <span className="text-xs font-bold uppercase tracking-wide text-warning">Approval</span>
-        <span
-          className={
-            timerUrgent
-              ? 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-destructive'
-              : 'min-w-9 text-right text-xs font-bold uppercase tracking-wide text-warning'
-          }
-        >
-          {secondsLeft}s
-        </span>
-      </header>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-sm font-semibold leading-snug text-foreground">Approval required</h1>
+          <p
+            className={
+              timerUrgent
+                ? 'text-right text-xs font-medium tabular-nums text-destructive'
+                : 'text-right text-xs font-medium tabular-nums text-warning'
+            }
+          >
+            {secondsLeft}s
+          </p>
+        </div>
 
-      <h1 className="mb-1 break-words text-base font-semibold leading-snug line-clamp-3">
-        {(snapshot.serverDisplayName || snapshot.serverId)}:{snapshot.toolName}
-      </h1>
-      {snapshot.serverDisplayName ? (
-        <p className="mb-2 font-mono text-xs text-muted-foreground">{snapshot.serverId}</p>
-      ) : null}
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Requested action</p>
+          <h2 className="break-words text-sm font-semibold leading-snug text-foreground line-clamp-3">
+            {(snapshot.serverDisplayName || snapshot.serverId)}:{snapshot.toolName}
+          </h2>
+          {snapshot.serverDisplayName ? (
+            <p className="break-words font-mono text-xs text-muted-foreground">{snapshot.serverId}</p>
+          ) : null}
+        </div>
 
-      <p className="mb-2 block min-h-10 flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-2 text-sm leading-relaxed text-muted-foreground">
-        {formatArguments(snapshot.arguments)}
-      </p>
+        <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
+          <p className="text-[11px] font-medium text-muted-foreground">Arguments</p>
+          <p className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground/80">
+            {formatArguments(snapshot.arguments)}
+          </p>
+        </div>
 
-      <Textarea
-        value={message}
-        onChange={(event) => {
-          // Only the current approval's draft has any future; prune the rest.
-          approvalDrafts.clear();
-          approvalDrafts.set(snapshot.approvalId, event.target.value);
-          setMessage(event.target.value);
-        }}
-        placeholder="Optional denial message"
-        aria-label="Optional denial message"
-        disabled={submitting}
-        className="h-9 min-h-0 flex-shrink-0 resize-none rounded-md border-border bg-background text-xs leading-4 text-foreground placeholder:text-muted-foreground"
-      />
+        <div className="space-y-1.5">
+          <label htmlFor={feedbackId} className="block text-xs font-medium text-foreground">
+            Optional denial message
+          </label>
+          <Textarea
+            id={feedbackId}
+            value={message}
+            onChange={(event) => {
+              approvalDrafts.clear();
+              approvalDrafts.set(snapshot.approvalId, event.target.value);
+              setMessage(event.target.value);
+            }}
+            placeholder="Optional denial message"
+            aria-label="Optional denial message"
+            disabled={submitting}
+            className="min-h-16 resize-none rounded-lg border-border bg-background text-xs leading-5 text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
+      </div>
 
       {submitting ? (
-        <p role="status" aria-live="polite" className="mt-3 text-right text-xs text-muted-foreground">
+        <p role="status" aria-live="polite" className="shrink-0 px-4 pb-4 text-center text-xs font-medium text-muted-foreground">
           Feedback sent. Continuing…
         </p>
       ) : (
-        <div className="mt-3 flex flex-shrink-0 justify-end gap-2">
+        <div className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-4 pb-3 pt-3">
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            className="h-8 w-24"
+            className="h-9 w-24"
             onClick={() => submitDecision('denied')}
           >
             Deny
@@ -418,7 +437,7 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
           <Button
             type="button"
             size="sm"
-            className="h-8 w-24"
+            className="h-9 w-24"
             onClick={() => submitDecision('approved')}
           >
             Approve

@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { X } from 'lucide-react';
-import { SectionHeader } from './ui/SectionHeader';
+import { SectionHeader, SettingsPanel } from './ui/SectionHeader';
 import { Tag, ToggleRow, SelectRow, DraftTextRow } from './ui/rows';
 import { SetupChecklist } from './SetupChecklist';
 import { CredentialControl } from './ui/CredentialControl';
@@ -143,7 +143,7 @@ function ProviderSelector({
         : { label: 'Credential required', tone: 'warning' as const };
 
   return (
-    <div className="border-b border-border/70 py-5 space-y-2">
+    <div className="border-b border-border/70 py-4 space-y-2">
       <Label id={labelId} className="text-sm font-medium">Provider</Label>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger
@@ -451,7 +451,7 @@ export function TranscriptionSettings({
           whisperLiveKitReadiness={whisperLiveKitReadiness}
         />
       ) : null}
-      <div className="rounded-lg border border-border/60 bg-card px-6">
+      <SettingsPanel className="overflow-hidden">
         {provider === 'managed-local' ? (
           <>
             <ManagedLocalSection settingsIpc={settingsIpc} />
@@ -601,7 +601,7 @@ export function TranscriptionSettings({
           error={fieldErrors[FIELD_ID_DICTIONARY]}
           onChange={(next) => commit('dictionary', next, FIELD_ID_DICTIONARY)}
         />
-      </div>
+      </SettingsPanel>
       <PrivacyNote provider={provider} />
     </div>
   );
@@ -641,7 +641,7 @@ function ManagedLocalSection({ settingsIpc }: { settingsIpc: SettingsSectionProp
   };
 
   return (
-    <div className="border-b border-border/70 py-5">
+    <div className="border-b border-border/70 py-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-medium">Local speech model</p>
@@ -720,7 +720,7 @@ function CorrectedDictationFormatterSection({
   };
 
   return (
-    <div className="border-b border-border/70 py-5 space-y-2">
+    <div className="border-b border-border/70 py-4 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm font-medium">Corrected Dictation formatter</p>
         <Tag tone={endpointClass === 'local' ? 'success' : 'warning'}>
@@ -824,7 +824,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
   const fieldError = validationError ?? fieldErrors['whisper-url'];
 
   return (
-    <div className="space-y-2 border-b border-border/70 py-5">
+    <div className="space-y-2 border-b border-border/70 py-4">
       <Label id={labelId} htmlFor={inputId} className="text-sm font-medium">
         Endpoint
       </Label>
@@ -927,7 +927,7 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
         }, FIELD_ID_OPENAI_MODEL)}
         clearError={() => persistence.clearFieldError(FIELD_ID_OPENAI_MODEL)}
       />
-      <div className="border-b border-border/70 py-5">
+      <div className="border-b border-border/70 py-4">
         <CredentialControl
           credential="openai-api-key"
           label="OpenAI API key"
@@ -998,7 +998,7 @@ function AzureSpeechSection({ config, persistence, settingsIpc }: Props) {
         }, FIELD_ID_AZURE_REGION)}
         clearError={() => persistence.clearFieldError(FIELD_ID_AZURE_REGION)}
       />
-      <div className="border-b border-border/70 py-5">
+      <div className="border-b border-border/70 py-4">
         <CredentialControl
           credential="azure-speech-key"
           label="Azure Speech key"
@@ -1166,7 +1166,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
         onChange={handleAuthChange}
       />
       {custom.auth === 'bearer' ? (
-        <div className="border-b border-border/70 py-5">
+        <div className="border-b border-border/70 py-4">
           <CredentialControl
             credential="custom-open-ai-compatible-bearer"
             label="Bearer token"
@@ -1190,7 +1190,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
             }, FIELD_ID_CUSTOM_HEADER_NAME)}
             clearError={() => persistence.clearFieldError(FIELD_ID_CUSTOM_HEADER_NAME)}
           />
-          <div className="border-b border-border/70 py-5">
+          <div className="border-b border-border/70 py-4">
             <CredentialControl
               credential="custom-open-ai-compatible-header"
               label="Secret header value"
@@ -1260,7 +1260,7 @@ function WhisperLiveKitSection({
           settingsIpc={settingsIpc}
         />
       ) : null}
-      <div className="flex flex-wrap items-center gap-3 border-b border-border/70 py-5">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border/70 py-4">
         <Button
           type="button"
           variant="secondary"
@@ -1321,7 +1321,7 @@ function CheckServerTest({ provider, settingsIpc, testState, setTestState }: Che
   if (provider === 'local-whisper-cpp') return null; // handled inline
 
   return (
-    <div className="flex items-center gap-3 border-b border-border/70 py-5">
+    <div className="flex items-center gap-3 border-b border-border/70 py-4">
       <Button
         type="button"
         variant="secondary"
@@ -1384,7 +1384,7 @@ function DictionaryRow({ dictionary, disabled = false, description, error, onCha
   };
 
   return (
-    <div className="space-y-3 border-b border-border/70 py-5">
+    <div className="space-y-3 border-b border-border/70 py-4">
       <div className="space-y-1">
         <Label className="text-sm font-medium">Personal dictionary</Label>
         <p className="text-xs text-muted-foreground">

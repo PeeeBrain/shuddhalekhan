@@ -72,7 +72,7 @@ export function CredentialControl({ credential, label, settingsIpc, documentImpo
   const unavailableMessage = status && !status.available ? status.message : null;
 
   return (
-    <div className="space-y-2 border-b border-border/70 py-5">
+    <div className="space-y-2 border-b border-border/60 py-4 last:border-b-0">
       <Label htmlFor={inputId} className="text-sm font-medium">{label}</Label>
       {documentImport ? (
         <Input
