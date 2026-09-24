@@ -70,19 +70,15 @@ body,
     width: 3px;
     height: 18px;
     border-radius: 999px;
-    background: #ffffff;
+    background: currentColor;
     transform-origin: center;
     will-change: transform;
 }
 
 .bar.dictation {
-    box-shadow:
-        0 0 3px rgba(133, 146, 255, 0.75),
-        0 0 6px rgba(100, 108, 255, 0.4);
+    color: var(--color-primary);
 }
 
 .bar.agent {
-    box-shadow:
-        0 0 3px rgba(255, 106, 106, 0.75),
-        0 0 6px rgba(255, 64, 64, 0.4);
+    color: var(--color-agent-accent);
 }

@@ -8,7 +8,7 @@ import type {
 import { getAppConfigDictationError } from '../../shared/dictation-runtime';
 import { assessBinding, formatBinding } from '../../shared/shortcut-bindings';
 import { Button } from '@/components/ui/button';
-import { SectionHeader } from './ui/SectionHeader';
+import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { Keycaps, ToggleRow } from './ui/rows';
 import type { SettingsSectionProps } from './settings-section-props';
 import {
@@ -54,26 +54,40 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
         description="Choose an independent global binding and recording behavior for each intent."
       />
 
-      <section className="rounded-lg border border-border/60 bg-card px-6" aria-label="Global shortcut pause">
-        <ToggleRow
-          title="Pause global shortcuts"
-          description="Temporarily allow configured keys to pass through. Active recordings still finish normally. This resets when Shuddhalekhan restarts."
-          checked={paused}
-          errorId="shortcut-pause-error"
-          error={pauseError}
-          onChange={(value) => void updatePaused(value)}
+      <SettingsPanel aria-label="Global shortcut pause" className="overflow-hidden">
+        <SettingsPanelHeader
+          eyebrow="Global controls"
+          title="Shortcut availability"
+          description="Pause both intents while you need the configured keys elsewhere."
         />
-        {paused ? (
-          <p className="pb-5 text-sm text-warning" role="status">
-            <strong>Global shortcuts are paused.</strong> New Dictation and Agent Mode sessions will not start.
-          </p>
-        ) : null}
-      </section>
+        <div>
+          <ToggleRow
+            title="Pause global shortcuts"
+            description="Temporarily allow configured keys to pass through. Active recordings still finish normally. This resets when Shuddhalekhan restarts."
+            checked={paused}
+            errorId="shortcut-pause-error"
+            error={pauseError}
+            onChange={(value) => void updatePaused(value)}
+          />
+          {paused ? (
+            <p className="pb-5 text-sm leading-5 text-warning" role="status">
+              <strong>Global shortcuts are paused.</strong> New Dictation and Agent Mode sessions will not start.
+            </p>
+          ) : null}
+        </div>
+      </SettingsPanel>
 
-      <section className="rounded-lg border border-border/60 bg-card px-6" aria-label="Shortcut bindings">
-        <ShortcutRow intent="dictation" {...props} />
-        <ShortcutRow intent="agent" {...props} />
-      </section>
+      <SettingsPanel aria-label="Shortcut bindings" className="overflow-hidden">
+        <SettingsPanelHeader
+          eyebrow="Recording intents"
+          title="Bindings and behavior"
+          description="Each intent has its own trigger and release model."
+        />
+        <div>
+          <ShortcutRow intent="dictation" {...props} />
+          <ShortcutRow intent="agent" {...props} />
+        </div>
+      </SettingsPanel>
     </div>
   );
 }
@@ -230,7 +244,7 @@ function ShortcutRow({
     : null;
 
   return (
-    <div className="border-b border-border/70 py-5 last:border-b-0">
+    <div className="border-b border-border/70 py-4 last:border-b-0">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 space-y-1.5">
           <h3 className="text-sm font-medium">{label}</h3>

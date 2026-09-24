@@ -149,21 +149,16 @@ export function RecordingPopup({
   return (
     <div className="flex h-full w-full items-center justify-center overflow-hidden bg-transparent isolate">
       <div
-        className={`pill-inner flex h-10 w-40 items-center justify-center gap-1 rounded-full border px-3 ${
+        className={`pill-inner flex h-10 w-40 items-center justify-center gap-1 rounded-full border border-border bg-card ${
           pillState === 'hidden' ? '' : pillState
-        } ${
-          mode === 'agent'
-            ? 'border-[rgba(255,106,106,0.72)] shadow-[inset_0_0_14px_rgba(255,64,64,0.32),inset_0_0_28px_rgba(255,64,64,0.14)]'
-            : 'border-[rgba(133,146,255,0.66)] shadow-[inset_0_0_14px_rgba(100,108,255,0.28),inset_0_0_28px_rgba(100,108,255,0.12)]'
         }`}
-        style={{ background: 'rgba(20, 20, 23, 0.96)' }}
         role="status"
         aria-label={`${mode === 'agent' ? 'Agent mode' : 'Dictation'} recording in progress${remainingSeconds === null ? '' : `. Recording stops in ${remainingSeconds} seconds`}`}
       >
         {mode === 'agent' ? (
-          <Bot className="h-3.5 w-3.5 shrink-0 text-[#ff6a6a]" aria-hidden="true" />
+          <Bot className="h-3.5 w-3.5 shrink-0 text-agent-accent" aria-hidden="true" />
         ) : (
-          <Mic className="h-3.5 w-3.5 shrink-0 text-[#8592ff]" aria-hidden="true" />
+          <Mic className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
         )}
         <div className={`h-8 items-center gap-1 ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
           {bars.map((_, index) => {
@@ -177,11 +172,11 @@ export function RecordingPopup({
             );
           })}
         </div>
-        <span className="text-[10px] font-mono tabular-nums text-white/70 select-none">
+        <span className="text-[10px] font-mono tabular-nums text-foreground/80 select-none">
           {formatted}
         </span>
         {remainingSeconds !== null ? (
-          <span className="ml-1 whitespace-nowrap text-[10px] font-medium tabular-nums text-amber-300">
+          <span className="ml-1 whitespace-nowrap text-[10px] font-medium tabular-nums text-warning">
             {remainingSeconds}s left
           </span>
         ) : null}

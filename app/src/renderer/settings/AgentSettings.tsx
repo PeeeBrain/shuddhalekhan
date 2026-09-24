@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { SectionHeader } from './ui/SectionHeader';
+import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { ToggleRow, DraftTextRow, SelectRow } from './ui/rows';
 import { CredentialControl } from './ui/CredentialControl';
 import { isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
@@ -49,134 +49,163 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
         title="Agent"
         description="Configure the voice agent provider and its model."
       />
-      <div className="rounded-lg border border-border/60 bg-card px-6">
-        <ToggleRow
-          title="Enable Agent Mode"
-          description="Activates the saved Agent Mode shortcut and voice-agent runtime. The shortcut remains dormant while disabled."
-          checked={agent.enabled}
-          tone="agent"
-          errorId={enabledErrorId}
-          error={fieldErrors[FIELD_ID_ENABLED]}
-          onChange={toggleEnabled}
-        />
-        <DraftTextRow
-          label="Provider base URL"
-          value={agent.provider.baseUrl}
-          placeholder="https://openrouter.ai/api/v1"
-          errorId={baseUrlErrorId}
-          error={fieldErrors[FIELD_ID_BASE_URL]}
-          onCommit={(baseUrl) =>
-            commit(
-              'agent',
-              { ...agent, provider: { ...agent.provider, baseUrl } },
-              FIELD_ID_BASE_URL,
-            )
-          }
-          clearError={() => clearFieldError(FIELD_ID_BASE_URL)}
-        />
-        <DraftTextRow
-          label="Model"
-          value={agent.provider.model}
-          placeholder="openai/gpt-4.1-mini"
-          errorId={modelErrorId}
-          error={fieldErrors[FIELD_ID_MODEL]}
-          onCommit={(model) =>
-            commit(
-              'agent',
-              { ...agent, provider: { ...agent.provider, model } },
-              FIELD_ID_MODEL,
-            )
-          }
-          clearError={() => clearFieldError(FIELD_ID_MODEL)}
-        />
-        <ToggleRow
-          title="Thinking"
-          description="Allows models that support thinking to spend extra reasoning before tool calls."
-          checked={agent.provider.thinkingEnabled}
-          tone="agent"
-          errorId={thinkingErrorId}
-          error={fieldErrors[FIELD_ID_THINKING]}
-          onChange={(thinkingEnabled) =>
-            commit(
-              'agent',
-              { ...agent, provider: { ...agent.provider, thinkingEnabled } },
-              FIELD_ID_THINKING,
-            )
-          }
-        />
-        {agent.provider.thinkingEnabled ? (
-          <SelectRow
-            label="Reasoning effort"
-            description="Controls how much reasoning the model uses. Supported levels depend on the selected provider and model."
-            value={agent.provider.reasoningEffort ?? 'medium'}
-            options={[
-              { value: 'low', label: 'Low' },
-              { value: 'medium', label: 'Medium' },
-              { value: 'high', label: 'High' },
-            ]}
-            errorId={reasoningEffortErrorId}
-            error={fieldErrors[FIELD_ID_THINKING]}
-            onChange={(reasoningEffort) =>
-              commit(
-                'agent',
-                {
-                  ...agent,
-                  provider: {
-                    ...agent.provider,
-                    reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high',
-                  },
-                },
-                FIELD_ID_THINKING,
-              )
-            }
+      <div className="space-y-5">
+        <SettingsPanel className="overflow-hidden">
+          <SettingsPanelHeader
+            eyebrow="Runtime"
+            title="Agent Mode"
+            description="One voice command starts one run. The shortcut stays dormant while the runtime is off."
           />
-        ) : null}
-        <SelectRow
-          label="API key source"
-          description="Choose a securely saved key or an environment variable for advanced setups."
-          value={apiKeySource}
-          options={[
-            { value: 'environment', label: 'Environment variable' },
-            { value: 'stored', label: 'Securely saved key' },
-          ]}
-          errorId={apiKeySourceErrorId}
-          error={fieldErrors[FIELD_ID_APIKEY]}
-          onChange={(next) =>
-            commit(
-              'agent',
-              { ...agent, provider: { ...agent.provider, apiKeySource: next as 'environment' | 'stored' } },
-              FIELD_ID_APIKEY,
-            )
-          }
-        />
-        {apiKeySource === 'environment' ? (
-          <DraftTextRow
-            label="API key env var name"
-            value={agent.provider.apiKeyEnvVar}
-            placeholder={
-              isLocalProviderUrl(agent.provider.baseUrl)
-                ? 'Optional for local providers'
-                : 'OPENROUTER_API_KEY'
-            }
-            warning={apiKeyWarning}
-            errorId={apiKeyEnvVarErrorId}
-            error={fieldErrors[FIELD_ID_APIKEY]}
-            onCommit={(apiKeyEnvVar) =>
-              commit(
-                'agent',
-                { ...agent, provider: { ...agent.provider, apiKeyEnvVar } },
-                FIELD_ID_APIKEY,
-              )
-            }
-            clearError={() => clearFieldError(FIELD_ID_APIKEY)}
+          <div>
+            <ToggleRow
+              title="Enable Agent Mode"
+              description="Activates the saved Agent Mode shortcut and voice-agent runtime. The shortcut remains dormant while disabled."
+              checked={agent.enabled}
+              tone="agent"
+              errorId={enabledErrorId}
+              error={fieldErrors[FIELD_ID_ENABLED]}
+              onChange={toggleEnabled}
+            />
+          </div>
+        </SettingsPanel>
+
+        <SettingsPanel className="overflow-hidden">
+          <SettingsPanelHeader
+            eyebrow="Model connection"
+            title="Provider and model"
+            description="Use an OpenAI-compatible endpoint. Changes are saved when you leave a text field."
           />
-        ) : (
-          <CredentialControl
-            credential="agent-api-key"
-            label="Saved API key"
-            settingsIpc={settingsIpc}
+          <div>
+            <DraftTextRow
+              label="Provider base URL"
+              value={agent.provider.baseUrl}
+              placeholder="https://openrouter.ai/api/v1"
+              errorId={baseUrlErrorId}
+              error={fieldErrors[FIELD_ID_BASE_URL]}
+              onCommit={(baseUrl) =>
+                commit(
+                  'agent',
+                  { ...agent, provider: { ...agent.provider, baseUrl } },
+                  FIELD_ID_BASE_URL,
+                )
+              }
+              clearError={() => clearFieldError(FIELD_ID_BASE_URL)}
+            />
+            <DraftTextRow
+              label="Model"
+              value={agent.provider.model}
+              placeholder="openai/gpt-4.1-mini"
+              errorId={modelErrorId}
+              error={fieldErrors[FIELD_ID_MODEL]}
+              onCommit={(model) =>
+                commit(
+                  'agent',
+                  { ...agent, provider: { ...agent.provider, model } },
+                  FIELD_ID_MODEL,
+                )
+              }
+              clearError={() => clearFieldError(FIELD_ID_MODEL)}
+            />
+            <ToggleRow
+              title="Thinking"
+              description="Allows models that support thinking to spend extra reasoning before tool calls."
+              checked={agent.provider.thinkingEnabled}
+              tone="agent"
+              errorId={thinkingErrorId}
+              error={fieldErrors[FIELD_ID_THINKING]}
+              onChange={(thinkingEnabled) =>
+                commit(
+                  'agent',
+                  { ...agent, provider: { ...agent.provider, thinkingEnabled } },
+                  FIELD_ID_THINKING,
+                )
+              }
+            />
+            {agent.provider.thinkingEnabled ? (
+              <SelectRow
+                label="Reasoning effort"
+                description="Controls how much reasoning the model uses. Supported levels depend on the selected provider and model."
+                value={agent.provider.reasoningEffort ?? 'medium'}
+                options={[
+                  { value: 'low', label: 'Low' },
+                  { value: 'medium', label: 'Medium' },
+                  { value: 'high', label: 'High' },
+                ]}
+                errorId={reasoningEffortErrorId}
+                error={fieldErrors[FIELD_ID_THINKING]}
+                onChange={(reasoningEffort) =>
+                  commit(
+                    'agent',
+                    {
+                      ...agent,
+                      provider: {
+                        ...agent.provider,
+                        reasoningEffort: reasoningEffort as 'low' | 'medium' | 'high',
+                      },
+                    },
+                    FIELD_ID_THINKING,
+                  )
+                }
+              />
+            ) : null}
+          </div>
+        </SettingsPanel>
+
+        <SettingsPanel className="overflow-hidden">
+          <SettingsPanelHeader
+            eyebrow="Access"
+            title="Credentials"
+            description="Keep API keys in the environment or in the app's secure credential store."
           />
-        )}
+          <div>
+            <SelectRow
+              label="API key source"
+              description="Choose a securely saved key or an environment variable for advanced setups."
+              value={apiKeySource}
+              options={[
+                { value: 'environment', label: 'Environment variable' },
+                { value: 'stored', label: 'Securely saved key' },
+              ]}
+              errorId={apiKeySourceErrorId}
+              error={fieldErrors[FIELD_ID_APIKEY]}
+              onChange={(next) =>
+                commit(
+                  'agent',
+                  { ...agent, provider: { ...agent.provider, apiKeySource: next as 'environment' | 'stored' } },
+                  FIELD_ID_APIKEY,
+                )
+              }
+            />
+            {apiKeySource === 'environment' ? (
+              <DraftTextRow
+                label="API key env var name"
+                value={agent.provider.apiKeyEnvVar}
+                placeholder={
+                  isLocalProviderUrl(agent.provider.baseUrl)
+                    ? 'Optional for local providers'
+                    : 'OPENROUTER_API_KEY'
+                }
+                warning={apiKeyWarning}
+                errorId={apiKeyEnvVarErrorId}
+                error={fieldErrors[FIELD_ID_APIKEY]}
+                onCommit={(apiKeyEnvVar) =>
+                  commit(
+                    'agent',
+                    { ...agent, provider: { ...agent.provider, apiKeyEnvVar } },
+                    FIELD_ID_APIKEY,
+                  )
+                }
+                clearError={() => clearFieldError(FIELD_ID_APIKEY)}
+              />
+            ) : (
+              <CredentialControl
+                credential="agent-api-key"
+                label="Saved API key"
+                settingsIpc={settingsIpc}
+              />
+            )}
+          </div>
+        </SettingsPanel>
       </div>
 
       <ConfirmDialog

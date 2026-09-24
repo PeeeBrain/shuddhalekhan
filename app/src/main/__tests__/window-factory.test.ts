@@ -31,6 +31,7 @@ installElectronMock();
 describe('createSingletonWindow', () => {
   beforeEach(() => {
     delete process.env.VITE_DEV_SERVER_URL;
+    delete process.env.ELECTRON_RENDERER_URL;
     resetElectronMock();
     electronMock.BrowserWindow.mockImplementation(BrowserWindow);
     BrowserWindow.mockClear();
@@ -98,6 +99,20 @@ describe('createSingletonWindow', () => {
     expect(loadFile).toHaveBeenCalledWith(expect.stringContaining('renderer'), {
       hash: 'recording?mode=agent',
     });
+  });
+
+  it('prefers the electron-vite dev server URL over the fallback', async () => {
+    process.env.ELECTRON_RENDERER_URL = 'http://localhost:5174/';
+    process.env.VITE_DEV_SERVER_URL = 'http://localhost:5173/';
+    const { createSingletonWindow } = await import(`../window-factory?test=${Date.now()}-2b`);
+    const windows = createSingletonWindow({
+      route: 'settings',
+      options: { width: 960, height: 680 },
+    });
+
+    windows.create();
+
+    expect(loadURL).toHaveBeenCalledWith('http://localhost:5174/#/settings');
   });
 
   it('clears the singleton on close and destroys live windows', async () => {

@@ -17,8 +17,7 @@ import {
   Keyboard,
   Mic,
   Plug,
-} from 'lucide-react';
-import { createSettingsIpc } from './settings/settings-ipc';
+} from 'lucide-react';import { createSettingsIpc } from './settings/settings-ipc';
 import {
   DEFAULT_SETTINGS_SECTION,
   SETTINGS_NAV_GROUPS,
@@ -172,24 +171,16 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   };
 
   return (
-    <main className="settings-root relative flex h-screen bg-background text-foreground">
+    <main className="settings-root relative flex h-screen overflow-hidden bg-background text-foreground">
       <aside
-        className="flex w-56 shrink-0 flex-col border-r border-border bg-background p-5 pt-6"
+        className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border/60 bg-background px-3 py-5"
         aria-label="Settings sections"
       >
-        <div className="mb-6 flex items-center gap-3">
-          <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary">
-            <span className="text-lg font-bold leading-none text-primary">S</span>
-          </div>
-          <div>
-            <h1 className="text-base font-semibold leading-tight">Shuddhalekhan</h1>
-            <p className="text-xs text-muted-foreground">
-              {appInfo?.version ? `v${appInfo.version}` : 'Settings'}
-            </p>
-          </div>
+        <div className="mb-6 px-2.5">
+          <p className="text-[11px] font-medium text-muted-foreground">Settings</p>
         </div>
 
-        <nav className="flex flex-col gap-4" aria-label="Settings navigation">
+        <nav className="flex flex-col gap-6" aria-label="Settings navigation">
           {SETTINGS_NAV_GROUPS.map((group) => (
             <NavGroup
               key={group.id}
@@ -203,7 +194,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
         </nav>
       </aside>
 
-      <section className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-canvas">
+      <section className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <div
           key={activeSection}
           role="tabpanel"
@@ -213,19 +204,19 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
           className="content-enter flex min-h-0 flex-1 flex-col overflow-hidden focus:outline-none"
         >
           {activeSection === 'history' ? (
-            <div className="flex flex-1 flex-col min-h-0">
+            <div className="flex min-h-0 flex-1 flex-col">
               <SectionFrame
                 sectionId="history"
                 title="History"
                 description="Review past agent runs, tool activity, and responses."
               />
-              <div className="flex flex-1 min-h-0 flex-col overflow-hidden px-10 pb-8">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 pb-8">
                 <AuditHistorySettings settingsIpc={settingsIpc} />
               </div>
             </div>
           ) : (
             <ScrollArea className="h-full min-h-0 flex-1">
-              <div className="px-10 py-8">
+              <div className="mx-auto w-full max-w-4xl px-8 py-8">
                 {activeSection === 'transcription' ? (
                   <TranscriptionSettings {...sectionProps} />
                 ) : null}
@@ -285,7 +276,7 @@ function NavGroup({
     <div>
       <p
         id={`settings-group-${group.id}`}
-        className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+        className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
       >
         {group.label}
       </p>
@@ -293,7 +284,7 @@ function NavGroup({
         role="tablist"
         aria-orientation="vertical"
         aria-label={group.label}
-        className="flex flex-col gap-0.5"
+        className="flex flex-col gap-1"
       >
         {group.sections.map((section) => {
           const isActive = activeSection === section.id;
@@ -311,15 +302,14 @@ function NavGroup({
               aria-selected={isActive}
               aria-controls={`panel-${section.id}`}
               tabIndex={isActive ? 0 : -1}
-              className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
-                isActive
-                  ? 'bg-secondary text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+              data-active={isActive}
+              className={`settings-nav-item ${
+                isActive ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
               }`}
               onClick={() => onSelect(section.id)}
               onKeyDown={onKeyDown}
             >
-              <Icon className="size-4 shrink-0" aria-hidden="true" />
+              <Icon className={`size-4 shrink-0 ${isActive ? 'text-primary' : ''}`} aria-hidden="true" />
               {section.label}
             </button>
           );
@@ -339,15 +329,15 @@ function SectionFrame({
   description: string;
 }) {
   return (
-    <header className="flex shrink-0 items-start justify-between gap-6 px-10 pt-8 pb-0">
+    <header className="flex shrink-0 items-start justify-between gap-6 px-8 pb-5 pt-7">
       <div>
         <h2
           id={`section-heading-${sectionId}`}
-          className="text-xl font-semibold tracking-tight"
+          className="text-2xl font-semibold tracking-tight"
         >
           {title}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
       </div>
     </header>
   );

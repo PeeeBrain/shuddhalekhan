@@ -85,6 +85,7 @@ tags and commit history, not from this file. Keep new entries under
 - Grouped all six transcription providers into Local, Cloud, and Custom choices with concise descriptions and configuration-readiness feedback.
 - Reorganized Settings into Dictation, Agent, and System groups, with Transcription as the initial destination.
 - Added a darker content canvas, cohesive settings controls, accessible vertical navigation, and restrained status tags across MCP and History.
+- Reworked Settings and Agent Mode presentation around a quieter shared shell, focused configuration panels, clearer runtime state, and more legible approval and response cards.
 - Text fields now save on blur while toggles and selections save immediately; successful saves use a brief in-window notification and failures remain inline.
 - Increased the default Settings window to 1040x720 while preserving the 820x560 minimum size.
 - Made confirmation-dialog backdrops accessible as semantic controls for keyboard and assistive-technology users.
