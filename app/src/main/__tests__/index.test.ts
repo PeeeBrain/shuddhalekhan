@@ -689,8 +689,11 @@ describe('main process IPC orchestration', () => {
 
     let releasePaste: () => void = () => undefined;
     const pasteGate = new Promise<void>((resolve) => { releasePaste = resolve; });
+    let markPasteStarted: () => void = () => undefined;
+    const pasteStarted = new Promise<void>((resolve) => { markPasteStarted = resolve; });
     captureForegroundTarget.mockReturnValue(defaultTargetSnapshot);
     simulatePaste.mockImplementation(async () => {
+      markPasteStarted();
       await pasteGate;
       return { acceptedEvents: 4 };
     });
@@ -699,10 +702,7 @@ describe('main process IPC orchestration', () => {
     handler?.({}, 'retry-paste');
     handler?.({}, 'retry-paste');
     releasePaste();
-
-    for (let i = 0; i < 1000 && simulatePaste.mock.calls.length === 0; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 1));
-    }
+    await pasteStarted;
 
     expect(runtimeShellFinish).toHaveBeenCalledTimes(1);
     expect(simulatePaste).toHaveBeenCalledTimes(1);

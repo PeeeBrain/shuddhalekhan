@@ -16,9 +16,10 @@ describe('last transcript store', () => {
   });
 
   it('does not store empty transcripts', () => {
+    setLastTranscript('probe-before-empty');
     setLastTranscript('');
 
-    expect(getLastTranscript()?.text).not.toBe('');
+    expect(getLastTranscript()?.text).toBe('probe-before-empty');
   });
 
   it('replaces the previous transcript with a newer one', () => {
