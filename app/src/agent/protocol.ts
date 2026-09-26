@@ -127,6 +127,11 @@ export type AgentCancelMessage = {
   agentRunId: string;
 };
 
+export type McpTestServerMessage = {
+  type: 'mcp:test-server';
+  serverId: string;
+};
+
 export type SidecarShutdownRequestMessage = {
   type: 'sidecar:shutdown';
 };
@@ -144,6 +149,7 @@ export type ElectronToSidecarMessage =
   | AgentStartMessage
   | AgentCancelMessage
   | ApprovalDecisionMessage
+  | McpTestServerMessage
   | SidecarShutdownRequestMessage;
 
 export function parseElectronMessage(line: string): ElectronToSidecarMessage | null {
@@ -159,6 +165,7 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
     case 'agent:start':
     case 'agent:cancel':
     case 'approval:decision':
+    case 'mcp:test-server':
     case 'sidecar:shutdown':
       return parsed as ElectronToSidecarMessage;
     default:

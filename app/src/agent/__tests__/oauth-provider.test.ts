@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { SidecarOAuthProvider } from '../oauth-provider';
+import type { McpServerConfig } from '../../types/ipc';
 
 const originalAppData = process.env.APPDATA;
 let appDataDir = '';
@@ -19,6 +20,106 @@ afterEach(() => {
 });
 
 describe('SidecarOAuthProvider', () => {
+  const originalTestSecret = process.env.SHUDDHA_TEST_OAUTH_SECRET;
+
+  afterEach(() => {
+    if (originalTestSecret === undefined) delete process.env.SHUDDHA_TEST_OAUTH_SECRET;
+    else process.env.SHUDDHA_TEST_OAUTH_SECRET = originalTestSecret;
+  });
+
+  function httpServer(transport: Partial<Extract<McpServerConfig['transport'], { type: 'http' }>> = {}): McpServerConfig {
+    return {
+      id: 'static-client-server',
+      displayName: 'Static client server',
+      enabled: true,
+      transport: {
+        type: 'http',
+        url: 'https://mcp.example.test/mcp',
+        redirect: 'error',
+        ...transport,
+      },
+      discoveredTools: [],
+      toolPolicies: {},
+    };
+  }
+
+  it('serves a pre-registered client from server config without dynamic registration', () => {
+    process.env.SHUDDHA_TEST_OAUTH_SECRET = 'secret-1';
+    const provider = new SidecarOAuthProvider(httpServer({
+      oauth: {
+        clientId: 'static-client',
+        clientSecretEnvVar: 'SHUDDHA_TEST_OAUTH_SECRET',
+        scopes: ['scope-a', 'scope-b'],
+      },
+    }));
+
+    expect(provider.clientInformation()).toEqual({
+      client_id: 'static-client',
+      client_secret: 'secret-1',
+    });
+
+    const tokenFilePath = join(appDataDir, 'Shuddhalekhan', 'agent', 'oauth', 'static-client-server.json');
+    expect(() => readFileSync(tokenFilePath, 'utf-8')).toThrow();
+  });
+
+  it('serves a public pre-registered client when the secret environment variable is absent', () => {
+    const provider = new SidecarOAuthProvider(httpServer({
+      oauth: {
+        clientId: 'static-client',
+        clientSecretEnvVar: 'SHUDDHA_TEST_OAUTH_SECRET',
+        scopes: [],
+      },
+    }));
+
+    expect(provider.clientInformation()).toEqual({ client_id: 'static-client' });
+  });
+
+  it('keeps the pre-registered client when the token store is invalidated', () => {
+    process.env.SHUDDHA_TEST_OAUTH_SECRET = 'secret-1';
+    const provider = new SidecarOAuthProvider(httpServer({
+      oauth: {
+        clientId: 'static-client',
+        clientSecretEnvVar: 'SHUDDHA_TEST_OAUTH_SECRET',
+        scopes: [],
+      },
+    }));
+
+    provider.invalidateCredentials('all');
+
+    expect(provider.clientInformation()).toEqual({
+      client_id: 'static-client',
+      client_secret: 'secret-1',
+    });
+  });
+
+  it('sends the configured scopes in client metadata during authorization', async () => {
+    const provider = new SidecarOAuthProvider(httpServer({
+      oauth: {
+        clientId: 'static-client',
+        clientSecretEnvVar: 'SHUDDHA_TEST_OAUTH_SECRET',
+        scopes: ['scope-a', 'scope-b'],
+      },
+    }));
+
+    await provider.start();
+    try {
+      expect(provider.clientMetadata.scope).toBe('scope-a scope-b');
+    } finally {
+      provider.close();
+    }
+  });
+
+  it('omits scope from client metadata when no OAuth scopes are configured', async () => {
+    const provider = new SidecarOAuthProvider(httpServer());
+
+    await provider.start();
+    try {
+      expect(provider.clientMetadata.scope).toBeUndefined();
+    } finally {
+      provider.close();
+    }
+  });
+
   it('preserves the authorization-server metadata pin with stored credentials', () => {
     const provider = new SidecarOAuthProvider({
       id: 'secure-http',

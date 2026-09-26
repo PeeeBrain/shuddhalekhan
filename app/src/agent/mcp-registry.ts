@@ -63,7 +63,7 @@ export class McpRegistry {
   private allPendingConnections = new Set<Promise<void>>();
   private attemptedConnectionKeys = new Map<string, string>();
   // Enabled-server ids are the keys of this map.
-  private desiredConnectionKeys = new Map<string, string>();
+  private desiredServers = new Map<string, McpServerConfig>();
   private toolPolicies = new Map<string, AgentToolApprovalPolicy>();
 
   constructor(private readonly ports: McpRegistryPorts) {}
@@ -73,9 +73,7 @@ export class McpRegistry {
     for (const server of config.agent.mcpServers) {
       if (server.enabled) enabledServers.set(server.id, server);
     }
-    this.desiredConnectionKeys = new Map(
-      [...enabledServers].map(([serverId, server]) => [serverId, getMcpServerConnectionKey(server)])
-    );
+    this.desiredServers = enabledServers;
     for (const serverId of this.attemptedConnectionKeys.keys()) {
       if (!enabledServers.has(serverId)) this.attemptedConnectionKeys.delete(serverId);
     }
@@ -92,28 +90,23 @@ export class McpRegistry {
     this.toolPolicies = collectToolPolicies(config);
 
     for (const server of enabledServers.values()) {
-      const connectionKey = getMcpServerConnectionKey(server);
       if (this.servers.has(server.id)) {
         this.servers.get(server.id)!.config = server;
         continue;
       }
-      if (this.pendingConnections.get(server.id)?.connectionKey === connectionKey) continue;
-      if (this.attemptedConnectionKeys.get(server.id) === connectionKey) continue;
-
-      this.attemptedConnectionKeys.set(server.id, connectionKey);
-      const pending = {
-        connectionKey,
-        promise: Promise.resolve(),
-      };
-      pending.promise = this.connect(server, connectionKey).finally(() => {
-        this.allPendingConnections.delete(pending.promise);
-        if (this.pendingConnections.get(server.id) === pending) {
-          this.pendingConnections.delete(server.id);
-        }
-      });
-      this.allPendingConnections.add(pending.promise);
-      this.pendingConnections.set(server.id, pending);
+      this.startConnectionAttempt(server);
     }
+  }
+
+  /** Re-establish one enabled server's connection, leaving every other server untouched. */
+  async testServer(serverId: string): Promise<void> {
+    const server = this.desiredServers.get(serverId);
+    if (!server) return;
+    if (this.pendingConnections.has(serverId)) return;
+
+    await this.disconnect(serverId);
+    this.attemptedConnectionKeys.delete(serverId);
+    this.startConnectionAttempt(server);
   }
 
   async settle(timeoutMs: number): Promise<{ connected: number; enabled: number }> {
@@ -123,10 +116,10 @@ export class McpRegistry {
     }
 
     let connected = 0;
-    for (const serverId of this.desiredConnectionKeys.keys()) {
+    for (const serverId of this.desiredServers.keys()) {
       if (this.servers.has(serverId)) connected += 1;
     }
-    return { connected, enabled: this.desiredConnectionKeys.size };
+    return { connected, enabled: this.desiredServers.size };
   }
 
   createRunSnapshot(
@@ -175,7 +168,7 @@ export class McpRegistry {
   }
 
   async close(timeoutMs = 5000): Promise<void> {
-    this.desiredConnectionKeys.clear();
+    this.desiredServers.clear();
     const pending = [...this.allPendingConnections];
     await Promise.allSettled(pending);
     const servers = [...this.servers.values()];
@@ -183,6 +176,27 @@ export class McpRegistry {
     // A run snapshot that never releases (hung tool call) must not stall
     // shutdown past the bounded wait; the job kill remains the backstop.
     await waitForSettled(servers.map((server) => server.closed), timeoutMs);
+  }
+
+  private startConnectionAttempt(server: McpServerConfig): void {
+    const connectionKey = getMcpServerConnectionKey(server);
+    if (this.servers.has(server.id)) return;
+    if (this.pendingConnections.get(server.id)?.connectionKey === connectionKey) return;
+    if (this.attemptedConnectionKeys.get(server.id) === connectionKey) return;
+
+    this.attemptedConnectionKeys.set(server.id, connectionKey);
+    const pending = {
+      connectionKey,
+      promise: Promise.resolve(),
+    };
+    pending.promise = this.connect(server, connectionKey).finally(() => {
+      this.allPendingConnections.delete(pending.promise);
+      if (this.pendingConnections.get(server.id) === pending) {
+        this.pendingConnections.delete(server.id);
+      }
+    });
+    this.allPendingConnections.add(pending.promise);
+    this.pendingConnections.set(server.id, pending);
   }
 
   private async connect(server: McpServerConfig, connectionKey: string): Promise<void> {
@@ -203,10 +217,8 @@ export class McpRegistry {
       // Two attempts can race for one server id when the desired key cycles
       // back (K1 -> K2 -> K1); updateConfig keys pending state by id, so the
       // loser must discard its client instead of overwriting the tracked one.
-      if (
-        this.desiredConnectionKeys.get(server.id) !== connectionKey ||
-        this.servers.has(server.id)
-      ) {
+      const desired = this.desiredServers.get(server.id);
+      if (!desired || getMcpServerConnectionKey(desired) !== connectionKey || this.servers.has(server.id)) {
         await client.close().catch(() => undefined);
         await oauthRedirectServer?.close().catch(() => undefined);
         return;
@@ -239,7 +251,8 @@ export class McpRegistry {
     } catch (err) {
       await client?.close().catch(() => undefined);
       await oauthRedirectServer?.close().catch(() => undefined);
-      if (this.desiredConnectionKeys.get(server.id) !== connectionKey) return;
+      const desired = this.desiredServers.get(server.id);
+      if (!desired || getMcpServerConnectionKey(desired) !== connectionKey) return;
       this.ports.transporter.sendStatus(server.id, 'failed', formatErrorMessage(err));
       this.ports.transporter.log(`MCP server failed: ${server.id}`, err);
     }

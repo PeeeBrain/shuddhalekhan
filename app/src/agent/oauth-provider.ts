@@ -9,7 +9,7 @@ import {
   type OAuthClientProvider,
   type OAuthTokens,
 } from '@ai-sdk/mcp';
-import type { McpServerConfig } from '../types/ipc';
+import type { McpHttpOAuthConfig, McpServerConfig } from '../types/ipc';
 import { logSidecar, writeJsonLine } from './protocol';
 
 type TokenFile = {
@@ -22,6 +22,7 @@ type TokenFile = {
 export class SidecarOAuthProvider implements OAuthClientProvider {
   private readonly tokenPath: string;
   private readonly fetchFn: typeof globalThis.fetch;
+  private readonly oauthConfig: McpHttpOAuthConfig | undefined;
   private callbackServer: Server | null = null;
   private callbackUrl: string | null = null;
   private lastRedirectUrl: string | null = null;
@@ -37,6 +38,7 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
 
     this.tokenPath = join(getAgentDataDir(), 'oauth', `${sanitizeFileName(server.id)}.json`);
     this.fetchFn = createRedirectAwareFetch(fetchFn, server.transport.redirect);
+    this.oauthConfig = server.transport.oauth;
   }
 
   get redirectUrl(): string {
@@ -48,12 +50,14 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
+    const scopes = this.oauthConfig?.scopes ?? [];
     return {
       redirect_uris: [this.redirectUrl],
       token_endpoint_auth_method: 'none',
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       client_name: 'Shuddhalekhan',
+      ...(scopes.length > 0 ? { scope: scopes.join(' ') } : {}),
     };
   }
 
@@ -85,6 +89,8 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   clientInformation(): OAuthClientInformation | undefined {
+    const staticClient = staticClientInformation(this.oauthConfig);
+    if (staticClient) return staticClient;
     return this.readTokenFile().clientInformation;
   }
 
@@ -246,6 +252,20 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
       });
     });
   }
+}
+
+// Pre-registered clients (configured client ID/secret) skip dynamic client
+// registration entirely; the secret is read from the environment at call time
+// and never persisted.
+function staticClientInformation(
+  oauth: McpHttpOAuthConfig | undefined,
+): OAuthClientInformation | undefined {
+  if (!oauth?.clientId) return undefined;
+  const clientSecret = oauth.clientSecretEnvVar ? process.env[oauth.clientSecretEnvVar] : undefined;
+  return {
+    client_id: oauth.clientId,
+    ...(clientSecret ? { client_secret: clientSecret } : {}),
+  };
 }
 
 export function createRedirectAwareFetch(

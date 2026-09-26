@@ -55,6 +55,12 @@ export type CredentialStatus =
 export type AgentApiKeySource = 'environment' | 'stored';
 export type AgentReasoningEffort = 'low' | 'medium' | 'high';
 
+export interface McpHttpOAuthConfig {
+  clientId: string;
+  clientSecretEnvVar: string;
+  scopes: string[];
+}
+
 export type McpServerTransport =
   | {
       type: 'stdio';
@@ -66,6 +72,8 @@ export type McpServerTransport =
       type: 'http';
       url: string;
       redirect: 'error' | 'follow';
+      /** Optional pre-registered OAuth client for auth servers without dynamic client registration. */
+      oauth?: McpHttpOAuthConfig;
     };
 
 export interface McpDiscoveredTool {
@@ -515,6 +523,6 @@ export interface AuditEventDetail {
   id: number;
   agentRunId: string;
   eventType: string;
-  payload: Record<string, any>;
+  payload: Record<string, unknown>;
   createdAt: string;
 }

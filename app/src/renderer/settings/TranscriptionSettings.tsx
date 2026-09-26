@@ -14,6 +14,7 @@ import {
 import { X } from 'lucide-react';
 import { SectionHeader, SettingsPanel } from './ui/SectionHeader';
 import { Tag, ToggleRow, SelectRow, DraftTextRow } from './ui/rows';
+import { Disclosure } from './ui/Disclosure';
 import { SetupChecklist } from './SetupChecklist';
 import { CredentialControl } from './ui/CredentialControl';
 import { WHISPER_LANGUAGES, isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
@@ -35,6 +36,10 @@ import {
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';
 
+const FIELD_ID_LOCAL_WHISPER_URL = 'whisper-url';
+const FIELD_ID_CUSTOM_MODEL = 'custom-model';
+const FIELD_ID_WHISPER_LIVE_KIT_BASE_URL = 'whisper-live-kit-base-url';
+const FIELD_ID_NVIDIA_HEADER_NAME = 'nvidia-header-name';
 const FIELD_ID_TASK = 'task';
 const FIELD_ID_LANGUAGE = 'language';
 const FIELD_ID_FILER = 'filler-words';
@@ -455,8 +460,7 @@ export function TranscriptionSettings({
         {provider === 'managed-local' ? (
           <>
             <ManagedLocalSection settingsIpc={settingsIpc} />
-            <details className="border-b border-border/70 py-4">
-              <summary className="cursor-pointer text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Advanced providers</summary>
+            <Disclosure label="Advanced providers" className="border-b border-border/70 py-4">
               <ProviderSelector
                 config={config}
                 value={provider}
@@ -464,7 +468,7 @@ export function TranscriptionSettings({
                 error={fieldErrors[FIELD_ID_PROVIDER]}
                 onChange={handleProviderChange}
               />
-            </details>
+            </Disclosure>
           </>
         ) : (
           <ProviderSelector
@@ -665,7 +669,7 @@ function ManagedLocalSection({ settingsIpc }: { settingsIpc: SettingsSectionProp
         <p className="mt-3 text-xs" role="status">Downloading… {Math.round(snapshot.state.downloadedBytes / snapshot.state.totalBytes * 100)}%</p>
       ) : null}
       {snapshot?.state.kind === 'installing' ? <p className="mt-3 text-xs" role="status">Verifying and installing…</p> : null}
-      {snapshot?.state.kind === 'ready' ? <p className="mt-3 text-xs text-emerald-500">Ready offline</p> : null}
+      {snapshot?.state.kind === 'ready' ? <p className="mt-3 text-xs text-success">Ready offline</p> : null}
       {snapshot?.state.kind === 'error' ? <p className="mt-3 text-xs text-destructive" role="alert">{snapshot.state.message}</p> : null}
       {error ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
     </div>
@@ -814,14 +818,14 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
           ...config.transcription.providers,
           localWhisperCpp: { endpoint: candidate },
         },
-      }, 'whisper-url');
+      }, FIELD_ID_LOCAL_WHISPER_URL);
     }
     setTestState('checking');
     const reachable = await settingsIpc.checkTranscriptionServer();
     setTestState(reachable ? 'success' : 'failed');
   };
 
-  const fieldError = validationError ?? fieldErrors['whisper-url'];
+  const fieldError = validationError ?? fieldErrors[FIELD_ID_LOCAL_WHISPER_URL];
 
   return (
     <div className="space-y-2 border-b border-border/70 py-4">
@@ -835,7 +839,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
         onChange={(e) => {
           setDraft(e.target.value);
           setValidationError(null);
-          clearFieldError('whisper-url');
+          clearFieldError(FIELD_ID_LOCAL_WHISPER_URL);
           setTestState('idle');
         }}
         onBlur={() => {
@@ -849,7 +853,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
                 ...config.transcription.providers,
                 localWhisperCpp: { endpoint: draft },
               },
-            }, 'whisper-url');
+            }, FIELD_ID_LOCAL_WHISPER_URL);
           }
         }}
         onKeyDown={(e) => {
@@ -1045,14 +1049,13 @@ function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
           Application Default Credentials are read by the main process from GOOGLE_APPLICATION_CREDENTIALS or the gcloud ADC file.
         </p>
       )}
-      <details className="border-b border-border/70 py-4 text-sm">
-        <summary className="cursor-pointer font-medium">Advanced</summary>
+      <Disclosure label="Advanced" className="border-b border-border/70 py-4 text-sm">
         <div className="mt-3">
           <SelectRow label="Credential source" value={google.credentialSource} errorId={useId()}
             options={[{ value: 'service-account', label: 'Imported service-account document' }, { value: 'adc', label: 'Application Default Credentials' }]}
             onChange={(value) => save({ ...google, credentialSource: value as typeof google.credentialSource }, 'google-credential-source')} />
         </div>
-      </details>
+      </Disclosure>
       <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
         Recordings warn at 45 seconds and stop automatically at 55 seconds for Google's synchronous short-audio API. Setup validation makes no billable request.
       </p>
@@ -1087,22 +1090,21 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc }: Props) {
       {nim.auth === 'header' ? (
         <>
           <DraftTextRow label="Header name" value={nim.headerName} placeholder="X-API-Key"
-            description="Secret header used by your reverse proxy." errorId={headerErrorId} error={fieldErrors['nvidia-header-name']}
+            description="Secret header used by your reverse proxy." errorId={headerErrorId} error={fieldErrors[FIELD_ID_NVIDIA_HEADER_NAME]}
             validate={(value) => /^[!#$%&'*+\-.^_`|~\w]+$/.test(value.trim()) ? null : 'Header name contains invalid characters.'}
-            onCommit={(value) => save({ ...nim, headerName: value.trim() }, 'nvidia-header-name')}
-            clearError={() => persistence.clearFieldError('nvidia-header-name')} />
+            onCommit={(value) => save({ ...nim, headerName: value.trim() }, FIELD_ID_NVIDIA_HEADER_NAME)}
+            clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_HEADER_NAME)} />
           <CredentialControl credential="nvidia-nim-header" label="Secret header value" settingsIpc={settingsIpc} />
         </>
       ) : null}
       {nim.auth === 'none' ? <CheckServerTest provider="nvidia-speech-nim" settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} /> : null}
-      <details className="border-b border-border/70 py-4 text-sm">
-        <summary className="cursor-pointer font-medium">Advanced model capabilities</summary>
+      <Disclosure label="Advanced model capabilities" className="border-b border-border/70 py-4 text-sm">
         <div className="mt-2">
           <ToggleRow title="Automatic language detection" description="Enable only if the selected NIM model declares support." checked={nim.supportsAutomaticLanguageDetection} errorId={useId()} onChange={(checked) => save({ ...nim, supportsAutomaticLanguageDetection: checked }, 'nvidia-auto-language')} />
           <ToggleRow title="Translation" description="Enable only if the selected NIM model and endpoint support translation." checked={nim.supportsTranslation} errorId={useId()} onChange={(checked) => save({ ...nim, supportsTranslation: checked }, 'nvidia-translation')} />
           <ToggleRow title="Dictionary hints" description="Send personal dictionary terms as an OpenAI-compatible prompt." checked={nim.supportsDictionaryHints} errorId={useId()} onChange={(checked) => save({ ...nim, supportsDictionaryHints: checked }, 'nvidia-dictionary')} />
         </div>
-      </details>
+      </Disclosure>
       <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
         This endpoint is user-hosted, not an NVIDIA managed cloud service. Speech NIM typically requires a supported GPU server or WSL2 deployment.
       </p>
@@ -1150,13 +1152,13 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
         placeholder="whisper-1"
         description="Model name for the OpenAI-compatible API."
         errorId={useId()}
-        error={fieldErrors['custom-model']}
+        error={fieldErrors[FIELD_ID_CUSTOM_MODEL]}
         validate={validateModelName}
         onCommit={(value) => commit('transcription', {
           ...config.transcription,
           providers: { ...config.transcription.providers, customOpenAiCompatible: { ...custom, model: value.trim() } },
-        }, 'custom-model')}
-        clearError={() => persistence.clearFieldError('custom-model')}
+        }, FIELD_ID_CUSTOM_MODEL)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_CUSTOM_MODEL)}
       />
       <SelectRow
         label="Authentication"
@@ -1237,10 +1239,10 @@ function WhisperLiveKitSection({
         placeholder="http://localhost:8000"
         description="The service root. Shuddhalekhan derives /health, /asr, and /v1/audio/transcriptions from it."
         errorId={useId()}
-        error={fieldErrors['whisper-live-kit-base-url']}
+        error={fieldErrors[FIELD_ID_WHISPER_LIVE_KIT_BASE_URL]}
         validate={validateWhisperLiveKitBaseUrl}
-        onCommit={(value) => save({ ...provider, baseUrl: value.trim() }, 'whisper-live-kit-base-url')}
-        clearError={() => persistence.clearFieldError('whisper-live-kit-base-url')}
+        onCommit={(value) => save({ ...provider, baseUrl: value.trim() }, FIELD_ID_WHISPER_LIVE_KIT_BASE_URL)}
+        clearError={() => persistence.clearFieldError(FIELD_ID_WHISPER_LIVE_KIT_BASE_URL)}
       />
       <SelectRow
         label="Authentication"
@@ -1336,8 +1338,9 @@ function CheckServerTest({ provider, settingsIpc, testState, setTestState }: Che
         <span id={labelId}><Tag tone="success">Reachable</Tag></span>
       ) : null}
       {testState === 'failed' ? (
-        <span id={labelId}>
+        <span id={labelId} className="flex items-center gap-2">
           <Tag tone="error">Unreachable</Tag>
+          <span className="text-xs text-muted-foreground">Confirm the endpoint URL and that the service is running.</span>
         </span>
       ) : null}
     </div>

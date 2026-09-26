@@ -72,7 +72,7 @@ function FieldError({ id, error }: FieldErrorProps) {
 
 interface ToggleRowProps {
   title: string;
-  description: string;
+  description?: string;
   checked: boolean;
   tone?: 'default' | 'agent';
   errorId: string;
@@ -90,17 +90,21 @@ export function ToggleRow({
   onChange,
 }: ToggleRowProps) {
   const descriptionId = useId();
-  const describedBy = [descriptionId, error ? errorId : null]
-    .filter(Boolean)
-    .join(' ');
+  const describedBy = description
+    ? [descriptionId, error ? errorId : null].filter(Boolean).join(' ')
+    : error
+      ? errorId
+      : undefined;
 
   return (
     <RowShell className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="max-w-2xl space-y-1.5">
         <p className="text-sm font-semibold">{title}</p>
-        <p id={descriptionId} className="max-w-xl text-xs leading-5 text-muted-foreground">
-          {description}
-        </p>
+        {description ? (
+          <p id={descriptionId} className="max-w-xl text-xs leading-5 text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
         {errorId ? (
           <FieldError id={errorId} error={error} />
         ) : null}

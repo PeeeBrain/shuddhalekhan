@@ -87,6 +87,7 @@ const agentStart = vi.fn();
 const agentStop = vi.fn();
 const agentCancelRun = vi.fn();
 const agentSendApprovalDecision = vi.fn();
+const agentTestMcpServer = vi.fn();
 const credentialVault = { read: vi.fn(() => null) };
 const registerCredentialIpcHandlers = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
@@ -173,6 +174,7 @@ mock.module('../agent-sidecar', () => ({
     stop = agentStop;
     cancelRun = agentCancelRun;
     sendApprovalDecision = agentSendApprovalDecision;
+    testMcpServer = agentTestMcpServer;
   },
 }));
 mock.module('../runtime-shell', () => ({
@@ -321,6 +323,7 @@ describe('main process IPC orchestration', () => {
     agentStop.mockClear();
     agentCancelRun.mockClear();
     agentSendApprovalDecision.mockClear();
+    agentTestMcpServer.mockClear();
     credentialVault.read.mockReset();
     credentialVault.read.mockReturnValue(null);
     agentEventHandler = null;
@@ -838,6 +841,7 @@ describe('main process IPC orchestration', () => {
     expect(setConfig).toHaveBeenCalledWith('whisperUrl', 'http://new');
     expect(agentStart).not.toHaveBeenCalled();
     expect(agentStop).not.toHaveBeenCalled();
+    expect(agentTestMcpServer).not.toHaveBeenCalled();
     expect(openSettingsWindow).toHaveBeenCalled();
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
@@ -864,7 +868,7 @@ describe('main process IPC orchestration', () => {
     expect(agentStop).toHaveBeenCalled();
   });
 
-  it('restarts the generation when the user tests an MCP server', async () => {
+  it('tests an MCP server through a targeted sidecar reconnect', async () => {
     const config = {
       ...baseConfig,
       agent: {
@@ -880,19 +884,13 @@ describe('main process IPC orchestration', () => {
         }],
       },
     };
-    let finishStop: () => void = () => undefined;
-    agentStop.mockImplementationOnce(() => new Promise<void>((resolve) => {
-      finishStop = resolve;
-    }));
     getConfig.mockReturnValue(config);
 
-    const reconnecting = ipcHandlers.get('mcp:test-server')?.({}, 'mail');
-    expect(agentStart).not.toHaveBeenCalled();
+    await ipcHandlers.get('mcp:test-server')?.({}, 'mail');
 
-    finishStop();
-    await reconnecting;
-    expect(agentStop).toHaveBeenCalledTimes(1);
-    expect(agentStart).toHaveBeenCalledWith(config, undefined);
+    expect(agentTestMcpServer).toHaveBeenCalledWith(config, undefined, 'mail');
+    expect(agentStop).not.toHaveBeenCalled();
+    expect(agentStart).not.toHaveBeenCalled();
   });
 
   it('waits for sidecar shutdown before allowing quit', async () => {

@@ -54,6 +54,41 @@ describe('McpRegistry', () => {
     await registry.close();
   });
 
+  it('reconnects only the requested server when testing', async () => {
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        mcpServers: [
+          { ...baseConfig.agent.mcpServers[0], id: 'a', displayName: 'A' },
+          { ...baseConfig.agent.mcpServers[0], id: 'b', displayName: 'B' },
+        ],
+      },
+    };
+    const connectionA1 = new FakeConnection({ search: makeTool('search') });
+    const connectionA2 = new FakeConnection({ search: makeTool('search-2') });
+    const connectionB = new FakeConnection({ fetch: makeTool('fetch') });
+    const ports = makePorts({ a: [connectionA1, connectionA2], b: [connectionB] });
+    const registry = new McpRegistry(ports);
+
+    await registry.updateConfig(config as never);
+    await registry.settle(1000);
+
+    await registry.testServer('a');
+    await registry.settle(1000);
+
+    expect(connectionA1.closed).toBe(true);
+    expect(connectionB.closed).toBe(false);
+    const statusEvents = ports.transporter.events.filter(([kind]) => kind === 'status');
+    expect(statusEvents.filter(([, serverId]) => serverId === 'b').map(([, , state]) => state)).toEqual([
+      'connecting', 'connected',
+    ]);
+    expect(statusEvents.filter(([, serverId]) => serverId === 'a').map(([, , state]) => state)).toEqual([
+      'connecting', 'connected', 'disconnected', 'connecting', 'connected',
+    ]);
+    await registry.close();
+  });
+
   it('stops waiting at the deadline and keeps the connected subset', async () => {
     let releaseConnection: ((connection: McpClientConnection) => void) | undefined;
     const ports = makePorts({});

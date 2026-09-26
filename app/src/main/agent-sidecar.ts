@@ -141,6 +141,20 @@ export class AgentSidecarManager {
     });
   }
 
+  /** Point-update the sidecar config, then reconnect only the named MCP server. */
+  testMcpServer(config: AppConfig, agentApiKey: string | undefined, serverId: string): void {
+    this.ensureGeneration();
+    this.sendOrQueue({
+      type: 'config:update',
+      config,
+      ...(agentApiKey ? { agentApiKey } : {}),
+    });
+    this.sendOrQueue({
+      type: 'mcp:test-server',
+      serverId,
+    });
+  }
+
   private ensureGeneration(): void {
     // A generation that is still gracefully stopping cannot accept traffic.
     // Replace it immediately so an explicit start always yields a usable

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Plug } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import type {
   AgentToolApprovalPolicy,
+  McpHttpOAuthConfig,
   McpServerConfig,
   McpServerRuntimeStatus,
 } from '../../types/ipc';
@@ -11,7 +12,6 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
-import { Tag } from './ui/rows';
 import {
   Select,
   SelectContent,
@@ -76,15 +76,14 @@ export function McpSettings({
           {saveError}
         </div>
       ) : null}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
         <SettingsPanel
           aria-label={editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}
-          className="overflow-hidden"
+          className="overflow-hidden [scrollbar-gutter:stable] lg:sticky lg:top-8 lg:max-h-[calc(100dvh-4rem)] lg:overflow-y-auto lg:self-start"
         >
           <SettingsPanelHeader
             eyebrow="Connection"
             title={editingServerId ? 'Edit MCP Server' : 'Add MCP Server'}
-            description="Configure one server, save it, then test discovery from the configured list."
           />
           <div className="space-y-5">
             <McpServerForm server={draft} onChange={setDraft} />
@@ -109,51 +108,38 @@ export function McpSettings({
           </div>
         </SettingsPanel>
 
-        <SettingsPanel aria-labelledby="configured-mcp-heading" className="overflow-hidden">
-          <SettingsPanelHeader
-            id="configured-mcp-heading"
-            eyebrow="Registry"
-            title="Configured MCPs"
-            description={
-              servers.length === 0
-                ? 'Add a server to give Agent Mode tools.'
-                : `${servers.length} server${servers.length === 1 ? '' : 's'} configured.`
-            }
-            actions={<Tag tone={servers.length > 0 ? 'agent' : 'neutral'}>{servers.length}</Tag>}
-          />
-          <div className="p-6">
-            {servers.length === 0 ? (
-              <div className="settings-panel-muted flex min-h-44 flex-col items-center justify-center px-6 text-center">
-                <span className="mb-3 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
-                  <Plug className="size-5" aria-hidden="true" />
-                </span>
-                <p className="text-sm font-semibold">No MCP servers configured.</p>
-                <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">
-                  Saved servers will appear here with live connection status and tool policies.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {servers.map((server) => (
-                  <ConfiguredMcpServer
-                    key={server.id}
-                    server={server}
-                    status={statuses[server.id]}
-                    onEdit={() => {
-                      setDraft(server);
-                      setEditingServerId(server.id);
-                    }}
-                    onRemove={() => setRemoveTarget(server)}
-                    onTest={() => onTest(server.id)}
-                    onPolicyChange={(nextServer) => {
-                      onChange(servers.map((item) => (item.id === server.id ? nextServer : item)));
-                    }}
-                  />
-                ))}
-              </div>
-            )}
+        <section aria-labelledby="configured-mcp-heading" className="space-y-3">
+          <div className="flex items-baseline justify-between gap-4 px-1">
+            <h3 id="configured-mcp-heading" className="text-sm font-semibold">Configured servers</h3>
+            <p className="text-xs text-muted-foreground">
+              {servers.length === 0 ? 'None yet' : `${servers.length} configured`}
+            </p>
           </div>
-        </SettingsPanel>
+          {servers.length === 0 ? (
+            <p className="px-1 text-sm leading-6 text-muted-foreground">
+              No MCP servers configured yet. Add one on the left to give Agent Mode tools.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {servers.map((server) => (
+                <ConfiguredMcpServer
+                  key={server.id}
+                  server={server}
+                  status={statuses[server.id]}
+                  onEdit={() => {
+                    setDraft(server);
+                    setEditingServerId(server.id);
+                  }}
+                  onRemove={() => setRemoveTarget(server)}
+                  onTest={() => onTest(server.id)}
+                  onPolicyChange={(nextServer) => {
+                    onChange(servers.map((item) => (item.id === server.id ? nextServer : item)));
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
       <ConfirmDialog
@@ -179,6 +165,20 @@ function McpServerForm({
   onChange: (server: McpServerConfig) => void;
 }) {
   const transport = server.transport;
+
+  const updateOauth = (patch: Partial<McpHttpOAuthConfig>) => {
+    if (transport.type !== 'http') return;
+    const oauth: McpHttpOAuthConfig = {
+      clientId: transport.oauth?.clientId ?? '',
+      clientSecretEnvVar: transport.oauth?.clientSecretEnvVar ?? '',
+      scopes: transport.oauth?.scopes ?? [],
+      ...patch,
+    };
+    onChange({
+      ...server,
+      transport: { ...transport, oauth: oauth.clientId.trim() ? oauth : undefined },
+    });
+  };
 
   return (
     <div className="space-y-5">
@@ -262,6 +262,45 @@ function McpServerForm({
                 Off by default. Enable only when this server requires redirects and you trust its destination.
               </p>
             </div>
+            <div className="col-span-full space-y-2">
+              <Label htmlFor="mcp-oauth-client-id" className="text-sm font-medium">OAuth client ID</Label>
+              <Input
+                id="mcp-oauth-client-id"
+                aria-label="OAuth client ID"
+                className="h-10"
+                value={transport.oauth?.clientId ?? ''}
+                placeholder="Optional, e.g. a pre-registered Google OAuth client"
+                onChange={(event) => updateOauth({ clientId: event.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                For OAuth servers that don&apos;t register clients for you (for example Google). Leave empty otherwise.
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="mcp-oauth-secret-env" className="text-sm font-medium">Client secret env var name</Label>
+                  <Input
+                    id="mcp-oauth-secret-env"
+                    aria-label="Client secret env var name"
+                    className="h-10"
+                    value={transport.oauth?.clientSecretEnvVar ?? ''}
+                    placeholder="GOOGLE_OAUTH_CLIENT_SECRET"
+                    onChange={(event) => updateOauth({ clientSecretEnvVar: event.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">Names only. Secret values stay in the environment.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="mcp-oauth-scopes" className="text-sm font-medium">OAuth scopes</Label>
+                  <Input
+                    id="mcp-oauth-scopes"
+                    aria-label="OAuth scopes"
+                    className="h-10"
+                    value={transport.oauth?.scopes.join(', ') ?? ''}
+                    placeholder="https://mail.google.com/, ..."
+                    onChange={(event) => updateOauth({ scopes: splitCommaList(event.target.value) })}
+                  />
+                </div>
+              </div>
+            </div>
           </>
         ) : (
           <>
@@ -321,20 +360,21 @@ function ConfiguredMcpServer({
   onTest: () => void;
   onPolicyChange: (server: McpServerConfig) => void;
 }) {
-  const statusTone = status?.status === 'connected'
-    ? 'success'
-    : status?.status === 'connecting'
-      ? 'info'
-      : status?.status === 'failed'
-        ? 'error'
-        : 'neutral';
-  const statusDotClass = status?.status === 'connected'
-    ? 'bg-success'
-    : status?.status === 'connecting'
-      ? 'bg-primary'
-      : status?.status === 'failed'
-        ? 'bg-destructive'
-        : 'bg-muted-foreground/50';
+  const statusLabel = !server.enabled ? 'disabled' : status?.status ?? 'not tested';
+  const statusTextClass = !server.enabled || !status
+    ? 'text-muted-foreground'
+    : status.status === 'connected'
+      ? 'text-success'
+      : status.status === 'connecting'
+        ? 'text-primary'
+        : 'text-destructive';
+  const statusDotClass = !server.enabled || !status
+    ? 'bg-muted-foreground/50'
+    : status.status === 'connected'
+      ? 'bg-success'
+      : status.status === 'connecting'
+        ? 'bg-primary'
+        : 'bg-destructive';
 
   return (
     <article className="settings-panel-muted space-y-4 p-5">
@@ -346,20 +386,11 @@ function ConfiguredMcpServer({
             <p className="mt-1 break-words text-xs text-muted-foreground">{formatTransport(server)}</p>
           </div>
         </div>
-        <Tag tone={statusTone}>{status?.status ?? 'not tested'}</Tag>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        <Tag tone={server.enabled ? 'agent' : 'neutral'}>
-          {server.enabled ? 'Enabled for Agent Mode' : 'Disabled'}
-        </Tag>
-        <Tag>
-          {server.discoveredTools.length} tool{server.discoveredTools.length === 1 ? '' : 's'}
-        </Tag>
+        <span className={`shrink-0 text-xs font-medium capitalize ${statusTextClass}`}>{statusLabel}</span>
       </div>
 
       {status?.message ? (
-        <p role="alert" className="break-words rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+        <p role="alert" className="break-words text-xs leading-5 text-destructive">
           {status.message}
         </p>
       ) : null}
@@ -368,7 +399,7 @@ function ConfiguredMcpServer({
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-border/50 pt-4">
         <Button type="button" variant="secondary" size="sm" onClick={onTest}>
-          Reconnect / Test
+          Reconnect
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={onEdit}>
           Edit
@@ -388,35 +419,42 @@ function ToolPolicyEditor({
   server: McpServerConfig;
   onChange: (server: McpServerConfig) => void;
 }) {
+  const [open, setOpen] = useState(false);
+
   if (server.discoveredTools.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-border/70 px-4 py-4">
-        <p className="text-sm font-medium">No tools discovered yet.</p>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Reconnect the server after it is running to discover its available tools.
-        </p>
-      </div>
+      <p className="text-xs leading-5 text-muted-foreground">
+        No tools discovered yet. Reconnect the server once it is running.
+      </p>
     );
   }
 
   return (
     <div className="space-y-3">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Tool policies</p>
-        <p className="mt-1 text-xs text-muted-foreground">Choose how much freedom the agent has with each tool.</p>
-      </div>
-      <div className="divide-y divide-border/50 rounded-lg border border-border/50 bg-background/30 px-4">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/50 bg-background/30 px-4 py-3 text-left hover:bg-muted/40"
+      >
+        <span className="text-sm font-medium">
+          Tools <span className="text-muted-foreground">· {server.discoveredTools.length}</span>
+        </span>
+        <ChevronDown aria-hidden="true" className={`size-4 shrink-0 text-muted-foreground ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open ? (
+        <div className="divide-y divide-border/50">
         {server.discoveredTools.map((tool) => {
           const policyKey = `${server.id}:${tool.name}` as const;
           const policy = server.toolPolicies[policyKey] ?? 'alwaysAsk';
 
           return (
-            <div key={tool.name} className="grid grid-cols-1 items-start gap-3 py-4 sm:grid-cols-[1fr_160px]">
+            <div key={tool.name} className="grid grid-cols-1 items-start gap-3 py-3 sm:grid-cols-[1fr_160px]">
               <div className="min-w-0">
                 <p className="break-words text-sm font-semibold">{tool.name}</p>
-                <div className="mt-2 max-h-20 overflow-y-auto rounded-md border border-border/40 bg-muted/20 px-3 py-2">
-                  <p className="break-words text-xs leading-relaxed text-muted-foreground">{tool.description || 'No description provided.'}</p>
-                </div>
+                <p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-muted-foreground">
+                  {tool.description || 'No description provided.'}
+                </p>
               </div>
               <div className="pt-0.5">
                 <Select
@@ -444,7 +482,8 @@ function ToolPolicyEditor({
             </div>
           );
         })}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -12,6 +12,7 @@ const FIELD_ID_BASE_URL = 'agent-base-url';
 const FIELD_ID_MODEL = 'agent-model';
 const FIELD_ID_THINKING = 'agent-thinking';
 const FIELD_ID_APIKEY = 'agent-api-key';
+const FIELD_ID_APIKEY_SOURCE = 'agent-api-key-source';
 
 export function AgentSettings({ config, persistence, settingsIpc }: SettingsSectionProps) {
   const { commit, fieldErrors, clearFieldError } = persistence;
@@ -59,7 +60,6 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
           <div>
             <ToggleRow
               title="Enable Agent Mode"
-              description="Activates the saved Agent Mode shortcut and voice-agent runtime. The shortcut remains dormant while disabled."
               checked={agent.enabled}
               tone="agent"
               errorId={enabledErrorId}
@@ -160,19 +160,18 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
           <div>
             <SelectRow
               label="API key source"
-              description="Choose a securely saved key or an environment variable for advanced setups."
               value={apiKeySource}
               options={[
                 { value: 'environment', label: 'Environment variable' },
                 { value: 'stored', label: 'Securely saved key' },
               ]}
               errorId={apiKeySourceErrorId}
-              error={fieldErrors[FIELD_ID_APIKEY]}
+              error={fieldErrors[FIELD_ID_APIKEY_SOURCE]}
               onChange={(next) =>
                 commit(
                   'agent',
                   { ...agent, provider: { ...agent.provider, apiKeySource: next as 'environment' | 'stored' } },
-                  FIELD_ID_APIKEY,
+                  FIELD_ID_APIKEY_SOURCE,
                 )
               }
             />

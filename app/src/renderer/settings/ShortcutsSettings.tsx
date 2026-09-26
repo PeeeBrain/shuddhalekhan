@@ -8,6 +8,13 @@ import type {
 import { getAppConfigDictationError } from '../../shared/dictation-runtime';
 import { assessBinding, formatBinding } from '../../shared/shortcut-bindings';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { Keycaps, ToggleRow } from './ui/rows';
 import type { SettingsSectionProps } from './settings-section-props';
@@ -106,7 +113,7 @@ function ShortcutRow({
   const [captureState, setCaptureState] = useState<ShortcutCaptureState>(EMPTY_CAPTURE_STATE);
   const captureStateRef = useRef(captureState);
   const captureActiveRef = useRef(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
   const [pendingWarning, setPendingWarning] = useState<{
     binding: ShortcutBinding;
     message: string;
@@ -147,7 +154,10 @@ function ShortcutRow({
     setPendingWarning(null);
     setCapturing(false);
     stopCapture();
-    setMessage(binding ? `${label} shortcut saved as ${formatBinding(binding)}.` : `${label} shortcut cleared.`);
+    setMessage({
+      text: binding ? `${label} shortcut saved as ${formatBinding(binding)}.` : `${label} shortcut cleared.`,
+      tone: 'info',
+    });
     await persistence.commit('shortcuts', next, fieldId);
     restoreFocus();
   };
@@ -160,9 +170,12 @@ function ShortcutRow({
       await settingsIpc.beginShortcutCapture();
       captureActiveRef.current = true;
       setCapturing(true);
-      setMessage(`Recording a new ${label} shortcut. Press keys, or Escape to cancel.`);
+      setMessage({
+        text: `Recording a new ${label} shortcut. Press keys, or Escape to cancel.`,
+        tone: 'info',
+      });
     } catch {
-      setMessage('Could not suspend global shortcuts for capture. Try again.');
+      setMessage({ text: 'Could not suspend global shortcuts for capture. Try again.', tone: 'error' });
     }
   };
 
@@ -171,7 +184,7 @@ function ShortcutRow({
     setPendingWarning(null);
     setTrackedCaptureState(EMPTY_CAPTURE_STATE);
     stopCapture();
-    setMessage(`${label} shortcut capture cancelled.`);
+    setMessage({ text: `${label} shortcut capture cancelled.`, tone: 'info' });
     restoreFocus();
   };
 
@@ -187,14 +200,14 @@ function ShortcutRow({
       return;
     }
     if (result.kind === 'unsupported') {
-      setMessage(result.message);
+      setMessage({ text: result.message, tone: 'error' });
       setTrackedCaptureState(EMPTY_CAPTURE_STATE);
       return;
     }
 
     const verdict = assessBinding(result.binding, config.shortcuts[otherIntent].binding);
     if (verdict.status === 'error') {
-      setMessage(verdict.message);
+      setMessage({ text: verdict.message, tone: 'error' });
       setTrackedCaptureState(EMPTY_CAPTURE_STATE);
       return;
     }
@@ -202,7 +215,10 @@ function ShortcutRow({
       setPendingWarning({ binding: result.binding, message: verdict.message });
       setCapturing(false);
       stopCapture();
-      setMessage(`Confirmation required for ${formatBinding(result.binding)}.`);
+      setMessage({
+        text: `Confirmation required for ${formatBinding(result.binding)}.`,
+        tone: 'info',
+      });
       return;
     }
     void commitBinding(result.binding);
@@ -231,7 +247,7 @@ function ShortcutRow({
         shortcuts: next,
       });
       if (error) {
-        setMessage(error);
+        setMessage({ text: error, tone: 'error' });
         return;
       }
     }
@@ -261,16 +277,18 @@ function ShortcutRow({
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="sr-only" htmlFor={`${fieldId}-mode`}>{label} activation mode</label>
-          <select
-            id={`${fieldId}-mode`}
+          <Select
             value={shortcut.activationMode}
-            onChange={(event) => updateActivationMode(event.target.value as 'push-to-talk' | 'toggle')}
-            className="h-8 w-[8.5rem] rounded-md border border-input bg-background px-2.5 py-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onValueChange={(value) => updateActivationMode(value as 'push-to-talk' | 'toggle')}
           >
-            <option value="push-to-talk">Push to Talk</option>
-            <option value="toggle">Toggle</option>
-          </select>
+            <SelectTrigger className="h-8 w-[8.5rem]" aria-label={`${label} activation mode`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="push-to-talk">Push to Talk</SelectItem>
+              <SelectItem value="toggle">Toggle</SelectItem>
+            </SelectContent>
+          </Select>
           <Button ref={changeButtonRef} size="sm" variant="outline" onClick={() => void beginCapture()}>
             Change
           </Button>
@@ -333,9 +351,9 @@ function ShortcutRow({
         id={`${fieldId}-status`}
         role="status"
         aria-live="polite"
-        className={`mt-3 text-xs ${message?.includes('cannot') || message?.includes('not supported') || message?.includes('Could not') ? 'text-destructive' : 'text-muted-foreground'}`}
+        className={`mt-3 text-xs ${message?.tone === 'error' || persistence.fieldErrors[fieldId] ? 'text-destructive' : 'text-muted-foreground'}`}
       >
-        {message ?? persistence.fieldErrors[fieldId] ?? ''}
+        {message?.text ?? persistence.fieldErrors[fieldId] ?? ''}
       </p>
     </div>
   );
