@@ -39,6 +39,8 @@ export type PerformanceMarker = {
   serverId?: string;
   surface?: string;
   childPid?: number;
+  micAcquisitionMs?: number;
+  graphSetupMs?: number;
   from?: string;
   to?: string;
   benchmarkPhase?: 'warmup' | 'measured';

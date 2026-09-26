@@ -86,7 +86,13 @@ export interface McpServerConfig {
 
 export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
-  'audio-capture-started': () => void;
+  'audio-capture-started': (
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
+    timing: AudioCaptureStartupTiming,
+  ) => void;
+  'runtime:audio-first-buffer': (generation: number, recordingSessionId: string, sequence: number) => void;
   'surface-paint-proxy': (surface: string, correlationId?: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
@@ -116,6 +122,11 @@ export interface RendererToMainSendChannels {
   'runtime:recovery-action': (action: DictationRecoveryAction) => void;
   'runtime:agent-card-size': (height: number) => void;
   'runtime:agent-dismiss': () => void;
+}
+
+export interface AudioCaptureStartupTiming {
+  micAcquisitionMs: number;
+  graphSetupMs: number;
 }
 
 export interface DictationTargetSnapshot {

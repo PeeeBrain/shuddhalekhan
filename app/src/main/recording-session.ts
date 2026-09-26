@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type {
   DictationMode,
+  AudioCaptureStartupTiming,
   DictationTargetSnapshot,
   RecordingActivationMode,
   RecordingIntent,
@@ -106,6 +107,7 @@ export interface RecordingSessionOptions {
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
   onError?: (error: Error) => void;
   onBegin?: (intent: RecordingIntent) => void;
+  onFirstAudioBuffer?: (transcriber: Transcriber) => void;
 
   runtimeShell?: RuntimeShellBackend;
   keyboardHook?: KeyboardHook;
@@ -170,6 +172,7 @@ export class RecordingSession {
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
   private onBeginCallback?: (intent: RecordingIntent) => void;
+  private onFirstAudioBufferCallback?: (transcriber: Transcriber) => void;
   private getSelectedDeviceId?: () => string | null;
 
   constructor(options: RecordingSessionOptions) {
@@ -205,6 +208,7 @@ export class RecordingSession {
     this.onResultCallback = options.onResult;
     this.onErrorCallback = options.onError;
     this.onBeginCallback = options.onBegin;
+    this.onFirstAudioBufferCallback = options.onFirstAudioBuffer;
     this.getSelectedDeviceId = options.getSelectedDeviceId;
   }
 
@@ -538,6 +542,7 @@ export class RecordingSession {
 
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.on('audio-capture-started', this.handleAudioCaptureStarted);
+    ipcMain.on('runtime:audio-first-buffer', this.handleAudioFirstBuffer);
     ipcMain.on('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.on('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
     ipcMain.on('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
@@ -551,6 +556,7 @@ export class RecordingSession {
     this.clearDurationTimers();
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.off('audio-capture-started', this.handleAudioCaptureStarted);
+    ipcMain.off('runtime:audio-first-buffer', this.handleAudioFirstBuffer);
     ipcMain.off('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.off('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
     ipcMain.off('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
@@ -805,13 +811,42 @@ export class RecordingSession {
     this.audioCapture.markReady?.();
   };
 
-  private handleAudioCaptureStarted = (): void => {
-    if (!this.activeRun) return;
+  private handleAudioCaptureStarted = (
+    _event: unknown,
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
+    timing: AudioCaptureStartupTiming,
+  ): void => {
+    if (!this.acceptsAudioMarker(generation, recordingSessionId, sequence)) return;
     emitPerformanceMarker('audio.capture.started', {
-      recordingSessionId: this.activeRun.id,
-      surface: this.activeRun.intent,
+      recordingSessionId,
+      surface: this.activeRun?.intent,
+      ...(Number.isFinite(timing?.micAcquisitionMs) ? { micAcquisitionMs: timing.micAcquisitionMs } : {}),
+      ...(Number.isFinite(timing?.graphSetupMs) ? { graphSetupMs: timing.graphSetupMs } : {}),
     });
   };
+
+  private handleAudioFirstBuffer = (
+    _event: unknown,
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
+  ): void => {
+    if (!this.acceptsAudioMarker(generation, recordingSessionId, sequence)) return;
+    emitPerformanceMarker('audio.first-buffer.received', {
+      recordingSessionId,
+      surface: this.activeRun?.intent,
+    });
+    if (this.activeRun) this.onFirstAudioBufferCallback?.(this.activeRun.transcriber);
+  };
+
+  private acceptsAudioMarker(generation: number, recordingSessionId: string, sequence: number): boolean {
+    const run = this.activeRun;
+    return Boolean(run && run.id === recordingSessionId && run.sequence === sequence && (
+      this.runtimeShellBackend?.acceptsAudioEvent?.(generation, recordingSessionId, sequence) ?? true
+    ));
+  }
 
   private handleRuntimeAudioChunk = async (
     _event: unknown,
