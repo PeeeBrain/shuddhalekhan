@@ -25,6 +25,7 @@ describe('McpSettings HTTP redirect policy', () => {
       <McpSettings
         servers={[server]}
         statuses={{}}
+        agentEnabled
         onChange={onChange}
         onTest={() => undefined}
       />,
@@ -64,9 +65,9 @@ function makeServer(
   };
 }
 
-function renderSettings(servers: McpServerConfig[]) {
+function renderSettings(servers: McpServerConfig[], agentEnabled = true) {
   const onChange = mock(() => undefined);
-  render(<McpSettings servers={servers} statuses={{}} onChange={onChange} onTest={() => undefined} />);
+  render(<McpSettings servers={servers} statuses={{}} agentEnabled={agentEnabled} onChange={onChange} onTest={() => undefined} />);
   return onChange;
 }
 
@@ -124,6 +125,11 @@ describe('McpSettings registry header', () => {
     expect(screen.getByRole('heading', { name: 'Configured servers' })).toBeDefined();
     expect(screen.getByText('2 configured')).toBeDefined();
   });
+});
+
+it('requires Agent Mode before reconnecting a server', () => {
+  renderSettings([makeServer(httpTransport)], false);
+  expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();
 });
 
 describe('McpSettings tool policy collapse', () => {

@@ -31,12 +31,14 @@ import {
 export function McpSettings({
   servers,
   statuses,
+  agentEnabled,
   onChange,
   onTest,
   saveError,
 }: {
   servers: McpServerConfig[];
   statuses: Record<string, McpServerRuntimeStatus>;
+  agentEnabled: boolean;
   onChange: (servers: McpServerConfig[]) => void;
   onTest: (serverId: string) => void;
   saveError?: string;
@@ -126,6 +128,7 @@ export function McpSettings({
                   key={server.id}
                   server={server}
                   status={statuses[server.id]}
+                  canReconnect={agentEnabled && server.enabled}
                   onEdit={() => {
                     setDraft(server);
                     setEditingServerId(server.id);
@@ -348,6 +351,7 @@ function McpServerForm({
 function ConfiguredMcpServer({
   server,
   status,
+  canReconnect,
   onEdit,
   onRemove,
   onTest,
@@ -355,6 +359,7 @@ function ConfiguredMcpServer({
 }: {
   server: McpServerConfig;
   status?: McpServerRuntimeStatus;
+  canReconnect: boolean;
   onEdit: () => void;
   onRemove: () => void;
   onTest: () => void;
@@ -398,7 +403,14 @@ function ConfiguredMcpServer({
       <ToolPolicyEditor server={server} onChange={onPolicyChange} />
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-border/50 pt-4">
-        <Button type="button" variant="secondary" size="sm" onClick={onTest}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={onTest}
+          disabled={!canReconnect}
+          title={!canReconnect ? 'Enable Agent Mode and this server to reconnect.' : undefined}
+        >
           Reconnect
         </Button>
         <Button type="button" variant="outline" size="sm" onClick={onEdit}>
@@ -452,7 +464,7 @@ function ToolPolicyEditor({
             <div key={tool.name} className="grid grid-cols-1 items-start gap-3 py-3 sm:grid-cols-[1fr_160px]">
               <div className="min-w-0">
                 <p className="break-words text-sm font-semibold">{tool.name}</p>
-                <p className="mt-1 line-clamp-2 break-words text-xs leading-5 text-muted-foreground">
+                <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">
                   {tool.description || 'No description provided.'}
                 </p>
               </div>

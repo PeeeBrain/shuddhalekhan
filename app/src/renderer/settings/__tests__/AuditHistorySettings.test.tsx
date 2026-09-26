@@ -12,6 +12,7 @@ describe('AuditHistorySettings live refresh backpressure', () => {
   it('debounces live updates and avoids duplicate parallel summary/detail queries', async () => {
     const timers: Array<() => void> = [];
     let listener: ((runId: string) => void) | undefined;
+    let failRefresh = false;
     const runs: AuditRunSummary[] = [
       {
         agentRunId: 'run-1',
@@ -25,8 +26,8 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       { id: 1, agentRunId: 'run-1', eventType: 'run_started', payload: { transcript: 'Active run' }, createdAt: '2026-06-25T10:00:00.000Z' },
     ];
     const settingsIpc: SettingsIpc = {
-      getAuditRuns: mock(() => Promise.resolve(runs)),
-      getAuditRunDetail: mock(() => Promise.resolve(detail)),
+      getAuditRuns: mock(() => failRefresh ? Promise.reject(new Error('offline')) : Promise.resolve(runs)),
+      getAuditRunDetail: mock(() => failRefresh ? Promise.reject(new Error('offline')) : Promise.resolve(detail)),
       onAuditRunUpdated: mock((callback: (runId: string) => void) => {
         listener = callback;
         return () => {};
@@ -72,6 +73,7 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       return timers.length as unknown as number;
     });
     const clearTimeoutSpy = spyOn(window, 'clearTimeout').mockImplementation(() => {});
+    const consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
 
     try {
       act(() => {
@@ -90,9 +92,21 @@ describe('AuditHistorySettings live refresh backpressure', () => {
 
       expect(settingsIpc.getAuditRuns).toHaveBeenCalledTimes(2);
       expect(settingsIpc.getAuditRunDetail).toHaveBeenCalledTimes(2);
+
+      failRefresh = true;
+      act(() => listener?.('run-1'));
+      await act(async () => {
+        timers.at(-1)?.();
+        await Promise.resolve();
+      });
+      expect(screen.getByRole('option', { name: /Active run/ })).toBeInTheDocument();
+      expect(screen.getByText('Run Started')).toBeInTheDocument();
+      expect(screen.getByText("Couldn't load run history.")).toBeInTheDocument();
+      expect(screen.getByText("Couldn't load events for this run.")).toBeInTheDocument();
     } finally {
       setTimeoutSpy.mockRestore();
       clearTimeoutSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
     }
   });
 

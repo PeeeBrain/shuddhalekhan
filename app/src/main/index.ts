@@ -734,22 +734,9 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
 ipcMain.handle('mcp:test-server', async (_event, serverId: string) => {
   const config = getConfig();
   const server = config.agent.mcpServers.find((item) => item.id === serverId);
-  if (!server) return;
+  if (!config.agent.enabled || !server?.enabled) return;
 
-  // The tested server connects even when disabled; other servers keep their
-  // live connections — only the named server is re-established.
-  const sidecarConfig = {
-    ...config,
-    agent: {
-      ...config.agent,
-      enabled: true,
-      mcpServers: config.agent.mcpServers.map((item) => ({
-        ...item,
-        enabled: item.id === serverId ? true : item.enabled,
-      })),
-    },
-  };
-  agentSidecar.testMcpServer(sidecarConfig, getAgentSidecarApiKey(sidecarConfig, credentialVault), serverId);
+  agentSidecar.testMcpServer(config, getAgentSidecarApiKey(config, credentialVault), serverId);
 });
 
 ipcMain.handle('mcp:get-status-snapshot', () => mcpStatusStore.getSnapshot());

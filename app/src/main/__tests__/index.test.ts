@@ -891,6 +891,15 @@ describe('main process IPC orchestration', () => {
     expect(agentTestMcpServer).toHaveBeenCalledWith(config, undefined, 'mail');
     expect(agentStop).not.toHaveBeenCalled();
     expect(agentStart).not.toHaveBeenCalled();
+
+    getConfig.mockReturnValue({ ...config, agent: { ...config.agent, enabled: false } });
+    await ipcHandlers.get('mcp:test-server')?.({}, 'mail');
+    getConfig.mockReturnValue({ ...config, agent: {
+      ...config.agent,
+      mcpServers: [{ ...config.agent.mcpServers[0], enabled: false }],
+    } });
+    await ipcHandlers.get('mcp:test-server')?.({}, 'mail');
+    expect(agentTestMcpServer).toHaveBeenCalledTimes(1);
   });
 
   it('waits for sidecar shutdown before allowing quit', async () => {

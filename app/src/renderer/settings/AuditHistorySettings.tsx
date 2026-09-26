@@ -193,17 +193,18 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
         <ScrollArea className="flex-1 min-h-0">
           <div className="p-3 space-y-2" role="listbox" aria-label="Agent run history" onKeyDown={handleRunListKeyDown}>
             {runsLoadFailed ? (
-              <div className="py-8 text-center text-xs text-destructive">
+              <div role="alert" className="py-2 text-center text-xs text-destructive">
                 Couldn&apos;t load run history.
               </div>
-            ) : runs.length === 0 ? (
+            ) : null}
+            {runs.length === 0 && !runsLoadFailed ? (
               <div className="py-8 text-center text-xs text-muted-foreground">
                 No agent runs recorded yet.
               </div>
-            ) : (
-              runs.map((run) => {
-                const isActive = selectedRunId === run.agentRunId;
-                return (
+            ) : null}
+            {runs.map((run) => {
+              const isActive = selectedRunId === run.agentRunId;
+              return (
                   <div
                     key={run.agentRunId}
                     role="option"
@@ -243,9 +244,8 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                       </div>
                     )}
                   </div>
-                );
-              })
-            )}
+              );
+            })}
           </div>
         </ScrollArea>
       </div>
@@ -294,10 +294,11 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                 )}
                 <div className="space-y-4">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">Execution Timeline</h4>
+                  {detailLoadFailed ? (
+                    <p role="alert" className="text-xs text-destructive">Couldn&apos;t load events for this run.</p>
+                  ) : null}
                   {isLoadingDetail && !selectedRunEvents ? (
                     <p className="text-xs text-muted-foreground">Loading events...</p>
-                  ) : detailLoadFailed ? (
-                    <p className="text-xs text-destructive">Couldn&apos;t load events for this run.</p>
                   ) : selectedRunEvents && selectedRunEvents.length > 0 ? (
                     <div className="relative pl-6 border-l border-border space-y-6">
                       {selectedRunEvents.map((event) => (
@@ -307,9 +308,9 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                         />
                       ))}
                     </div>
-                  ) : (
+                  ) : !detailLoadFailed ? (
                     <p className="text-xs text-muted-foreground">No detailed timeline events found.</p>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </ScrollArea>
