@@ -45,7 +45,3 @@ export function markLastTranscriptInjected(
     lastTranscript.injectionStatus = status;
   }
 }
-
-export function clearLastTranscript(): void {
-  lastTranscript = null;
-}

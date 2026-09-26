@@ -147,7 +147,12 @@ export type ElectronToSidecarMessage =
   | SidecarShutdownRequestMessage;
 
 export function parseElectronMessage(line: string): ElectronToSidecarMessage | null {
-  const parsed = JSON.parse(line) as Partial<ElectronToSidecarMessage>;
+  let parsed: Partial<ElectronToSidecarMessage>;
+  try {
+    parsed = JSON.parse(line) as Partial<ElectronToSidecarMessage>;
+  } catch {
+    return null;
+  }
 
   switch (parsed.type) {
     case 'config:update':

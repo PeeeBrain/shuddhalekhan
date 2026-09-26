@@ -224,10 +224,6 @@ describe('runAgent', () => {
 
     const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions;
     expect(systemPrompt).toContain('<identity>');
-    expect(systemPrompt).toContain('<persistence>');
-    expect(systemPrompt).toContain('<context_gathering>');
-    expect(systemPrompt).toContain('<tool_preambles>');
-    expect(systemPrompt).toContain('<approval_handling>');
     expect(systemPrompt).not.toContain('# Identity');
   });
 

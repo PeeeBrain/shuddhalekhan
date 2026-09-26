@@ -1,13 +1,15 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import {
   isDictationResultStillDeliverable,
   markDictationResultPending,
-  resetDictationResultDeliveryForTests,
 } from '../dictation-result-delivery';
 
 describe('dictation result delivery gate', () => {
-  afterEach(() => {
-    resetDictationResultDeliveryForTests();
+  it('marks only the newest dictation session as deliverable', () => {
+    markDictationResultPending('session-probe');
+
+    expect(isDictationResultStillDeliverable('session-probe')).toBe(true);
+    expect(isDictationResultStillDeliverable('never-marked')).toBe(false);
   });
 
   it('drops stale dictation results after a newer session begins routing', () => {

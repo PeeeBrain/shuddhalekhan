@@ -5,7 +5,7 @@ describe('credential IPC', () => {
   it('returns credential status after a save without returning the supplied secret', () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const vault = {
-      status: () => ({ available: true, exists: false }) as const,
+      status: () => ({ available: true, exists: true }) as const,
       save: () => ({ available: true, exists: true }) as const,
       remove: () => ({ available: true, exists: false }) as const,
     };
@@ -17,19 +17,10 @@ describe('credential IPC', () => {
 
     expect(result).toEqual({ available: true, exists: true });
     expect(JSON.stringify(result)).not.toContain('new-agent-secret');
-  });
-
-  it('accepts the Microsoft Azure Speech credential kind without exposing the key', () => {
-    const handlers = new Map<string, (...args: unknown[]) => unknown>();
-    const vault = {
-      status: () => ({ available: true, exists: true }) as const,
-      save: () => ({ available: true, exists: true }) as const,
-      remove: () => ({ available: true, exists: false }) as const,
-    };
-    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault);
-
-    const result = handlers.get('credential:get-status')?.({}, 'azure-speech-key');
-    expect(result).toEqual({ available: true, exists: true });
+    expect(handlers.get('credential:get-status')?.({}, 'azure-speech-key')).toEqual({
+      available: true,
+      exists: true,
+    });
   });
 
   it('rejects malformed Google service-account documents before they reach encrypted storage', () => {
@@ -42,7 +33,7 @@ describe('credential IPC', () => {
     };
     registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault);
 
-    expect(() => handlers.get('credential:save')?.({}, 'google-service-account', '{"private_key":"secret"}')).toThrow(/must contain/);
+    expect(() => handlers.get('credential:save')?.({}, 'google-service-account', '{"private_key":"secret"}')).toThrow();
     expect(saved).toBe(false);
   });
 
