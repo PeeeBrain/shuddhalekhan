@@ -36,6 +36,8 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
   const [selectedRunEvents, setSelectedRunEvents] = useState<AuditEventDetail[] | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [runsLoadFailed, setRunsLoadFailed] = useState(false);
+  const [detailLoadFailed, setDetailLoadFailed] = useState(false);
   const selectedRunIdRef = useRef<string | null>(null);
   const runsQueryInFlightRef = useRef<Promise<void> | null>(null);
   const detailQueryInFlightRef = useRef<string | null>(null);
@@ -54,6 +56,7 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
         startTransition(() => {
           setRuns(data);
         });
+        setRunsLoadFailed(false);
         if (data.length > 0 && !selectedRunIdRef.current) {
           setIsLoadingDetail(true);
           setSelectedRunId(data[0].agentRunId);
@@ -61,6 +64,7 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
       })
       .catch((err) => {
         console.error('Failed to fetch audit runs:', err);
+        setRunsLoadFailed(true);
       })
       .finally(() => {
         runsQueryInFlightRef.current = null;
@@ -80,10 +84,14 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
       .then((detail) => {
         if (selectedRunIdRef.current === runId) {
           setSelectedRunEvents(detail);
+          setDetailLoadFailed(false);
         }
       })
       .catch((err) => {
         console.error(`Failed to fetch events for run ${runId}:`, err);
+        if (selectedRunIdRef.current === runId) {
+          setDetailLoadFailed(true);
+        }
       })
       .finally(() => {
         if (detailQueryInFlightRef.current === runId) {
@@ -97,6 +105,7 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
 
   const selectRun = useCallback((runId: string) => {
     setSelectedRunEvents(null);
+    setDetailLoadFailed(false);
     setIsLoadingDetail(true);
     setSelectedRunId(runId);
   }, []);
@@ -167,7 +176,6 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
 
   return (
     <div className="flex flex-1 overflow-hidden h-full">
-      {/* Left Pane - List of Runs */}
       <div className="w-80 border-r border-border bg-card flex flex-col h-full">
         <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
           <h3 className="font-semibold text-sm">Run History</h3>
@@ -184,14 +192,19 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
         </div>
         <ScrollArea className="flex-1 min-h-0">
           <div className="p-3 space-y-2" role="listbox" aria-label="Agent run history" onKeyDown={handleRunListKeyDown}>
-            {runs.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-xs italic">
+            {runsLoadFailed ? (
+              <div role="alert" className="py-2 text-center text-xs text-destructive">
+                Couldn&apos;t load run history.
+              </div>
+            ) : null}
+            {runs.length === 0 && !runsLoadFailed ? (
+              <div className="py-8 text-center text-xs text-muted-foreground">
                 No agent runs recorded yet.
               </div>
-            ) : (
-              runs.map((run) => {
-                const isActive = selectedRunId === run.agentRunId;
-                return (
+            ) : null}
+            {runs.map((run) => {
+              const isActive = selectedRunId === run.agentRunId;
+              return (
                   <div
                     key={run.agentRunId}
                     role="option"
@@ -218,31 +231,27 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                         {run.tools.slice(0, 3).map((tool) => (
                           <span
                             key={tool}
-                            className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[9px] font-mono text-muted-foreground border border-border/40"
+                            className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground border border-border/40"
                           >
                             {tool.split('.').pop()}
                           </span>
                         ))}
                         {run.tools.length > 3 && (
-                          <span className="text-[9px] font-mono text-muted-foreground/75 px-1 py-0.5">
+                          <span className="text-[10px] font-mono text-muted-foreground/75 px-1 py-0.5">
                             +{run.tools.length - 3} more
                           </span>
                         )}
                       </div>
                     )}
                   </div>
-                );
-              })
-            )}
+              );
+            })}
           </div>
         </ScrollArea>
       </div>
-
-      {/* Right Pane - Detail View */}
       <div className="flex-1 bg-background flex flex-col h-full min-w-0">
         {selectedRunId ? (
           <div className="flex flex-col h-full overflow-hidden">
-            {/* Header info */}
             <div className="p-5 border-b border-border shrink-0">
               <div className="flex items-center justify-between gap-4 mb-2">
                 <h3 className="font-semibold text-base truncate pr-4">Run Details</h3>
@@ -259,29 +268,22 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                 )}
               </div>
             </div>
-
-            {/* Content pane */}
             <ScrollArea className="flex-1 min-h-0">
               <div className="p-6 space-y-6 max-w-3xl">
-                {/* Prompt block */}
                 <div className="space-y-1.5">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Voice Prompt</h4>
                   <div className="p-4 rounded-lg bg-secondary/20 border border-border/60 text-sm select-text leading-relaxed">
                     {selectedRunSummary?.transcript || <span className="italic text-muted-foreground">(No prompt recorded)</span>}
                   </div>
                 </div>
-
-                {/* Final Response (if present) */}
                 {selectedRunSummary?.response && (
                   <div className="space-y-1.5">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Final Response</h4>
-                    <div className="p-4 rounded-lg bg-primary-foreground border border-border text-sm select-text leading-relaxed">
+                    <div className="p-4 rounded-lg bg-secondary/20 border border-border/60 text-sm select-text leading-relaxed">
                       {renderMarkdown(selectedRunSummary.response)}
                     </div>
                   </div>
                 )}
-
-                {/* Error Block (if failed) */}
                 {selectedRunSummary?.error && (
                   <div className="space-y-1.5">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-destructive">Execution Failure</h4>
@@ -290,12 +292,13 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                     </div>
                   </div>
                 )}
-
-                {/* Events Timeline */}
                 <div className="space-y-4">
                   <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">Execution Timeline</h4>
+                  {detailLoadFailed ? (
+                    <p role="alert" className="text-xs text-destructive">Couldn&apos;t load events for this run.</p>
+                  ) : null}
                   {isLoadingDetail && !selectedRunEvents ? (
-                    <p className="text-xs text-muted-foreground italic">Loading events...</p>
+                    <p className="text-xs text-muted-foreground">Loading events...</p>
                   ) : selectedRunEvents && selectedRunEvents.length > 0 ? (
                     <div className="relative pl-6 border-l border-border space-y-6">
                       {selectedRunEvents.map((event) => (
@@ -305,18 +308,16 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                         />
                       ))}
                     </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground italic">No detailed timeline events found.</p>
-                  )}
+                  ) : !detailLoadFailed ? (
+                    <p className="text-xs text-muted-foreground">No detailed timeline events found.</p>
+                  ) : null}
                 </div>
               </div>
             </ScrollArea>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-            <Terminal className="h-8 w-8 text-muted-foreground/50 mb-3" />
-            <h3 className="font-medium text-sm text-foreground">No Run Selected</h3>
-            <p className="text-xs text-muted-foreground mt-1">
+          <div className="flex flex-1 items-center justify-center p-8">
+            <p className="max-w-xs text-center text-xs text-muted-foreground">
               Select an agent run from the history list to inspect its execution.
             </p>
           </div>
@@ -326,7 +327,6 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
   );
 }
 
-// Sub-components & Helpers
 
 function formatTime(isoString: string) {
   try {
@@ -383,7 +383,7 @@ function StatusBadge({
     case 'running':
       return (
         <Tag tone="info" className={className}>
-          Thinking
+          Running
         </Tag>
       );
     default:
@@ -397,15 +397,17 @@ interface TimelineNodeProps {
 
 function TimelineNode({ event }: TimelineNodeProps) {
   const [showPayload, setShowPayload] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(JSON.stringify(event.payload, null, 2));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopyState('copied');
     } catch (err) {
       console.error('Failed to copy payload:', err);
+      setCopyState('failed');
+    } finally {
+      setTimeout(() => setCopyState('idle'), 2000);
     }
   };
 
@@ -413,12 +415,9 @@ function TimelineNode({ event }: TimelineNodeProps) {
 
   return (
     <div className="relative group">
-      {/* Node Marker icon */}
       <span className="absolute -left-[37px] top-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background shadow-sm ring-4 ring-background">
         {info.icon}
       </span>
-
-      {/* Main Node Content */}
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-4">
           <span className="text-xs font-semibold text-foreground">
@@ -431,8 +430,6 @@ function TimelineNode({ event }: TimelineNodeProps) {
         <p className="text-xs text-muted-foreground select-text leading-relaxed">
           {info.description}
         </p>
-
-        {/* Payload expander */}
         {hasPayload(event) && (
           <div className="pt-1.5">
             <Button
@@ -463,7 +460,13 @@ function TimelineNode({ event }: TimelineNodeProps) {
                   className="absolute right-2 top-2 h-7 w-7 text-muted-foreground hover:text-foreground bg-background/50 hover:bg-background border border-border/40"
                   title="Copy JSON Payload"
                 >
-                  {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copyState === 'copied' ? (
+                    <Check className="h-3.5 w-3.5 text-success" />
+                  ) : copyState === 'failed' ? (
+                    <XCircle className="h-3.5 w-3.5 text-destructive" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
                 </Button>
                 <pre className="p-4 overflow-auto max-h-64 text-[11px] font-mono select-text leading-normal max-w-full text-foreground/90 whitespace-pre-wrap">
                   {JSON.stringify(event.payload, null, 2)}
@@ -496,46 +499,42 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
       return {
         title: 'Run Started',
         description: `Agent initialized with prompt: "${formatPromptPreview(p.transcript)}"`,
-        icon: <Play className="h-2.5 w-2.5 text-sky-500 fill-sky-500" />,
+        icon: <Play className="h-2.5 w-2.5 text-primary fill-primary" />,
       };
     case 'status':
       return {
         title: 'Status Update',
-        description: p.status || 'Agent status update',
+        description: unknownAsString(p.status, 'Agent status update'),
         icon: <Clock className="h-2.5 w-2.5 text-muted-foreground" />,
       };
-    case 'tool_requests': {
-      const toolNames = Array.isArray(p.toolCalls)
-        ? p.toolCalls.map((tc: any) => tc.toolName.split('__').join('.')).join(', ')
-        : 'unknown tools';
+    case 'tool_requests':
       return {
         title: 'Tool Requested',
-        description: `Model requested tool execution: ${toolNames}`,
-        icon: <Terminal className="h-2.5 w-2.5 text-indigo-500" />,
+        description: `Model requested tool execution: ${toolCallNames(p.toolCalls)}`,
+        icon: <Terminal className="h-2.5 w-2.5 text-primary" />,
       };
-    }
     case 'tool_results': {
       const count = Array.isArray(p.toolResults) ? p.toolResults.length : 0;
       return {
         title: 'Tool Results Received',
         description: `Received outputs for ${count} tool(s)`,
-        icon: <CheckCircle2 className="h-2.5 w-2.5 text-indigo-400" />,
+        icon: <CheckCircle2 className="h-2.5 w-2.5 text-primary" />,
       };
     }
     case 'approval_requested':
       return {
         title: 'Approval Required',
-        description: `Sensitive tool requires user consent: ${p.serverId}.${p.toolName}`,
-        icon: <AlertTriangle className="h-2.5 w-2.5 text-amber-500" />,
+        description: `Sensitive tool requires user consent: ${formatServerTool(p.serverId, p.toolName)}`,
+        icon: <AlertTriangle className="h-2.5 w-2.5 text-warning" />,
       };
     case 'approval_decision':
       return {
         title: 'Approval Choice',
         description: p.approved
-          ? `User approved execution of ${p.serverId}.${p.toolName}`
-          : `User denied tool execution: ${p.message || 'Deny'}`,
+          ? `User approved execution of ${formatServerTool(p.serverId, p.toolName)}`
+          : `User denied tool execution: ${unknownAsString(p.message, 'Deny')}`,
         icon: p.approved ? (
-          <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
+          <CheckCircle2 className="h-2.5 w-2.5 text-success" />
         ) : (
           <XCircle className="h-2.5 w-2.5 text-destructive" />
         ),
@@ -543,56 +542,56 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
     case 'mcp_tool_execute_started':
       return {
         title: 'Calling MCP Tool',
-        description: `Executing tool ${p.serverId}.${p.toolName} on server`,
-        icon: <Terminal className="h-2.5 w-2.5 text-purple-400" />,
+        description: `Executing tool ${formatServerTool(p.serverId, p.toolName)} on server`,
+        icon: <Terminal className="h-2.5 w-2.5 text-primary" />,
       };
     case 'mcp_tool_execute_result':
       return {
         title: 'MCP Tool Success',
-        description: `Finished executing ${p.serverId}.${p.toolName} successfully`,
-        icon: <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />,
+        description: `Finished executing ${formatServerTool(p.serverId, p.toolName)} successfully`,
+        icon: <CheckCircle2 className="h-2.5 w-2.5 text-success" />,
       };
     case 'mcp_tool_execute_error':
       return {
         title: 'MCP Tool Error',
-        description: `Execution failed for ${p.serverId}.${p.toolName}: ${p.error || 'Unknown error'}`,
+        description: `Execution failed for ${formatServerTool(p.serverId, p.toolName)}: ${unknownAsString(p.error, 'Unknown error')}`,
         icon: <XCircle className="h-2.5 w-2.5 text-destructive" />,
       };
     case 'empty_response_degraded':
       return {
-        title: 'Empty Response degraded',
-        description: p.reason || 'Received an empty response from model',
-        icon: <AlertTriangle className="h-2.5 w-2.5 text-amber-500" />,
+        title: 'Empty Response',
+        description: unknownAsString(p.reason, 'Received an empty response from model'),
+        icon: <AlertTriangle className="h-2.5 w-2.5 text-warning" />,
       };
     case 'max_step_guardrail':
       return {
         title: 'Guardrail Warning',
-        description: `Stop threshold hit (steps: ${p.stepCount})`,
+        description: `Stop threshold hit (steps: ${typeof p.stepCount === 'number' ? p.stepCount : '?'})`,
         icon: <AlertTriangle className="h-2.5 w-2.5 text-destructive" />,
       };
     case 'run_completed':
       return {
         title: 'Run Completed',
         description: 'Agent finished reasoning and outputs are finalized.',
-        icon: <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500 fill-emerald-500" />,
+        icon: <CheckCircle2 className="h-2.5 w-2.5 text-success fill-success" />,
       };
     case 'run_interrupted':
       return {
         title: 'Run Interrupted',
-        description: `Run ended before normal completion. Reason: ${p.reason || 'interrupted'}`,
+        description: `Run ended before normal completion. Reason: ${unknownAsString(p.reason, 'interrupted')}`,
         icon: <XCircle className="h-2.5 w-2.5 text-muted-foreground" />,
       };
     case 'run_cancelled':
     case 'cancelled':
       return {
         title: 'Run Cancelled',
-        description: `Run was aborted. Reason: ${p.reason || 'User requested cancellation'}`,
+        description: `Run was aborted. Reason: ${unknownAsString(p.reason, 'User requested cancellation')}`,
         icon: <XCircle className="h-2.5 w-2.5 text-muted-foreground" />,
       };
     case 'run_failed':
       return {
         title: 'Run Failed',
-        description: `Execution failed: ${p.error || 'Unknown error'}`,
+        description: `Execution failed: ${unknownAsString(p.error, 'Unknown error')}`,
         icon: <XCircle className="h-2.5 w-2.5 text-destructive fill-destructive" />,
       };
     default:
@@ -602,6 +601,23 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
         icon: <Terminal className="h-2.5 w-2.5 text-muted-foreground" />,
       };
   }
+}
+
+function unknownAsString(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
+function toolCallNames(calls: unknown): string {
+  if (!Array.isArray(calls)) return 'unknown tools';
+  const names = calls
+    .filter((tc): tc is { toolName: string } =>
+      typeof tc === 'object' && tc !== null && 'toolName' in tc && typeof tc.toolName === 'string')
+    .map((tc) => tc.toolName.split('__').join('.'));
+  return names.length > 0 ? names.join(', ') : 'unknown tools';
+}
+
+function formatServerTool(serverId: unknown, toolName: unknown): string {
+  return `${unknownAsString(serverId, 'unknown-server')}.${unknownAsString(toolName, 'unknown-tool')}`;
 }
 
 function formatPromptPreview(transcript: unknown): string {

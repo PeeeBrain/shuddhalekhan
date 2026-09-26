@@ -123,7 +123,7 @@ export function Onboarding({
                 <Button className="mt-3" onClick={finishMicrophoneCheck}>My microphone works</Button>
               </div>
             ) : micState === 'verified' ? (
-              <p className="mt-3 text-sm text-emerald-500">Microphone check complete.</p>
+              <p className="mt-3 text-sm text-success">Microphone check complete.</p>
             ) : (
               <>
                 <Button className="mt-4" disabled={!modelReady} onClick={() => void startMicrophoneCheck()}>Start microphone check</Button>
@@ -159,7 +159,7 @@ function Step({ icon: Icon, number, title, done, disabled = false, children }: {
   return (
     <section className={`rounded-xl border border-border/60 bg-card p-6 ${disabled ? 'opacity-50' : ''}`} aria-labelledby={`onboarding-step-${number}`}>
       <div className="mb-4 flex items-center gap-3">
-        <span className={`flex size-9 items-center justify-center rounded-full ${done ? 'bg-emerald-500/15 text-emerald-500' : 'bg-secondary text-primary'}`}>
+        <span className={`flex size-9 items-center justify-center rounded-full ${done ? 'bg-success/15 text-success' : 'bg-secondary text-primary'}`}>
           {done ? <Check className="size-5" aria-hidden="true" /> : <Icon className="size-5" aria-hidden="true" />}
         </span>
         <div>
@@ -178,7 +178,7 @@ function ModelState({ state }: { state: ManagedLocalModelState }) {
     return <p className="mt-3 text-sm" role="status">Downloading… {percent}%</p>;
   }
   if (state.kind === 'installing') return <p className="mt-3 text-sm" role="status">Verifying and installing…</p>;
-  if (state.kind === 'ready') return <p className="mt-3 text-sm text-emerald-500">Installed and ready offline.</p>;
+  if (state.kind === 'ready') return <p className="mt-3 text-sm text-success">Installed and ready offline.</p>;
   if (state.kind === 'error') return <p className="mt-3 text-sm text-destructive" role="alert">{state.message}</p>;
   return null;
 }

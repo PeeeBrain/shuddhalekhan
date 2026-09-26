@@ -31,10 +31,18 @@ export function normalizeDraftServer(
   existingId: string | null,
   makeId: IdFactory = () => makeServerId('mcp')
 ): McpServerConfig {
+  let transport = server.transport;
+  if (transport.type === 'http' && transport.oauth) {
+    const { oauth, ...http } = transport;
+    transport = oauth.clientId.trim()
+      ? { ...http, oauth: { ...oauth, scopes: splitCommaList(oauth.scopes.join(',')) } }
+      : http;
+  }
   return {
     ...server,
     id: existingId ?? makeId(),
     displayName: server.displayName.trim() || 'MCP Server',
+    transport,
   };
 }
 

@@ -14,6 +14,13 @@ tags and commit history, not from this file. Keep new entries under
 
 ### Agent Mode
 - Agent runs now identify themselves to OpenCode Go with a stable `x-opencode-session` per run and a Shuddhalekhan `User-Agent`, so Console Go requests route correctly instead of failing with `MissingSessionID`.
+- HTTP MCP servers can optionally name a pre-registered OAuth client (client ID, client-secret env var, scopes) in Settings. Servers whose authorization endpoints don't support dynamic client registration, such as Google's hosted MCP endpoints, can now complete browser sign-in and tool authorization; servers without this setting behave exactly as before.
+- MCP server cards now keep their tool policy lists collapsed by default with a one-click expand, and the Add/Edit MCP server panel stays anchored at the top of the section, so servers with many tools no longer push the configuration fields out of view.
+- "Reconnect / Test" on an MCP server card is now a single honest "Reconnect" that reconnects only that server over the running sidecar, instead of restarting the whole sidecar and resetting every server's connection.
+
+### Settings
+- Agent run history now reports load and copy failures in the UI instead of failing silently, keeps one status per run ("Running", "Empty Response"), and no longer renders the final response block as a light panel in dark mode.
+- Settings surfaces share one visual vocabulary: consistent theme tokens for success and warning states, one disclosure pattern for advanced blocks, one select control in Shortcuts, less duplicated helper copy, a simpler device row in Audio, and visible feedback when an update check fails.
 
 ### Dictation Runtime
 - Microphone capture now overlaps audio-context setup with device opening. The selected Managed Local model loads after app startup so the first Dictation can use it immediately once ready; an early recording shares the same in-progress load.

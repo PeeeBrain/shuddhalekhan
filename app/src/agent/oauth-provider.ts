@@ -1,20 +1,22 @@
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { createServer, type Server } from 'http';
 import { join } from 'path';
 import {
   auth,
+  type OAuthAuthorizationServerInformation,
   type OAuthClientInformation,
   type OAuthClientMetadata,
   type OAuthClientProvider,
   type OAuthTokens,
 } from '@ai-sdk/mcp';
-import type { McpServerConfig } from '../types/ipc';
+import type { McpHttpOAuthConfig, McpServerConfig } from '../types/ipc';
 import { logSidecar, writeJsonLine } from './protocol';
 
 type TokenFile = {
   tokens?: OAuthTokens;
   clientInformation?: OAuthClientInformation;
+  authorizationServerInformation?: OAuthAuthorizationServerInformation;
   codeVerifier?: string;
   state?: string;
 };
@@ -22,6 +24,7 @@ type TokenFile = {
 export class SidecarOAuthProvider implements OAuthClientProvider {
   private readonly tokenPath: string;
   private readonly fetchFn: typeof globalThis.fetch;
+  private readonly oauthConfig: McpHttpOAuthConfig | undefined;
   private callbackServer: Server | null = null;
   private callbackUrl: string | null = null;
   private lastRedirectUrl: string | null = null;
@@ -35,8 +38,12 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
       throw new Error('OAuth provider requires an HTTP MCP server.');
     }
 
-    this.tokenPath = join(getAgentDataDir(), 'oauth', `${sanitizeFileName(server.id)}.json`);
+    const clientKey = server.transport.oauth
+      ? `-${createHash('sha256').update(JSON.stringify([server.transport.url, server.transport.oauth])).digest('hex')}`
+      : '';
+    this.tokenPath = join(getAgentDataDir(), 'oauth', `${sanitizeFileName(server.id)}${clientKey}.json`);
     this.fetchFn = createRedirectAwareFetch(fetchFn, server.transport.redirect);
+    this.oauthConfig = server.transport.oauth;
   }
 
   get redirectUrl(): string {
@@ -48,12 +55,14 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   get clientMetadata(): OAuthClientMetadata {
+    const scopes = this.oauthConfig?.scopes ?? [];
     return {
       redirect_uris: [this.redirectUrl],
       token_endpoint_auth_method: 'none',
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       client_name: 'Shuddhalekhan',
+      ...(scopes.length > 0 ? { scope: scopes.join(' ') } : {}),
     };
   }
 
@@ -85,12 +94,25 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   clientInformation(): OAuthClientInformation | undefined {
+    const staticClient = staticClientInformation(this.oauthConfig);
+    if (staticClient) return staticClient;
     return this.readTokenFile().clientInformation;
   }
 
   saveClientInformation(clientInformation: OAuthClientInformation): void {
     const current = this.readTokenFile();
-    this.writeTokenFile({ ...current, clientInformation });
+    const storedClient = { ...clientInformation };
+    if (this.oauthConfig) delete storedClient.client_secret;
+    this.writeTokenFile({ ...current, clientInformation: storedClient });
+  }
+
+  authorizationServerInformation(): OAuthAuthorizationServerInformation | undefined {
+    return this.readTokenFile().authorizationServerInformation;
+  }
+
+  saveAuthorizationServerInformation(information: OAuthAuthorizationServerInformation): void {
+    const current = this.readTokenFile();
+    this.writeTokenFile({ ...current, authorizationServerInformation: information });
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
@@ -246,6 +268,20 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
       });
     });
   }
+}
+
+// Pre-registered clients (configured client ID/secret) skip dynamic client
+// registration entirely; the secret is read from the environment at call time
+// and never persisted.
+function staticClientInformation(
+  oauth: McpHttpOAuthConfig | undefined,
+): OAuthClientInformation | undefined {
+  if (!oauth?.clientId) return undefined;
+  const clientSecret = oauth.clientSecretEnvVar ? process.env[oauth.clientSecretEnvVar] : undefined;
+  return {
+    client_id: oauth.clientId,
+    ...(clientSecret ? { client_secret: clientSecret } : {}),
+  };
 }
 
 export function createRedirectAwareFetch(

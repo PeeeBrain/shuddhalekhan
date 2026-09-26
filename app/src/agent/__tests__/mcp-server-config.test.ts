@@ -87,6 +87,55 @@ describe('MCP server config', () => {
     expect(servers[1].id).toBe('mail-secondary');
   });
 
+  it('trims the pre-registered OAuth client config and drops it when no client ID is set', () => {
+    const [trimmed] = normalizeMcpServers([{
+      id: 'mail',
+      displayName: 'Hosted Mail',
+      enabled: true,
+      transport: {
+        type: 'http',
+        url: 'https://mail.example.com/mcp',
+        redirect: 'error',
+        oauth: {
+          clientId: ' static-client ',
+          clientSecretEnvVar: ' MAIL_OAUTH_SECRET ',
+          scopes: [' scope-a ', '', 'scope-b'],
+        },
+      },
+      discoveredTools: [],
+      toolPolicies: {},
+    } as McpServerConfig]);
+    const [dropped] = normalizeMcpServers([{
+      id: 'mail',
+      displayName: 'Hosted Mail',
+      enabled: true,
+      transport: {
+        type: 'http',
+        url: 'https://mail.example.com/mcp',
+        redirect: 'error',
+        oauth: { clientId: '   ', clientSecretEnvVar: 'MAIL_OAUTH_SECRET', scopes: ['scope-a'] },
+      },
+      discoveredTools: [],
+      toolPolicies: {},
+    } as McpServerConfig]);
+
+    expect(trimmed.transport).toEqual({
+      type: 'http',
+      url: 'https://mail.example.com/mcp',
+      redirect: 'error',
+      oauth: {
+        clientId: 'static-client',
+        clientSecretEnvVar: 'MAIL_OAUTH_SECRET',
+        scopes: ['scope-a', 'scope-b'],
+      },
+    });
+    expect(dropped.transport).toEqual({
+      type: 'http',
+      url: 'https://mail.example.com/mcp',
+      redirect: 'error',
+    });
+  });
+
   it('creates stable policy keys and connection keys', () => {
     const server: McpServerConfig = {
       id: 'srv1',

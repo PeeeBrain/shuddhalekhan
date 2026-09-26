@@ -18,9 +18,8 @@ export function AudioSettings({ config }: SettingsSectionProps) {
         <div>
           <ReadOnlyRow
             label="Selected device"
-            value={config.selectedDeviceId ?? 'Default input device'}
+            value={config.selectedDeviceId && config.selectedDeviceId !== 'default' ? config.selectedDeviceId : 'Default input device'}
           />
-          <ReadOnlyRow label="Capture path" value="Shared by Dictation and Agent Mode" />
         </div>
       </SettingsPanel>
     </div>

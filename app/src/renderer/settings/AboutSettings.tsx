@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { ReadOnlyRow } from './ui/rows';
@@ -11,6 +12,7 @@ export function AboutSettings({
   settingsIpc,
   onUpdateStatusChange,
 }: SettingsSectionProps) {
+  const [checkFailed, setCheckFailed] = useState(false);
   const statusText = updateStatus?.message ?? 'Update status unavailable';
   const availableReleaseNotes =
     updateStatus?.state === 'available' ||
@@ -45,16 +47,23 @@ export function AboutSettings({
               className="w-fit min-w-36"
               disabled={updateStatus?.state === 'checking'}
               onClick={() => {
+                setCheckFailed(false);
                 settingsIpc
                   .checkForUpdates()
                   .then(onUpdateStatusChange)
                   .catch((err) => {
                     console.error('Failed to check for updates:', err);
+                    setCheckFailed(true);
                   });
               }}
             >
               {updateStatus?.state === 'checking' ? 'Checking...' : 'Check for Updates'}
             </Button>
+            {checkFailed ? (
+              <p className="mt-2 text-xs text-destructive" role="alert">
+                Couldn't check for updates. Try again.
+              </p>
+            ) : null}
           </div>
         </div>
       </SettingsPanel>

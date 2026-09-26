@@ -734,22 +734,9 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
 ipcMain.handle('mcp:test-server', async (_event, serverId: string) => {
   const config = getConfig();
   const server = config.agent.mcpServers.find((item) => item.id === serverId);
-  if (!server) return;
+  if (!config.agent.enabled || !server?.enabled) return;
 
-  const sidecarConfig = {
-    ...config,
-    agent: {
-      ...config.agent,
-      enabled: true,
-      mcpServers: config.agent.mcpServers.map((item) => ({
-        ...item,
-        enabled: item.id === serverId ? true : item.enabled,
-      })),
-    },
-  };
-  await agentSidecar.stop();
-  resetMcpStatusSnapshot();
-  agentSidecar.start(sidecarConfig, getAgentSidecarApiKey(sidecarConfig, credentialVault));
+  agentSidecar.testMcpServer(config, getAgentSidecarApiKey(config, credentialVault), serverId);
 });
 
 ipcMain.handle('mcp:get-status-snapshot', () => mcpStatusStore.getSnapshot());

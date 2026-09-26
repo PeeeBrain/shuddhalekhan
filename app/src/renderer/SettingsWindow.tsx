@@ -233,6 +233,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
                   <McpSettings
                     servers={config.agent.mcpServers}
                     statuses={mcpStatuses}
+                    agentEnabled={config.agent.enabled}
                     saveError={persistence.fieldErrors['mcp-servers']}
                     onChange={updateMcpServers}
                     onTest={(serverId) => {

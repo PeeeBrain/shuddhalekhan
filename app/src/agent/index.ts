@@ -87,6 +87,11 @@ function handleLine(line: string): void {
     case 'approval:decision':
       handleApprovalDecision(message);
       break;
+    case 'mcp:test-server':
+      configUpdateQueue = configUpdateQueue
+        .then(() => mcpRegistry.testServer(message.serverId))
+        .catch((err) => logSidecar('mcp test-server failed', err));
+      break;
     case 'sidecar:shutdown':
       void beginShutdown(true);
       break;

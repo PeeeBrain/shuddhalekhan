@@ -385,9 +385,10 @@ describe('Settings section reachability', () => {
     );
     fireEvent.click(tabByLabel('Shortcuts'));
 
-    fireEvent.change(screen.getByRole('combobox', {
+    fireEvent.click(screen.getByRole('combobox', {
       name: 'Dictation activation mode',
-    }), { target: { value: 'push-to-talk' } });
+    }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Push to Talk' }));
 
     expect(await screen.findByText('Live Dictation requires Toggle activation.')).toBeInTheDocument();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
@@ -547,7 +548,6 @@ describe('Settings section reachability', () => {
 
     expect(screen.queryByRole('combobox', { name: 'Recording activation' })).not.toBeInTheDocument();
     expect(screen.getByText('Selected device')).toBeInTheDocument();
-    expect(screen.getByText('Capture path')).toBeInTheDocument();
   });
 
   it('shows both hotkey displays on the Shortcuts section', async () => {
@@ -945,10 +945,10 @@ describe('Settings persistence timing', () => {
     await waitForLoaded();
     fireEvent.click(tabByLabel('Shortcuts'));
 
-    const activation = screen.getByRole('combobox', {
+    fireEvent.click(screen.getByRole('combobox', {
       name: 'Dictation activation mode',
-    });
-    fireEvent.change(activation, { target: { value: 'toggle' } });
+    }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Toggle' }));
 
     await waitFor(() => {
       expect(settingsIpc.setConfig).toHaveBeenCalledWith(

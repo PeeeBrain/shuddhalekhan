@@ -1,5 +1,6 @@
 import type {
   AgentToolApprovalPolicy,
+  McpHttpOAuthConfig,
   McpServerConfig,
   McpToolPolicyKey,
 } from '../types/ipc';
@@ -14,7 +15,11 @@ export function normalizeMcpServer(server: McpServerConfig): McpServerConfig {
   const discoveredTools = Array.isArray(server.discoveredTools) ? server.discoveredTools : [];
   const toolPolicies = { ...(server.toolPolicies ?? {}) };
   const transport = server.transport.type === 'http'
-    ? { ...server.transport, redirect: server.transport.redirect ?? 'error' as const }
+    ? {
+        ...server.transport,
+        redirect: server.transport.redirect ?? 'error' as const,
+        oauth: normalizeMcpHttpOAuth(server.transport.oauth),
+      }
     : server.transport;
 
   for (const tool of discoveredTools) {
@@ -37,6 +42,17 @@ export function normalizeMcpServers(servers: McpServerConfig[] | undefined): Mcp
   if (!Array.isArray(servers)) return [];
 
   return servers.map(normalizeMcpServer);
+}
+
+function normalizeMcpHttpOAuth(oauth: McpHttpOAuthConfig | undefined): McpHttpOAuthConfig | undefined {
+  if (!oauth) return undefined;
+  const clientId = oauth.clientId.trim();
+  if (!clientId) return undefined;
+  return {
+    clientId,
+    clientSecretEnvVar: oauth.clientSecretEnvVar.trim(),
+    scopes: oauth.scopes.map((scope) => scope.trim()).filter(Boolean),
+  };
 }
 
 export function getMcpServerConnectionKey(server: McpServerConfig): string {
