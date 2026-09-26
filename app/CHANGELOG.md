@@ -16,6 +16,7 @@ tags and commit history, not from this file. Keep new entries under
 - Agent runs now identify themselves to OpenCode Go with a stable `x-opencode-session` per run and a Shuddhalekhan `User-Agent`, so Console Go requests route correctly instead of failing with `MissingSessionID`.
 
 ### Dictation Runtime
+- Microphone capture now overlaps audio-context setup with device opening. The selected Managed Local model loads after app startup so the first Dictation can use it immediately once ready; an early recording shares the same in-progress load.
 - Fresh installations now use Managed Local Batch Dictation with Toggle activation. Shuddhalekhan downloads, verifies, installs, and loads a recommended local speech model without Docker, Python, CUDA, or a separate speech server; existing installations keep their provider, mode, shortcut, activation, and recognition settings.
 - First-run onboarding now guides model installation, a live default-microphone check, shortcut use, and one real Dictation. Setup completes only after the transcript is inserted into the original target application.
 - Local speech recognition runs in a crash-isolated Electron utility process, restarts after a failure, and works offline after model installation. Model downloads resume, verify a pinned SHA-256 hash, reject unsafe archive entries, promote atomically, and can be deleted from Settings.

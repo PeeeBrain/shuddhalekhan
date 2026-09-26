@@ -1014,6 +1014,27 @@ describe('main process IPC orchestration', () => {
     expect(agentStart).not.toHaveBeenCalled();
   });
 
+  it('preloads Managed Local after the runtime becomes operational', async () => {
+    const { managedLocalTranscriber } = await import('../managed-local');
+    const warmup = vi.spyOn(managedLocalTranscriber, 'warmup').mockResolvedValue();
+    try {
+      getConfig.mockReturnValue({
+        ...baseConfig,
+        transcription: { ...baseConfig.transcription, activeProvider: 'managed-local' },
+      });
+      await import(`../index?test=${Date.now()}-managed-local-startup`);
+      await Promise.resolve();
+      expect(warmup).not.toHaveBeenCalled();
+
+      Object.assign(electronMock.app, { getAppMetrics: vi.fn(() => []) });
+      ipcListeners.get('surface-paint-proxy')?.({}, 'recording');
+      await Promise.resolve();
+      expect(warmup).toHaveBeenCalledTimes(1);
+    } finally {
+      warmup.mockRestore();
+    }
+  });
+
   it('stores the last transcript before injection so it survives paste failures', async () => {
     simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
 

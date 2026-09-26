@@ -80,6 +80,9 @@ const runtimeReadiness = createRuntimeReadinessBarrier(() => {
   emitElectronProcessInventory();
   emitPerformanceMarker('runtime.operational');
   queueMicrotask(() => {
+    if (!performanceDriverEnabled && getConfig().transcription.activeProvider === 'managed-local') {
+      void managedLocalTranscriber.warmup().catch(() => undefined);
+    }
     void startPerformanceScenario().catch((error) => {
       console.error('Performance scenario driver failed:', error);
     });
@@ -133,6 +136,11 @@ const recordingSession = new RecordingSession({
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   onBegin: (intent) => {
     if (intent === 'agent') invalidateActiveAgentRun();
+  },
+  onFirstAudioBuffer: (transcriber) => {
+    if (transcriber === managedLocalTranscriber) {
+      void managedLocalTranscriber.warmup().catch(() => undefined);
+    }
   },
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
@@ -706,6 +714,14 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
   cachedAgentEnabled = config.agent.enabled;
+  // A switched-away provider has no next use with this runtime; release
+  // the loaded model instead of holding ~1.1GB idling all session.
+  if (
+    previousConfig.transcription.activeProvider === 'managed-local' &&
+    config.transcription.activeProvider !== 'managed-local'
+  ) {
+    await managedLocalTranscriber.shutdown().catch(() => undefined);
+  }
   const sidecarAction = getSidecarConfigAction(previousConfig, config);
   if (sidecarAction === 'stop') {
     await agentSidecar.stop();

@@ -487,6 +487,7 @@ describe('RecordingSession', () => {
     const registeredChannels = (electronMock.ipcMain.on as any).mock.calls.map((call: any) => call[0]);
     expect(registeredChannels).toContain('audio-stream-ready');
     expect(registeredChannels).toContain('audio-capture-started');
+    expect(registeredChannels).toContain('runtime:audio-first-buffer');
     expect(registeredChannels).toContain('audio-level-changed');
     expect(registeredChannels).not.toContain('audio-window-ready');
     expect(registeredChannels).not.toContain('audio-data-ready');
@@ -497,6 +498,7 @@ describe('RecordingSession', () => {
     const unregisteredChannels = (electronMock.ipcMain.off as any).mock.calls.map((call: any) => call[0]);
     expect(unregisteredChannels).toContain('audio-stream-ready');
     expect(unregisteredChannels).toContain('audio-capture-started');
+    expect(unregisteredChannels).toContain('runtime:audio-first-buffer');
     expect(unregisteredChannels).toContain('audio-level-changed');
     expect(unregisteredChannels).not.toContain('audio-window-ready');
     expect(unregisteredChannels).not.toContain('audio-data-ready');
@@ -724,6 +726,8 @@ describe('RecordingSession', () => {
 
   it('measures keyboard activation through the renderer-confirmed capture start', async () => {
     const lines: string[] = [];
+    const onFirstAudioBuffer = vi.fn();
+    const transcriber = createTranscriber(({ audio }) => transcribe(audio));
     resetPerformanceMarkerCollectorForTests();
     setPerformanceMarkerCollector(createMarkerCollector(
       {
@@ -737,10 +741,11 @@ describe('RecordingSession', () => {
 
     session = new RecordingSessionCtor({
       runtimeShell: audioStream,
-      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
+      transcriber,
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
+      onFirstAudioBuffer,
     });
 
     session.start();
@@ -751,12 +756,28 @@ describe('RecordingSession', () => {
 
     let events = lines.map((line) => JSON.parse(line).event);
     expect(events).toEqual(['hotkey.detected', 'recording.begin.accepted']);
+    expect(onFirstAudioBuffer).not.toHaveBeenCalled();
 
     const captureStartedCall = (electronMock.ipcMain.on as any).mock.calls.find(
       (call: any) => call[0] === 'audio-capture-started'
     );
     expect(captureStartedCall).toBeDefined();
-    captureStartedCall[1]({});
+    const firstBufferCall = (electronMock.ipcMain.on as any).mock.calls.find(
+      (call: any) => call[0] === 'runtime:audio-first-buffer'
+    );
+    const command = audioStream.beginCapture.mock.calls[0]?.[0] as {
+      recordingSessionId: string;
+      sequence: number;
+    };
+    captureStartedCall[1]({}, 1, 'stale-session', command.sequence);
+    captureStartedCall[1]({}, 1, command.recordingSessionId, command.sequence, {
+      micAcquisitionMs: 180,
+      graphSetupMs: 12,
+    });
+    firstBufferCall[1]({}, 1, 'stale-session', command.sequence);
+    firstBufferCall[1]({}, 1, command.recordingSessionId, command.sequence);
+    expect(onFirstAudioBuffer).toHaveBeenCalledTimes(1);
+    expect(onFirstAudioBuffer).toHaveBeenCalledWith(transcriber);
 
     const endPromise = session.end();
     const fakeAudioData = new Uint8Array(64);
@@ -768,11 +789,14 @@ describe('RecordingSession', () => {
       'hotkey.detected',
       'recording.begin.accepted',
       'audio.capture.started',
+      'audio.first-buffer.received',
       'recording.stop.requested',
       'transcription.batch.requested',
       'transcription.batch.completed',
       'recording.session.completed',
     ]);
+    const captureMarker = lines.map((line) => JSON.parse(line)).find((line) => line.event === 'audio.capture.started');
+    expect(captureMarker).toMatchObject({ micAcquisitionMs: 180, graphSetupMs: 12 });
     resetPerformanceMarkerCollectorForTests();
   });
 
