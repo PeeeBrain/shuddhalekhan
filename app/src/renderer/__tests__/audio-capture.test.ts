@@ -295,16 +295,25 @@ describe('warm audio stream', () => {
     expect(audioProcess).toBeNull();
     expect(stopTrack).toHaveBeenCalledTimes(1);
 
-    await mod.startRecording();
+    const onFirstBuffer = vi.fn();
+    const timing = await mod.startRecording(undefined, onFirstBuffer);
+    expect(timing).toEqual({
+      micAcquisitionMs: expect.any(Number),
+      graphSetupMs: expect.any(Number),
+    });
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(audioProcess).toBeTypeOf('function');
 
     (audioProcess as unknown as (event: AudioProcessingEvent) => void)({
       inputBuffer: { getChannelData: () => new Float32Array([0.2, -0.4, 0.6]) },
     } as unknown as AudioProcessingEvent);
+    (audioProcess as unknown as (event: AudioProcessingEvent) => void)({
+      inputBuffer: { getChannelData: () => new Float32Array([0.2, -0.4, 0.6]) },
+    } as unknown as AudioProcessingEvent);
 
     const wav = mod.stopRecording();
-    expect(wav.byteLength).toBe(50);
+    expect(onFirstBuffer).toHaveBeenCalledTimes(1);
+    expect(wav.byteLength).toBe(56);
     expect(stopTrack).toHaveBeenCalledTimes(2);
     expect(close).toHaveBeenCalledTimes(1);
 
@@ -313,6 +322,23 @@ describe('warm audio stream', () => {
     mod.stopRecording();
     expect(stopTrack).toHaveBeenCalledTimes(3);
     expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it('builds the audio context while the microphone is opening', async () => {
+    installAudioMocks();
+    let resolveStream: ((stream: MediaStream) => void) | undefined;
+    getUserMedia.mockImplementationOnce(() => new Promise<MediaStream>((resolve) => {
+      resolveStream = resolve;
+    }));
+    const mod = await importWarm();
+
+    const starting = mod.startRecording();
+    expect(AudioContext).toHaveBeenCalledTimes(1);
+
+    resolveStream?.({ getTracks: () => [{ stop: stopTrack }] } as MediaStream);
+    await starting;
+    mod.stopRecording();
+    expect(stopTrack).toHaveBeenCalledTimes(1);
   });
 
   it('throttles recording pill level telemetry without dropping captured audio chunks or emitting duration updates', async () => {

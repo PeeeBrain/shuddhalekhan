@@ -80,6 +80,9 @@ const runtimeReadiness = createRuntimeReadinessBarrier(() => {
   emitElectronProcessInventory();
   emitPerformanceMarker('runtime.operational');
   queueMicrotask(() => {
+    if (!performanceDriverEnabled && getConfig().transcription.activeProvider === 'managed-local') {
+      void managedLocalTranscriber.warmup().catch(() => undefined);
+    }
     void startPerformanceScenario().catch((error) => {
       console.error('Performance scenario driver failed:', error);
     });
@@ -133,6 +136,11 @@ const recordingSession = new RecordingSession({
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   onBegin: (intent) => {
     if (intent === 'agent') invalidateActiveAgentRun();
+  },
+  onFirstAudioBuffer: (transcriber) => {
+    if (transcriber === managedLocalTranscriber) {
+      void managedLocalTranscriber.warmup().catch(() => undefined);
+    }
   },
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,

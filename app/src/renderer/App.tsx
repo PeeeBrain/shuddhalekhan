@@ -59,8 +59,23 @@ export function AudioWindow() {
             command.sequence,
           );
         },
-      } : undefined)
-        .then(() => window.electronAPI?.send('audio-capture-started'))
+      } : undefined, () => {
+        window.electronAPI?.send(
+          'runtime:audio-first-buffer',
+          command.generation,
+          command.recordingSessionId,
+          command.sequence,
+        );
+      })
+        .then((timing) => {
+          if (timing) window.electronAPI?.send(
+            'audio-capture-started',
+            command.generation,
+            command.recordingSessionId,
+            command.sequence,
+            timing,
+          );
+        })
         .catch((err) => {
           commandRef.current = null;
           console.error('Failed to start runtime recording:', err);
