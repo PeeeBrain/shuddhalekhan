@@ -228,6 +228,7 @@ describe('capture cleanup', () => {
     });
 
     await expect(startRecording()).rejects.toThrow('Audio context failed');
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(stopTrack).toHaveBeenCalledTimes(1);
   });
 });

@@ -714,6 +714,14 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
   cachedAgentEnabled = config.agent.enabled;
+  // A switched-away provider has no next use with this runtime; release
+  // the loaded model instead of holding ~1.1GB idling all session.
+  if (
+    previousConfig.transcription.activeProvider === 'managed-local' &&
+    config.transcription.activeProvider !== 'managed-local'
+  ) {
+    await managedLocalTranscriber.shutdown().catch(() => undefined);
+  }
   const sidecarAction = getSidecarConfigAction(previousConfig, config);
   if (sidecarAction === 'stop') {
     await agentSidecar.stop();

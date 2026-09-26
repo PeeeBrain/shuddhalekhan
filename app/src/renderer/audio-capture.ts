@@ -262,11 +262,19 @@ export async function startRecording(
       return stream;
     });
     const contextStartedAt = performance.now();
-    audioContext = new AudioContext({
+    const context = new AudioContext({
       sampleRate: 16000,
     });
+    audioContext = context;
     const contextCreationMs = performance.now() - contextStartedAt;
     mediaStream = await pendingMic;
+    // A device change during mic acquisition tears the context down and
+    // hands stream ownership to recreateStream(); abandon this start.
+    if (audioContext !== context) {
+      mediaStream.getTracks().forEach((track) => track.stop());
+      mediaStream = null;
+      return null;
+    }
     hasAudioPermission = true;
     const graphStartedAt = performance.now();
 
@@ -318,7 +326,11 @@ export async function startRecording(
     return { micAcquisitionMs, graphSetupMs: contextCreationMs + performance.now() - graphStartedAt };
   } catch (error) {
     if (!mediaStream) {
-      (await pendingMic?.catch(() => null))?.getTracks().forEach((track) => track.stop());
+      // Don't block failure reporting on a pending permission prompt;
+      // stop tracks asynchronously once acquisition settles.
+      void pendingMic
+        ?.catch(() => null)
+        .then((stream) => stream?.getTracks().forEach((track) => track.stop()));
     }
     isRecording = false;
     audioBuffer = [];
