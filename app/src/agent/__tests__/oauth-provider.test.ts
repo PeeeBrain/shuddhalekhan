@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { auth } from '@ai-sdk/mcp';
 import { SidecarOAuthProvider } from '../oauth-provider';
 import type { McpServerConfig } from '../../types/ipc';
 
@@ -57,9 +58,6 @@ describe('SidecarOAuthProvider', () => {
       client_id: 'static-client',
       client_secret: 'secret-1',
     });
-
-    const tokenFilePath = join(appDataDir, 'Shuddhalekhan', 'agent', 'oauth', 'static-client-server.json');
-    expect(() => readFileSync(tokenFilePath, 'utf-8')).toThrow();
   });
 
   it('serves a public pre-registered client when the secret environment variable is absent', () => {
@@ -72,6 +70,65 @@ describe('SidecarOAuthProvider', () => {
     }));
 
     expect(provider.clientInformation()).toEqual({ client_id: 'static-client' });
+  });
+
+  it('completes a pre-registered client callback without storing the client secret', async () => {
+    process.env.SHUDDHA_TEST_OAUTH_SECRET = 'secret-1';
+    const serverUrl = 'https://auth.example.test/';
+    const fetchFn: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === 'https://auth.example.test/.well-known/oauth-authorization-server') {
+        return Response.json({
+          issuer: 'https://auth.example.test',
+          authorization_endpoint: 'https://auth.example.test/authorize',
+          token_endpoint: 'https://auth.example.test/token',
+          response_types_supported: ['code'],
+          code_challenge_methods_supported: ['S256'],
+        });
+      }
+      if (url === 'https://auth.example.test/token') {
+        return Response.json({ access_token: 'new-token', token_type: 'Bearer' });
+      }
+      return new Response(null, { status: 404 });
+    };
+    class CallbackProvider extends SidecarOAuthProvider {
+      override async redirectToAuthorization(url: URL): Promise<void> {
+        await auth(this, {
+          serverUrl,
+          authorizationCode: 'authorization-code',
+          callbackState: url.searchParams.get('state') ?? undefined,
+          fetchFn,
+        });
+      }
+    }
+    const provider = new CallbackProvider(httpServer({
+      url: serverUrl,
+      oauth: { clientId: 'static-client', clientSecretEnvVar: 'SHUDDHA_TEST_OAUTH_SECRET', scopes: [] },
+    }), fetchFn);
+
+    await provider.start();
+    try {
+      await auth(provider, { serverUrl, fetchFn });
+      expect(provider.tokens()?.access_token).toBe('new-token');
+      const tokenDir = join(appDataDir, 'Shuddhalekhan', 'agent', 'oauth');
+      const [tokenFile] = readdirSync(tokenDir);
+      expect(tokenFile).toBeDefined();
+      const stored = readFileSync(join(tokenDir, tokenFile), 'utf-8');
+      expect(stored).not.toContain('secret-1');
+    } finally {
+      provider.close();
+    }
+  });
+
+  it('does not reuse tokens after the pre-registered client or scopes change', () => {
+    const oauth = { clientId: 'client-a', clientSecretEnvVar: '', scopes: ['read'] };
+    new SidecarOAuthProvider(httpServer({ oauth })).saveTokens({ access_token: 'old-token', token_type: 'Bearer' });
+
+    const changedClient = new SidecarOAuthProvider(httpServer({ oauth: { ...oauth, clientId: 'client-b' } }));
+    expect(changedClient.tokens()).toBeUndefined();
+    expect(new SidecarOAuthProvider(httpServer({ oauth: { ...oauth, scopes: ['write'] } })).tokens()).toBeUndefined();
+    changedClient.saveTokens({ access_token: 'new-token', token_type: 'Bearer' });
+    expect(new SidecarOAuthProvider(httpServer({ oauth })).tokens()?.access_token).toBe('old-token');
   });
 
   it('keeps the pre-registered client when the token store is invalidated', () => {

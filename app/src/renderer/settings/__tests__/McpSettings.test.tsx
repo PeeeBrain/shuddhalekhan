@@ -75,8 +75,11 @@ describe('McpSettings pre-registered OAuth client', () => {
     const onChange = renderSettings([makeServer(httpTransport)]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    fireEvent.change(screen.getByLabelText('OAuth client ID'), { target: { value: 'my-client' } });
     fireEvent.change(screen.getByLabelText('Client secret env var name'), { target: { value: 'MY_GOOGLE_SECRET' } });
+    expect(screen.getByLabelText('Client secret env var name')).toHaveValue('MY_GOOGLE_SECRET');
+    fireEvent.change(screen.getByLabelText('OAuth client ID'), { target: { value: 'my-client' } });
+    fireEvent.change(screen.getByLabelText('OAuth scopes'), { target: { value: 'gmail.readonly,' } });
+    expect(screen.getByLabelText('OAuth scopes')).toHaveValue('gmail.readonly,');
     fireEvent.change(screen.getByLabelText('OAuth scopes'), { target: { value: 'gmail.readonly, gmail.send' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
 
@@ -99,6 +102,8 @@ describe('McpSettings pre-registered OAuth client', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByLabelText('OAuth client ID')).toHaveValue('keep-id');
     fireEvent.change(screen.getByLabelText('OAuth client ID'), { target: { value: '   ' } });
+    expect(screen.getByLabelText('Client secret env var name')).toHaveValue('S');
+    expect(screen.getByLabelText('OAuth scopes')).toHaveValue('gmail.readonly');
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
 
     const saved = onChange.mock.calls[0]?.[0]?.[0] as McpServerConfig;

@@ -1,9 +1,10 @@
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { createServer, type Server } from 'http';
 import { join } from 'path';
 import {
   auth,
+  type OAuthAuthorizationServerInformation,
   type OAuthClientInformation,
   type OAuthClientMetadata,
   type OAuthClientProvider,
@@ -15,6 +16,7 @@ import { logSidecar, writeJsonLine } from './protocol';
 type TokenFile = {
   tokens?: OAuthTokens;
   clientInformation?: OAuthClientInformation;
+  authorizationServerInformation?: OAuthAuthorizationServerInformation;
   codeVerifier?: string;
   state?: string;
 };
@@ -36,7 +38,10 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
       throw new Error('OAuth provider requires an HTTP MCP server.');
     }
 
-    this.tokenPath = join(getAgentDataDir(), 'oauth', `${sanitizeFileName(server.id)}.json`);
+    const clientKey = server.transport.oauth
+      ? `-${createHash('sha256').update(JSON.stringify([server.transport.url, server.transport.oauth])).digest('hex')}`
+      : '';
+    this.tokenPath = join(getAgentDataDir(), 'oauth', `${sanitizeFileName(server.id)}${clientKey}.json`);
     this.fetchFn = createRedirectAwareFetch(fetchFn, server.transport.redirect);
     this.oauthConfig = server.transport.oauth;
   }
@@ -96,7 +101,18 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
 
   saveClientInformation(clientInformation: OAuthClientInformation): void {
     const current = this.readTokenFile();
-    this.writeTokenFile({ ...current, clientInformation });
+    const storedClient = { ...clientInformation };
+    if (this.oauthConfig) delete storedClient.client_secret;
+    this.writeTokenFile({ ...current, clientInformation: storedClient });
+  }
+
+  authorizationServerInformation(): OAuthAuthorizationServerInformation | undefined {
+    return this.readTokenFile().authorizationServerInformation;
+  }
+
+  saveAuthorizationServerInformation(information: OAuthAuthorizationServerInformation): void {
+    const current = this.readTokenFile();
+    this.writeTokenFile({ ...current, authorizationServerInformation: information });
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {

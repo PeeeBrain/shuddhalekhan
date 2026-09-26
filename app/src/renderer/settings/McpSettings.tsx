@@ -176,7 +176,7 @@ function McpServerForm({
     };
     onChange({
       ...server,
-      transport: { ...transport, oauth: oauth.clientId.trim() ? oauth : undefined },
+      transport: { ...transport, oauth },
     });
   };
 
@@ -294,9 +294,9 @@ function McpServerForm({
                     id="mcp-oauth-scopes"
                     aria-label="OAuth scopes"
                     className="h-10"
-                    value={transport.oauth?.scopes.join(', ') ?? ''}
+                    value={transport.oauth?.scopes.join(',') ?? ''}
                     placeholder="https://mail.google.com/, ..."
-                    onChange={(event) => updateOauth({ scopes: splitCommaList(event.target.value) })}
+                    onChange={(event) => updateOauth({ scopes: event.target.value.split(',') })}
                   />
                 </div>
               </div>
