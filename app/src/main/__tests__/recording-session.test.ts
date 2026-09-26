@@ -716,8 +716,10 @@ describe('RecordingSession', () => {
     const fakeAudioData = new Uint8Array(64);
     await listener({}, 1, command.recordingSessionId, command.sequence, fakeAudioData.buffer);
 
-    // Wait a brief moment
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The keyboard onStop path attaches onResult only when the session's own
+    // callback is unset; here the session owns delivery, so the hook's fire-
+    // and-forget end() must not produce a second transcription result.
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(onResult).toHaveBeenCalledTimes(1);
   });
@@ -1481,10 +1483,5 @@ describe('RecordingSession', () => {
     expect(result).toBeNull();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Network error during transcription' }));
     expect(session.isActive()).toBe(false);
-  });
-
-  it('no longer ships the legacy recording pill module', async () => {
-    const removedModulePath = '../recording-pill?removed';
-    await expect(import(removedModulePath)).rejects.toThrow();
   });
 });

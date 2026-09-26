@@ -7,7 +7,3 @@ export function markDictationResultPending(recordingSessionId: string): void {
 export function isDictationResultStillDeliverable(recordingSessionId: string): boolean {
   return latestDeliverableDictationSessionId === recordingSessionId;
 }
-
-export function resetDictationResultDeliveryForTests(): void {
-  latestDeliverableDictationSessionId = null;
-}

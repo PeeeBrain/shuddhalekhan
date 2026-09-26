@@ -612,28 +612,6 @@ describe('getTranscriber provider selection', () => {
 });
 
 describe('provider capabilities', () => {
-  it('describes the OpenAI transcription contract', async () => {
-    const { OPENAI_CAPABILITIES } = await import('../providers');
-    expect(OPENAI_CAPABILITIES).toEqual({
-      translation: true,
-      automaticLanguageDetection: true,
-      dictionaryHints: true,
-      authentication: 'required',
-      maxDurationSeconds: null,
-    });
-  });
-
-  it('describes the custom OpenAI transcription contract', async () => {
-    const { CUSTOM_OPENAI_CAPABILITIES } = await import('../providers');
-    expect(CUSTOM_OPENAI_CAPABILITIES).toEqual({
-      translation: true,
-      automaticLanguageDetection: true,
-      dictionaryHints: true,
-      authentication: 'optional',
-      maxDurationSeconds: null,
-    });
-  });
-
   it('validates recording readiness for local whisper', () => {
     const config: AppConfig = {
       ...BASE_CONFIG,

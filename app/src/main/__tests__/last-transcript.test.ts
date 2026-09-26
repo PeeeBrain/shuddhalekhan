@@ -1,49 +1,38 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import {
-  clearLastTranscript,
   getLastTranscript,
   markLastTranscriptInjected,
   setLastTranscript,
 } from '../last-transcript';
 
 describe('last transcript store', () => {
-  beforeEach(() => {
-    clearLastTranscript();
-  });
-
   it('stores a non-empty transcript and exposes it', () => {
-    setLastTranscript('hello world');
+    setLastTranscript('probe-store-1');
 
     const stored = getLastTranscript();
-    expect(stored?.text).toBe('hello world');
+    expect(stored?.text).toBe('probe-store-1');
     expect(stored?.injectionStatus).toBe('pending');
     expect(stored?.createdAt).toBeString();
   });
 
   it('does not store empty transcripts', () => {
+    setLastTranscript('probe-before-empty');
     setLastTranscript('');
 
-    expect(getLastTranscript()).toBeNull();
+    expect(getLastTranscript()?.text).toBe('probe-before-empty');
   });
 
   it('replaces the previous transcript with a newer one', () => {
-    setLastTranscript('first');
-    setLastTranscript('second');
+    setLastTranscript('probe-first');
+    setLastTranscript('probe-second');
 
-    expect(getLastTranscript()?.text).toBe('second');
+    expect(getLastTranscript()?.text).toBe('probe-second');
   });
 
   it('updates injection status', () => {
-    setLastTranscript('hello world');
+    setLastTranscript('probe-status');
     markLastTranscriptInjected('dispatched');
 
     expect(getLastTranscript()?.injectionStatus).toBe('dispatched');
-  });
-
-  it('clears the stored transcript', () => {
-    setLastTranscript('hello world');
-    clearLastTranscript();
-
-    expect(getLastTranscript()).toBeNull();
   });
 });

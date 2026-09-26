@@ -65,10 +65,4 @@ describe('Agent presenters', () => {
     presenter.cancelled('run-1');
     expect(shell.clearAgentRun).toHaveBeenCalledTimes(1);
   });
-
-  it('no longer exports the legacy toast presenter', async () => {
-    const presentationModule = await import(`../agent-presentation?test=${Date.now()}-contracted`);
-
-    expect('createLegacyToastPresenter' in presentationModule).toBe(false);
-  });
 });

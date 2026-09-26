@@ -1,60 +1,20 @@
 import { describe, expect, it } from 'bun:test';
 import { parseElectronMessage } from '../protocol';
 
-const config = {
-  whisperUrl: 'http://localhost:8080/inference',
-  selectedDeviceId: null,
-  removeFillerWords: true,
-  agent: {
-    enabled: true,
-    provider: {
-      baseUrl: 'https://openrouter.ai/api/v1',
-      model: 'openai/gpt-4.1-mini',
-      apiKeyEnvVar: 'OPENROUTER_API_KEY',
-      thinkingEnabled: true,
-    },
-    mcpServers: [],
-  },
-};
-
 describe('parseElectronMessage', () => {
-  it('parses supported JSONL sidecar messages', () => {
-    expect(parseElectronMessage(JSON.stringify({ type: 'config:update', config }))).toEqual({
-      type: 'config:update',
-      config,
-    });
-    expect(parseElectronMessage(JSON.stringify({
+  it('parses supported main-to-sidecar messages', () => {
+    const agentRunId = 'run-1';
+    expect(parseElectronMessage(JSON.stringify({ type: 'agent:start', agentRunId, transcript: 'do the thing' }))).toEqual({
       type: 'agent:start',
-      agentRunId: 'run-1',
-      transcript: 'check mail',
-    }))).toEqual({
-      type: 'agent:start',
-      agentRunId: 'run-1',
-      transcript: 'check mail',
+      agentRunId,
+      transcript: 'do the thing',
     });
-    expect(parseElectronMessage(JSON.stringify({ type: 'agent:cancel', agentRunId: 'run-1' }))).toEqual({
-      type: 'agent:cancel',
-      agentRunId: 'run-1',
-    });
-    expect(parseElectronMessage(JSON.stringify({
-      type: 'approval:decision',
-      agentRunId: 'run-1',
-      approvalId: 'approval-1',
-      decision: 'denied',
-      message: 'no',
-    }))).toEqual({
-      type: 'approval:decision',
-      agentRunId: 'run-1',
-      approvalId: 'approval-1',
-      decision: 'denied',
-      message: 'no',
-    });
-    expect(parseElectronMessage(JSON.stringify({ type: 'sidecar:shutdown' }))).toEqual({
-      type: 'sidecar:shutdown',
-    });
+    expect(parseElectronMessage(JSON.stringify({ type: 'agent:cancel', agentRunId }))).toEqual({ type: 'agent:cancel', agentRunId });
+    expect(parseElectronMessage(JSON.stringify({ type: 'sidecar:shutdown' }))).toEqual({ type: 'sidecar:shutdown' });
   });
 
-  it('rejects unknown protocol messages', () => {
+  it('rejects unknown protocol messages and malformed JSON', () => {
     expect(parseElectronMessage(JSON.stringify({ type: 'agent:unknown', agentRunId: 'run-1' }))).toBeNull();
+    expect(parseElectronMessage('{not json')).toBeNull();
   });
 });

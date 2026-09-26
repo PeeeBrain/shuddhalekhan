@@ -138,12 +138,3 @@ describe('recording presentation envelope', () => {
     expect(envelope.outcome).toEqual({ kind: 'completed' });
   });
 });
-
-describe('runtime gate contraction', () => {
-  it('no longer exports maintainer runtime gates or their runtime error helper', async () => {
-    const runtimeModule = await import(`../dictation-runtime?contracted=${Date.now()}`);
-
-    expect('parseMaintainerRuntimeGates' in runtimeModule).toBe(false);
-    expect('getDictationRuntimeError' in runtimeModule).toBe(false);
-  });
-});

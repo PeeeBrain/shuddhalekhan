@@ -1,7 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import type { DictationTargetSnapshot } from '../../types/ipc';
-import { resetDictationResultDeliveryForTests } from '../dictation-result-delivery';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
 
@@ -341,7 +340,6 @@ describe('main process IPC orchestration', () => {
     runtimeShellHandleAgentCardSize.mockClear();
     applyDictationFormatter.mockReset();
     applyDictationFormatter.mockResolvedValue({ kind: 'success', text: 'formatted text' });
-    resetDictationResultDeliveryForTests();
     getConfig.mockReturnValue(baseConfig);
 
     recordingSessionStart.mockClear();
@@ -464,7 +462,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await new Promise((resolve) => setTimeout(resolve, 120));
 
     expect(simulatePaste).toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
@@ -556,7 +553,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await new Promise((resolve) => setTimeout(resolve, 120));
 
     expect(agentStartRun).not.toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('transcribed text');
@@ -693,8 +689,11 @@ describe('main process IPC orchestration', () => {
 
     let releasePaste: () => void = () => undefined;
     const pasteGate = new Promise<void>((resolve) => { releasePaste = resolve; });
+    let markPasteStarted: () => void = () => undefined;
+    const pasteStarted = new Promise<void>((resolve) => { markPasteStarted = resolve; });
     captureForegroundTarget.mockReturnValue(defaultTargetSnapshot);
     simulatePaste.mockImplementation(async () => {
+      markPasteStarted();
       await pasteGate;
       return { acceptedEvents: 4 };
     });
@@ -703,7 +702,7 @@ describe('main process IPC orchestration', () => {
     handler?.({}, 'retry-paste');
     handler?.({}, 'retry-paste');
     releasePaste();
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await pasteStarted;
 
     expect(runtimeShellFinish).toHaveBeenCalledTimes(1);
     expect(simulatePaste).toHaveBeenCalledTimes(1);
@@ -1045,7 +1044,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
     expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
@@ -1063,7 +1061,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(notificationShow).not.toHaveBeenCalled();
     expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
@@ -1076,7 +1073,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     simulatePaste.mockClear();
     await trayHandlers.onCopyLastTranscript?.();
@@ -1092,7 +1088,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     notificationShow.mockClear();
     simulatePaste.mockReturnValue({ acceptedEvents: 0, errorCode: 5 });
@@ -1110,7 +1105,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
     expect(runtimeShellShowFailure.mock.calls[0]?.[1]).toContain('Clipboard changed before Shuddhalekhan could paste the transcript.');
@@ -1140,7 +1134,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
       recordingSessionId: 'session-corrected',
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(applyDictationFormatter).toHaveBeenCalledTimes(1);
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('buy eggs');
@@ -1176,7 +1169,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
       recordingSessionId: 'session-fallback',
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('complete raw transcript');
     expect(notificationShow).toHaveBeenCalledTimes(1);
@@ -1191,7 +1183,6 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
       recordingSessionId: 'session-batch',
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(applyDictationFormatter).not.toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('plain text');

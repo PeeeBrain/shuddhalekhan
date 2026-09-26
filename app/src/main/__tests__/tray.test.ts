@@ -33,6 +33,29 @@ const setConfig = vi.fn((key: keyof typeof config, value: never) => {
 });
 const send = vi.fn();
 
+type MenuItemSpec = {
+  label?: string;
+  submenu?: MenuItemSpec[];
+  click?: () => void;
+  checked?: boolean;
+  enabled?: boolean;
+  type?: string;
+};
+
+const menuAt = (): MenuItemSpec[] => (buildFromTemplate.mock.calls.at(-1)?.[0] ?? []) as MenuItemSpec[];
+const item = (label: string): MenuItemSpec & { click(): void } => {
+  const found = menuAt().find((entry) => entry.label === label);
+  if (!found) throw new Error(`Tray menu is missing item "${label}"`);
+  if (!found.click) throw new Error(`Tray item "${label}" has no click handler`);
+  return found as MenuItemSpec & { click(): void };
+};
+// Status labels are presence-only: they carry no click handler by design.
+const text = (label: string): MenuItemSpec => {
+  const found = menuAt().find((entry) => entry.label === label);
+  if (!found) throw new Error(`Tray menu is missing item "${label}"`);
+  return found;
+};
+
 installElectronMock();
 mock.module('fs', () => ({ existsSync }));
 mock.module('../config', () => ({
@@ -112,25 +135,25 @@ describe('tray', () => {
       { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
       { deviceId: 'speaker', label: 'Speaker', kind: 'audioinput' },
     ]);
-    const latestMenu = buildFromTemplate.mock.calls.at(-1)?.[0];
-    const deviceItems = latestMenu[4].submenu;
+    const latestMenu = menuAt();
+    const deviceItems = latestMenu.find((entry) => entry.label === 'Audio Devices')?.submenu ?? [];
+    const speakerItem = deviceItems.find((entry) => entry.label === 'Speaker');
 
     expect(deviceItems).toHaveLength(2);
-    expect(deviceItems[0].checked).toBe(true);
-    deviceItems[1].click();
+    expect(deviceItems[0]?.checked).toBe(true);
+    expect(speakerItem).toBeDefined();
+    speakerItem?.click?.();
 
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'speaker');
     expect(onSelectDevice).toHaveBeenCalledWith('speaker');
   });
 
-  it('keeps settings-owned actions out of the tray and handles exit', async () => {
+  it('handles exit from the tray', async () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-4`);
 
     createTray({ onOpenSettings: vi.fn() });
-    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu.some((item: { label?: string }) => item.label === 'Clean Transcription')).toBe(false);
-    menu[13].click();
+    item('Exit').click();
 
     expect(quit).toHaveBeenCalled();
   });
@@ -140,10 +163,9 @@ describe('tray', () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-settings`);
 
     createTray({ onOpenSettings: settingsHandler });
-    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[6].label).toBe('Agent Mode: Disabled');
-    menu[8].click();
+    expect(text('Agent Mode: Disabled')).toBeDefined();
+    item('Settings...').click();
     expect(settingsHandler).toHaveBeenCalled();
   });
 
@@ -156,16 +178,13 @@ describe('tray', () => {
       isShortcutsPaused: () => false,
       onTogglePause: togglePause,
     });
-    let menu = buildFromTemplate.mock.calls.at(-1)?.[0];
-
-    expect(menu[7]).toMatchObject({ label: 'Pause Global Shortcuts', type: 'checkbox', checked: false });
-    menu[7].click();
+    expect(item('Pause Global Shortcuts')).toMatchObject({ type: 'checkbox', checked: false });
+    item('Pause Global Shortcuts').click();
     expect(togglePause).toHaveBeenCalledWith(true);
 
     updateShortcutPauseState(true);
-    menu = buildFromTemplate.mock.calls.at(-1)?.[0];
-    expect(menu[7].checked).toBe(true);
-    menu[7].click();
+    expect(item('Pause Global Shortcuts').checked).toBe(true);
+    item('Pause Global Shortcuts').click();
     expect(togglePause).toHaveBeenLastCalledWith(false);
   });
 
@@ -180,10 +199,9 @@ describe('tray', () => {
       message: "You're on the latest version: Shuddhalekhan v4.0.0.",
       checkedAt: new Date().toISOString(),
     });
-    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[0].label).toBe('Shuddhalekhan v4.0.0');
-    expect(menu[1].label).toBe('Update status: latest (4.0.0)');
+    expect(text('Shuddhalekhan v4.0.0')).toBeDefined();
+    expect(text('Update status: latest (4.0.0)')).toBeDefined();
   });
 
   it('shows Check for Updates menu item that triggers the check handler', async () => {
@@ -191,11 +209,10 @@ describe('tray', () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-check-updates`);
 
     createTray({ onOpenSettings: vi.fn(), onCheckForUpdates: checkHandler });
-    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[2].label).toBe('Check for Updates');
-    expect(menu[2].enabled).toBe(true);
-    menu[2].click();
+    const checkItem = item('Check for Updates');
+    expect(checkItem.enabled).toBe(true);
+    checkItem.click();
     expect(checkHandler).toHaveBeenCalled();
   });
 
@@ -209,10 +226,8 @@ describe('tray', () => {
       message: 'Checking for updates...',
       checkedAt: null,
     });
-    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[2].label).toBe('Checking...');
-    expect(menu[2].enabled).toBe(false);
+    expect(item('Checking...')).toMatchObject({ enabled: false });
   });
 
   it('exposes paste and copy last transcript actions when handlers are provided', async () => {
@@ -221,16 +236,15 @@ describe('tray', () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-recovery`);
 
     createTray({ onOpenSettings: vi.fn(), onPasteLastTranscript: pasteHandler, onCopyLastTranscript: copyHandler });
-    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[10].label).toBe('Paste Last Transcript');
-    expect(menu[10].enabled).toBe(true);
-    menu[10].click();
+    const pasteItem = item('Paste Last Transcript');
+    expect(pasteItem.enabled).toBe(true);
+    pasteItem.click();
     expect(pasteHandler).toHaveBeenCalled();
 
-    expect(menu[11].label).toBe('Copy Last Transcript');
-    expect(menu[11].enabled).toBe(true);
-    menu[11].click();
+    const copyItem = item('Copy Last Transcript');
+    expect(copyItem.enabled).toBe(true);
+    copyItem.click();
     expect(copyHandler).toHaveBeenCalled();
   });
 
@@ -238,11 +252,8 @@ describe('tray', () => {
     const { createTray } = await import(`../tray?test=${Date.now()}-no-recovery`);
 
     createTray({ onOpenSettings: vi.fn() });
-    const menu = buildFromTemplate.mock.calls.at(-1)?.[0];
 
-    expect(menu[10].label).toBe('Paste Last Transcript');
-    expect(menu[10].enabled).toBe(false);
-    expect(menu[11].label).toBe('Copy Last Transcript');
-    expect(menu[11].enabled).toBe(false);
+    expect(item('Paste Last Transcript')).toMatchObject({ enabled: false });
+    expect(item('Copy Last Transcript')).toMatchObject({ enabled: false });
   });
 });

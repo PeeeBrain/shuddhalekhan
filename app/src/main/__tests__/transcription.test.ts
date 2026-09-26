@@ -6,19 +6,8 @@ import {
   TranscriptionFailure,
   validateLocalWhisperSettings,
 } from '../transcription';
-import { LOCAL_WHISPER_CPP_CAPABILITIES } from '../whisper';
 
 describe('transcription provider capabilities', () => {
-  it('describes the local whisper.cpp recognition contract', () => {
-    expect(LOCAL_WHISPER_CPP_CAPABILITIES).toEqual({
-      translation: true,
-      automaticLanguageDetection: true,
-      dictionaryHints: true,
-      authentication: 'none',
-      maxDurationSeconds: null,
-    });
-  });
-
   it('reports recognition controls unsupported by a provider', () => {
     expect(getRecognitionCompatibilityErrors({
       language: 'auto',

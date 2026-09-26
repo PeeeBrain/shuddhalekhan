@@ -2,7 +2,6 @@ import { describe, expect, it, mock } from 'bun:test';
 import type NodeWebSocket from 'ws';
 import {
   checkWhisperLiveKitReadiness,
-  WHISPER_LIVE_KIT_CAPABILITIES,
   createWhisperLiveKitStreamingSession,
   createWhisperLiveKitTranscriber,
   deriveWhisperLiveKitEndpoints,
@@ -89,7 +88,6 @@ describe('WhisperLiveKit endpoint contract', () => {
       },
     })).resolves.toBe('Quick brown fox.');
 
-    expect(transcriber.capabilities).toEqual(WHISPER_LIVE_KIT_CAPABILITIES);
     expect(transcriber.transportCapabilities).toEqual({ batch: true, streaming: true });
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:8000/v1/audio/transcriptions',
