@@ -93,13 +93,16 @@ describe('managed local runtime supervision', () => {
       await transcriber.warmup();
       expect(children).toHaveLength(1);
       expect(firstChild.sent[0]).toMatchObject({ kind: 'load', numThreads: 1 });
+      const next = transcriber.transcribe(request);
+      await transcriber.warmup();
+      expect(firstChild.sent).toHaveLength(2);
       const message = firstChild.sent.find(message => (
         message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe'
       ));
       if (!message || typeof message !== 'object' || !('requestId' in message)) throw new Error('No transcription request');
       firstChild.emit('message', { kind: 'result', requestId: message.requestId, text: 'original run', transcriptionMilliseconds: 8 });
       expect(await active).toBe('original run');
-      expect(await transcriber.transcribe(request)).toBe('hello world');
+      expect(await next).toBe('hello world');
       expect(children).toHaveLength(2);
       expect(children[1].sent[0]).toMatchObject({ kind: 'load', numThreads: 2 });
       await transcriber.transcribe(request);

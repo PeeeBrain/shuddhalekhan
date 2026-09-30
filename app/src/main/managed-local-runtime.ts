@@ -14,6 +14,7 @@ type RuntimeProcess = {
 type PendingRequest = {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
+  finished: Promise<void>;
   timeout: ReturnType<typeof setTimeout>;
 };
 
@@ -163,9 +164,15 @@ export function createManagedLocalTranscriber({
       maxDurationSeconds: null,
     },
     async transcribe({ audio, recognition }) {
+      // A cancelled recording can leave its decode running. Drain it before changing threads.
+      if (pending.size > 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads())) {
+        await Promise.all([...pending.values()].map(request => request.finished));
+      }
       await ensureReady();
       if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
       const requestId = randomUUID();
+      let finishRequest!: () => void;
+      const finished = new Promise<void>(resolve => { finishRequest = resolve; });
       const result = new Promise<string>((resolve, reject) => {
         const timeout = setTimeout(() => {
           const process = child;
@@ -173,7 +180,12 @@ export function createManagedLocalTranscriber({
           if (process) reset(process, error, true);
           else reject(error);
         }, transcriptionTimeoutMs);
-        pending.set(requestId, { resolve, reject, timeout });
+        pending.set(requestId, {
+          resolve: text => { finishRequest(); resolve(text); },
+          reject: error => { finishRequest(); reject(error); },
+          finished,
+          timeout,
+        });
       });
       child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer });
       const text = (await result).trim();
