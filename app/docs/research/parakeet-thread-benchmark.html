@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parakeet CPU thread benchmark</title>
+  <style>
+    :root { color-scheme: light; color: #182a35; background: #f3f2ec; font-family: Georgia, serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: clamp(20px, 5vw, 64px); }
+    main { max-width: 1100px; margin: auto; }
+    .eyebrow, label, select, .hint, table, footer { font-family: "Segoe UI", sans-serif; }
+    .eyebrow { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #526570; }
+    h1 { font-size: clamp(32px, 4vw, 52px); font-weight: 500; letter-spacing: -.035em; margin: 16px 0; }
+    p { max-width: 850px; line-height: 1.6; font-size: 18px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 20px; margin: 28px 0 16px; }
+    label { display: grid; gap: 8px; font-size: 13px; font-weight: 600; }
+    select { color: inherit; background: white; border: 1px solid #aebbc0; border-radius: 4px; padding: 10px; font-size: 15px; }
+    select:focus-visible, summary:focus-visible { outline: 3px solid #007d91; outline-offset: 3px; }
+    .plot { background: white; border: 1px solid #d3d9d9; padding: clamp(12px, 2vw, 24px); }
+    .canvas-wrap { position: relative; height: clamp(340px, 48vw, 510px); }
+    .hint { color: #526570; font-size: 13px; margin-bottom: 0; }
+    .takeaway { border-left: 3px solid #007d91; padding-left: 18px; margin: 28px 0; }
+    details { margin-top: 24px; }
+    summary { cursor: pointer; padding: 8px 0; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+    th, td { text-align: right; padding: 12px; border-bottom: 1px solid #d3d9d9; }
+    th:first-child, td:first-child { text-align: left; }
+    tr.recommended { background: #e0eff0; }
+    footer { font-size: 12px; line-height: 1.7; color: #526570; margin-top: 28px; }
+    #load-error { color: #8e342c; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Managed Parakeet / CPU experiment / 2026-09-30</div>
+  <h1>Start with four threads.</h1>
+  <p>On this Ryzen 7 7840HS, four threads was fastest for both short recordings. Six helped the long recording slightly. Allocating every logical processor made all three recordings slower than using four.</p>
+  <div class="controls">
+    <label for="clips">Recordings
+      <select id="clips">
+        <option value="short">Short dictation: both recordings</option>
+        <option value="all">All three recordings</option>
+        <option value="0">3.845 s recording</option>
+        <option value="1">5.376 s recording</option>
+        <option value="2">16.128 s constructed recording</option>
+      </select>
+    </label>
+    <label for="metric">Vertical axis
+      <select id="metric">
+        <option value="latency">Inference latency (lower is better)</option>
+        <option value="speedup">Speedup over one thread (higher is better)</option>
+      </select>
+    </label>
+  </div>
+  <section class="plot" aria-label="Thread-count benchmark scatter plot">
+    <div class="canvas-wrap"><canvas id="benchmark" role="img" aria-label="Median warm inference latency by thread count. Exact values are in the measurements table below."></canvas></div>
+    <p class="hint">Hover or tap a point for exact values. The dashed line marks four threads. Use speedup to compare recordings on the same scale.</p>
+    <p id="load-error" hidden>The interactive chart could not load. Connect to the internet and reload, or use the exact measurements below.</p>
+    <noscript><p>Enable JavaScript for the interactive chart. Exact values are also in the Markdown report.</p></noscript>
+  </section>
+  <p class="takeaway"><strong>For this laptop:</strong> keep four as the starting setting. Six reduced long-recording latency from 767 to 733 ms, about 4.4%, while using about 41% more process CPU time. Two is a useful lower-resource setting if leaving CPU capacity for other apps matters more than latency.</p>
+  <details>
+    <summary>Exact measurements, in milliseconds</summary>
+    <div class="table-wrap"><table>
+      <caption>Median of seven warm passes per recording, default CPU provider</caption>
+      <thead><tr><th scope="col">Threads</th><th scope="col">3.845 s</th><th scope="col">5.376 s</th><th scope="col">16.128 s constructed</th></tr></thead>
+      <tbody id="measurements"></tbody>
+    </table></div>
+  </details>
+  <footer>AMD Ryzen 7 7840HS, 8 physical cores / 16 logical CPUs. INT8 Parakeet v3, sherpa-onnx-node 1.13.8, ONNX Runtime 1.28.2.<br>
+    Warm native inference only; microphone startup and model loading are excluded. Ordinary activity and temperature were not controlled. This is one CPU's result, not a universal x64 optimum.<br>
+    Chart.js 4.5.1 loads from jsDelivr and requires internet access. The benchmark data is embedded in this file. <a href="parakeet-quality-and-cpu.md">Read the full report</a>.</footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<script>
+  const threads = [1, 2, 4, 6, 8, 12, 16];
+  const recordings = [
+    { label: '3.845 s recording', values: [504, 269, 211, 215, 272, 266, 413], color: '#007d91', shape: 'circle' },
+    { label: '5.376 s recording', values: [660, 374, 270, 301, 303, 363, 543], color: '#a45423', shape: 'rectRot' },
+    { label: '16.128 s constructed recording', values: [1785, 1065, 767, 733, 779, 782, 1117], color: '#514988', shape: 'triangle' },
+  ];
+  document.getElementById('measurements').innerHTML = threads.map((count, i) =>
+    `<tr class="${count === 4 ? 'recommended' : ''}"><th scope="row">${count}</th>${recordings.map(recording => `<td>${recording.values[i].toLocaleString('en-US')}</td>`).join('')}</tr>`
+  ).join('');
+  if (typeof Chart === 'undefined') {
+    document.getElementById('load-error').hidden = false;
+  } else {
+    Chart.defaults.font.family = 'Segoe UI, sans-serif';
+    Chart.defaults.color = '#526570';
+    const chart = new Chart(document.getElementById('benchmark'), {
+      type: 'scatter',
+      data: { datasets: [] },
+      plugins: [{
+        id: 'fourThreads',
+        beforeDatasetsDraw(chart) {
+          const x = chart.scales.x.getPixelForValue(4);
+          const { ctx, chartArea } = chart;
+          ctx.save();
+          ctx.strokeStyle = '#74878e';
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke();
+          ctx.restore();
+        },
+      }],
+      options: {
+        animation: false, responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: { type: 'linear', min: 0, max: 17, title: { display: true, text: 'Inference threads' },
+            afterBuildTicks: axis => { axis.ticks = threads.map(value => ({ value })); }, grid: { display: false } },
+          y: { beginAtZero: true, title: { display: true, text: '' }, grid: { color: '#e8eded' } },
+        },
+        plugins: {
+          legend: { position: 'bottom', onClick: () => {}, labels: { usePointStyle: true, padding: 20 } },
+          tooltip: { callbacks: {
+            title: items => `${items[0].raw.x} inference threads`,
+            label: item => `${item.dataset.label}: ${item.raw.ms.toLocaleString('en-US')} ms; ${item.raw.speedup.toFixed(2)}× speedup over one thread`,
+          } },
+        },
+      },
+    });
+    function updateChart() {
+      const selection = document.getElementById('clips').value;
+      const speedup = document.getElementById('metric').value === 'speedup';
+      chart.data.datasets = recordings.filter((_, i) => selection === 'all' || (selection === 'short' ? i < 2 : i === Number(selection))).map(recording => ({
+        label: recording.label, backgroundColor: recording.color, borderColor: recording.color,
+        pointStyle: recording.shape, pointRadius: 6, pointHoverRadius: 9,
+        data: threads.map((x, i) => ({ x, y: speedup ? recording.values[0] / recording.values[i] : recording.values[i],
+          ms: recording.values[i], speedup: recording.values[0] / recording.values[i] })),
+      }));
+      chart.options.scales.y.title.text = speedup ? 'Speedup over one thread (×, higher is better)' : 'Median warm inference latency (ms, lower is better)';
+      document.getElementById('benchmark').setAttribute('aria-label', chart.options.scales.y.title.text + ' by thread count. Exact values are in the measurements table below.');
+      chart.update();
+    }
+    document.getElementById('clips').addEventListener('change', updateChart);
+    document.getElementById('metric').addEventListener('change', updateChart);
+    updateChart();
+  }
+</script>
+</body>
+</html>

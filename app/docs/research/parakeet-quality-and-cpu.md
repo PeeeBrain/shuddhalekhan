@@ -66,6 +66,12 @@ An open [NVIDIA NeMo issue](https://github.com/NVIDIA-NeMo/Speech/issues/15757) 
 
 ## CPU speed: measured options
 
+Start with **four threads on this laptop**. Both short recordings were fastest at four; the long recording was slightly faster at six, with higher CPU use. The best count on other x64 devices still needs measurement.
+
+[Open the interactive Chart.js scatter plot](parakeet-thread-benchmark.html). Open the downloaded HTML file in a browser; GitHub's file viewer displays its source. Choose recordings, hover over points, or switch to speedup to compare all recording lengths on the same scale. The chart loads Chart.js from a pinned CDN URL and requires internet access.
+
+![Scatter plots of median inference latency by thread count, with four threads marked. Both short recordings reach their minimum at four threads; the constructed long recording reaches its minimum at six.](assets/parakeet-thread-latency.png)
+
 Median warm latency in milliseconds, seven passes per clip, default provider settings:
 
 | Threads | 3.845 s clip | 5.376 s clip | 16.128 s constructed clip |
