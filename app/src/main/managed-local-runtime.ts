@@ -104,7 +104,12 @@ export function createManagedLocalTranscriber({
     if (ready && child && !resolveReady && pending.size === 0 && runtimeThreads !== numThreads) {
       reset(child, new TranscriptionFailure('model', 'Local speech recognition settings changed.'), true);
     }
-    if (ready) return ready;
+    if (ready) {
+      const startup = ready;
+      return startup.then(() => {
+        if (ready !== startup || (pending.size === 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads()))) return ensureReady();
+      });
+    }
     runtimeThreads = numThreads;
     const startupToken = {};
     activeStartup = startupToken;
@@ -145,7 +150,7 @@ export function createManagedLocalTranscriber({
       }
     })();
     ready = startup;
-    return startup;
+    return startup.then(ensureReady);
   };
 
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void> } = {

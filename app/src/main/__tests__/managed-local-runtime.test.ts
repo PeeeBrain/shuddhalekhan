@@ -10,6 +10,7 @@ class FakeUtilityProcess extends EventEmitter {
 
   postMessage(message: unknown): void {
     this.sent.push(message);
+    this.emit('sent', message);
     if (!message || typeof message !== 'object' || !('kind' in message)) return;
     if (message.kind === 'load' && this.respondToLoad) {
       queueMicrotask(() => this.emit('message', { kind: 'ready', loadMilliseconds: 12 }));
@@ -31,6 +32,39 @@ class FakeUtilityProcess extends EventEmitter {
 }
 
 describe('managed local runtime supervision', () => {
+  it.skipIf(availableParallelism() < 2)('uses new thread settings for a transcription waiting on startup', async () => {
+    let numThreads = 1;
+    const children: FakeUtilityProcess[] = [];
+    const firstChild = new FakeUtilityProcess();
+    firstChild.respondToLoad = false;
+    const loading = new Promise<void>(resolve => firstChild.once('sent', () => resolve()));
+    const transcriber = createManagedLocalTranscriber({
+      getModelPath: async () => 'C:\\models\\parakeet',
+      getNumThreads: () => numThreads,
+      startProcess: () => {
+        const child = children.length > 0 ? new FakeUtilityProcess() : firstChild;
+        children.push(child);
+        return child;
+      },
+    });
+    try {
+      const warmup = transcriber.warmup();
+      await loading;
+      numThreads = 2;
+      const transcription = transcriber.transcribe({
+        audio: new Uint8Array([1]),
+        recognition: { language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false },
+      });
+      children[0].emit('message', { kind: 'ready', loadMilliseconds: 12 });
+      await warmup;
+      expect(await transcription).toBe('hello world');
+      expect(children).toHaveLength(2);
+      expect(children[0].sent).toEqual([{ kind: 'load', modelPath: 'C:\\models\\parakeet', numThreads: 1 }]);
+      expect(children[1].sent[0]).toMatchObject({ kind: 'load', numThreads: 2 });
+    } finally {
+      await transcriber.shutdown();
+    }
+  });
   it.skipIf(availableParallelism() < 2)('applies inference thread settings on next use without interrupting a run', async () => {
     let numThreads = 1;
     const children: FakeUtilityProcess[] = [];

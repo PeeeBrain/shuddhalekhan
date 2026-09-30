@@ -185,7 +185,7 @@ function tabByLabel(label: string) {
 }
 
 describe('Settings navigation', () => {
-  it('saves inference thread settings when the slider is released and can restore defaults', async () => {
+  it('saves inference threads on release and can retry restoring defaults after a failed save', async () => {
     const { settingsIpc } = renderSettings({ config: baseConfig({
       transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
     }) });
@@ -199,8 +199,15 @@ describe('Settings navigation', () => {
     await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('managedLocalThreads', 8));
     fireEvent.keyUp(slider, { key: 'ArrowRight' });
     expect(settingsIpc.setConfig).toHaveBeenCalledTimes(1);
+    spyOn(settingsIpc, 'setConfig').mockRejectedValueOnce(new Error('Save failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'Use default' }));
+    await screen.findByText('Could not save this setting.');
+    expect(screen.getByRole('button', { name: 'Use default' }).hasAttribute('disabled')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Use default' }));
     await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('managedLocalThreads', null));
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByText('Could not save this setting.')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Use default' }).hasAttribute('disabled')).toBe(true);
     expect(slider).toHaveValue('4');
   });
   it('guides fresh installs through local model setup before normal settings', async () => {

@@ -714,7 +714,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
             <Button
               variant="ghost"
               size="sm"
-              disabled={config.managedLocalThreads == null && draftThreads === null}
+              disabled={config.managedLocalThreads == null && draftThreads === null && !threadsError}
               onClick={() => {
                 setDraftThreads(null);
                 void persistence.commit('managedLocalThreads', null, FIELD_ID_LOCAL_THREADS);

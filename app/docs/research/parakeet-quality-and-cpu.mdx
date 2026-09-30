@@ -1,3 +1,93 @@
+import { useEffect, useId, useRef, useState } from 'react';
+import Chart from 'chart.js/auto';
+
+export const benchmarkThreads = [1, 2, 4, 6, 8, 12, 16];
+
+export const benchmarkRecordings = [
+  { label: '3.845 s recording', values: [504, 269, 211, 215, 272, 266, 413], color: '#007d91', shape: 'circle' },
+  { label: '5.376 s recording', values: [660, 374, 270, 301, 303, 363, 543], color: '#a45423', shape: 'rectRot' },
+  { label: '16.128 s constructed recording', values: [1785, 1065, 767, 733, 779, 782, 1117], color: '#514988', shape: 'triangle' },
+];
+
+export function ParakeetThreadChart() {
+  const canvasRef = useRef(null);
+  const id = useId();
+  const [selection, setSelection] = useState('short');
+  const [metric, setMetric] = useState('latency');
+  const speedup = metric === 'speedup';
+  const axisLabel = speedup ? 'Speedup over one thread (×, higher is better)' : 'Median warm inference latency (ms, lower is better)';
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const chart = new Chart(canvas, {
+        type: 'scatter',
+        data: {
+          datasets: benchmarkRecordings.filter((_, i) => selection === 'all' || (selection === 'short' ? i < 2 : i === Number(selection))).map(recording => ({
+            label: recording.label, backgroundColor: recording.color, borderColor: recording.color,
+            pointStyle: recording.shape, pointRadius: 6, pointHoverRadius: 9,
+            data: benchmarkThreads.map((x, i) => ({ x, y: speedup ? recording.values[0] / recording.values[i] : recording.values[i],
+              ms: recording.values[i], speedup: recording.values[0] / recording.values[i] })),
+          })),
+        },
+        plugins: [{
+          id: 'fourThreads',
+          beforeDatasetsDraw(chart) {
+            const x = chart.scales.x.getPixelForValue(4);
+            const { ctx, chartArea } = chart;
+            ctx.save();
+            ctx.strokeStyle = '#74878e';
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke();
+            ctx.restore();
+          },
+        }],
+        options: {
+          animation: false, responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'nearest', intersect: false },
+          scales: {
+            x: { type: 'linear', min: 0, max: 17, title: { display: true, text: 'Inference threads' },
+              afterBuildTicks: axis => { axis.ticks = benchmarkThreads.map(value => ({ value })); }, grid: { display: false } },
+            y: { beginAtZero: true, title: { display: true, text: axisLabel } },
+          },
+          plugins: {
+            legend: { position: 'bottom', onClick: () => {}, labels: { usePointStyle: true, padding: 20 } },
+            tooltip: { callbacks: {
+              title: items => `${items[0].raw.x} inference threads`,
+              label: item => `${item.dataset.label}: ${item.raw.ms.toLocaleString('en-US')} ms; ${item.raw.speedup.toFixed(2)}× speedup over one thread`,
+            } },
+          },
+        },
+    });
+    return () => chart.destroy();
+  }, [selection, speedup, axisLabel]);
+  return (
+    <section aria-label="Thread-count benchmark scatter plot" style={{ border: '1px solid #d3d9d9', borderRadius: 6, padding: 20, margin: '24px 0', background: '#fff', color: '#182a35' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, marginBottom: 20 }}>
+        <label htmlFor={`${id}-clips`} style={{ display: 'grid', gap: 8 }}>
+          Recordings
+          <select id={`${id}-clips`} value={selection} onChange={event => setSelection(event.target.value)} style={{ padding: 8, background: '#fff', color: '#182a35' }}>
+            <option value="short">Short dictation: both recordings</option>
+            <option value="all">All three recordings</option>
+            <option value="0">3.845 s recording</option>
+            <option value="1">5.376 s recording</option>
+            <option value="2">16.128 s constructed recording</option>
+          </select>
+        </label>
+        <label htmlFor={`${id}-metric`} style={{ display: 'grid', gap: 8 }}>
+          Vertical axis
+          <select id={`${id}-metric`} value={metric} onChange={event => setMetric(event.target.value)} style={{ padding: 8, background: '#fff', color: '#182a35' }}>
+            <option value="latency">Inference latency (lower is better)</option>
+            <option value="speedup">Speedup over one thread (higher is better)</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ position: 'relative', height: 420 }}>
+        <canvas ref={canvasRef} role="img" aria-label={`${axisLabel} by thread count. Exact values are in the table below.`} />
+      </div>
+      <p style={{ fontSize: 14 }}>Hover or tap a point for exact values. The dashed line marks four threads. Use speedup to compare recordings on the same scale.</p>
+    </section>
+  );
+}
+
 # Managed Parakeet quality and CPU experiments
 
 Date: 2026-09-30. Scope: improvements for x64 CPUs generally. This laptop supplies measurements; its thread-count optimum is not a universal default.
@@ -68,9 +158,11 @@ An open [NVIDIA NeMo issue](https://github.com/NVIDIA-NeMo/Speech/issues/15757) 
 
 Start with **four threads on this laptop**. Both short recordings were fastest at four; the long recording was slightly faster at six, with higher CPU use. The best count on other x64 devices still needs measurement.
 
-[Open the interactive Chart.js scatter plot](parakeet-thread-benchmark.html). Open the downloaded HTML file in a browser; GitHub's file viewer displays its source. Choose recordings, hover over points, or switch to speedup to compare all recording lengths on the same scale. The chart loads Chart.js from a pinned CDN URL and requires internet access.
+<ParakeetThreadChart />
 
-![Scatter plots of median inference latency by thread count, with four threads marked. Both short recordings reach their minimum at four threads; the constructed long recording reaches its minimum at six.](assets/parakeet-thread-latency.png)
+This MDX report embeds the interactive Chart.js scatter plot directly. View it with a React-based MDX renderer with GitHub-flavored Markdown tables enabled. React and Chart.js resolve from the workspace's installed dependencies; run `bun install` first. GitHub's file viewer shows the source and tables rather than running the component.
+
+In Cursor, install [Modern MDX Preview](https://open-vsx.org/extension/ggfincke/vsc-mdx-preview), trust this repository, and enable `mdx-preview.preview.enableScripts`. Open this file and run **MDX: Open MDX Preview** from the Command Palette, or press **Ctrl+K**, then **X**. Chart.js loads locally, so the chart needs no CDN access or relaxed preview security policy.
 
 Median warm latency in milliseconds, seven passes per clip, default provider settings:
 
