@@ -1,7 +1,7 @@
-import { availableParallelism } from 'os';
 import { join } from 'path';
 import { OfflineRecognizer } from 'sherpa-onnx-node';
 import { decodePcm16Wave } from './managed-local-wave';
+import { isManagedLocalThreadCount } from './managed-local-threads';
 
 const port = process.parentPort;
 if (!port) throw new Error('Local speech recognition must run as an Electron utility process.');
@@ -25,7 +25,7 @@ async function handleMessage(message: unknown): Promise<void> {
             joiner: join(message.modelPath, 'joiner.int8.onnx'),
           },
           tokens: join(message.modelPath, 'tokens.txt'),
-          numThreads: Math.max(1, Math.min(4, availableParallelism() - 1)),
+          numThreads: message.numThreads,
           provider: 'cpu',
           modelType: 'nemo_transducer',
           debug: false,
@@ -62,11 +62,12 @@ async function handleMessage(message: unknown): Promise<void> {
   }
 }
 
-function isLoadMessage(message: unknown): message is { kind: 'load'; modelPath: string } {
+function isLoadMessage(message: unknown): message is { kind: 'load'; modelPath: string; numThreads: number } {
   return Boolean(
     message && typeof message === 'object'
     && 'kind' in message && message.kind === 'load'
-    && 'modelPath' in message && typeof message.modelPath === 'string',
+    && 'modelPath' in message && typeof message.modelPath === 'string'
+    && 'numThreads' in message && isManagedLocalThreadCount(message.numThreads),
   );
 }
 

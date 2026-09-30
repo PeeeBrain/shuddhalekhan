@@ -134,16 +134,19 @@ function createMockSettingsIpc(
     onMcpStatusSnapshot: mock(() => undefined),
     onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
     getManagedLocalModel: mock(() => Promise.resolve({
+      inference: { maxThreads: 16, defaultThreads: 4 },
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: options.managedLocalModelReady
         ? { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' }
         : { kind: 'missing' as const, modelId: 'test' },
     })),
     installManagedLocalModel: mock(() => Promise.resolve({
+      inference: { maxThreads: 16, defaultThreads: 4 },
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' },
     })),
     deleteManagedLocalModel: mock(() => Promise.resolve({
+      inference: { maxThreads: 16, defaultThreads: 4 },
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: { kind: 'missing' as const, modelId: 'test' },
     })),
@@ -182,6 +185,24 @@ function tabByLabel(label: string) {
 }
 
 describe('Settings navigation', () => {
+  it('saves inference thread settings when the slider is released and can restore defaults', async () => {
+    const { settingsIpc } = renderSettings({ config: baseConfig({
+      transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+    }) });
+    const slider = await screen.findByRole('slider', { name: 'Inference threads' });
+    expect(slider).toHaveAttribute('min', '1');
+    expect(slider).toHaveAttribute('max', '16');
+    expect(slider).toHaveValue('4');
+    fireEvent.change(slider, { target: { value: '8' } });
+    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    fireEvent.pointerUp(slider);
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('managedLocalThreads', 8));
+    fireEvent.keyUp(slider, { key: 'ArrowRight' });
+    expect(settingsIpc.setConfig).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Use default' }));
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('managedLocalThreads', null));
+    expect(slider).toHaveValue('4');
+  });
   it('guides fresh installs through local model setup before normal settings', async () => {
     renderSettings({ config: baseConfig({
       onboarding: { status: 'pending' },

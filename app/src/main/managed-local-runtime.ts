@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { cleanFillerWords, TranscriptionFailure, type Transcriber } from './transcription';
 import { emitPerformanceMarker } from './performance/marker-collector';
+import { resolveManagedLocalThreads } from './managed-local-threads';
 
 type RuntimeProcess = {
   postMessage(message: unknown): void;
@@ -18,17 +19,20 @@ type PendingRequest = {
 
 export function createManagedLocalTranscriber({
   getModelPath,
+  getNumThreads = () => resolveManagedLocalThreads(null),
   startProcess = defaultStartProcess,
   loadTimeoutMs = 120_000,
   transcriptionTimeoutMs = 120_000,
 }: {
   getModelPath: () => Promise<string>;
+  getNumThreads?: () => number;
   startProcess?: () => RuntimeProcess | Promise<RuntimeProcess>;
   loadTimeoutMs?: number;
   transcriptionTimeoutMs?: number;
 }) {
   let child: RuntimeProcess | null = null;
   let ready: Promise<void> | null = null;
+  let runtimeThreads: number | null = null;
   let resolveReady: (() => void) | null = null;
   let rejectReady: ((error: Error) => void) | null = null;
   let loadTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -50,6 +54,7 @@ export function createManagedLocalTranscriber({
     if (child !== process) return;
     child = null;
     ready = null;
+    runtimeThreads = null;
     activeStartup = null;
     if (loadTimeout) clearTimeout(loadTimeout);
     loadTimeout = null;
@@ -94,7 +99,13 @@ export function createManagedLocalTranscriber({
   };
 
   const ensureReady = (): Promise<void> => {
+    const numThreads = resolveManagedLocalThreads(getNumThreads());
+    // Reload on next use; a settings change must not interrupt active inference or startup.
+    if (ready && child && !resolveReady && pending.size === 0 && runtimeThreads !== numThreads) {
+      reset(child, new TranscriptionFailure('model', 'Local speech recognition settings changed.'), true);
+    }
     if (ready) return ready;
+    runtimeThreads = numThreads;
     const startupToken = {};
     activeStartup = startupToken;
     const startup = (async () => {
@@ -123,7 +134,7 @@ export function createManagedLocalTranscriber({
             'Local speech recognition timed out while loading. Retry Dictation.',
           ), true);
         }, loadTimeoutMs);
-        process.postMessage({ kind: 'load', modelPath });
+        process.postMessage({ kind: 'load', modelPath, numThreads });
         await loaded;
       } catch (error) {
         if (activeStartup === startupToken) {

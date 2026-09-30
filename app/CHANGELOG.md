@@ -19,6 +19,7 @@ tags and commit history, not from this file. Keep new entries under
 - "Reconnect / Test" on an MCP server card is now a single honest "Reconnect" that reconnects only that server over the running sidecar, instead of restarting the whole sidecar and resetting every server's connection.
 
 ### Settings
+- Managed Local now offers an inference-thread slider, a restore-default button, and guidance on CPU use and speed. Changes apply to the next transcription without interrupting an active inference.
 - Agent run history now reports load and copy failures in the UI instead of failing silently, keeps one status per run ("Running", "Empty Response"), and no longer renders the final response block as a light panel in dark mode.
 - Settings surfaces share one visual vocabulary: consistent theme tokens for success and warning states, one disclosure pattern for advanced blocks, one select control in Shortcuts, less duplicated helper copy, a simpler device row in Audio, and visible feedback when an update check fails.
 

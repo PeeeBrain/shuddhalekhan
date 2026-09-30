@@ -47,6 +47,8 @@ Install-time defaults are resolved from config-file existence: a genuinely new i
 
 Managed Local owns one pinned model manifest outside the renderer, stores verified model files under app data, and runs sherpa-onnx inference in an Electron utility process. Electron main retains recording-session and exact-target insertion ownership. When selected, the model begins loading after the main runtime and shell are ready; an early recording shares that load. The utility process receives structured load/transcribe messages and returns only readiness, content-free timing diagnostics, failures, and the final transcript. It is restarted on the next request after a crash. Managed Local is Batch-only; Corrected Dictation may format its finalized transcript, while Live remains limited to providers with the committed/tentative streaming contract.
 
+Settings can persist `managedLocalThreads` as a whole-number CPU inference thread count, bounded by available logical processors. Missing/null uses the existing automatic limit, `max(1, min(4, available logical processors - 1))`. Main passes the effective count with the utility-process load message. A change reloads the model on next use without interrupting an active inference or model load; it does not select dedicated processors or change the decoding algorithm.
+
 Fresh installs remain in guided onboarding until a real Dictation is successfully inserted. Onboarding recommends the pinned model, shows size and language coverage, performs a live default-microphone check, explains the configured shortcut, and observes completion from the existing insertion result. Advanced provider settings remain reachable without changing the saved onboarding state.
 
 ### Agent (Jarvis)

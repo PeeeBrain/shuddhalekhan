@@ -2,12 +2,15 @@ import { TranscriptionFailure } from './transcription';
 import { createManagedLocalModelManager } from './managed-local-model';
 import { createManagedLocalTranscriber } from './managed-local-runtime';
 import type { ManagedLocalModelState } from '../types/ipc';
+import { getConfig } from './config';
+import { resolveManagedLocalThreads } from './managed-local-threads';
 
 type ModelManager = ReturnType<typeof createManagedLocalModelManager>;
 
 let modelManager: ModelManager | null = null;
 
 export const managedLocalTranscriber = createManagedLocalTranscriber({
+  getNumThreads: () => resolveManagedLocalThreads(getConfig().managedLocalThreads),
   async getModelPath() {
     const state = await requireModelManager().getState();
     if (state.kind !== 'ready') {

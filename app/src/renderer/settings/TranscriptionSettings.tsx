@@ -56,6 +56,7 @@ const FIELD_ID_GOOGLE_MODEL = 'google-model';
 const FIELD_ID_NVIDIA_ENDPOINT = 'nvidia-endpoint';
 const FIELD_ID_NVIDIA_MODEL = 'nvidia-model';
 const FIELD_ID_PROVIDER = 'provider';
+const FIELD_ID_LOCAL_THREADS = 'managed-local-threads';
 const FIELD_ID_DICTATION_MODE = 'dictation-mode';
 const FIELD_ID_FORMATTER_BASE_URL = 'formatter-base-url';
 const FIELD_ID_FORMATTER_MODEL = 'formatter-model';
@@ -459,7 +460,7 @@ export function TranscriptionSettings({
       <SettingsPanel className="overflow-hidden">
         {provider === 'managed-local' ? (
           <>
-            <ManagedLocalSection settingsIpc={settingsIpc} />
+            <ManagedLocalSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
             <Disclosure label="Advanced providers" className="border-b border-border/70 py-4">
               <ProviderSelector
                 config={config}
@@ -611,9 +612,22 @@ export function TranscriptionSettings({
   );
 }
 
-function ManagedLocalSection({ settingsIpc }: { settingsIpc: SettingsSectionProps['settingsIpc'] }) {
+function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<SettingsSectionProps, 'config' | 'persistence' | 'settingsIpc'>) {
   const [snapshot, setSnapshot] = useState<ManagedLocalModelSnapshot | null>(null);
   const [error, setError] = useState('');
+  const [draftThreads, setDraftThreads] = useState<number | null>(null);
+  const threadsId = useId();
+  const threadsDescriptionId = useId();
+  const threadsErrorId = useId();
+  const threadsError = persistence.fieldErrors[FIELD_ID_LOCAL_THREADS];
+  const threads = draftThreads ?? config.managedLocalThreads ?? snapshot?.inference.defaultThreads ?? 1;
+  const saveThreads = () => {
+    if (draftThreads === null) return;
+    const next = draftThreads;
+    setDraftThreads(null);
+    if (next === (config.managedLocalThreads ?? snapshot?.inference.defaultThreads) && !threadsError) return;
+    void persistence.commit('managedLocalThreads', next, FIELD_ID_LOCAL_THREADS);
+  };
 
   useEffect(() => {
     void settingsIpc.getManagedLocalModel().then(setSnapshot).catch(() => {
@@ -672,6 +686,49 @@ function ManagedLocalSection({ settingsIpc }: { settingsIpc: SettingsSectionProp
       {snapshot?.state.kind === 'ready' ? <p className="mt-3 text-xs text-success">Ready offline</p> : null}
       {snapshot?.state.kind === 'error' ? <p className="mt-3 text-xs text-destructive" role="alert">{snapshot.state.message}</p> : null}
       {error ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
+      {snapshot ? (
+        <div className="mt-4 max-w-xl space-y-2">
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor={threadsId}>Inference threads</Label>
+            <output htmlFor={threadsId} className="text-sm tabular-nums">{threads}</output>
+          </div>
+          <input
+            id={threadsId}
+            type="range"
+            min={1}
+            max={snapshot.inference.maxThreads}
+            step={1}
+            value={threads}
+            disabled={snapshot.inference.maxThreads === 1}
+            aria-valuetext={`${threads} inference ${threads === 1 ? 'thread' : 'threads'}`}
+            aria-describedby={`${threadsDescriptionId}${threadsError ? ` ${threadsErrorId}` : ''}`}
+            aria-invalid={threadsError ? true : undefined}
+            className="w-full accent-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+            onChange={(event) => setDraftThreads(Number(event.currentTarget.value))}
+            onPointerUp={saveThreads}
+            onKeyUp={saveThreads}
+            onBlur={saveThreads}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>{snapshot.inference.maxThreads} logical processors available · Default: {snapshot.inference.defaultThreads}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={config.managedLocalThreads == null && draftThreads === null}
+              onClick={() => {
+                setDraftThreads(null);
+                void persistence.commit('managedLocalThreads', null, FIELD_ID_LOCAL_THREADS);
+              }}
+            >Use default</Button>
+          </div>
+          <p id={threadsDescriptionId} className="text-xs text-muted-foreground">
+            Fewer threads leave more CPU capacity for other apps. More may shorten transcription, but increase CPU use,
+            heat and battery drain; too many can be slower. Threads share your CPU with other apps. Recognition quality is unchanged.
+            Applies to the next transcription, which may take longer while the model reloads.
+          </p>
+          {threadsError ? <p id={threadsErrorId} className="text-xs text-destructive" role="alert">{threadsError}</p> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

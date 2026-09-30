@@ -60,6 +60,7 @@ import {
 import { outerTrimTranscript } from '../shared/live-dictation';
 import { applyDictationFormatter } from './dictation-formatter';
 import { getDictationFormatterApiKey } from './dictation-formatter-credential';
+import { getManagedLocalThreadLimits } from './managed-local-threads';
 import {
   isDictationResultStillDeliverable,
   markDictationResultPending,
@@ -685,6 +686,7 @@ function managedLocalSnapshot() {
       languages: [...manager.manifest.languages],
     },
     state,
+    inference: getManagedLocalThreadLimits(),
   }));
 }
 

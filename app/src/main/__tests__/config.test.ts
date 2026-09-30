@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { join, normalize } from 'path';
+import { availableParallelism } from 'os';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
@@ -185,6 +186,23 @@ describe('config store', () => {
         mcpServers: [],
       },
     });
+  });
+
+  it('persists inference thread settings, restores automatic defaults, and rejects invalid IPC values', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-inference-threads`);
+    expect(getConfig().managedLocalThreads).toBeNull();
+    setConfig('managedLocalThreads', availableParallelism());
+    expect(getConfig().managedLocalThreads).toBe(availableParallelism());
+    expect(storeData.get('managedLocalThreads')).toBe(availableParallelism());
+    for (const value of [0, -1, 1.5, NaN, Infinity, '4', undefined, availableParallelism() + 1]) {
+      expect(() => Reflect.apply(setConfig, undefined, ['managedLocalThreads', value])).toThrow('thread count');
+      expect(getConfig().managedLocalThreads).toBe(availableParallelism());
+    }
+    setConfig('managedLocalThreads', null);
+    expect(storeData.get('managedLocalThreads')).toBeNull();
+    storeData.set('managedLocalThreads', 1.5);
+    expect(getConfig().managedLocalThreads).toBeNull();
   });
 
   it('migrates an existing whisperUrl into the active local provider without setup', async () => {
