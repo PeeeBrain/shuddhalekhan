@@ -8,6 +8,7 @@ import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/sh
 import { getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
 import { preparePersistentStoreDirectory } from './store-path';
 import { isolatePerformanceDriverConfig } from './performance/scenario-driver';
+import { isManagedLocalThreadCount } from './managed-local-threads';
 
 type StoreConfig = Omit<AppConfig, 'dictation'> & {
   dictation?: unknown;
@@ -58,6 +59,7 @@ const store = new Store<StoreConfig>({
   defaults: {
     whisperUrl: DEFAULT_LOCAL_ENDPOINT,
     transcription: DEFAULT_TRANSCRIPTION,
+    managedLocalThreads: null,
     selectedDeviceId: null,
     removeFillerWords: true,
     language: 'auto',
@@ -242,6 +244,8 @@ export function getConfig(): AppConfig {
   return isolatePerformanceDriverConfig({
     whisperUrl: localEndpoint,
     transcription,
+    managedLocalThreads: isManagedLocalThreadCount(store.get('managedLocalThreads'))
+      ? store.get('managedLocalThreads') : null,
     selectedDeviceId: store.get('selectedDeviceId'),
     removeFillerWords: store.get('removeFillerWords'),
     language: store.get('language') ?? 'auto',
@@ -273,6 +277,9 @@ export function getConfig(): AppConfig {
 }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
+  if (key === 'managedLocalThreads' && value !== null && !isManagedLocalThreadCount(value)) {
+    throw new Error('Choose a whole-number thread count within the available CPU range.');
+  }
   if (key === 'shortcuts') {
     const shortcuts = normalizeShortcutsConfig(value as ShortcutsConfig);
     for (const intent of ['dictation', 'agent'] as const) {

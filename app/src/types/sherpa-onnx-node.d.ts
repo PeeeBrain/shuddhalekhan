@@ -1,11 +1,13 @@
 declare module 'sherpa-onnx-node' {
+  export const version: string;
+  export const onnxruntimeVersion: string;
   export interface OfflineRecognizerConfig {
     featConfig: { sampleRate: number; featureDim: number };
     modelConfig: {
       transducer: { encoder: string; decoder: string; joiner: string };
       tokens: string;
       numThreads: number;
-      provider: 'cpu';
+      provider: string;
       modelType: 'nemo_transducer';
       debug: boolean;
     };

@@ -379,6 +379,7 @@ export type ManagedLocalModelState =
 export interface ManagedLocalModelSnapshot {
   model: ManagedLocalModelMetadata;
   state: ManagedLocalModelState;
+  inference: { maxThreads: number; defaultThreads: number };
 }
 
 export type DictationMode = 'batch' | 'live' | 'corrected';
@@ -420,6 +421,8 @@ export interface AppConfig {
   /** @deprecated Read the local provider endpoint from transcription instead. */
   whisperUrl: string;
   transcription: TranscriptionConfig;
+  /** Missing/null keeps the automatic Managed Local CPU thread default. */
+  managedLocalThreads?: number | null;
   selectedDeviceId: string | null;
   removeFillerWords: boolean;
   language: string;

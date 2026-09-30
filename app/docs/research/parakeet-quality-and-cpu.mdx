@@ -1,0 +1,237 @@
+import { useEffect, useId, useRef, useState } from 'react';
+import Chart from 'chart.js/auto';
+
+export const benchmarkThreads = [1, 2, 4, 6, 8, 12, 16];
+
+export const benchmarkRecordings = [
+  { label: '3.845 s recording', values: [504, 269, 211, 215, 272, 266, 413], color: '#007d91', shape: 'circle' },
+  { label: '5.376 s recording', values: [660, 374, 270, 301, 303, 363, 543], color: '#a45423', shape: 'rectRot' },
+  { label: '16.128 s constructed recording', values: [1785, 1065, 767, 733, 779, 782, 1117], color: '#514988', shape: 'triangle' },
+];
+
+export function ParakeetThreadChart() {
+  const canvasRef = useRef(null);
+  const id = useId();
+  const [selection, setSelection] = useState('short');
+  const [metric, setMetric] = useState('latency');
+  const speedup = metric === 'speedup';
+  const axisLabel = speedup ? 'Speedup over one thread (×, higher is better)' : 'Median warm inference latency (ms, lower is better)';
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const chart = new Chart(canvas, {
+        type: 'scatter',
+        data: {
+          datasets: benchmarkRecordings.filter((_, i) => selection === 'all' || (selection === 'short' ? i < 2 : i === Number(selection))).map(recording => ({
+            label: recording.label, backgroundColor: recording.color, borderColor: recording.color,
+            pointStyle: recording.shape, pointRadius: 6, pointHoverRadius: 9,
+            data: benchmarkThreads.map((x, i) => ({ x, y: speedup ? recording.values[0] / recording.values[i] : recording.values[i],
+              ms: recording.values[i], speedup: recording.values[0] / recording.values[i] })),
+          })),
+        },
+        plugins: [{
+          id: 'fourThreads',
+          beforeDatasetsDraw(chart) {
+            const x = chart.scales.x.getPixelForValue(4);
+            const { ctx, chartArea } = chart;
+            ctx.save();
+            ctx.strokeStyle = '#74878e';
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke();
+            ctx.restore();
+          },
+        }],
+        options: {
+          animation: false, responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'nearest', intersect: false },
+          scales: {
+            x: { type: 'linear', min: 0, max: 17, title: { display: true, text: 'Inference threads' },
+              afterBuildTicks: axis => { axis.ticks = benchmarkThreads.map(value => ({ value })); }, grid: { display: false } },
+            y: { beginAtZero: true, title: { display: true, text: axisLabel } },
+          },
+          plugins: {
+            legend: { position: 'bottom', onClick: () => {}, labels: { usePointStyle: true, padding: 20 } },
+            tooltip: { callbacks: {
+              title: items => `${items[0].raw.x} inference threads`,
+              label: item => `${item.dataset.label}: ${item.raw.ms.toLocaleString('en-US')} ms; ${item.raw.speedup.toFixed(2)}× speedup over one thread`,
+            } },
+          },
+        },
+    });
+    return () => chart.destroy();
+  }, [selection, speedup, axisLabel]);
+  return (
+    <section aria-label="Thread-count benchmark scatter plot" style={{ border: '1px solid #d3d9d9', borderRadius: 6, padding: 20, margin: '24px 0', background: '#fff', color: '#182a35' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, marginBottom: 20 }}>
+        <label htmlFor={`${id}-clips`} style={{ display: 'grid', gap: 8 }}>
+          Recordings
+          <select id={`${id}-clips`} value={selection} onChange={event => setSelection(event.target.value)} style={{ padding: 8, background: '#fff', color: '#182a35' }}>
+            <option value="short">Short dictation: both recordings</option>
+            <option value="all">All three recordings</option>
+            <option value="0">3.845 s recording</option>
+            <option value="1">5.376 s recording</option>
+            <option value="2">16.128 s constructed recording</option>
+          </select>
+        </label>
+        <label htmlFor={`${id}-metric`} style={{ display: 'grid', gap: 8 }}>
+          Vertical axis
+          <select id={`${id}-metric`} value={metric} onChange={event => setMetric(event.target.value)} style={{ padding: 8, background: '#fff', color: '#182a35' }}>
+            <option value="latency">Inference latency (lower is better)</option>
+            <option value="speedup">Speedup over one thread (higher is better)</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ position: 'relative', height: 420 }}>
+        <canvas ref={canvasRef} role="img" aria-label={`${axisLabel} by thread count. Exact values are in the table below.`} />
+      </div>
+      <p style={{ fontSize: 14 }}>Hover or tap a point for exact values. The dashed line marks four threads. Use speedup to compare recordings on the same scale.</p>
+    </section>
+  );
+}
+
+# Managed Parakeet quality and CPU experiments
+
+Date: 2026-09-30. Scope: improvements for x64 CPUs generally. This laptop supplies measurements; its thread-count optimum is not a universal default.
+
+## Recommendation
+
+Fix capture readiness first. The report that waiting until the pill shows one second makes transcription reliable agrees with the current microphone lifecycle: every hotkey opens a fresh stream, while the recording pill appears before that acquisition finishes. Speech spoken in that gap never reaches Parakeet.
+
+Keep the current INT8 model and conservative thread limit. Test a short ONNX Runtime spin window as a general x64 performance candidate, and disabled spinning as an efficiency candidate. Neither needs a model replacement or a CPU-vendor-specific build. Do not introduce blanket silence padding, gain normalization, or a larger thread count based on these results.
+
+The research phase added tooling and accurate dependency declarations. A subsequent Settings change exposes an optional inference-thread override with a restore-default button; changing it reloads the model on next use without interrupting active inference. Capture behavior and inference defaults remain as measured here.
+
+## What was tested
+
+- Installed `parakeet-tdt-0.6b-v3-int8-1`, with the production encoder, decoder, joiner, 16 kHz/80-feature config, CPU provider, and default offline decoder.
+- `sherpa-onnx-node` 1.13.8, native ONNX Runtime 1.28.2, Bun 1.4.2. AMD Ryzen 7 7840HS, 8 physical cores / 16 logical CPUs, about 31 GiB RAM.
+- Quality: 12 reference-labelled human LibriSpeech clips, the existing human fox recording, the model's human English example, and 8 Windows speech-synthesis command probes. Human corpus results and synthetic probes are reported separately.
+- Quality variants: original recording, leading/trailing silence, energy-trimmed onset, gain, and removal of 160 ms after detected onset. Each variant was decoded once.
+- Speed: 3.845 s and 5.376 s human recordings, plus a 16.128 s constructed repeat of the fox recording. Separate processes for each thread count/configuration. First decode recorded separately, then two warm-up passes and seven measured passes per clip.
+- Thread sweep: 1, 2, 4, 6, 8, 12, 16. Tuning comparisons: default, bounded spinning, disabled spinning, and dynamic work blocks. Default and bounded-spin configurations each had three separate process runs, with a final default run after the bounded-spin confirmations.
+- Total: 578 measured decodes, excluding first-decode and warm-up passes.
+
+These are direct native inference measurements under Bun, not packaged Electron end-to-end timings. Native inference runs sequentially; no two benchmark recognizers ran concurrently. Ordinary machine activity, power policy, and temperature were not held fixed. This is a screening experiment, not a release performance baseline or proof for every x64 CPU.
+
+The 12 LibriSpeech clips are the first 12 validation examples from [Hugging Face's small LibriSpeech test dataset](https://huggingface.co/datasets/hf-internal-testing/librispeech_asr_dummy). They share a speaker/chapter and are clean English read speech. They do not establish accuracy for Indian conversational speech, other languages, noisy microphones, or every recording duration.
+
+Raw measurements, portable manifests, audio, hashes, CPU config files, and the summary are in `benchmark-output/parakeet-2026-09-30/`. This directory is ignored by Git. No local audio was uploaded.
+
+## Opening speech: findings and options
+
+`prepareStream()` opens a permission stream and immediately stops its tracks in `app/src/renderer/audio-capture.ts:184`. `startRecording()` opens a fresh stream and waits for it before connecting the input graph at lines 256–323. Main displays the pill immediately after requesting capture in `app/src/main/recording-session.ts:303`. The pill's elapsed time starts on presentation in `app/src/renderer/RecordingPopup.tsx:89`, rather than on capture readiness.
+
+This is a strong capture-start explanation, supported by the user's one-second workaround. Physical microphone onset was not recorded or measured in this investigation, so the exact missing interval on the user's device remains unproven. Existing hotkey-to-graph, mic-acquisition, and first-buffer markers can measure it without new telemetry machinery.
+
+The 4096-sample ScriptProcessor block is 256 ms at 16 kHz. That delays callback delivery. It does not establish that the beginning of that block is discarded. Smaller blocks or AudioWorklet may reduce callback and stop-flush delay, but are not a demonstrated repair for speech lost before microphone acquisition.
+
+Mean per-clip word error rate on the 12 human reference clips:
+
+| Input | Mean WER | Exact normalized first word correct |
+| --- | ---: | ---: |
+| Original | 2.34% | 12/12 |
+| Original + 160 ms leading zeros | 1.97% | 12/12 |
+| Original + 320 ms trailing zeros | 2.46% | 12/12 |
+| Energy-trimmed onset | 4.34% | 11/12 |
+| Trimmed + 80 ms leading zeros | 3.46% | 12/12 |
+| Trimmed + 160 ms leading zeros | 2.09% | 11/12 |
+| Trimmed + 320 ms leading zeros | 2.64% | 11/12 |
+| Trimmed + 160 ms zeros at both ends | 4.10% | 12/12 |
+| Trimmed + 2× gain | 4.66% | 12/12 |
+| Removed 160 ms after detected onset | 10.27% | 3/12 |
+| Same removal + 160 ms leading zeros | 9.48% | 2/12 |
+
+WER is the arithmetic mean of each clip's edit-distance WER using the existing repository normalizer. First-word match is a textual proxy; alternate spellings also fail it. Onset detection is a simple 10 ms RMS window over 0.008 amplitude. It can trim quiet phonemes, so "trimmed" should not be read as guaranteed removal of silence only.
+
+The complete fox and English model examples transcribed correctly. Padding occasionally changed the synthetic command outputs: leading silence repaired one opening and changed another word; adding silence after clipping could also reduce first-word correctness. The complete-audio results support testing a small leading pad, but not treating it as a reliable general fix.
+
+| Option | Decision and evidence |
+| --- | --- |
+| Show capture readiness and start elapsed time from capture acknowledgment | First implementation candidate. Removes the misleading readiness cue with minimal idle cost. Needs a live-microphone pass; not yet physically tested. |
+| Keep the mic/input graph open, with bounded 250–500 ms actual audio pre-roll | Candidate if immediate-hotkey speech is required. Avoids repeated device acquisition and retains real opening audio. Needs live onset, idle CPU, Bluetooth/device-change, suspend, and microphone-indicator measurements. |
+| Add a fixed one-second delay | Reject. It preserves the workaround and imposes needless delay on faster devices. |
+| Add 80–320 ms digital leading silence | Experimental fallback after capture is correct. Helps some intact/tightly bounded inputs, but does not recover missing samples. |
+| Add trailing silence or automatic gain | No general default change supported by this sample. |
+
+An open [NVIDIA NeMo issue](https://github.com/NVIDIA-NeMo/Speech/issues/15757) also reports changed v3 results after adding trailing zeros. It concerns NeMo rather than this sherpa runtime and is unconfirmed; our own measured differences are the basis for avoiding unconditional padding.
+
+## CPU speed: measured options
+
+Start with **four threads on this laptop**. Both short recordings were fastest at four; the long recording was slightly faster at six, with higher CPU use. The best count on other x64 devices still needs measurement.
+
+<ParakeetThreadChart />
+
+This MDX report embeds the interactive Chart.js scatter plot directly. View it with a React-based MDX renderer with GitHub-flavored Markdown tables enabled. React and Chart.js resolve from the workspace's installed dependencies; run `bun install` first. GitHub's file viewer shows the source and tables rather than running the component.
+
+In Cursor, install [Modern MDX Preview](https://open-vsx.org/extension/ggfincke/vsc-mdx-preview), trust this repository, and enable `mdx-preview.preview.enableScripts`. Open this file and run **MDX: Open MDX Preview** from the Command Palette, or press **Ctrl+K**, then **X**. Chart.js loads locally, so the chart needs no CDN access or relaxed preview security policy.
+
+Median warm latency in milliseconds, seven passes per clip, default provider settings:
+
+| Threads | 3.845 s clip | 5.376 s clip | 16.128 s constructed clip |
+| ---: | ---: | ---: | ---: |
+| 1 | 504 | 660 | 1,785 |
+| 2 | 269 | 374 | 1,065 |
+| 4 | 211 | 270 | 767 |
+| 6 | 215 | 301 | 733 |
+| 8 | 272 | 303 | 779 |
+| 12 | 266 | 363 | 782 |
+| 16 | 413 | 543 | 1,117 |
+
+The existing four-thread cap is reasonable on this test CPU. Six saves about 4.5% on the long constructed clip but uses about 41% more process CPU time. Sixteen roughly doubles short-clip latency relative to four and consumes far more CPU. Raising the cap for all x64 machines is unsupported.
+
+Model load took about 4.7–6.9 seconds across processes, and process RSS after the speed tests was roughly 964–973 MiB. These are machine-specific observations. The app already prewarms the recognizer and retains its utility process between dictations, so ordinary recordings do not repeatedly incur this load.
+
+Four-thread provider tuning, pooled median milliseconds. Default and bounded spin each include 21 measurements per clip from three process runs; disabled spinning includes 14 from two runs; dynamic blocks include seven.
+
+| Setting | 3.845 s clip | 5.376 s clip | 16.128 s clip | Process CPU-time effect |
+| --- | ---: | ---: | ---: | --- |
+| Default | 185 | 247 | 670 | Baseline |
+| 1 ms spin window, backoff 8 | 175 | 230 | 656 | About 25–31% less per decode |
+| Spinning disabled | 189 | 247 | 683 | About 37–47% less per decode |
+| Dynamic block base 4 | 182 | 240 | 664 | No convincing efficiency gain |
+
+Bounded spin reduces pooled latency about 2–7%. The final default run was already faster than the first default run, so the observed absolute gain is small and must be checked on other CPUs. Disabling spinning offers the larger efficiency gain with a 0–2% latency increase on this machine. CPU time is not an energy measurement.
+
+In the two seconds immediately after first decode, default runs used 250–282 ms of process CPU time; bounded-spin runs used 0–16 ms and disabled spinning used zero. This is transient post-inference pool activity, not a measurement of perpetual steady-state idle load.
+
+Measured transcript outputs matched the default across thread/tuning configurations. The constructed long clip already omitted a word in the baseline; identical output means no additional measured regression, not perfect recognition.
+
+The installed runtime supports these options through `provider: 'cpu:<config-file>'`. [Sherpa 1.13.8 session source](https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.13.8/sherpa-onnx/csrc/session.cc) forwards `SessionConfig.*` keys to ONNX Runtime. The [ORT threading guide](https://onnxruntime.ai/docs/performance/tune-performance/threading.html) explains the latency/power tradeoff and dynamic-work settings.
+
+Bounded-spin candidate:
+
+```ini
+SessionConfig.session.intra_op.spin_duration_us=1000
+SessionConfig.session.intra_op.spin_backoff_max=8
+```
+
+Efficiency candidate:
+
+```ini
+SessionConfig.session.intra_op.allow_spinning=0
+SessionConfig.session.inter_op.allow_spinning=0
+```
+
+## General x64 rollout
+
+1. Fix capture readiness independent of model or CPU vendor. Measure actual hotkey-to-acquisition and first-buffer timing across USB, built-in, and Bluetooth microphones. Validate immediate speech and speech after the ready cue against retained WAVs.
+2. Keep INT8 and the existing conservative thread policy while comparing default versus bounded/disabled spinning. These runtime settings work through the existing CPU provider and do not require a laptop-specific model export.
+3. Before changing the default, repeat the portable benchmark on a low-core x64 device, a hybrid Intel CPU, and another AMD CPU. Include short commands and natural 15–30 s dictation, ordinary foreground-app load, and battery mode. Compare latency, process CPU time, resource use, and transcript quality together.
+4. Prefer a small optional thread override or performance/efficiency choice only if cross-device data shows a real need. Avoid vendor-name heuristics and automatic full sweeps on every launch. Each recognizer reload costs seconds and substantial memory.
+5. Consider model graph/export work only after profiling identifies a compute bottleneck left by these changes. FP32, FP16, a custom runtime, and alternative CPU providers were not benchmarked here. They are not justified repairs for missing capture audio.
+
+Greedy decoding is the upstream v3 baseline. [Sherpa's Parakeet documentation](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html) shows its defaults, and the [versioned Node API](https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.13.8/scripts/node-addon-api/lib/types.js) does not expose the offline beam-search/feature-normalization knobs often suggested for other APIs. Changing those would require binding work and a fresh quality comparison.
+
+## Reproducing
+
+Copy the benchmark-output folder and use the installed model directory on the target x64 device. Manifests use relative WAV filenames, and `audio-sha256.json` identifies the exact inputs. The runner uses the production WAV decoder and existing WER helper.
+
+```powershell
+bun app/scripts/parakeet-experiment.ts --self-check
+bun app/scripts/parakeet-experiment.ts MODEL_DIR benchmark-output/parakeet-2026-09-30/human-manifest.json human-quality.json quality 4
+bun app/scripts/parakeet-experiment.ts MODEL_DIR benchmark-output/parakeet-2026-09-30/speed-manifest.json speed.json speed 4
+bun app/scripts/parakeet-experiment.ts MODEL_DIR benchmark-output/parakeet-2026-09-30/speed-manifest.json spin.json speed 4 cpu:ABSOLUTE_PATH_TO_SPIN_CONFIG
+```
+
+Run one recognizer process at a time. Repeat speed with thread counts 1/2/4 and 6/8 when the device has enough cores. Record machine/power/temperature conditions; compare configs within each device rather than pooling absolute times across different CPUs.
+
+Verification: runner self-check, focused ESLint, focused TypeScript compilation, and the real model runs passed. Existing audio-capture and microphone-startup tests passed, 15 tests. No repository-wide or packaging checks were run.

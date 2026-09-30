@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { cleanFillerWords, TranscriptionFailure, type Transcriber } from './transcription';
 import { emitPerformanceMarker } from './performance/marker-collector';
+import { resolveManagedLocalThreads } from './managed-local-threads';
 
 type RuntimeProcess = {
   postMessage(message: unknown): void;
@@ -13,22 +14,26 @@ type RuntimeProcess = {
 type PendingRequest = {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
+  finished: Promise<void>;
   timeout: ReturnType<typeof setTimeout>;
 };
 
 export function createManagedLocalTranscriber({
   getModelPath,
+  getNumThreads = () => resolveManagedLocalThreads(null),
   startProcess = defaultStartProcess,
   loadTimeoutMs = 120_000,
   transcriptionTimeoutMs = 120_000,
 }: {
   getModelPath: () => Promise<string>;
+  getNumThreads?: () => number;
   startProcess?: () => RuntimeProcess | Promise<RuntimeProcess>;
   loadTimeoutMs?: number;
   transcriptionTimeoutMs?: number;
 }) {
   let child: RuntimeProcess | null = null;
   let ready: Promise<void> | null = null;
+  let runtimeThreads: number | null = null;
   let resolveReady: (() => void) | null = null;
   let rejectReady: ((error: Error) => void) | null = null;
   let loadTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -50,6 +55,7 @@ export function createManagedLocalTranscriber({
     if (child !== process) return;
     child = null;
     ready = null;
+    runtimeThreads = null;
     activeStartup = null;
     if (loadTimeout) clearTimeout(loadTimeout);
     loadTimeout = null;
@@ -94,7 +100,18 @@ export function createManagedLocalTranscriber({
   };
 
   const ensureReady = (): Promise<void> => {
-    if (ready) return ready;
+    const numThreads = resolveManagedLocalThreads(getNumThreads());
+    // Reload on next use; a settings change must not interrupt active inference or startup.
+    if (ready && child && !resolveReady && pending.size === 0 && runtimeThreads !== numThreads) {
+      reset(child, new TranscriptionFailure('model', 'Local speech recognition settings changed.'), true);
+    }
+    if (ready) {
+      const startup = ready;
+      return startup.then(() => {
+        if (ready !== startup || (pending.size === 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads()))) return ensureReady();
+      });
+    }
+    runtimeThreads = numThreads;
     const startupToken = {};
     activeStartup = startupToken;
     const startup = (async () => {
@@ -123,7 +140,7 @@ export function createManagedLocalTranscriber({
             'Local speech recognition timed out while loading. Retry Dictation.',
           ), true);
         }, loadTimeoutMs);
-        process.postMessage({ kind: 'load', modelPath });
+        process.postMessage({ kind: 'load', modelPath, numThreads });
         await loaded;
       } catch (error) {
         if (activeStartup === startupToken) {
@@ -134,7 +151,7 @@ export function createManagedLocalTranscriber({
       }
     })();
     ready = startup;
-    return startup;
+    return startup.then(ensureReady);
   };
 
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void> } = {
@@ -147,9 +164,15 @@ export function createManagedLocalTranscriber({
       maxDurationSeconds: null,
     },
     async transcribe({ audio, recognition }) {
+      // A cancelled recording can leave its decode running. Drain it before changing threads.
+      if (pending.size > 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads())) {
+        await Promise.all([...pending.values()].map(request => request.finished));
+      }
       await ensureReady();
       if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
       const requestId = randomUUID();
+      let finishRequest!: () => void;
+      const finished = new Promise<void>(resolve => { finishRequest = resolve; });
       const result = new Promise<string>((resolve, reject) => {
         const timeout = setTimeout(() => {
           const process = child;
@@ -157,7 +180,12 @@ export function createManagedLocalTranscriber({
           if (process) reset(process, error, true);
           else reject(error);
         }, transcriptionTimeoutMs);
-        pending.set(requestId, { resolve, reject, timeout });
+        pending.set(requestId, {
+          resolve: text => { finishRequest(); resolve(text); },
+          reject: error => { finishRequest(); reject(error); },
+          finished,
+          timeout,
+        });
       });
       child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer });
       const text = (await result).trim();
