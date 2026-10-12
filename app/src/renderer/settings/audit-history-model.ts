@@ -7,6 +7,7 @@ export const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
   { value: 'cancelled', label: 'Cancelled' },
+  { value: 'interrupted', label: 'Interrupted' },
   { value: 'running', label: 'Running' },
 ];
 

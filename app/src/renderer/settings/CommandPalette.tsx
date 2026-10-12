@@ -24,6 +24,12 @@ export function CommandPalette({ settingsIpc, onClose, onNavigate, onOpenRun }: 
   const listRef = useRef<HTMLDivElement | null>(null);
   // Dismissing returns focus to whatever opened the palette; choosing an item lets navigation own focus.
   const [returnFocus] = useState(() => document.activeElement as HTMLElement | null);
+  const restoreFocusRef = useRef(false);
+
+  // Restore after unmount, once the window behind the palette is no longer inert.
+  useEffect(() => () => {
+    if (restoreFocusRef.current) returnFocus?.focus();
+  }, [returnFocus]);
 
   useEffect(() => {
     settingsIpc.getAuditRuns().then((all) => setRuns(all.slice(0, 50))).catch(() => setRuns([]));
@@ -48,8 +54,8 @@ export function CommandPalette({ settingsIpc, onClose, onNavigate, onOpenRun }: 
   };
 
   const dismiss = () => {
+    restoreFocusRef.current = true;
     onClose();
-    returnFocus?.focus();
   };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {

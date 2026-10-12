@@ -194,6 +194,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   return (
     <main className="settings-root relative flex h-screen overflow-hidden bg-background text-foreground">
       <aside
+        inert={paletteOpen}
         className="flex w-52 shrink-0 flex-col overflow-y-auto border-r border-border/60 bg-canvas px-2.5 py-5"
         aria-label="Settings sections"
       >
@@ -228,7 +229,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
         </nav>
       </aside>
 
-      <section className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <section inert={paletteOpen} className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <div
           key={activeSection}
           role="tabpanel"

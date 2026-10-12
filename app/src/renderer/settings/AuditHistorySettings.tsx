@@ -124,6 +124,7 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
   }, []);
 
   const visibleRuns = filterAuditRuns(runs, query, statusFilter);
+  const selectedVisible = visibleRuns.some((run) => run.agentRunId === selectedRunId);
 
   const handleRunListKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (isListboxActivateKey(e.key)) {
@@ -242,14 +243,16 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
                 No runs match.
               </div>
             ) : null}
-            {visibleRuns.map((run) => {
+            {visibleRuns.map((run, index) => {
               const isActive = selectedRunId === run.agentRunId;
+              // When filters hide the selected run, the first match keeps the list reachable by Tab.
+              const isTabStop = isActive || (index === 0 && !selectedVisible);
               return (
                   <div
                     key={run.agentRunId}
                     role="option"
                     aria-selected={isActive}
-                    tabIndex={isActive ? 0 : -1}
+                    tabIndex={isTabStop ? 0 : -1}
                     onClick={() => selectRun(run.agentRunId)}
                     className={`cursor-pointer rounded-lg px-3 py-2.5 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                       isActive ? 'bg-secondary' : 'hover:bg-muted/30'
@@ -412,6 +415,7 @@ interface TimelineNodeProps {
 }
 
 function TimelineNode({ event }: TimelineNodeProps) {
+  const [open, setOpen] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const handleCopy = async () => {
@@ -441,8 +445,9 @@ function TimelineNode({ event }: TimelineNodeProps) {
 
   return (
     <li>
-      <details>
+      <details onToggle={(toggleEvent) => setOpen(toggleEvent.currentTarget.open)}>
         <summary className="cursor-pointer list-none rounded-md hover:bg-muted/20">{row}</summary>
+        {open ? (
         <div className="relative mb-2 ml-[5.25rem] rounded-md bg-muted/40">
           <Button
             variant="ghost"
@@ -463,6 +468,7 @@ function TimelineNode({ event }: TimelineNodeProps) {
             {JSON.stringify(event.payload, null, 2)}
           </pre>
         </div>
+        ) : null}
       </details>
     </li>
   );

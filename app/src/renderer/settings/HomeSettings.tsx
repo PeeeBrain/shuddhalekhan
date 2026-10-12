@@ -40,6 +40,7 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
   const servers = config.agent.mcpServers;
   const connected = servers.filter((server) => mcpStatuses[server.id]?.status === 'connected').length;
   const { dictation, agent } = config.shortcuts;
+  const hasChosenMic = Boolean(config.selectedDeviceId) && config.selectedDeviceId !== 'default';
 
   return (
     <div className="space-y-8">
@@ -73,9 +74,9 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
           />
           <StatusRow
             label="Microphone"
-            detail={config.selectedDeviceId ? 'Chosen device' : 'Follows the Windows default input'}
+            detail={hasChosenMic ? 'Chosen device' : 'Follows the Windows default input'}
             tone="success"
-            status={config.selectedDeviceId ? 'Selected' : 'System default'}
+            status={hasChosenMic ? 'Selected' : 'System default'}
             section="shortcuts"
             onNavigate={onNavigate}
           />
