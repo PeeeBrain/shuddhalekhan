@@ -1,13 +1,13 @@
 export type SettingsSectionId =
+  | 'home'
   | 'transcription'
-  | 'audio'
   | 'shortcuts'
   | 'agent'
   | 'mcp'
   | 'history'
   | 'about';
 
-export type SettingsNavGroupId = 'dictation' | 'agent' | 'system';
+export type SettingsNavGroupId = 'general' | 'agent' | 'system';
 
 export interface SettingsNavSection {
   id: SettingsSectionId;
@@ -23,12 +23,12 @@ export interface SettingsNavGroup {
 
 export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
   {
-    id: 'dictation',
-    label: 'Dictation',
+    id: 'general',
+    label: 'General',
     sections: [
-      { id: 'transcription', label: 'Transcription', group: 'dictation' },
-      { id: 'audio', label: 'Audio', group: 'dictation' },
-      { id: 'shortcuts', label: 'Shortcuts', group: 'dictation' },
+      { id: 'home', label: 'Home', group: 'general' },
+      { id: 'transcription', label: 'Transcription', group: 'general' },
+      { id: 'shortcuts', label: 'Shortcuts', group: 'general' },
     ],
   },
   {
@@ -50,11 +50,25 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
 export const SETTINGS_NAV_SECTIONS: SettingsNavSection[] =
   SETTINGS_NAV_GROUPS.flatMap((group) => group.sections);
 
-export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'transcription';
+export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'home';
 
 export function getNavSectionIndex(id: SettingsSectionId): number {
   const index = SETTINGS_NAV_SECTIONS.findIndex(
     (section) => section.id === id,
   );
   return index === -1 ? 0 : index;
+}
+
+/** Command palette entries: settings sections and agent runs. */
+export type PaletteItem =
+  | { kind: 'section'; id: SettingsSectionId; label: string }
+  | { kind: 'run'; id: string; label: string; meta: string };
+
+/** Sections first, then agent runs; every word in the query must appear. */
+export function matchPaletteItems(items: PaletteItem[], query: string): PaletteItem[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return items.filter((item) => {
+    const text = `${item.label} ${item.kind === 'run' ? item.meta : ''}`.toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
 }

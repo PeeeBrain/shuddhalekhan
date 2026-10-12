@@ -67,18 +67,34 @@ body,
 }
 
 .bar {
-    width: 3px;
-    height: 18px;
-    border-radius: 999px;
+    width: 2px;
+    height: 16px;
+    border-radius: 1px;
     background: currentColor;
     transform-origin: center;
-    will-change: transform;
 }
 
-.bar.dictation {
+/* Dictation and Agent Mode differ by shape, glyph and tint, not only color. */
+.recording-island {
+    border-radius: 14px;
+    border-color: var(--color-border);
+    background: var(--color-card);
     color: var(--color-primary);
 }
 
-.bar.agent {
+.recording-island .recording-glyph {
+    border-radius: 10px;
+    background: color-mix(in oklab, var(--color-primary) 16%, transparent);
+}
+
+.recording-island[data-intent="agent"] {
+    border-radius: 6px;
+    border-color: color-mix(in oklab, var(--color-agent-accent) 45%, transparent);
+    background: color-mix(in oklab, var(--color-card) 93%, var(--color-agent-accent));
     color: var(--color-agent-accent);
+}
+
+.recording-island[data-intent="agent"] .recording-glyph {
+    border-radius: 3px;
+    background: color-mix(in oklab, var(--color-agent-accent) 18%, transparent);
 }

@@ -146,6 +146,7 @@ export class McpRegistry {
           modelName,
           toolDef,
           policy,
+          () => this.toolPolicies.get(policyKey),
           requestToolApproval,
           onAudit,
           onToolStarted
@@ -320,13 +321,16 @@ function wrapToolWithPolicy(
   modelToolName: string,
   toolDef: Tool,
   policy: Exclude<AgentToolApprovalPolicy, 'disabled'>,
+  /** Current saved policy; lets "Always allow" relax approval mid-run. */
+  livePolicy: () => AgentToolApprovalPolicy | undefined,
   _requestToolApproval: RequestToolApproval,
   onAudit?: AuditCallback,
   onToolStarted?: ToolStartedCallback
 ): Tool {
   return {
     ...toolDef,
-    needsApproval: policy === 'alwaysAsk' ? true : undefined,
+    // The run snapshot only ever loosens: alwaysAsk becomes alwaysAllow once saved.
+    needsApproval: policy === 'alwaysAsk' ? () => livePolicy() !== 'alwaysAllow' : undefined,
     execute: async (args, options) => {
       if (!toolDef.execute) throw new Error(`MCP tool ${serverId}:${toolName} is missing an execute handler.`);
 

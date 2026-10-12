@@ -147,6 +147,39 @@ describe('RuntimeShellSurface agent cards', () => {
     );
   });
 
+  it('maps card shortcuts to decisions but leaves the denial note typeable', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+
+    showCard({
+      kind: 'agent-approval',
+      agentRunId: 'run-1',
+      approvalId: 'approval-keys',
+      serverId: 'mail',
+      toolName: 'send_message',
+      modelToolName: 'mail__send_message',
+      arguments: { to: 'a@example.com' },
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+    });
+
+    expect(await screen.findByText('Send message')).toBeInTheDocument();
+    await user.type(await screen.findByLabelText('Optional denial message'), 'a{Enter}');
+    expect(invoke).not.toHaveBeenCalled();
+
+    screen.getByRole('alert').focus();
+    await user.keyboard('a');
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith(
+      'agent:approval-decision',
+      'run-1',
+      'approval-keys',
+      'always-allow',
+      undefined,
+    );
+  });
+
   it('sends populated denial feedback', async () => {
     const user = userEvent.setup();
     mockElectronAPI();

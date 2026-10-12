@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { AuditHistorySettings } from '../AuditHistorySettings';
+import { filterAuditRuns, summarizeRunError } from '../audit-history-model';
 import type { SettingsIpc } from '../settings-ipc';
 import type { AuditEventDetail, AuditRunSummary } from '../../../types/ipc';
 
@@ -100,7 +101,7 @@ describe('AuditHistorySettings live refresh backpressure', () => {
         await Promise.resolve();
       });
       expect(screen.getByRole('option', { name: /Active run/ })).toBeInTheDocument();
-      expect(screen.getByText('Run Started')).toBeInTheDocument();
+      expect(screen.getByText('Started')).toBeInTheDocument();
       expect(screen.getByText("Couldn't load run history.")).toBeInTheDocument();
       expect(screen.getByText("Couldn't load events for this run.")).toBeInTheDocument();
     } finally {
@@ -162,5 +163,27 @@ describe('AuditHistorySettings live refresh backpressure', () => {
 
     expect(container.querySelector('strong')?.textContent).toBe('bold text');
     expect(container.querySelectorAll('li')).toHaveLength(2);
+  });
+});
+
+describe('audit history model', () => {
+  const run = (agentRunId: string, transcript: string, status: AuditRunSummary['status'], tools: string[] = []): AuditRunSummary => ({
+    agentRunId, startedAt: '2026-06-25T10:00:00.000Z', transcript, status, tools,
+  });
+  const runs = [
+    run('a', 'Summarize my inbox', 'completed', ['gmail.search_threads']),
+    run('b', 'Book a table', 'failed'),
+  ];
+
+  it('matches prompt or tool text case-insensitively and narrows by status', () => {
+    expect(filterAuditRuns(runs, 'INBOX', 'all').map((r) => r.agentRunId)).toEqual(['a']);
+    expect(filterAuditRuns(runs, 'search_threads', 'all').map((r) => r.agentRunId)).toEqual(['a']);
+    expect(filterAuditRuns(runs, '', 'failed').map((r) => r.agentRunId)).toEqual(['b']);
+    expect(filterAuditRuns(runs, 'inbox', 'failed')).toEqual([]);
+  });
+
+  it('leads provider errors with their human message', () => {
+    expect(summarizeRunError('Upstream request failed: payment needed. | HTTP 403 | Response: {}')).toBe('Upstream request failed: payment needed.');
+    expect(summarizeRunError('Plain failure')).toBe('Plain failure');
   });
 });

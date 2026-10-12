@@ -107,6 +107,7 @@ const runtimeShellShowAgentApproval = vi.fn();
 const runtimeShellShowAgentCompleted = vi.fn();
 const runtimeShellShowAgentFailed = vi.fn();
 const runtimeShellDismissAgentCard = vi.fn();
+const runtimeShellGetPendingApproval = vi.fn((): { serverId: string; toolName: string } | null => null);
 const runtimeShellHandleAgentCardSize = vi.fn();
 const applyDictationFormatter = vi.fn();
 
@@ -191,6 +192,7 @@ mock.module('../runtime-shell', () => ({
     showAgentCompleted = runtimeShellShowAgentCompleted;
     showAgentFailed = runtimeShellShowAgentFailed;
     dismissAgentCard = runtimeShellDismissAgentCard;
+    getPendingApproval = runtimeShellGetPendingApproval;
     handleAgentCardSize = runtimeShellHandleAgentCardSize;
   },
 }));
@@ -900,6 +902,50 @@ describe('main process IPC orchestration', () => {
     } });
     await ipcHandlers.get('mcp:test-server')?.({}, 'mail');
     expect(agentTestMcpServer).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves an alwaysAllow policy for the presented tool before approving it', async () => {
+    const config = {
+      ...baseConfig,
+      agent: {
+        ...baseConfig.agent,
+        enabled: true,
+        mcpServers: [{
+          id: 'mail',
+          displayName: 'Mail',
+          enabled: true,
+          transport: { type: 'http', url: 'https://mail.example.com/mcp', redirect: 'error' },
+          discoveredTools: [{ name: 'send_message', description: '' }],
+          toolPolicies: { 'mail:send_message': 'alwaysAsk' },
+        }],
+      },
+    };
+    getConfig.mockReturnValue(config);
+    runtimeShellGetPendingApproval.mockImplementation((id: string) =>
+      id === 'approval-1' ? { serverId: 'mail', toolName: 'send_message' } : null);
+
+    await ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-1', 'always-allow');
+
+    expect(setConfig).toHaveBeenCalledWith('agent', expect.objectContaining({
+      mcpServers: [expect.objectContaining({ toolPolicies: { 'mail:send_message': 'alwaysAllow' } })],
+    }));
+    expect(agentStart).toHaveBeenCalledTimes(1);
+    expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'approved', undefined);
+
+    // A stale approval id approves without touching policy.
+    setConfig.mockClear();
+    await ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-old', 'always-allow');
+    expect(setConfig).not.toHaveBeenCalled();
+    expect(agentSendApprovalDecision).toHaveBeenLastCalledWith('run-1', 'approval-old', 'approved', undefined);
+    runtimeShellGetPendingApproval.mockReset();
+    runtimeShellGetPendingApproval.mockImplementation(() => null);
+  });
+
+  it('rejects unrecognized approval decisions instead of approving', async () => {
+    agentSendApprovalDecision.mockClear();
+
+    expect(() => ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-1', 'yes')).toThrow('Invalid approval decision');
+    expect(agentSendApprovalDecision).not.toHaveBeenCalled();
   });
 
   it('waits for sidecar shutdown before allowing quit', async () => {

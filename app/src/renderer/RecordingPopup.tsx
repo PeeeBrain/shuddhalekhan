@@ -4,6 +4,7 @@ import type { RecordingIntent } from '../types/ipc';
 import {
   BAR_COUNT,
   computeBarScale,
+  isWaveformSettled,
   PHASE_STEP,
   SMOOTHING_FACTOR,
 } from './recording-popup-math';
@@ -19,8 +20,6 @@ export function RecordingPopup({
   recordingSessionId,
 }: RecordingPopupProps) {
   const [mode, setMode] = useState<RecordingIntent>(initialMode);
-  const [level, setLevel] = useState(0);
-  const [tick, setTick] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const recordingStartRef = useRef<number | null>(null);
@@ -31,7 +30,12 @@ export function RecordingPopup({
     recordingSessionId ? 'visible' : 'hidden'
   );
   const targetLevelRef = useRef(0);
-  const bars = Array.from({ length: BAR_COUNT });
+  // The waveform is painted straight to the DOM from refs: a level change must
+  // not re-render React, and a silent mic must not repaint at all.
+  const barRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const levelRef = useRef(0);
+  const phaseRef = useRef(0);
+  const wakeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('recording:mode-changed', setMode);
@@ -41,6 +45,7 @@ export function RecordingPopup({
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('audio:level-changed', (nextLevel) => {
       targetLevelRef.current = nextLevel;
+      if (!isWaveformSettled(nextLevel, levelRef.current)) wakeRef.current?.();
     });
     return unsubscribe;
   }, []);
@@ -105,28 +110,30 @@ export function RecordingPopup({
     if (reducedMotion || pillState === 'hidden') return;
 
     let raf = 0;
-    const loop = () => {
-      setLevel((current) => current + (targetLevelRef.current - current) * SMOOTHING_FACTOR);
-      setTick((t) => (t + 1) % 1000000);
-      raf = requestAnimationFrame(loop);
-    };
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        if (raf) {
-          cancelAnimationFrame(raf);
-          raf = 0;
-        }
-      } else if (!raf) {
-        raf = requestAnimationFrame(loop);
+    const frame = () => {
+      raf = 0;
+      const target = targetLevelRef.current;
+      levelRef.current += (target - levelRef.current) * SMOOTHING_FACTOR;
+      phaseRef.current += PHASE_STEP;
+      barRefs.current.forEach((bar, index) => {
+        if (bar) bar.style.transform = `scaleY(${computeBarScale(levelRef.current, phaseRef.current, index)})`;
+      });
+      // Park once silent; the next audible level wakes the loop again.
+      if (!isWaveformSettled(target, levelRef.current) && !document.hidden) {
+        raf = requestAnimationFrame(frame);
       }
     };
+    const wake = () => {
+      if (!raf && !document.hidden) raf = requestAnimationFrame(frame);
+    };
 
-    raf = requestAnimationFrame(loop);
-    document.addEventListener('visibilitychange', handleVisibility);
+    wakeRef.current = wake;
+    wake();
+    document.addEventListener('visibilitychange', wake);
     return () => {
+      wakeRef.current = null;
       if (raf) cancelAnimationFrame(raf);
-      document.removeEventListener('visibilitychange', handleVisibility);
+      document.removeEventListener('visibilitychange', wake);
     };
   }, [reducedMotion, pillState]);
 
@@ -140,46 +147,44 @@ export function RecordingPopup({
     return () => clearInterval(id);
   }, [pillState]);
 
-  const phase = tick * PHASE_STEP;
-
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;
   const formatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 
+  const isAgent = mode === 'agent';
+  const Glyph = isAgent ? Bot : Mic;
+
   return (
     <div className="flex h-full w-full items-center justify-center overflow-hidden bg-transparent isolate">
       <div
-        className={`pill-inner flex h-10 w-40 items-center justify-center gap-1 rounded-full border border-border bg-card ${
+        data-intent={mode}
+        className={`pill-inner recording-island flex h-10 w-40 items-center gap-2.5 border pl-1.5 pr-3 ${
           pillState === 'hidden' ? '' : pillState
         }`}
         role="status"
-        aria-label={`${mode === 'agent' ? 'Agent mode' : 'Dictation'} recording in progress${remainingSeconds === null ? '' : `. Recording stops in ${remainingSeconds} seconds`}`}
+        aria-label={`${isAgent ? 'Agent mode' : 'Dictation'} recording in progress${remainingSeconds === null ? '' : `. Recording stops in ${remainingSeconds} seconds`}`}
       >
-        {mode === 'agent' ? (
-          <Bot className="h-3.5 w-3.5 shrink-0 text-agent-accent" aria-hidden="true" />
-        ) : (
-          <Mic className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
-        )}
-        <div className={`h-8 items-center gap-1 ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
-          {bars.map((_, index) => {
-            const scale = computeBarScale(level, phase, index);
-            return (
-              <span
-                key={index}
-                className={`bar ${mode}`}
-                style={{ transform: `scaleY(${scale})` }}
-              />
-            );
-          })}
-        </div>
-        <span className="text-[10px] font-mono tabular-nums text-foreground/80 select-none">
-          {formatted}
+        <span aria-hidden="true" className="recording-glyph flex size-7 shrink-0 items-center justify-center">
+          <Glyph className="size-3.5" />
         </span>
+        <div className={`h-8 flex-1 items-center justify-center gap-[3px] ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
+          {Array.from({ length: BAR_COUNT }, (_, index) => (
+            <span
+              key={index}
+              ref={(bar) => { barRefs.current[index] = bar; }}
+              className="bar"
+              style={{ transform: `scaleY(${computeBarScale(0, 0, index)})` }}
+            />
+          ))}
+        </div>
         {remainingSeconds !== null ? (
-          <span className="ml-1 whitespace-nowrap text-[10px] font-medium tabular-nums text-warning">
+          <span className="flex-1 whitespace-nowrap text-[11px] font-medium tabular-nums text-warning">
             {remainingSeconds}s left
           </span>
         ) : null}
+        <span className="text-[11px] tabular-nums text-muted-foreground select-none">
+          {formatted}
+        </span>
       </div>
     </div>
   );

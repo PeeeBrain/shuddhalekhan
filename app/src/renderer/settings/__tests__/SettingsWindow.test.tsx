@@ -174,6 +174,8 @@ async function waitForLoaded() {
   await waitFor(() => {
     expect(screen.getByRole('tab', { name: 'Transcription' })).toBeInTheDocument();
   }, { timeout: SLOW_CI_TIMEOUT });
+  // Settings lands on Home; most tests exercise Transcription.
+  fireEvent.click(screen.getByRole('tab', { name: 'Transcription' }));
 }
 
 function getTabs() {
@@ -189,7 +191,8 @@ describe('Settings navigation', () => {
     const { settingsIpc } = renderSettings({ config: baseConfig({
       transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
     }) });
-    const slider = await screen.findByRole('slider', { name: 'Inference threads' });
+    await waitForLoaded();
+    const slider = await screen.findByRole('slider', { name: 'CPU threads' });
     expect(slider).toHaveAttribute('min', '1');
     expect(slider).toHaveAttribute('max', '16');
     expect(slider).toHaveValue('4');
@@ -278,11 +281,11 @@ describe('Settings navigation', () => {
     expect(screen.queryByRole('region', { name: 'First-run setup' })).toBeNull();
   });
 
-  it('groups destinations into Dictation, Agent, and System with no General', async () => {
+  it('groups destinations into General, Agent, and System', async () => {
     renderSettings();
     await waitForLoaded();
 
-    const groupLabels = ['Dictation', 'Agent', 'System'];
+    const groupLabels = ['General', 'Agent', 'System'];
     for (const label of groupLabels) {
       expect(
         screen.getAllByText(label).some((el) => el.id === `settings-group-${label.toLowerCase()}`),
@@ -292,8 +295,6 @@ describe('Settings navigation', () => {
         'vertical',
       );
     }
-
-    expect(screen.queryByRole('tab', { name: 'General' })).toBeNull();
   });
 
   it('lists the seven destinations in order', async () => {
@@ -301,8 +302,8 @@ describe('Settings navigation', () => {
     await waitForLoaded();
 
     const expected = [
+      'Home',
       'Transcription',
-      'Audio',
       'Shortcuts',
       'Agent',
       'MCP Servers',
@@ -312,11 +313,37 @@ describe('Settings navigation', () => {
     expect(getTabs().map((tab) => tab.textContent ?? '')).toEqual(expected);
   });
 
-  it('opens on Transcription as the initial destination', async () => {
+  it('opens on Home as the initial destination', async () => {
+    renderSettings();
+
+    expect(await screen.findByRole('tab', { name: 'Home' }, { timeout: SLOW_CI_TIMEOUT })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Readiness')).toBeInTheDocument();
+  });
+
+  it('opens the command palette with Ctrl+K and jumps to a section', async () => {
     renderSettings();
     await waitForLoaded();
 
-    expect(tabByLabel('Transcription')).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const search = screen.getByRole('combobox', { name: 'Search settings and runs' });
+    fireEvent.change(search, { target: { value: 'about' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(tabByLabel('About')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+  });
+
+  it('returns focus to the opener when the palette is dismissed', async () => {
+    renderSettings();
+    await waitForLoaded();
+
+    const opener = screen.getByRole('button', { name: /Search/ });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search settings and runs' }), { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
   });
 
   it('switches sections and exposes the active tab panel when a tab is clicked', async () => {
@@ -340,9 +367,9 @@ describe('Settings navigation', () => {
     fireEvent.focus(transcriptionTab);
     fireEvent.keyDown(transcriptionTab, { key: 'ArrowDown' });
 
-    expect(tabByLabel('Audio')).toHaveAttribute('aria-selected', 'true');
+    expect(tabByLabel('Shortcuts')).toHaveAttribute('aria-selected', 'true');
 
-    fireEvent.keyDown(tabByLabel('Audio'), { key: 'ArrowUp' });
+    fireEvent.keyDown(tabByLabel('Shortcuts'), { key: 'ArrowUp' });
     expect(tabByLabel('Transcription')).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -350,13 +377,13 @@ describe('Settings navigation', () => {
     renderSettings();
     await waitForLoaded();
 
-    const audioTab = tabByLabel('Audio');
-    fireEvent.focus(audioTab);
-    fireEvent.keyDown(audioTab, { key: 'End' });
+    const shortcutsTab = tabByLabel('Shortcuts');
+    fireEvent.focus(shortcutsTab);
+    fireEvent.keyDown(shortcutsTab, { key: 'End' });
     expect(tabByLabel('About')).toHaveAttribute('aria-selected', 'true');
 
     fireEvent.keyDown(tabByLabel('About'), { key: 'Home' });
-    expect(tabByLabel('Transcription')).toHaveAttribute('aria-selected', 'true');
+    expect(tabByLabel('Home')).toHaveAttribute('aria-selected', 'true');
   });
 });
 
@@ -371,7 +398,7 @@ describe('Settings section reachability', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Check server' }));
     await waitFor(() => expect(settingsIpc.checkTranscriptionServer).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Reachable')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Mode' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Task' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Spoken language' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeInTheDocument();
   });
@@ -474,7 +501,7 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Microsoft Azure');
     expect(screen.getByText(/does not send test audio or make a billable Azure request/i)).toBeInTheDocument();
 
-    const mode = screen.getByRole('combobox', { name: 'Mode' });
+    const mode = screen.getByRole('combobox', { name: 'Task' });
     fireEvent.click(mode);
     expect(await screen.findByRole('option', { name: /Translate speech to English/ })).toHaveAttribute('data-disabled');
     expect(settingsIpc.checkTranscriptionServer).not.toHaveBeenCalled();
@@ -504,7 +531,7 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Google Cloud');
     fireEvent.click(screen.getByText('Advanced'));
     expect(screen.getByRole('combobox', { name: 'Credential source' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Mode' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Task' }));
     expect(await screen.findByRole('option', { name: /not supported by Google/ })).toHaveAttribute('data-disabled');
   });
 
@@ -568,14 +595,14 @@ describe('Settings section reachability', () => {
     expect(await screen.findByLabelText('Bearer token')).toBeInTheDocument();
   });
 
-  it('shows shared device rows without the removed shared activation setting', async () => {
+  it('shows the microphone on the Shortcuts section without a shared activation setting', async () => {
     renderSettings();
     await waitForLoaded();
 
-    fireEvent.click(tabByLabel('Audio'));
+    fireEvent.click(tabByLabel('Shortcuts'));
 
     expect(screen.queryByRole('combobox', { name: 'Recording activation' })).not.toBeInTheDocument();
-    expect(screen.getByText('Selected device')).toBeInTheDocument();
+    expect(screen.getByText('Microphone')).toBeInTheDocument();
   });
 
   it('shows both hotkey displays on the Shortcuts section', async () => {
@@ -707,12 +734,12 @@ describe('Settings section reachability', () => {
     fireEvent.click(tabByLabel('Agent'));
 
     expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Provider base URL' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Base URL' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Model' })).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Thinking' })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Reasoning effort' })).not.toBeInTheDocument();
     expect(
-      screen.getByRole('textbox', { name: 'API key env var name' }),
+      screen.getByRole('textbox', { name: 'Environment variable' }),
     ).toBeInTheDocument();
   });
 
@@ -795,6 +822,7 @@ describe('Settings section reachability', () => {
     await waitForLoaded();
 
     fireEvent.click(tabByLabel('MCP Servers'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
 
     expect(
       screen.getByRole('button', { name: 'Save Server' }),

@@ -389,8 +389,15 @@ describe('McpRegistry', () => {
     await registry.settle(1000);
 
     const snapshot = registry.createRunSnapshot(approve);
-    expect(snapshot.tools.srv1__search.needsApproval).toBe(true);
+    const needsApproval = snapshot.tools.srv1__search.needsApproval as () => boolean;
+    expect(needsApproval()).toBe(true);
     expect(snapshot.tools).not.toHaveProperty('srv1__remove');
+
+    // "Always allow" saved mid-run stops asking for the rest of that run.
+    await registry.updateConfig(
+      withServer({ toolPolicies: { 'srv1:remove': 'disabled', 'srv1:search': 'alwaysAllow' } }) as never
+    );
+    expect(needsApproval()).toBe(false);
 
     await snapshot.close();
     await registry.close();

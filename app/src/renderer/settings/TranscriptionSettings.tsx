@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { X } from 'lucide-react';
-import { SectionHeader, SettingsPanel } from './ui/SectionHeader';
+import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { Tag, ToggleRow, SelectRow, DraftTextRow } from './ui/rows';
 import { Disclosure } from './ui/Disclosure';
 import { SetupChecklist } from './SetupChecklist';
@@ -149,7 +149,7 @@ function ProviderSelector({
         : { label: 'Credential required', tone: 'warning' as const };
 
   return (
-    <div className="border-b border-border/70 py-4 space-y-2">
+    <div className="border-b border-border/50 py-3.5 last:border-b-0 space-y-2">
       <Label id={labelId} className="text-sm font-medium">Provider</Label>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger
@@ -444,10 +444,10 @@ export function TranscriptionSettings({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <SectionHeader
         title="Transcription"
-        description="Configure where recordings are transcribed and how language is handled."
+        description="Where your recordings are turned into text, and how that text is cleaned up."
       />
       {!config.setupChecklistDismissed ? (
         <SetupChecklist
@@ -457,11 +457,13 @@ export function TranscriptionSettings({
           whisperLiveKitReadiness={whisperLiveKitReadiness}
         />
       ) : null}
-      <SettingsPanel className="overflow-hidden">
+      <SettingsPanel>
+        <SettingsPanelHeader title="Speech engine" />
+        <SettingsCard>
         {provider === 'managed-local' ? (
           <>
             <ManagedLocalSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
-            <Disclosure label="Advanced providers" className="border-b border-border/70 py-4">
+            <Disclosure label="Use a different provider" className="border-b border-border/50 py-3.5 last:border-b-0">
               <ProviderSelector
                 config={config}
                 value={provider}
@@ -514,7 +516,12 @@ export function TranscriptionSettings({
             onReadinessChange={setWhisperLiveKitReadiness}
           />
         ) : null}
+        </SettingsCard>
+      </SettingsPanel>
 
+      <SettingsPanel>
+        <SettingsPanelHeader title="Output" />
+        <SettingsCard>
         <ToggleRow
           title="Clean transcription"
           description="Remove common filler words before dictation text is injected."
@@ -531,7 +538,7 @@ export function TranscriptionSettings({
             { value: 'live', label: 'Live Dictation (beta)' },
             { value: 'corrected', label: 'Corrected Dictation' },
           ]}
-          description="Batch Dictation keeps finalize-once insertion. Live and Corrected are opt-in and require a supported combination."
+          description="Batch inserts text once you stop. Live and Corrected need a supported provider."
           errorId={useId()}
           error={dictationModeError ?? storedDictationModeError ?? fieldErrors[FIELD_ID_DICTATION_MODE]}
           onChange={handleDictationModeChange}
@@ -545,7 +552,7 @@ export function TranscriptionSettings({
           />
         ) : null}
         <SelectRow
-          label="Mode"
+          label="Task"
           value={config.task}
           options={[
             { value: 'transcribe', label: 'Transcribe spoken language' },
@@ -606,6 +613,7 @@ export function TranscriptionSettings({
           error={fieldErrors[FIELD_ID_DICTIONARY]}
           onChange={(next) => commit('dictionary', next, FIELD_ID_DICTIONARY)}
         />
+        </SettingsCard>
       </SettingsPanel>
       <PrivacyNote provider={provider} />
     </div>
@@ -659,18 +667,21 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
   };
 
   return (
-    <div className="border-b border-border/70 py-4">
+    <div className="border-b border-border/50 py-3.5">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium">Local speech model</p>
+        <div className="space-y-0.5">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            Local speech model
+            {snapshot?.state.kind === 'ready' ? <Tag tone="success">Ready offline</Tag> : null}
+          </p>
           {snapshot ? (
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {snapshot.model.name} · {Math.round(snapshot.model.downloadBytes / 1_000_000)} MB download · {snapshot.model.languages.length} languages
             </p>
-          ) : <p className="mt-1 text-xs text-muted-foreground">Checking status…</p>}
+          ) : <p className="text-xs text-muted-foreground">Checking status…</p>}
         </div>
         {snapshot?.state.kind === 'ready' ? (
-          <Button variant="outline" size="sm" onClick={() => void remove()}>Delete model</Button>
+          <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => void remove()}>Delete model</Button>
         ) : snapshot?.state.kind === 'downloading' || snapshot?.state.kind === 'installing' ? null : (
           <Button size="sm" onClick={() => void install()}>
             {snapshot?.state.kind === 'error'
@@ -683,14 +694,13 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
         <p className="mt-3 text-xs" role="status">Downloading… {Math.round(snapshot.state.downloadedBytes / snapshot.state.totalBytes * 100)}%</p>
       ) : null}
       {snapshot?.state.kind === 'installing' ? <p className="mt-3 text-xs" role="status">Verifying and installing…</p> : null}
-      {snapshot?.state.kind === 'ready' ? <p className="mt-3 text-xs text-success">Ready offline</p> : null}
       {snapshot?.state.kind === 'error' ? <p className="mt-3 text-xs text-destructive" role="alert">{snapshot.state.message}</p> : null}
       {error ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
       {snapshot ? (
-        <div className="mt-4 max-w-xl space-y-2">
+        <div className="mt-4 space-y-2 border-t border-border/50 pt-3.5">
           <div className="flex items-center justify-between gap-4">
-            <Label htmlFor={threadsId}>Inference threads</Label>
-            <output htmlFor={threadsId} className="text-sm tabular-nums">{threads}</output>
+            <Label htmlFor={threadsId}>CPU threads</Label>
+            <output htmlFor={threadsId} className="text-sm tabular-nums text-muted-foreground">{threads} of {snapshot.inference.maxThreads}</output>
           </div>
           <input
             id={threadsId}
@@ -709,11 +719,14 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
             onKeyUp={saveThreads}
             onBlur={saveThreads}
           />
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>{snapshot.inference.maxThreads} logical processors available · Default: {snapshot.inference.defaultThreads}</span>
+          <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+            <p id={threadsDescriptionId} className="max-w-md text-xs leading-5 text-muted-foreground">
+              More threads can finish sooner but use more CPU and battery. Quality is unchanged.
+              Default is {snapshot.inference.defaultThreads}; changes apply to the next transcription.
+            </p>
             <Button
               variant="ghost"
-              size="sm"
+              size="xs"
               disabled={config.managedLocalThreads == null && draftThreads === null && !threadsError}
               onClick={() => {
                 setDraftThreads(null);
@@ -721,11 +734,6 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
               }}
             >Use default</Button>
           </div>
-          <p id={threadsDescriptionId} className="text-xs text-muted-foreground">
-            Fewer threads leave more CPU capacity for other apps. More may shorten transcription, but increase CPU use,
-            heat and battery drain; too many can be slower. Threads share your CPU with other apps. Recognition quality is unchanged.
-            Applies to the next transcription, which may take longer while the model reloads.
-          </p>
           {threadsError ? <p id={threadsErrorId} className="text-xs text-destructive" role="alert">{threadsError}</p> : null}
         </div>
       ) : null}
@@ -781,7 +789,7 @@ function CorrectedDictationFormatterSection({
   };
 
   return (
-    <div className="border-b border-border/70 py-4 space-y-2">
+    <div className="border-b border-border/50 py-3.5 last:border-b-0 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm font-medium">Corrected Dictation formatter</p>
         <Tag tone={endpointClass === 'local' ? 'success' : 'warning'}>
@@ -885,7 +893,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
   const fieldError = validationError ?? fieldErrors[FIELD_ID_LOCAL_WHISPER_URL];
 
   return (
-    <div className="space-y-2 border-b border-border/70 py-4">
+    <div className="space-y-2 border-b border-border/50 py-3.5 last:border-b-0">
       <Label id={labelId} htmlFor={inputId} className="text-sm font-medium">
         Endpoint
       </Label>
@@ -988,7 +996,7 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
         }, FIELD_ID_OPENAI_MODEL)}
         clearError={() => persistence.clearFieldError(FIELD_ID_OPENAI_MODEL)}
       />
-      <div className="border-b border-border/70 py-4">
+      <div className="border-b border-border/50 py-3.5 last:border-b-0">
         <CredentialControl
           credential="openai-api-key"
           label="OpenAI API key"
@@ -1059,14 +1067,14 @@ function AzureSpeechSection({ config, persistence, settingsIpc }: Props) {
         }, FIELD_ID_AZURE_REGION)}
         clearError={() => persistence.clearFieldError(FIELD_ID_AZURE_REGION)}
       />
-      <div className="border-b border-border/70 py-4">
+      <div className="border-b border-border/50 py-3.5 last:border-b-0">
         <CredentialControl
           credential="azure-speech-key"
           label="Azure Speech key"
           settingsIpc={settingsIpc}
         />
       </div>
-      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+      <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
         Settings are checked locally. Shuddhalekhan does not send test audio or make a billable Azure request.
       </p>
     </>
@@ -1102,18 +1110,18 @@ function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
       {google.credentialSource === 'service-account' ? (
         <CredentialControl credential="google-service-account" label="Service-account JSON document" settingsIpc={settingsIpc} documentImport />
       ) : (
-        <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+        <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
           Application Default Credentials are read by the main process from GOOGLE_APPLICATION_CREDENTIALS or the gcloud ADC file.
         </p>
       )}
-      <Disclosure label="Advanced" className="border-b border-border/70 py-4 text-sm">
+      <Disclosure label="Advanced" className="border-b border-border/50 py-3.5 last:border-b-0 text-sm">
         <div className="mt-3">
           <SelectRow label="Credential source" value={google.credentialSource} errorId={useId()}
             options={[{ value: 'service-account', label: 'Imported service-account document' }, { value: 'adc', label: 'Application Default Credentials' }]}
             onChange={(value) => save({ ...google, credentialSource: value as typeof google.credentialSource }, 'google-credential-source')} />
         </div>
       </Disclosure>
-      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+      <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
         Recordings warn at 45 seconds and stop automatically at 55 seconds for Google's synchronous short-audio API. Setup validation makes no billable request.
       </p>
     </>
@@ -1155,14 +1163,14 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc }: Props) {
         </>
       ) : null}
       {nim.auth === 'none' ? <CheckServerTest provider="nvidia-speech-nim" settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} /> : null}
-      <Disclosure label="Advanced model capabilities" className="border-b border-border/70 py-4 text-sm">
+      <Disclosure label="Advanced model capabilities" className="border-b border-border/50 py-3.5 last:border-b-0 text-sm">
         <div className="mt-2">
           <ToggleRow title="Automatic language detection" description="Enable only if the selected NIM model declares support." checked={nim.supportsAutomaticLanguageDetection} errorId={useId()} onChange={(checked) => save({ ...nim, supportsAutomaticLanguageDetection: checked }, 'nvidia-auto-language')} />
           <ToggleRow title="Translation" description="Enable only if the selected NIM model and endpoint support translation." checked={nim.supportsTranslation} errorId={useId()} onChange={(checked) => save({ ...nim, supportsTranslation: checked }, 'nvidia-translation')} />
           <ToggleRow title="Dictionary hints" description="Send personal dictionary terms as an OpenAI-compatible prompt." checked={nim.supportsDictionaryHints} errorId={useId()} onChange={(checked) => save({ ...nim, supportsDictionaryHints: checked }, 'nvidia-dictionary')} />
         </div>
       </Disclosure>
-      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+      <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
         This endpoint is user-hosted, not an NVIDIA managed cloud service. Speech NIM typically requires a supported GPU server or WSL2 deployment.
       </p>
     </>
@@ -1225,7 +1233,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
         onChange={handleAuthChange}
       />
       {custom.auth === 'bearer' ? (
-        <div className="border-b border-border/70 py-4">
+        <div className="border-b border-border/50 py-3.5 last:border-b-0">
           <CredentialControl
             credential="custom-open-ai-compatible-bearer"
             label="Bearer token"
@@ -1249,7 +1257,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
             }, FIELD_ID_CUSTOM_HEADER_NAME)}
             clearError={() => persistence.clearFieldError(FIELD_ID_CUSTOM_HEADER_NAME)}
           />
-          <div className="border-b border-border/70 py-4">
+          <div className="border-b border-border/50 py-3.5 last:border-b-0">
             <CredentialControl
               credential="custom-open-ai-compatible-header"
               label="Secret header value"
@@ -1319,7 +1327,7 @@ function WhisperLiveKitSection({
           settingsIpc={settingsIpc}
         />
       ) : null}
-      <div className="flex flex-wrap items-center gap-3 border-b border-border/70 py-4">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border/50 py-3.5 last:border-b-0">
         <Button
           type="button"
           variant="secondary"
@@ -1331,7 +1339,7 @@ function WhisperLiveKitSection({
         </Button>
         {readiness ? <WhisperLiveKitReadinessTag readiness={readiness} /> : null}
       </div>
-      <p role="note" className="border-b border-border/70 py-4 text-xs text-muted-foreground">
+      <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
         WhisperLiveKit is a user-hosted service. Batch Dictation sends audio to its REST endpoint; readiness opens a short-lived handshake socket and keeps no idle ASR connection.
       </p>
     </>
@@ -1380,7 +1388,7 @@ function CheckServerTest({ provider, settingsIpc, testState, setTestState }: Che
   if (provider === 'local-whisper-cpp') return null; // handled inline
 
   return (
-    <div className="flex items-center gap-3 border-b border-border/70 py-4">
+    <div className="flex items-center gap-3 border-b border-border/50 py-3.5 last:border-b-0">
       <Button
         type="button"
         variant="secondary"
@@ -1409,7 +1417,7 @@ function PrivacyNote({ provider }: { provider: TranscriptionProviderId }) {
     <p
       role="note"
       aria-label="Transcription privacy note"
-      className="px-6 text-xs text-muted-foreground"
+      className="-mt-4 px-1 text-xs leading-5 text-muted-foreground/80"
     >
       {PRIVACY_MESSAGES[provider]}
     </p>
@@ -1444,7 +1452,7 @@ function DictionaryRow({ dictionary, disabled = false, description, error, onCha
   };
 
   return (
-    <div className="space-y-3 border-b border-border/70 py-4">
+    <div className="space-y-3 border-b border-border/50 py-3.5 last:border-b-0">
       <div className="space-y-1">
         <Label className="text-sm font-medium">Personal dictionary</Label>
         <p className="text-xs text-muted-foreground">
@@ -1466,7 +1474,7 @@ function DictionaryRow({ dictionary, disabled = false, description, error, onCha
         {dictionary.map((word) => (
           <span
             key={word}
-            className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-sm font-medium text-secondary-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+            className="group inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/40 py-0.5 pl-2 pr-1 text-xs font-medium text-secondary-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
           >
             {word}
             <button
@@ -1474,7 +1482,7 @@ function DictionaryRow({ dictionary, disabled = false, description, error, onCha
               disabled={disabled}
               onClick={() => removeWord(word)}
               aria-label={`Remove ${word}`}
-              className="rounded-full p-0.5 text-muted-foreground transition-colors hover:text-destructive focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+              className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-destructive focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             >
               <X className="size-3" aria-hidden="true" />
             </button>

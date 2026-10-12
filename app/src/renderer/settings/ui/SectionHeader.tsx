@@ -3,27 +3,29 @@ import { cn } from '@/lib/utils';
 
 interface SectionHeaderProps {
   title: string;
-  description?: string;
-  eyebrow?: string;
+  description?: ReactNode;
+  actions?: ReactNode;
   className?: string;
 }
 
-export function SectionHeader({ title, description, eyebrow, className }: SectionHeaderProps) {
+/** Page title for a settings section. */
+export function SectionHeader({ title, description, actions, className }: SectionHeaderProps) {
   return (
-    <header className={cn('mb-6 shrink-0', className)}>
-      {eyebrow ? (
-        <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">{eyebrow}</p>
-      ) : null}
-      <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
-      {description ? (
-        <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
-      ) : null}
+    <header className={cn('mb-7 flex shrink-0 items-end justify-between gap-6', className)}>
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight">{title}</h2>
+        {description ? (
+          <p className="mt-1 max-w-xl text-[13px] leading-5 text-muted-foreground">{description}</p>
+        ) : null}
+      </div>
+      {actions ? <div className="shrink-0">{actions}</div> : null}
     </header>
   );
 }
 
 type SettingsPanelProps = ComponentPropsWithoutRef<'section'>;
 
+/** A titled group: SettingsPanelHeader followed by a SettingsCard of rows. */
 export function SettingsPanel({ className, children, ...props }: SettingsPanelProps) {
   return (
     <section {...props} className={cn('settings-panel', className)}>
@@ -32,8 +34,16 @@ export function SettingsPanel({ className, children, ...props }: SettingsPanelPr
   );
 }
 
+/** Rounded surface that holds divided rows. */
+export function SettingsCard({ className, children, ...props }: ComponentPropsWithoutRef<'div'>) {
+  return (
+    <div {...props} className={cn('settings-card', className)}>
+      {children}
+    </div>
+  );
+}
+
 interface SettingsPanelHeaderProps {
-  eyebrow?: string;
   title: string;
   description?: string;
   actions?: ReactNode;
@@ -42,7 +52,6 @@ interface SettingsPanelHeaderProps {
 }
 
 export function SettingsPanelHeader({
-  eyebrow,
   title,
   description,
   actions,
@@ -50,17 +59,14 @@ export function SettingsPanelHeader({
   id,
 }: SettingsPanelHeaderProps) {
   return (
-    <header className={cn('flex flex-col gap-1.5', className)}>
-      {eyebrow ? (
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{eyebrow}</p>
-      ) : null}
-      <div className="flex items-start justify-between gap-4">
-        <h3 id={id} className="text-sm font-semibold text-foreground">{title}</h3>
-        {actions ? <div className="shrink-0">{actions}</div> : null}
+    <header className={cn('flex items-end justify-between gap-4 px-1', className)}>
+      <div className="min-w-0">
+        <h3 id={id} className="text-[13px] font-medium text-muted-foreground">{title}</h3>
+        {description ? (
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground/80">{description}</p>
+        ) : null}
       </div>
-      {description ? (
-        <p className="text-xs leading-5 text-muted-foreground">{description}</p>
-      ) : null}
+      {actions ? <div className="shrink-0">{actions}</div> : null}
     </header>
   );
 }

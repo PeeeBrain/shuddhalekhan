@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
+import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { ToggleRow, DraftTextRow, SelectRow } from './ui/rows';
 import { CredentialControl } from './ui/CredentialControl';
 import { isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
@@ -45,39 +45,32 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <SectionHeader
         title="Agent"
-        description="Configure the voice agent provider and its model."
+        description="Speak a command, and an agent runs it once with your MCP tools."
       />
-      <div className="space-y-5">
-        <SettingsPanel className="overflow-hidden">
-          <SettingsPanelHeader
-            eyebrow="Runtime"
-            title="Agent Mode"
-            description="One voice command starts one run. The shortcut stays dormant while the runtime is off."
-          />
-          <div>
+      <div className="space-y-8">
+        <SettingsCard>
             <ToggleRow
               title="Enable Agent Mode"
+              description="The Agent Mode shortcut does nothing while this is off."
               checked={agent.enabled}
               tone="agent"
               errorId={enabledErrorId}
               error={fieldErrors[FIELD_ID_ENABLED]}
               onChange={toggleEnabled}
             />
-          </div>
-        </SettingsPanel>
+        </SettingsCard>
 
-        <SettingsPanel className="overflow-hidden">
+        <SettingsPanel>
           <SettingsPanelHeader
-            eyebrow="Model connection"
-            title="Provider and model"
-            description="Use an OpenAI-compatible endpoint. Changes are saved when you leave a text field."
+            title="Model"
+            description="Any OpenAI-compatible endpoint. Text fields save when you leave them."
           />
-          <div>
+          <SettingsCard>
             <DraftTextRow
-              label="Provider base URL"
+              label="Base URL"
               value={agent.provider.baseUrl}
               placeholder="https://openrouter.ai/api/v1"
               errorId={baseUrlErrorId}
@@ -108,7 +101,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
             />
             <ToggleRow
               title="Thinking"
-              description="Allows models that support thinking to spend extra reasoning before tool calls."
+              description="Let models that support it reason before calling tools."
               checked={agent.provider.thinkingEnabled}
               tone="agent"
               errorId={thinkingErrorId}
@@ -124,7 +117,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
             {agent.provider.thinkingEnabled ? (
               <SelectRow
                 label="Reasoning effort"
-                description="Controls how much reasoning the model uses. Supported levels depend on the selected provider and model."
+                description="Supported levels depend on the provider and model."
                 value={agent.provider.reasoningEffort ?? 'medium'}
                 options={[
                   { value: 'low', label: 'Low' },
@@ -148,18 +141,14 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
                 }
               />
             ) : null}
-          </div>
+          </SettingsCard>
         </SettingsPanel>
 
-        <SettingsPanel className="overflow-hidden">
-          <SettingsPanelHeader
-            eyebrow="Access"
-            title="Credentials"
-            description="Keep API keys in the environment or in the app's secure credential store."
-          />
-          <div>
+        <SettingsPanel>
+          <SettingsPanelHeader title="API key" />
+          <SettingsCard>
             <SelectRow
-              label="API key source"
+              label="Source"
               value={apiKeySource}
               options={[
                 { value: 'environment', label: 'Environment variable' },
@@ -177,7 +166,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
             />
             {apiKeySource === 'environment' ? (
               <DraftTextRow
-                label="API key env var name"
+                label="Environment variable"
                 value={agent.provider.apiKeyEnvVar}
                 placeholder={
                   isLocalProviderUrl(agent.provider.baseUrl)
@@ -203,7 +192,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
                 settingsIpc={settingsIpc}
               />
             )}
-          </div>
+          </SettingsCard>
         </SettingsPanel>
       </div>
 

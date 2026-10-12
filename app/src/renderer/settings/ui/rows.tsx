@@ -21,23 +21,25 @@ interface TagProps {
 }
 
 const TAG_TONE_CLASS: Record<TagTone, string> = {
-  neutral: 'border-border/70 bg-muted/50 text-muted-foreground',
-  success: 'border-success/25 bg-success/10 text-success',
-  warning: 'border-warning/30 bg-warning/10 text-warning',
-  error: 'border-destructive/30 bg-destructive/10 text-destructive',
-  info: 'border-primary/25 bg-primary/10 text-primary',
-  agent: 'border-agent-accent/30 bg-agent-accent/10 text-agent-accent',
+  neutral: 'text-muted-foreground',
+  success: 'text-success',
+  warning: 'text-warning',
+  error: 'text-destructive',
+  info: 'text-primary',
+  agent: 'text-agent-accent',
 };
 
+/** Inline status: a dot plus tinted label. Deliberately not a pill. */
 export function Tag({ tone = 'neutral', className, children }: TagProps) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold tracking-wide',
+        'inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium',
         TAG_TONE_CLASS[tone],
         className,
       )}
     >
+      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-current" />
       {children}
     </span>
   );
@@ -50,11 +52,14 @@ interface RowShellProps {
 
 function RowShell({ children, className }: RowShellProps) {
   return (
-    <div className={cn('border-b border-border/60 py-4 last:border-b-0', className)}>
+    <div className={cn('border-b border-border/50 py-3.5 last:border-b-0', className)}>
       {children}
     </div>
   );
 }
+
+/** Two-column row: label and help on the left, control on the right. */
+const SPLIT_ROW = 'grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,18rem)] sm:items-center sm:gap-8';
 
 interface FieldErrorProps {
   id: string;
@@ -97,11 +102,11 @@ export function ToggleRow({
       : undefined;
 
   return (
-    <RowShell className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="max-w-2xl space-y-1.5">
-        <p className="text-sm font-semibold">{title}</p>
+    <RowShell className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+      <div className="max-w-xl space-y-0.5">
+        <p className="text-sm font-medium">{title}</p>
         {description ? (
-          <p id={descriptionId} className="max-w-xl text-xs leading-5 text-muted-foreground">
+          <p id={descriptionId} className="text-xs leading-5 text-muted-foreground">
             {description}
           </p>
         ) : null}
@@ -150,13 +155,21 @@ export function SelectRow({
     .filter(Boolean)
     .join(' ') || undefined;
   return (
-    <RowShell className="space-y-2.5">
-      <Label id={labelId} className="text-sm font-semibold">
-        {label}
-      </Label>
+    <RowShell className={SPLIT_ROW}>
+      <div className="min-w-0 space-y-0.5">
+        <Label id={labelId} className="text-sm font-medium">
+          {label}
+        </Label>
+        {description ? (
+          <p id={descriptionId} className="text-xs leading-5 text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
+        <FieldError id={errorId} error={error} />
+      </div>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger
-          className="h-10 w-full max-w-md"
+          className="h-9 w-full"
           aria-label={label}
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
@@ -175,12 +188,6 @@ export function SelectRow({
           ))}
         </SelectContent>
       </Select>
-      {description ? (
-        <p id={descriptionId} className="max-w-xl text-xs leading-5 text-muted-foreground">
-          {description}
-        </p>
-      ) : null}
-      <FieldError id={errorId} error={error} />
     </RowShell>
   );
 }
@@ -264,13 +271,26 @@ export function DraftTextRow({
   ].filter(Boolean).join(' ') || undefined;
 
   return (
-    <RowShell className="space-y-2.5">
-      <Label id={labelId} htmlFor={inputId} className="text-sm font-semibold">
-        {label}
-      </Label>
+    <RowShell className={SPLIT_ROW}>
+      <div className="min-w-0 space-y-0.5">
+        <Label id={labelId} htmlFor={inputId} className="text-sm font-medium">
+          {label}
+        </Label>
+        {description ? (
+          <p id={descriptionId} className="text-xs leading-5 text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
+        {warning ? (
+          <p id={warningId} className="text-xs leading-5 text-warning break-words">
+            {warning}
+          </p>
+        ) : null}
+        <FieldError id={errorId} error={showError ?? undefined} />
+      </div>
       <Input
         id={inputId}
-        className="h-10 max-w-xl"
+        className="h-9"
         value={currentValue}
         placeholder={placeholder}
         onChange={handleChange}
@@ -280,17 +300,6 @@ export function DraftTextRow({
         aria-invalid={showError ? true : undefined}
         aria-describedby={describedBy}
       />
-      {description ? (
-        <p id={descriptionId} className="max-w-xl text-xs leading-5 text-muted-foreground">
-          {description}
-        </p>
-      ) : null}
-      {warning ? (
-        <p id={warningId} className="max-w-xl text-xs leading-5 text-warning break-words">
-          {warning}
-        </p>
-      ) : null}
-      <FieldError id={errorId} error={showError ?? undefined} />
     </RowShell>
   );
 }
@@ -310,10 +319,10 @@ export function ReadOnlyRow({ label, value }: ReadOnlyRowProps) {
         aria-labelledby={labelId}
         className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
       >
-        <span id={labelId} className="text-sm text-muted-foreground">
+        <span id={labelId} className="text-sm font-medium">
           {label}
         </span>
-        <span className="text-sm font-semibold break-words sm:text-right">{value}</span>
+        <span className="text-sm text-muted-foreground break-words sm:text-right">{value}</span>
       </div>
     </RowShell>
   );
@@ -322,7 +331,7 @@ export function ReadOnlyRow({ label, value }: ReadOnlyRowProps) {
 export function Keycaps({ value, label }: { value: string; label?: string }) {
   const keys = value.split(' + ');
   return (
-    <div className="flex flex-wrap items-center gap-1" aria-label={label ?? value}>
+    <span className="inline-flex flex-wrap items-center gap-1" aria-label={label ?? value}>
       {keys.map((key, i) => (
         <span key={key} className="flex items-center gap-1">
           <kbd className="inline-flex min-h-7 items-center justify-center rounded-md border border-border/80 bg-muted/70 px-2 py-1 font-mono text-[10px] font-semibold text-foreground shadow-sm">
@@ -340,6 +349,6 @@ export function Keycaps({ value, label }: { value: string; label?: string }) {
           ) : null}
         </span>
       ))}
-    </div>
+    </span>
   );
 }

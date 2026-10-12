@@ -32,6 +32,9 @@ export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
 
 export type McpToolPolicyKey = `${string}:${string}`;
 
+/** Approval card choices; 'always-allow' approves and saves an alwaysAllow tool policy. */
+export type AgentApprovalChoice = 'approved' | 'denied' | 'always-allow';
+
 export type CredentialKind =
   | 'agent-api-key'
   | 'transcription-api-key'
@@ -168,7 +171,7 @@ export interface RendererToMainInvokeChannels {
   'agent:approval-decision': (
     agentRunId: string,
     approvalId: string,
-    decision: 'approved' | 'denied',
+    decision: AgentApprovalChoice,
     message?: string
   ) => Promise<void>;
   'mcp:test-server': (serverId: string) => Promise<void>;

@@ -13,11 +13,13 @@ import {
   Bot,
   FileText,
   History as HistoryIcon,
+  House,
   Info,
   Keyboard,
-  Mic,
   Plug,
-} from 'lucide-react';import { createSettingsIpc } from './settings/settings-ipc';
+  Search,
+} from 'lucide-react';
+import { createSettingsIpc } from './settings/settings-ipc';
 import {
   DEFAULT_SETTINGS_SECTION,
   SETTINGS_NAV_GROUPS,
@@ -30,12 +32,13 @@ import { isListboxNavKey, getNextListboxIndex } from './settings/audit-history-n
 import { useSettingsPersistence } from './settings/use-settings-persistence';
 import { SaveToast } from './settings/SaveToast';
 import { TranscriptionSettings } from './settings/TranscriptionSettings';
-import { AudioSettings } from './settings/AudioSettings';
 import { ShortcutsSettings } from './settings/ShortcutsSettings';
 import { AgentSettings } from './settings/AgentSettings';
 import { AboutSettings } from './settings/AboutSettings';
 import { McpSettings } from './settings/McpSettings';
 import { AuditHistorySettings } from './settings/AuditHistorySettings';
+import { HomeSettings } from './settings/HomeSettings';
+import { CommandPalette } from './settings/CommandPalette';
 import type { SettingsIpc } from './settings/settings-ipc';
 import { Onboarding } from './settings/Onboarding';
 
@@ -44,8 +47,8 @@ interface SettingsWindowProps {
 }
 
 const NAV_ICONS: Record<SettingsSectionId, React.ElementType> = {
+  home: House,
   transcription: FileText,
-  audio: Mic,
   shortcuts: Keyboard,
   agent: Bot,
   mcp: Plug,
@@ -70,6 +73,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   const [mcpStatuses, setMcpStatuses] = useState<
     Record<string, McpServerRuntimeStatus>
   >({});
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  /** Run History opens on; null shows the newest. */
+  const [historyRunId, setHistoryRunId] = useState<string | null>(null);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const latestMcpStatusRevision = useRef(-1);
 
@@ -111,7 +117,16 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       } : current);
     });
 
+    const handlePaletteShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', handlePaletteShortcut);
+
     return () => {
+      window.removeEventListener('keydown', handlePaletteShortcut);
       offUpdater?.();
       offNavigate?.();
       offMcpSnapshot?.();
@@ -143,7 +158,13 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
 
   const selectSection = (id: SettingsSectionId) => {
     setActiveSection(id);
+    setHistoryRunId(null);
     tabRefs.current[getNavSectionIndex(id)]?.focus();
+  };
+
+  const openRun = (agentRunId: string) => {
+    selectSection('history');
+    setHistoryRunId(agentRunId);
   };
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
@@ -173,14 +194,28 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   return (
     <main className="settings-root relative flex h-screen overflow-hidden bg-background text-foreground">
       <aside
-        className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border/60 bg-background px-3 py-5"
+        inert={paletteOpen}
+        className="flex w-52 shrink-0 flex-col overflow-y-auto border-r border-border/60 bg-canvas px-2.5 py-5"
         aria-label="Settings sections"
       >
-        <div className="mb-6 px-2.5">
-          <p className="text-[11px] font-medium text-muted-foreground">Settings</p>
+        <div className="mb-4 px-2.5">
+          <p className="text-sm font-semibold tracking-tight">Shuddhalekhan</p>
+          <p className="text-xs text-muted-foreground">
+            Settings{appInfo?.version ? ` · v${appInfo.version}` : ''}
+          </p>
         </div>
 
-        <nav className="flex flex-col gap-6" aria-label="Settings navigation">
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          className="settings-nav-item mb-5 border border-border/60"
+        >
+          <Search className="size-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1 text-left">Search</span>
+          <kbd className="text-[10px] font-normal text-muted-foreground">Ctrl K</kbd>
+        </button>
+
+        <nav className="flex flex-1 flex-col gap-5" aria-label="Settings navigation">
           {SETTINGS_NAV_GROUPS.map((group) => (
             <NavGroup
               key={group.id}
@@ -194,7 +229,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
         </nav>
       </aside>
 
-      <section className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <section inert={paletteOpen} className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <div
           key={activeSection}
           role="tabpanel"
@@ -210,18 +245,18 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
                 title="History"
                 description="Review past agent runs, tool activity, and responses."
               />
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 pb-8">
-                <AuditHistorySettings settingsIpc={settingsIpc} />
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-10 pb-8">
+                <AuditHistorySettings key={historyRunId ?? 'latest'} settingsIpc={settingsIpc} initialRunId={historyRunId} />
               </div>
             </div>
           ) : (
             <ScrollArea className="h-full min-h-0 flex-1">
-              <div className="mx-auto w-full max-w-4xl px-8 py-8">
+              <div className="mx-auto w-full max-w-3xl px-10 py-9">
+                {activeSection === 'home' ? (
+                  <HomeSettings {...sectionProps} onOpenRun={openRun} />
+                ) : null}
                 {activeSection === 'transcription' ? (
                   <TranscriptionSettings {...sectionProps} />
-                ) : null}
-                {activeSection === 'audio' ? (
-                  <AudioSettings {...sectionProps} />
                 ) : null}
                 {activeSection === 'shortcuts' ? (
                   <ShortcutsSettings {...sectionProps} />
@@ -250,6 +285,14 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
         </div>
         <SaveToast toast={persistence.toast} />
       </section>
+      {paletteOpen ? (
+        <CommandPalette
+          settingsIpc={settingsIpc}
+          onClose={() => setPaletteOpen(false)}
+          onNavigate={selectSection}
+          onOpenRun={openRun}
+        />
+      ) : null}
     </main>
   );
 }
@@ -274,10 +317,10 @@ function NavGroup({
   onKeyDown,
 }: NavGroupProps) {
   return (
-    <div>
+    <div className={group.id === 'system' ? 'mt-auto' : undefined}>
       <p
         id={`settings-group-${group.id}`}
-        className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
+        className="mb-1 px-2.5 text-[11px] font-medium text-muted-foreground/70"
       >
         {group.label}
       </p>
@@ -285,7 +328,7 @@ function NavGroup({
         role="tablist"
         aria-orientation="vertical"
         aria-label={group.label}
-        className="flex flex-col gap-1"
+        className="flex flex-col gap-0.5"
       >
         {group.sections.map((section) => {
           const isActive = activeSection === section.id;
@@ -330,15 +373,15 @@ function SectionFrame({
   description: string;
 }) {
   return (
-    <header className="flex shrink-0 items-start justify-between gap-6 px-8 pb-5 pt-7">
+    <header className="flex shrink-0 items-start justify-between gap-6 px-10 pb-6 pt-9">
       <div>
         <h2
           id={`section-heading-${sectionId}`}
-          className="text-2xl font-semibold tracking-tight"
+          className="text-xl font-semibold tracking-tight"
         >
           {title}
         </h2>
-        <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
+        <p className="mt-1 max-w-xl text-[13px] leading-5 text-muted-foreground">{description}</p>
       </div>
     </header>
   );
