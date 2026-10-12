@@ -15,8 +15,8 @@ export function SaveToast({ toast }: SaveToastProps) {
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className={`pointer-events-none absolute bottom-5 right-5 z-40 max-w-[min(360px,calc(100vw-2rem))] rounded-lg border border-border bg-popover px-3.5 py-2.5 text-sm text-popover-foreground shadow-lg border-l-2 save-toast-enter ${
-        isError ? 'border-l-destructive' : 'border-l-primary'
+      className={`pointer-events-none absolute bottom-5 right-5 z-40 max-w-[min(360px,calc(100vw-2rem))] rounded-lg border border-border bg-popover px-3.5 py-2.5 text-sm text-popover-foreground shadow-lg save-toast-enter ${
+        isError ? 'text-destructive' : ''
       }`}
     >
       {toast.message}

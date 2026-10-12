@@ -15,8 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
-import { Keycaps, ToggleRow } from './ui/rows';
+import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
+import { Keycaps, ReadOnlyRow, ToggleRow } from './ui/rows';
 import type { SettingsSectionProps } from './settings-section-props';
 import {
   captureKeyDown,
@@ -27,7 +27,7 @@ import {
 } from './shortcut-capture';
 
 export function ShortcutsSettings(props: SettingsSectionProps) {
-  const { settingsIpc } = props;
+  const { settingsIpc, config } = props;
   const [paused, setPaused] = useState(false);
   const [pauseError, setPauseError] = useState<string | undefined>();
 
@@ -55,45 +55,41 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <SectionHeader
         title="Shortcuts"
-        description="Choose an independent global binding and recording behavior for each intent."
+        description="A global key and recording behavior for each mode."
       />
 
-      <SettingsPanel aria-label="Global shortcut pause" className="overflow-hidden">
-        <SettingsPanelHeader
-          eyebrow="Global controls"
-          title="Shortcut availability"
-          description="Pause both intents while you need the configured keys elsewhere."
-        />
-        <div>
+      <SettingsPanel aria-label="Shortcut bindings">
+        <SettingsPanelHeader title="Recording" />
+        <SettingsCard>
+          <ShortcutRow intent="dictation" {...props} />
+          <ShortcutRow intent="agent" {...props} />
+        </SettingsCard>
+      </SettingsPanel>
+
+      <SettingsPanel aria-label="Global shortcut pause">
+        <SettingsPanelHeader title="Input" />
+        <SettingsCard>
           <ToggleRow
             title="Pause global shortcuts"
-            description="Temporarily allow configured keys to pass through. Active recordings still finish normally. This resets when Shuddhalekhan restarts."
+            description="Let the keys pass through to other apps until you turn this off or restart Shuddhalekhan."
             checked={paused}
             errorId="shortcut-pause-error"
             error={pauseError}
             onChange={(value) => void updatePaused(value)}
           />
           {paused ? (
-            <p className="pb-5 text-sm leading-5 text-warning" role="status">
+            <p className="-mt-1 pb-3.5 text-xs leading-5 text-warning" role="status">
               <strong>Global shortcuts are paused.</strong> New Dictation and Agent Mode sessions will not start.
             </p>
           ) : null}
-        </div>
-      </SettingsPanel>
-
-      <SettingsPanel aria-label="Shortcut bindings" className="overflow-hidden">
-        <SettingsPanelHeader
-          eyebrow="Recording intents"
-          title="Bindings and behavior"
-          description="Each intent has its own trigger and release model."
-        />
-        <div>
-          <ShortcutRow intent="dictation" {...props} />
-          <ShortcutRow intent="agent" {...props} />
-        </div>
+          <ReadOnlyRow
+            label="Microphone"
+            value={config.selectedDeviceId && config.selectedDeviceId !== 'default' ? config.selectedDeviceId : 'System default'}
+          />
+        </SettingsCard>
       </SettingsPanel>
     </div>
   );
@@ -260,23 +256,23 @@ function ShortcutRow({
     : null;
 
   return (
-    <div className="border-b border-border/70 py-4 last:border-b-0">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0 space-y-1.5">
+    <div className="border-b border-border/50 py-3.5 last:border-b-0">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-6">
+        <div className="min-w-0 space-y-0.5">
           <h3 className="text-sm font-medium">{label}</h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs leading-5 text-muted-foreground">
             {intent === 'agent' && !config.agent.enabled
               ? 'Saved but dormant while Agent Mode is disabled.'
               : shortcut.activationMode === 'toggle'
                 ? 'Press once to start and again to stop.'
                 : 'Hold the shortcut to record; release it to stop.'}
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <Keycaps
             value={formatBinding(shortcut.binding)}
             label={`${label} shortcut: ${formatBinding(shortcut.binding)}`}
           />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
           <Select
             value={shortcut.activationMode}
             onValueChange={(value) => updateActivationMode(value as 'push-to-talk' | 'toggle')}
@@ -313,7 +309,7 @@ function ShortcutRow({
           onKeyDown={handleKeyDown}
           onKeyUp={handleKeyUp}
           onBlur={cancelCapture}
-          className="mt-4 rounded-md border border-primary/60 bg-primary/5 p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-3 rounded-lg border border-primary/50 bg-primary/5 p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <p className="text-sm font-medium">Press the new shortcut</p>
           <div className="mt-3 min-h-7">
@@ -330,7 +326,7 @@ function ShortcutRow({
       ) : null}
 
       {pendingWarning ? (
-        <div className="mt-4 rounded-md border border-warning/50 bg-warning/10 p-4" role="alert">
+        <div className="mt-3 rounded-lg border border-warning/50 bg-warning/10 p-4" role="alert">
           <div className="flex gap-3">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
             <div className="space-y-3">
@@ -351,7 +347,7 @@ function ShortcutRow({
         id={`${fieldId}-status`}
         role="status"
         aria-live="polite"
-        className={`mt-3 text-xs ${message?.tone === 'error' || persistence.fieldErrors[fieldId] ? 'text-destructive' : 'text-muted-foreground'}`}
+        className={`text-xs empty:hidden [&:not(:empty)]:mt-3 ${message?.tone === 'error' || persistence.fieldErrors[fieldId] ? 'text-destructive' : 'text-muted-foreground'}`}
       >
         {message?.text ?? persistence.fieldErrors[fieldId] ?? ''}
       </p>

@@ -88,7 +88,7 @@ export function Onboarding({
     <main className="min-h-screen bg-canvas px-6 py-10 text-foreground">
       <div className="mx-auto max-w-2xl">
         <header className="mb-8">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary">Welcome to Shuddhalekhan</p>
+          <p className="mb-2 text-[13px] font-medium text-muted-foreground">Welcome to Shuddhalekhan</p>
           <h1 className="text-3xl font-semibold tracking-tight">Set up Dictation</h1>
           <p className="mt-2 text-sm text-muted-foreground">Install private local speech recognition, check your microphone, then complete one real Dictation.</p>
         </header>

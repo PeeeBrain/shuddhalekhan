@@ -22,6 +22,8 @@ const settingsWindow = createSingletonWindow({
     title: 'Shuddhalekhan Settings',
     icon: loadAppIcon(),
     backgroundColor: '#0f1115',
+    // The default File/Edit/View menu clashes with the custom UI; Alt still reveals it.
+    autoHideMenuBar: true,
   },
   onCreated: (window) => {
     window.once('ready-to-show', () => {

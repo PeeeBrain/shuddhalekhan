@@ -42,7 +42,7 @@ export function SetupChecklist({
     {
       label: 'Select microphone',
       done: micComplete,
-      action: () => onNavigate('audio'),
+      action: () => onNavigate('shortcuts'),
     },
     {
       label: config.shortcuts.dictation.binding

@@ -394,6 +394,14 @@ export class RuntimeShell {
     this.republish();
   }
 
+  /** The approval currently presented, so main can act on its server and tool. */
+  getPendingApproval(approvalId: string): { serverId: string; toolName: string } | null {
+    const approval = this.agentApproval;
+    return approval?.approvalId === approvalId
+      ? { serverId: approval.serverId, toolName: approval.toolName }
+      : null;
+  }
+
   dismissAgentCard(): void {
     if (!this.agentTerminal) return;
     this.agentTerminal = null;

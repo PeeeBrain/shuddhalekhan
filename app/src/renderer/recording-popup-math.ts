@@ -14,3 +14,11 @@ export function computeBarScale(level: number, phase: number, index: number): nu
   const wave = Math.sin(phase + index * WAVE_FREQUENCY) * (WAVE_BASE_AMPLITUDE + level * WAVE_LEVEL_AMPLITUDE);
   return Math.max(SCALE_MIN, Math.min(SCALE_MAX, SCALE_BASE + level * SCALE_LEVEL_GAIN + wave));
 }
+
+/** Below this level the mic counts as silent and the waveform stops repainting. */
+export const SILENCE_LEVEL = 0.03;
+
+/** True once both the incoming and smoothed levels are silent, so the rAF loop can park. */
+export function isWaveformSettled(target: number, level: number): boolean {
+  return target < SILENCE_LEVEL && level < SILENCE_LEVEL;
+}

@@ -55,16 +55,20 @@
   @apply relative grid gap-2;
 }
 
+.settings-card {
+  @apply rounded-xl border border-border/60 bg-card px-4;
+}
+
 .settings-panel-muted {
   @apply rounded-lg bg-muted/20 px-4 py-3;
 }
 
 .settings-nav-item {
-  @apply relative flex min-h-11 items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground outline-none transition-colors;
+  @apply relative flex h-8 items-center gap-2.5 rounded-md px-2.5 text-[13px] font-medium text-muted-foreground outline-none transition-colors;
 }
 
 .settings-nav-item:hover {
-  @apply bg-muted/25 text-foreground;
+  @apply bg-muted/30 text-foreground;
 }
 
 .settings-nav-item[data-active="true"] {
@@ -72,7 +76,7 @@
 }
 
 .settings-nav-item:focus-visible {
-  @apply ring-2 ring-ring ring-offset-2 ring-offset-background;
+  @apply ring-2 ring-ring;
 }
 
 @keyframes thinking-dot {
@@ -87,6 +91,9 @@
 @layer base {
   * {
     @apply border-border;
+    /* Native scrollbars (palette, approval card, code blocks) match the theme instead of Windows' default. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
   }
 
   body {
@@ -179,4 +186,22 @@
   .processing-bar:nth-child(3) { animation-delay: 280ms; }
   .processing-bar:nth-child(4) { animation-delay: 420ms; }
   .processing-bar:nth-child(5) { animation-delay: 560ms; }
+}
+
+/* Agent Mode surfaces share the agent recording island's squarer shape and tint. */
+.agent-island {
+  border-radius: 6px;
+  border-color: color-mix(in oklab, var(--color-agent-accent) 35%, transparent);
+  background: color-mix(in oklab, var(--color-card) 95%, var(--color-agent-accent));
+}
+
+/* Stepped once per second, so a pending approval repaints at 1 Hz, not every frame. */
+@keyframes approval-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+.approval-countdown {
+  animation-name: approval-countdown;
+  animation-fill-mode: forwards;
 }

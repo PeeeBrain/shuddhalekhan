@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { computeBarScale, SCALE_BASE, SCALE_MAX, SCALE_MIN } from '../recording-popup-math';
+import { computeBarScale, isWaveformSettled, SCALE_BASE, SCALE_MAX, SCALE_MIN } from '../recording-popup-math';
 
 describe('computeBarScale', () => {
   it('returns the base scale at zero level and zero phase for index 0', () => {
@@ -42,5 +42,13 @@ describe('computeBarScale', () => {
         }
       }
     }
+  });
+});
+
+describe('isWaveformSettled', () => {
+  it('parks only when both target and smoothed level are silent', () => {
+    expect(isWaveformSettled(0, 0.01)).toBe(true);
+    expect(isWaveformSettled(0, 0.2)).toBe(false);
+    expect(isWaveformSettled(0.2, 0)).toBe(false);
   });
 });

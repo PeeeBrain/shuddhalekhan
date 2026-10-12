@@ -1,6 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { AlertTriangle, Bot, Check, ShieldQuestion } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type {
+  AgentApprovalChoice,
   DictationRecoveryAction,
   RuntimePresentationSnapshot,
 } from '../types/ipc';
@@ -49,6 +52,8 @@ export function RuntimeShellSurface() {
       return (
         <AgentCard
           tone="primary"
+          icon={Bot}
+          title="Agent"
           live={{ role: 'status', 'aria-live': 'polite' }}
         >
           {isThinkingMessage(snapshot.message) ? <ThinkingDots /> : snapshot.message}
@@ -58,6 +63,8 @@ export function RuntimeShellSurface() {
       return (
         <AgentCard
           tone="primary"
+          icon={Bot}
+          title="Agent"
           live={undefined}
           announcement="Agent response is streaming"
           growRef
@@ -72,13 +79,15 @@ export function RuntimeShellSurface() {
       return (
         <AgentCard
           tone="success"
+          icon={Check}
+          title="Agent · Done"
           live={{ role: 'status', 'aria-live': 'polite' }}
           growRef
           measureKey={snapshot.revision}
           actions={
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => window.electronAPI?.send('runtime:agent-dismiss')}
             >
@@ -88,19 +97,9 @@ export function RuntimeShellSurface() {
         >
           <div className="break-words">{renderMarkdown(snapshot.response)}</div>
           {snapshot.toolSummary.length > 0 ? (
-            <div className="mt-4 border-t border-border/60 pt-3">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Tool activity</p>
-              <ul className="flex flex-wrap gap-1.5 p-0">
-                {snapshot.toolSummary.slice(0, 3).map((item) => (
-                  <li
-                    key={item}
-                    className="max-w-full break-words rounded-full border border-border bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground"
-                  >
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <p className="mt-3 break-words border-t border-border/60 pt-2.5 text-xs text-muted-foreground">
+              Used {snapshot.toolSummary.slice(0, 3).join(' · ')}
+            </p>
           ) : null}
         </AgentCard>
       );
@@ -108,11 +107,13 @@ export function RuntimeShellSurface() {
       return (
         <AgentCard
           tone="destructive"
+          icon={AlertTriangle}
+          title="Agent · Failed"
           live={{ role: 'alert' }}
           actions={
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => window.electronAPI?.send('runtime:agent-dismiss')}
             >
@@ -153,7 +154,7 @@ function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnap
         <p
           data-testid="streaming-preview"
           aria-live="off"
-          className="m-0 max-h-12 w-[488px] overflow-hidden rounded-lg border border-border/70 bg-card px-3.5 py-2.5 text-sm leading-5 text-foreground"
+          className="m-0 max-h-12 w-[488px] overflow-hidden rounded-[14px] border border-border bg-card px-3.5 py-2.5 text-sm leading-5 text-foreground"
         >
           {snapshot.insertionHalted ? (
             <span data-testid="insertion-halted" className="mb-1 block text-xs font-semibold text-warning">
@@ -180,7 +181,7 @@ function ProcessingView() {
       aria-live="polite"
       className="flex h-screen w-screen items-center justify-center bg-transparent"
     >
-      <div className="flex h-10 w-40 items-center justify-center gap-2 rounded-full border border-border bg-card text-primary">
+      <div className="flex h-10 w-40 items-center justify-center gap-2.5 rounded-[14px] border border-border bg-card text-primary">
         <span aria-hidden="true" className="processing-bars">
           <span className="processing-bar" />
           <span className="processing-bar" />
@@ -188,7 +189,7 @@ function ProcessingView() {
           <span className="processing-bar" />
           <span className="processing-bar" />
         </span>
-        <p className="text-xs font-medium tracking-wide">Processing…</p>
+        <p className="text-xs font-medium text-muted-foreground">Transcribing…</p>
       </div>
     </main>
   );
@@ -207,18 +208,19 @@ function FailureView({
     <main
       role="alert"
       data-tone="destructive"
-      className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border/40 border-l-2 border-l-destructive bg-card text-card-foreground"
+      className="flex h-screen w-screen flex-col overflow-hidden rounded-[14px] border border-destructive/40 bg-card text-card-foreground"
     >
-      <div className="min-h-0 flex-1 overflow-auto px-4 py-4">
+      <IslandHeader icon={AlertTriangle} tone="destructive" title="Dictation" />
+      <div className="min-h-0 flex-1 overflow-auto px-4 pb-3">
         <p className="text-sm leading-relaxed text-foreground">{snapshot.message}</p>
       </div>
       {snapshot.recoveryActions.length ? (
-        <div className="flex flex-wrap justify-end gap-2 border-t border-border/60 px-4 pb-3 pt-3">
+        <div className="flex flex-wrap justify-end gap-2 px-3 pb-3">
           {snapshot.recoveryActions.map((action) => (
             <Button
               key={action}
               type="button"
-              variant={action === 'retry-paste' ? 'default' : 'outline'}
+              variant={action === 'retry-paste' ? 'default' : 'ghost'}
               size="sm"
               disabled={retrying && action === 'retry-paste'}
               onClick={() => {
@@ -235,12 +237,42 @@ function FailureView({
   );
 }
 
+const TONE_TEXT = {
+  primary: 'text-agent-accent',
+  warning: 'text-warning',
+  success: 'text-success',
+  destructive: 'text-destructive',
+} as const;
+
+type Tone = keyof typeof TONE_TEXT;
+
+/** Shared island header: a tinted glyph tile names what the surface is about. */
+function IslandHeader({ icon: Icon, tone, title, meta }: {
+  icon: LucideIcon;
+  tone: Tone;
+  title: ReactNode;
+  meta?: ReactNode;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-2.5 px-3 pb-2 pt-3">
+      <span aria-hidden="true" className={`flex size-6 shrink-0 bg-current/15 items-center justify-center rounded-[4px] ${TONE_TEXT[tone]}`}>
+        <Icon className="size-3.5" />
+      </span>
+      <p className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">{title}</p>
+      {meta}
+    </div>
+  );
+}
+
 /**
- * One quiet card with a semantic left accent. Passive cards never take focus;
- * interactive actions accept deliberate clicks without activating Shuddhalekhan.
+ * The agent island: Agent Mode's squarer shape and accent border, with a
+ * tone-tinted glyph. Passive cards never take focus; interactive actions
+ * accept deliberate clicks without activating Shuddhalekhan.
  */
 function AgentCard({
   tone,
+  icon,
+  title,
   live,
   announcement,
   growRef,
@@ -248,7 +280,9 @@ function AgentCard({
   actions,
   children,
 }: {
-  tone: 'primary' | 'warning' | 'success' | 'destructive';
+  tone: Tone;
+  icon: LucideIcon;
+  title: string;
   live?: { role?: 'alert' | 'status'; 'aria-live'?: 'polite' };
   /** Polite one-shot announcement used instead of live regions for token streams. */
   announcement?: string;
@@ -307,19 +341,20 @@ function AgentCard({
       ref={cardRef}
       {...live}
       data-tone={tone}
-      className={`flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border/40 border-l-2 bg-card text-card-foreground ${toneClass[tone]}`}
+      className="agent-island flex h-screen w-screen flex-col overflow-hidden border text-card-foreground"
     >
       {announcement ? (
         <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
       ) : null}
+      <IslandHeader icon={icon} tone={tone} title={title} />
       <div
         ref={bodyRef}
-        className="min-h-0 flex-1 overflow-y-auto break-words px-4 py-4 text-sm leading-relaxed text-foreground"
+        className="min-h-0 flex-1 overflow-y-auto break-words px-4 pb-3.5 text-sm leading-relaxed text-foreground"
       >
         {children}
       </div>
       {actions ? (
-        <div className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-4 pb-3 pt-3">
+        <div className="-mt-1.5 flex shrink-0 justify-end gap-2 px-3 pb-2.5">
           {actions}
         </div>
       ) : null}
@@ -327,31 +362,18 @@ function AgentCard({
   );
 }
 
-const toneClass = {
-  primary: 'border-l-primary',
-  warning: 'border-l-warning',
-  success: 'border-l-success',
-  destructive: 'border-l-destructive',
-} as const;
-
 function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
   // Remounted per approvalId via key; drafts persist across preemption in a
   // module-level store so denial feedback survives Dictation round-trips.
   const [message, setMessage] = useState(() => approvalDrafts.get(snapshot.approvalId) ?? '');
   const [submitting, setSubmitting] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const feedbackId = useId();
+  // Read once: the countdown is a stepped CSS animation, not a re-render loop.
+  const [secondsLeft] = useState(() => Math.max(1, Math.ceil((new Date(snapshot.expiresAt).getTime() - Date.now()) / 1000)));
+  const fields = describeArguments(snapshot.arguments);
+  const server = snapshot.serverDisplayName || snapshot.serverId;
 
-  // Countdown ticks only while the approval is presented.
-  useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(interval);
-  }, []);
-
-  const secondsLeft = Math.max(0, Math.ceil((new Date(snapshot.expiresAt).getTime() - now) / 1000));
-  const timerUrgent = secondsLeft <= 5;
-
-  const submitDecision = (decision: 'approved' | 'denied') => {
+  const submitDecision = (decision: AgentApprovalChoice) => {
+    if (submitting) return;
     setSubmitting(true);
     void window.electronAPI.invoke(
       'agent:approval-decision',
@@ -362,61 +384,75 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
     ).catch(() => setSubmitting(false));
   };
 
+  // Shortcuts apply once the user clicks into the card; the denial note and
+  // focused buttons keep their native keys.
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    const tag = (event.target as HTMLElement).tagName;
+    if (tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SUMMARY') return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const decision = APPROVAL_SHORTCUTS[event.key.toLowerCase()];
+    if (!decision) return;
+    event.preventDefault();
+    submitDecision(decision);
+  };
+
   return (
     <main
       role="alert"
       data-tone="warning"
-      className="flex h-screen w-screen flex-col overflow-hidden rounded-lg border border-border/40 border-l-2 border-l-warning bg-card text-card-foreground"
+      tabIndex={-1}
+      onKeyDown={handleKeyDown}
+      className="agent-island relative flex h-screen w-screen flex-col overflow-hidden border text-card-foreground outline-none"
     >
-      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-4 py-3">
-        <h1 className="text-sm font-semibold leading-snug text-foreground">Approval required</h1>
-        <p
-          className={
-            timerUrgent
-              ? 'text-right text-xs font-medium tabular-nums text-destructive'
-              : 'text-right text-xs font-medium tabular-nums text-warning'
-          }
-        >
-          {secondsLeft}s
-        </p>
-      </div>
+      <span
+        aria-hidden="true"
+        className="approval-countdown absolute inset-x-0 top-0 h-0.5 origin-left bg-warning"
+        style={{ animationDuration: `${secondsLeft}s`, animationTimingFunction: `steps(${secondsLeft})` }}
+      />
+      <IslandHeader
+        icon={ShieldQuestion}
+        tone="warning"
+        title="Approval needed"
+        meta={<p className="truncate font-mono text-[11px] text-muted-foreground">{server}:{snapshot.toolName}</p>}
+      />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
-        <div className="space-y-1.5">
-          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Requested action</p>
-          <h2 className="break-words text-sm font-semibold leading-snug text-foreground">
-            {(snapshot.serverDisplayName || snapshot.serverId)}:{snapshot.toolName}
-          </h2>
-          {snapshot.serverDisplayName ? (
-            <p className="break-words font-mono text-xs text-muted-foreground">{snapshot.serverId}</p>
-          ) : null}
-        </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-3">
+        <h1 className="text-[15px] font-semibold leading-snug text-foreground">
+          {humanize(snapshot.toolName)}
+        </h1>
 
-        <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
-          <p className="text-[11px] font-medium text-muted-foreground">Arguments</p>
-          <p className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-foreground/80">
+        {fields ? (
+          <dl className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px] leading-5">
+            {fields.map(([key, value]) => (
+              <div key={key} className="contents">
+                <dt className="truncate text-muted-foreground">{humanize(key)}</dt>
+                <dd className="line-clamp-3 whitespace-pre-wrap break-words text-foreground">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+
+        <details className="text-xs" open={!fields}>
+          <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
+            Raw arguments
+          </summary>
+          <pre className="mt-1.5 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 px-2.5 py-2 font-mono text-[11px] leading-5 text-foreground/80">
             {formatArguments(snapshot.arguments)}
-          </p>
-        </div>
+          </pre>
+        </details>
 
-        <div className="space-y-1.5">
-          <label htmlFor={feedbackId} className="block text-xs font-medium text-foreground">
-            Optional denial message
-          </label>
-          <Textarea
-            id={feedbackId}
-            value={message}
-            onChange={(event) => {
-              approvalDrafts.clear();
-              approvalDrafts.set(snapshot.approvalId, event.target.value);
-              setMessage(event.target.value);
-            }}
-            placeholder="Optional denial message"
-            aria-label="Optional denial message"
-            disabled={submitting}
-            className="min-h-16 resize-none rounded-lg border-border bg-background text-xs leading-5 text-foreground placeholder:text-muted-foreground"
-          />
-        </div>
+        <Textarea
+          value={message}
+          onChange={(event) => {
+            approvalDrafts.clear();
+            approvalDrafts.set(snapshot.approvalId, event.target.value);
+            setMessage(event.target.value);
+          }}
+          placeholder="Optional denial message"
+          aria-label="Optional denial message"
+          disabled={submitting}
+          className="min-h-14 resize-none rounded-md border-border bg-background/60 text-xs leading-5 text-foreground placeholder:text-muted-foreground"
+        />
       </div>
 
       {submitting ? (
@@ -424,28 +460,48 @@ function ApprovalView({ snapshot }: { snapshot: AgentApprovalSnapshot }) {
           Feedback sent. Continuing…
         </p>
       ) : (
-        <div className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-4 pb-3 pt-3">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="h-9 w-24"
-            onClick={() => submitDecision('denied')}
-          >
-            Deny
+        <div className="flex shrink-0 items-center gap-1.5 border-t border-border/60 px-3 py-2.5">
+          <Button type="button" variant="ghost" size="sm" aria-keyshortcuts="A" onClick={() => submitDecision('always-allow')}>
+            Always allow<Kbd>A</Kbd>
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            className="h-9 w-24"
-            onClick={() => submitDecision('approved')}
-          >
-            Approve
+          <div className="flex-1" />
+          <Button type="button" variant="secondary" size="sm" aria-keyshortcuts="Escape" onClick={() => submitDecision('denied')}>
+            Deny<Kbd>Esc</Kbd>
+          </Button>
+          <Button type="button" size="sm" aria-keyshortcuts="Enter" onClick={() => submitDecision('approved')}>
+            Approve<Kbd>↵</Kbd>
           </Button>
         </div>
       )}
     </main>
   );
+}
+
+const APPROVAL_SHORTCUTS: Partial<Record<string, AgentApprovalChoice>> = {
+  enter: 'approved',
+  escape: 'denied',
+  a: 'always-allow',
+};
+
+function Kbd({ children }: { children: ReactNode }) {
+  return <kbd aria-hidden="true" className="ml-1.5 font-sans text-[10px] font-normal opacity-60">{children}</kbd>;
+}
+
+/** Flat argument objects read as labeled fields; anything else stays raw only. */
+function describeArguments(value: unknown): Array<[string, string]> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length === 0) return null;
+  return entries.map(([key, field]) => [
+    key,
+    typeof field === 'string' ? field : JSON.stringify(field) ?? String(field),
+  ]);
+}
+
+/** send_message / sendMessage -> "Send message". */
+function humanize(name: string): string {
+  const words = name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-.]+/g, ' ').trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function isThinkingMessage(message: string): boolean {

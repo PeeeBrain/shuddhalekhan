@@ -4,41 +4,54 @@ import type { AuditRunSummary, AuditEventDetail } from '../../types/ipc';
 import { renderMarkdown } from '../markdown';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tag } from './ui/rows';
 import {
-  Play,
-  CheckCircle2,
   XCircle,
-  AlertTriangle,
-  Clock,
-  Terminal,
   ChevronRight,
-  ChevronDown,
   Copy,
   Check,
   RotateCw,
+  Search,
 } from 'lucide-react';
 import {
   getNextListboxIndex,
   isListboxActivateKey,
   isListboxNavKey,
 } from './audit-history-nav';
+import {
+  filterAuditRuns,
+  STATUS_FILTERS,
+  summarizeRunError,
+  type StatusFilter,
+} from './audit-history-model';
 
 interface AuditHistorySettingsProps {
   settingsIpc: SettingsIpc;
+  /** Run to open first, e.g. when arriving from Home or the command palette. */
+  initialRunId?: string | null;
 }
 
 const LIVE_REFRESH_DEBOUNCE_MS = 500;
 
-export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps) {
+export function AuditHistorySettings({ settingsIpc, initialRunId = null }: AuditHistorySettingsProps) {
   const [runs, setRuns] = useState<AuditRunSummary[]>([]);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId);
   const [selectedRunEvents, setSelectedRunEvents] = useState<AuditEventDetail[] | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [runsLoadFailed, setRunsLoadFailed] = useState(false);
   const [detailLoadFailed, setDetailLoadFailed] = useState(false);
-  const selectedRunIdRef = useRef<string | null>(null);
+  const selectedRunIdRef = useRef<string | null>(initialRunId);
   const runsQueryInFlightRef = useRef<Promise<void> | null>(null);
   const detailQueryInFlightRef = useRef<string | null>(null);
   const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,19 +123,21 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
     setSelectedRunId(runId);
   }, []);
 
+  const visibleRuns = filterAuditRuns(runs, query, statusFilter);
+
   const handleRunListKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
     if (isListboxActivateKey(e.key)) {
       e.preventDefault();
-      const active = runs.find((r) => r.agentRunId === selectedRunId);
+      const active = visibleRuns.find((r) => r.agentRunId === selectedRunId);
       if (active) selectRun(active.agentRunId);
       return;
     }
     if (!isListboxNavKey(e.key)) return;
     e.preventDefault();
-    const currentIndex = runs.findIndex((r) => r.agentRunId === selectedRunId);
-    const nextIndex = getNextListboxIndex(currentIndex, e.key, runs.length);
-    if (nextIndex === currentIndex || nextIndex < 0 || nextIndex >= runs.length) return;
-    const nextRun = runs[nextIndex];
+    const currentIndex = visibleRuns.findIndex((r) => r.agentRunId === selectedRunId);
+    const nextIndex = getNextListboxIndex(currentIndex, e.key, visibleRuns.length);
+    if (nextIndex === currentIndex || nextIndex < 0 || nextIndex >= visibleRuns.length) return;
+    const nextRun = visibleRuns[nextIndex];
     if (!nextRun) return;
     selectRun(nextRun.agentRunId);
     const container = e.currentTarget;
@@ -130,7 +145,7 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
       const items = container.querySelectorAll<HTMLElement>('[role="option"]');
       items[nextIndex]?.focus();
     });
-  }, [runs, selectedRunId, selectRun]);
+  }, [visibleRuns, selectedRunId, selectRun]);
 
   useEffect(() => {
     fetchRuns();
@@ -175,10 +190,30 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
   const selectedRunSummary = runs.find((r) => r.agentRunId === selectedRunId);
 
   return (
-    <div className="flex flex-1 overflow-hidden h-full">
-      <div className="w-80 border-r border-border bg-card flex flex-col h-full">
-        <div className="p-4 border-b border-border flex items-center justify-between shrink-0">
-          <h3 className="font-semibold text-sm">Run History</h3>
+    <div className="flex h-full flex-1 overflow-hidden rounded-xl border border-border/60 bg-card">
+      <div className="flex h-full w-72 flex-col border-r border-border/60">
+        <div className="flex shrink-0 items-center gap-1 border-b border-border/60 p-2">
+          <div className="relative min-w-0 flex-1">
+            <Search aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search runs"
+              aria-label="Search runs"
+              className="h-8 border-transparent bg-transparent pl-8 text-[13px] shadow-none focus-visible:border-border"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
+            <SelectTrigger aria-label="Filter runs by status" className="h-8 w-auto gap-1 border-transparent bg-transparent px-2 text-xs text-muted-foreground shadow-none">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {STATUS_FILTERS.map((filter) => (
+                <SelectItem key={filter.value} value={filter.value}>{filter.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="ghost"
             size="icon"
@@ -191,7 +226,7 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
           </Button>
         </div>
         <ScrollArea className="flex-1 min-h-0">
-          <div className="p-3 space-y-2" role="listbox" aria-label="Agent run history" onKeyDown={handleRunListKeyDown}>
+          <div className="space-y-0.5 p-1.5" role="listbox" aria-label="Agent run history" onKeyDown={handleRunListKeyDown}>
             {runsLoadFailed ? (
               <div role="alert" className="py-2 text-center text-xs text-destructive">
                 Couldn&apos;t load run history.
@@ -202,7 +237,12 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                 No agent runs recorded yet.
               </div>
             ) : null}
-            {runs.map((run) => {
+            {runs.length > 0 && visibleRuns.length === 0 ? (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                No runs match.
+              </div>
+            ) : null}
+            {visibleRuns.map((run) => {
               const isActive = selectedRunId === run.agentRunId;
               return (
                   <div
@@ -211,37 +251,24 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
                     aria-selected={isActive}
                     tabIndex={isActive ? 0 : -1}
                     onClick={() => selectRun(run.agentRunId)}
-                    className={`cursor-pointer rounded-md border-l-2 px-3 py-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
-                      isActive
-                        ? 'border-l-primary bg-secondary/40'
-                        : 'border-l-transparent bg-transparent hover:bg-muted/30'
+                    className={`cursor-pointer rounded-lg px-3 py-2.5 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      isActive ? 'bg-secondary' : 'hover:bg-muted/30'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <span className="text-[10px] text-muted-foreground font-mono">
-                        {formatTime(run.startedAt)} ({formatDate(run.startedAt)})
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="text-[11px] tabular-nums text-muted-foreground">
+                        {formatDate(run.startedAt)}, {formatTime(run.startedAt)}
                       </span>
-                      <StatusBadge status={run.status} />
+                      {run.status === 'completed' ? null : <StatusBadge status={run.status} />}
                     </div>
-                    <p className="text-xs font-medium text-foreground line-clamp-2 mb-2 select-none">
+                    <p className="mb-1.5 line-clamp-2 select-none text-[13px] leading-5 text-foreground">
                       {run.transcript || <span className="italic text-muted-foreground/80">(Empty prompt)</span>}
                     </p>
                     {run.tools.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {run.tools.slice(0, 3).map((tool) => (
-                          <span
-                            key={tool}
-                            className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground border border-border/40"
-                          >
-                            {tool.split('.').pop()}
-                          </span>
-                        ))}
-                        {run.tools.length > 3 && (
-                          <span className="text-[10px] font-mono text-muted-foreground/75 px-1 py-0.5">
-                            +{run.tools.length - 3} more
-                          </span>
-                        )}
-                      </div>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground">
+                        {run.tools.slice(0, 3).map((tool) => tool.split('.').pop()).join(' · ')}
+                        {run.tools.length > 3 ? ` +${run.tools.length - 3}` : ''}
+                      </p>
                     )}
                   </div>
               );
@@ -249,72 +276,61 @@ export function AuditHistorySettings({ settingsIpc }: AuditHistorySettingsProps)
           </div>
         </ScrollArea>
       </div>
-      <div className="flex-1 bg-background flex flex-col h-full min-w-0">
+      <div className="flex h-full min-w-0 flex-1 flex-col">
         {selectedRunId ? (
-          <div className="flex flex-col h-full overflow-hidden">
-            <div className="p-5 border-b border-border shrink-0">
-              <div className="flex items-center justify-between gap-4 mb-2">
-                <h3 className="font-semibold text-base truncate pr-4">Run Details</h3>
-                {selectedRunSummary && <StatusBadge status={selectedRunSummary.status} size="lg" />}
-              </div>
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground font-mono">
-                  ID: <span className="select-all">{selectedRunId}</span>
+          <ScrollArea className="h-full min-h-0 flex-1">
+            <div className="max-w-3xl space-y-6 px-6 py-5">
+              <header className="space-y-1.5">
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {selectedRunSummary ? (
+                    <>
+                      <span className="tabular-nums">{formatDate(selectedRunSummary.startedAt)}, {formatTime(selectedRunSummary.startedAt)}</span>
+                      <StatusBadge status={selectedRunSummary.status} size="lg" />
+                    </>
+                  ) : null}
+                </p>
+                <h3 className="select-text text-base font-medium leading-snug">
+                  {selectedRunSummary?.transcript || <span className="italic text-muted-foreground">(No prompt recorded)</span>}
+                </h3>
+              </header>
+
+              {selectedRunSummary?.response && (
+                <div className="select-text text-sm leading-relaxed">
+                  {renderMarkdown(selectedRunSummary.response)}
                 </div>
-                {selectedRunSummary && (
-                  <div className="text-xs text-muted-foreground">
-                    Started at {new Date(selectedRunSummary.startedAt).toLocaleString()}
-                  </div>
-                )}
-              </div>
-            </div>
-            <ScrollArea className="flex-1 min-h-0">
-              <div className="p-6 space-y-6 max-w-3xl">
-                <div className="space-y-1.5">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Voice Prompt</h4>
-                  <div className="p-4 rounded-lg bg-secondary/20 border border-border/60 text-sm select-text leading-relaxed">
-                    {selectedRunSummary?.transcript || <span className="italic text-muted-foreground">(No prompt recorded)</span>}
-                  </div>
-                </div>
-                {selectedRunSummary?.response && (
-                  <div className="space-y-1.5">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Final Response</h4>
-                    <div className="p-4 rounded-lg bg-secondary/20 border border-border/60 text-sm select-text leading-relaxed">
-                      {renderMarkdown(selectedRunSummary.response)}
-                    </div>
-                  </div>
-                )}
-                {selectedRunSummary?.error && (
-                  <div className="space-y-1.5">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-destructive">Execution Failure</h4>
-                    <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive select-text font-mono">
-                      {selectedRunSummary.error}
-                    </div>
-                  </div>
-                )}
-                <div className="space-y-4">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">Execution Timeline</h4>
+              )}
+
+              {selectedRunSummary?.error && (
+                <RunError error={selectedRunSummary.error} />
+              )}
+
+              <details className="group">
+                <summary className="flex cursor-pointer select-none items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+                  <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
+                  Activity{selectedRunEvents?.length ? ` · ${selectedRunEvents.length} steps` : ''}
+                </summary>
+                <div className="mt-2">
                   {detailLoadFailed ? (
                     <p role="alert" className="text-xs text-destructive">Couldn&apos;t load events for this run.</p>
                   ) : null}
                   {isLoadingDetail && !selectedRunEvents ? (
                     <p className="text-xs text-muted-foreground">Loading events...</p>
                   ) : selectedRunEvents && selectedRunEvents.length > 0 ? (
-                    <div className="relative pl-6 border-l border-border space-y-6">
+                    <ol className="divide-y divide-border/40">
                       {selectedRunEvents.map((event) => (
-                        <TimelineNode
-                          key={event.id}
-                          event={event}
-                        />
+                        <TimelineNode key={event.id} event={event} />
                       ))}
-                    </div>
+                    </ol>
                   ) : !detailLoadFailed ? (
                     <p className="text-xs text-muted-foreground">No detailed timeline events found.</p>
                   ) : null}
+                  <p className="pt-3 font-mono text-[10px] text-muted-foreground/70">
+                    Run ID <span className="select-all">{selectedRunId}</span>
+                  </p>
                 </div>
-              </div>
-            </ScrollArea>
-          </div>
+              </details>
+            </div>
+          </ScrollArea>
         ) : (
           <div className="flex flex-1 items-center justify-center p-8">
             <p className="max-w-xs text-center text-xs text-muted-foreground">
@@ -396,7 +412,6 @@ interface TimelineNodeProps {
 }
 
 function TimelineNode({ event }: TimelineNodeProps) {
-  const [showPayload, setShowPayload] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const handleCopy = async () => {
@@ -412,70 +427,60 @@ function TimelineNode({ event }: TimelineNodeProps) {
   };
 
   const info = getEventDisplayInfo(event);
+  const row = (
+    <span className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-3 py-2 text-xs">
+      <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{formatTime(event.createdAt)}</span>
+      <span className="min-w-0">
+        <span className={`font-medium ${info.tone ?? 'text-foreground'}`}>{info.title}</span>
+        <span className="text-muted-foreground"> · {info.description}</span>
+      </span>
+    </span>
+  );
+
+  if (!hasPayload(event)) return <li>{row}</li>;
 
   return (
-    <div className="relative group">
-      <span className="absolute -left-[37px] top-0.5 flex h-5 w-5 items-center justify-center rounded-full border border-border bg-background shadow-sm ring-4 ring-background">
-        {info.icon}
-      </span>
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-xs font-semibold text-foreground">
-            {info.title}
-          </span>
-          <span className="text-[10px] text-muted-foreground font-mono">
-            {formatTime(event.createdAt)}
-          </span>
-        </div>
-        <p className="text-xs text-muted-foreground select-text leading-relaxed">
-          {info.description}
-        </p>
-        {hasPayload(event) && (
-          <div className="pt-1.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowPayload(!showPayload)}
-              className="h-6 px-1.5 text-[10px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/40"
-            >
-              {showPayload ? (
-                <>
-                  <ChevronDown className="h-3 w-3 mr-1" />
-                  Hide payload
-                </>
-              ) : (
-                <>
-                  <ChevronRight className="h-3 w-3 mr-1" />
-                  View payload
-                </>
-              )}
-            </Button>
-
-            {showPayload && (
-              <div className="relative mt-2 rounded-lg border border-border bg-muted/45 max-w-full">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={handleCopy}
-                  className="absolute right-2 top-2 h-7 w-7 text-muted-foreground hover:text-foreground bg-background/50 hover:bg-background border border-border/40"
-                  title="Copy JSON Payload"
-                >
-                  {copyState === 'copied' ? (
-                    <Check className="h-3.5 w-3.5 text-success" />
-                  ) : copyState === 'failed' ? (
-                    <XCircle className="h-3.5 w-3.5 text-destructive" />
-                  ) : (
-                    <Copy className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-                <pre className="p-4 overflow-auto max-h-64 text-[11px] font-mono select-text leading-normal max-w-full text-foreground/90 whitespace-pre-wrap">
-                  {JSON.stringify(event.payload, null, 2)}
-                </pre>
-              </div>
+    <li>
+      <details>
+        <summary className="cursor-pointer list-none rounded-md hover:bg-muted/20">{row}</summary>
+        <div className="relative mb-2 ml-[5.25rem] rounded-md bg-muted/40">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleCopy}
+            className="absolute right-1.5 top-1.5 h-6 w-6 text-muted-foreground hover:text-foreground"
+            title="Copy JSON Payload"
+          >
+            {copyState === 'copied' ? (
+              <Check className="h-3.5 w-3.5 text-success" />
+            ) : copyState === 'failed' ? (
+              <XCircle className="h-3.5 w-3.5 text-destructive" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
             )}
-          </div>
-        )}
-      </div>
+          </Button>
+          <pre className="max-h-64 max-w-full select-text overflow-auto whitespace-pre-wrap p-3 pr-9 font-mono text-[11px] leading-normal text-foreground/90">
+            {JSON.stringify(event.payload, null, 2)}
+          </pre>
+        </div>
+      </details>
+    </li>
+  );
+}
+
+function RunError({ error }: { error: string }) {
+  const summary = summarizeRunError(error);
+  return (
+    <div className="space-y-1.5 border-l-2 border-destructive/60 pl-3">
+      <p className="select-text text-sm leading-relaxed text-foreground">{summary}</p>
+      {summary !== error.trim() ? (
+        <details className="text-xs">
+          <summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">Technical details</summary>
+          <pre className="mt-1.5 max-h-48 select-text overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-mono text-[11px] leading-5 text-foreground/80">
+            {error}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -488,7 +493,8 @@ function hasPayload(event: AuditEventDetail): boolean {
 interface EventDisplay {
   title: string;
   description: string;
-  icon: React.ReactNode;
+  /** Text class for the title when the step went wrong or needed the user. */
+  tone?: string;
 }
 
 function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
@@ -497,108 +503,92 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
   switch (event.eventType) {
     case 'run_started':
       return {
-        title: 'Run Started',
-        description: `Agent initialized with prompt: "${formatPromptPreview(p.transcript)}"`,
-        icon: <Play className="h-2.5 w-2.5 text-primary fill-primary" />,
+        title: 'Started',
+        description: `"${formatPromptPreview(p.transcript)}"`,
       };
     case 'status':
       return {
-        title: 'Status Update',
+        title: 'Status',
         description: unknownAsString(p.status, 'Agent status update'),
-        icon: <Clock className="h-2.5 w-2.5 text-muted-foreground" />,
       };
     case 'tool_requests':
       return {
-        title: 'Tool Requested',
-        description: `Model requested tool execution: ${toolCallNames(p.toolCalls)}`,
-        icon: <Terminal className="h-2.5 w-2.5 text-primary" />,
+        title: 'Tool requested',
+        description: toolCallNames(p.toolCalls),
       };
     case 'tool_results': {
       const count = Array.isArray(p.toolResults) ? p.toolResults.length : 0;
       return {
-        title: 'Tool Results Received',
-        description: `Received outputs for ${count} tool(s)`,
-        icon: <CheckCircle2 className="h-2.5 w-2.5 text-primary" />,
+        title: 'Tool results',
+        description: `${count} result${count === 1 ? '' : 's'}`,
       };
     }
     case 'approval_requested':
       return {
-        title: 'Approval Required',
-        description: `Sensitive tool requires user consent: ${formatServerTool(p.serverId, p.toolName)}`,
-        icon: <AlertTriangle className="h-2.5 w-2.5 text-warning" />,
+        title: 'Approval requested',
+        tone: 'text-warning',
+        description: formatServerTool(p.serverId, p.toolName),
       };
     case 'approval_decision':
       return {
-        title: 'Approval Choice',
+        title: p.approved ? 'Approved' : 'Denied',
         description: p.approved
-          ? `User approved execution of ${formatServerTool(p.serverId, p.toolName)}`
-          : `User denied tool execution: ${unknownAsString(p.message, 'Deny')}`,
-        icon: p.approved ? (
-          <CheckCircle2 className="h-2.5 w-2.5 text-success" />
-        ) : (
-          <XCircle className="h-2.5 w-2.5 text-destructive" />
-        ),
+          ? formatServerTool(p.serverId, p.toolName)
+          : unknownAsString(p.message, 'No reason given'),
       };
     case 'mcp_tool_execute_started':
       return {
-        title: 'Calling MCP Tool',
-        description: `Executing tool ${formatServerTool(p.serverId, p.toolName)} on server`,
-        icon: <Terminal className="h-2.5 w-2.5 text-primary" />,
+        title: 'Calling tool',
+        description: formatServerTool(p.serverId, p.toolName),
       };
     case 'mcp_tool_execute_result':
       return {
-        title: 'MCP Tool Success',
-        description: `Finished executing ${formatServerTool(p.serverId, p.toolName)} successfully`,
-        icon: <CheckCircle2 className="h-2.5 w-2.5 text-success" />,
+        title: 'Tool finished',
+        description: formatServerTool(p.serverId, p.toolName),
       };
     case 'mcp_tool_execute_error':
       return {
-        title: 'MCP Tool Error',
-        description: `Execution failed for ${formatServerTool(p.serverId, p.toolName)}: ${unknownAsString(p.error, 'Unknown error')}`,
-        icon: <XCircle className="h-2.5 w-2.5 text-destructive" />,
+        title: 'Tool failed',
+        tone: 'text-destructive',
+        description: `${formatServerTool(p.serverId, p.toolName)}: ${summarizeRunError(unknownAsString(p.error, 'Unknown error'))}`,
       };
     case 'empty_response_degraded':
       return {
-        title: 'Empty Response',
+        title: 'Empty response',
         description: unknownAsString(p.reason, 'Received an empty response from model'),
-        icon: <AlertTriangle className="h-2.5 w-2.5 text-warning" />,
       };
     case 'max_step_guardrail':
       return {
-        title: 'Guardrail Warning',
-        description: `Stop threshold hit (steps: ${typeof p.stepCount === 'number' ? p.stepCount : '?'})`,
-        icon: <AlertTriangle className="h-2.5 w-2.5 text-destructive" />,
+        title: 'Step limit reached',
+        tone: 'text-warning',
+        description: `${typeof p.stepCount === 'number' ? p.stepCount : '?'} steps`,
       };
     case 'run_completed':
       return {
-        title: 'Run Completed',
-        description: 'Agent finished reasoning and outputs are finalized.',
-        icon: <CheckCircle2 className="h-2.5 w-2.5 text-success fill-success" />,
+        title: 'Completed',
+        description: 'Response delivered',
       };
     case 'run_interrupted':
       return {
-        title: 'Run Interrupted',
-        description: `Run ended before normal completion. Reason: ${unknownAsString(p.reason, 'interrupted')}`,
-        icon: <XCircle className="h-2.5 w-2.5 text-muted-foreground" />,
+        title: 'Interrupted',
+        description: unknownAsString(p.reason, 'Ended early'),
       };
     case 'run_cancelled':
     case 'cancelled':
       return {
-        title: 'Run Cancelled',
-        description: `Run was aborted. Reason: ${unknownAsString(p.reason, 'User requested cancellation')}`,
-        icon: <XCircle className="h-2.5 w-2.5 text-muted-foreground" />,
+        title: 'Cancelled',
+        description: unknownAsString(p.reason, 'Cancelled by you'),
       };
     case 'run_failed':
       return {
-        title: 'Run Failed',
-        description: `Execution failed: ${unknownAsString(p.error, 'Unknown error')}`,
-        icon: <XCircle className="h-2.5 w-2.5 text-destructive fill-destructive" />,
+        title: 'Failed',
+        tone: 'text-destructive',
+        description: summarizeRunError(unknownAsString(p.error, 'Unknown error')),
       };
     default:
       return {
         title: event.eventType.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '),
         description: 'Audit log entry',
-        icon: <Terminal className="h-2.5 w-2.5 text-muted-foreground" />,
       };
   }
 }

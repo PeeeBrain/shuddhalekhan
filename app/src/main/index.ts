@@ -37,7 +37,7 @@ import {
   setLastTranscript,
 } from './last-transcript';
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
-import type { AppConfig, AudioDevice, InjectResult, McpStatusSnapshot, UpdateStatus } from '../types/ipc';
+import type { AgentApprovalChoice, AppConfig, AudioDevice, InjectResult, McpStatusSnapshot, McpToolPolicyKey, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
 import { emitPerformanceMarker } from './performance/marker-collector';
 import { buildElectronProcessInventory } from './performance/process-inventory';
@@ -753,8 +753,22 @@ ipcMain.handle('clipboard:inject-text', async (_event, text: string): Promise<In
 
 ipcMain.handle(
   'agent:approval-decision',
-  (_event, agentRunId: string, approvalId: string, decision: 'approved' | 'denied', message?: string) => {
-    agentSidecar.sendApprovalDecision(agentRunId, approvalId, decision, message);
+  (_event, agentRunId: string, approvalId: string, decision: AgentApprovalChoice, message?: string) => {
+    const approval = decision === 'always-allow' ? runtimeShell.getPendingApproval(approvalId) : null;
+    if (approval) {
+      const config = getConfig();
+      const policyKey: McpToolPolicyKey = `${approval.serverId}:${approval.toolName}`;
+      setConfig('agent', {
+        ...config.agent,
+        mcpServers: config.agent.mcpServers.map((server) => server.id === approval.serverId
+          ? { ...server, toolPolicies: { ...server.toolPolicies, [policyKey]: 'alwaysAllow' } }
+          : server),
+      });
+      // Later calls in this same run should see the new policy too.
+      const next = getConfig();
+      agentSidecar.start(next, getAgentSidecarApiKey(next, credentialVault));
+    }
+    agentSidecar.sendApprovalDecision(agentRunId, approvalId, decision === 'denied' ? 'denied' : 'approved', message);
   }
 );
 

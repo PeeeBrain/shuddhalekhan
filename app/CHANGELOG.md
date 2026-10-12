@@ -7,6 +7,11 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Interface
+- Redesigned Settings: a new Home section (readiness, shortcuts, recent agent runs), a Ctrl+K command palette, searchable and filterable History with simpler run details, and quieter card-based sections. Audio settings moved into Shortcuts. The default menu bar is hidden (Alt reveals it).
+- Redesigned the runtime surfaces: Dictation and Agent Mode recording are distinguished by shape, glyph, and tint, and the waveform stops repainting while the microphone is silent. Agent cards share one header style.
+- Tool approvals show labeled arguments with the raw JSON collapsed, support Enter/Esc/A shortcuts, and offer **Always allow**, which saves an `alwaysAllow` policy for that tool and applies it to the rest of the run.
+
 ### Runtime Shell
 - Removed the legacy Agent toast window, hidden audio window, and standalone recording-pill window. Agent status, approvals, and final responses now appear only as cards in the persistent runtime shell, and the shell owns recording presentation.
 - Removed the local maintainer rollback switches (`SHUDDHALEKHAN_DISABLE_RUNTIME_SHELL`, `SHUDDHALEKHAN_DISABLE_AGENT_SHELL`, `SHUDDHALEKHAN_DISABLE_STREAMING`, `SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE`) together with their legacy IPC channels, renderer routes, and fallback paths.

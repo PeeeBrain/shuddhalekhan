@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { SectionHeader, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
+import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { ReadOnlyRow } from './ui/rows';
 import type { SettingsSectionProps } from './settings-section-props';
 import { renderMarkdown } from '../markdown';
@@ -28,23 +28,18 @@ export function AboutSettings({
         : [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <SectionHeader
         title="About"
-        description="Version and update status for Shuddhalekhan."
+        description="A local voice interface for dictation and one-off agent commands."
       />
-      <SettingsPanel className="overflow-hidden">
-        <SettingsPanelHeader
-          eyebrow="Application"
-          title="Shuddhalekhan"
-          description="A local voice interface for dictation and one-off agent commands."
-        />
-        <div>
+      <SettingsCard>
           <ReadOnlyRow label="Version" value={appInfo?.version ?? 'Unknown'} />
           <ReadOnlyRow label="Update status" value={statusText} />
-          <div className="py-4">
+          <div className="py-3.5">
             <Button
-              className="w-fit min-w-36"
+              variant="secondary"
+              size="sm"
               disabled={updateStatus?.state === 'checking'}
               onClick={() => {
                 setCheckFailed(false);
@@ -65,21 +60,19 @@ export function AboutSettings({
               </p>
             ) : null}
           </div>
-        </div>
-      </SettingsPanel>
+      </SettingsCard>
       {releaseNotes.length > 0 ? (
         <SettingsPanel aria-labelledby="release-notes-heading">
           <SettingsPanelHeader
             id="release-notes-heading"
-            eyebrow="Release notes"
             title="What's new"
             description={releaseNotes.map((release) => `v${release.version}`).join(', ')}
           />
-          <div className="px-6 py-4 text-sm leading-relaxed text-foreground">
+          <SettingsCard className="py-4 text-sm leading-relaxed text-foreground">
             {releaseNotes.map((release) => (
               <div key={release.version}>{renderMarkdown(release.notes)}</div>
             ))}
-          </div>
+          </SettingsCard>
         </SettingsPanel>
       ) : null}
     </div>
