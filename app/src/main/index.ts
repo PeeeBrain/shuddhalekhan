@@ -754,6 +754,10 @@ ipcMain.handle('clipboard:inject-text', async (_event, text: string): Promise<In
 ipcMain.handle(
   'agent:approval-decision',
   (_event, agentRunId: string, approvalId: string, decision: AgentApprovalChoice, message?: string) => {
+    // The renderer is untrusted input: anything unrecognized must never approve.
+    if (decision !== 'approved' && decision !== 'denied' && decision !== 'always-allow') {
+      throw new Error('Invalid approval decision');
+    }
     const approval = decision === 'always-allow' ? runtimeShell.getPendingApproval(approvalId) : null;
     if (approval) {
       const config = getConfig();

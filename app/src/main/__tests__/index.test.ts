@@ -941,6 +941,13 @@ describe('main process IPC orchestration', () => {
     runtimeShellGetPendingApproval.mockImplementation(() => null);
   });
 
+  it('rejects unrecognized approval decisions instead of approving', async () => {
+    agentSendApprovalDecision.mockClear();
+
+    expect(() => ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-1', 'yes')).toThrow('Invalid approval decision');
+    expect(agentSendApprovalDecision).not.toHaveBeenCalled();
+  });
+
   it('waits for sidecar shutdown before allowing quit', async () => {
     let finishStop: () => void = () => undefined;
     agentStop.mockImplementationOnce(() => new Promise<void>((resolve) => {

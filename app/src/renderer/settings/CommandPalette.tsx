@@ -22,6 +22,8 @@ export function CommandPalette({ settingsIpc, onClose, onNavigate, onOpenRun }: 
   const [active, setActive] = useState(0);
   const [runs, setRuns] = useState<AuditRunSummary[]>([]);
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Dismissing returns focus to whatever opened the palette; choosing an item lets navigation own focus.
+  const [returnFocus] = useState(() => document.activeElement as HTMLElement | null);
 
   useEffect(() => {
     settingsIpc.getAuditRuns().then((all) => setRuns(all.slice(0, 50))).catch(() => setRuns([]));
@@ -45,10 +47,16 @@ export function CommandPalette({ settingsIpc, onClose, onNavigate, onOpenRun }: 
     else onOpenRun(item.id);
   };
 
+  const dismiss = () => {
+    onClose();
+    returnFocus?.focus();
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k')) {
       event.preventDefault();
-      onClose();
+      event.stopPropagation();
+      dismiss();
     } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const next = (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % Math.max(items.length, 1);
@@ -61,7 +69,7 @@ export function CommandPalette({ settingsIpc, onClose, onNavigate, onOpenRun }: 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-background/55 pt-[12vh] backdrop-blur-sm" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-background/55 pt-[12vh] backdrop-blur-sm" onMouseDown={dismiss}>
       <div
         role="dialog"
         aria-modal="true"

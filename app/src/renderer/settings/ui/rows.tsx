@@ -331,7 +331,7 @@ export function ReadOnlyRow({ label, value }: ReadOnlyRowProps) {
 export function Keycaps({ value, label }: { value: string; label?: string }) {
   const keys = value.split(' + ');
   return (
-    <div className="flex flex-wrap items-center gap-1" aria-label={label ?? value}>
+    <span className="inline-flex flex-wrap items-center gap-1" aria-label={label ?? value}>
       {keys.map((key, i) => (
         <span key={key} className="flex items-center gap-1">
           <kbd className="inline-flex min-h-7 items-center justify-center rounded-md border border-border/80 bg-muted/70 px-2 py-1 font-mono text-[10px] font-semibold text-foreground shadow-sm">
@@ -349,6 +349,6 @@ export function Keycaps({ value, label }: { value: string; label?: string }) {
           ) : null}
         </span>
       ))}
-    </div>
+    </span>
   );
 }

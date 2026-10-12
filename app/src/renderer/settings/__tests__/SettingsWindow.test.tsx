@@ -333,6 +333,19 @@ describe('Settings navigation', () => {
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
   });
 
+  it('returns focus to the opener when the palette is dismissed', async () => {
+    renderSettings();
+    await waitForLoaded();
+
+    const opener = screen.getByRole('button', { name: /Search/ });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search settings and runs' }), { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
   it('switches sections and exposes the active tab panel when a tab is clicked', async () => {
     renderSettings();
     await waitForLoaded();
