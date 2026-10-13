@@ -15,7 +15,7 @@ The existing provider selection, MCP approval policy, single-flight cancellation
 
 ## Current position
 
-Implementation is complete. The maintainer approved Markdown memory and daft-punk mode. Codex implemented persistence, runtime integration, and validation; Claude implemented the Skills and Memory Settings UI. After the maintainer requested dev testing, the real Electron app was probed with isolated app data and a local fixture provider. Before/after UI evidence is in `app/docs/research/agent-context-ui/`.
+Implementation is complete. The maintainer approved Markdown memory and daft-punk mode. Codex implemented persistence, runtime integration, and validation; Claude implemented the Skills and Memory Settings UI. After the maintainer requested dev testing, the real Electron app was probed with isolated app data and a local fixture provider. Dev verification notes are in `app/docs/research/agent-context-ui/README.md`.
 
 - `app/package.json` pins AI SDK `7.0.138` and already includes Zod and `electron-store`.
 - `app/src/agent/runtime.ts` uses `streamText`, a stable system prompt, fresh run messages, and a five-step tool loop. Keep this runtime rather than migrating it to `ToolLoopAgent`.
