@@ -143,7 +143,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   if (!config) {
     return (
       <main className="settings-root flex h-screen items-center justify-center bg-background text-foreground">
-        <p className="text-muted-foreground">Loading settings...</p>
+        <p className="text-muted-foreground">Loading settings…</p>
       </main>
     );
   }

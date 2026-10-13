@@ -317,7 +317,7 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
                     <p role="alert" className="text-xs text-destructive">Couldn&apos;t load events for this run.</p>
                   ) : null}
                   {isLoadingDetail && !selectedRunEvents ? (
-                    <p className="text-xs text-muted-foreground">Loading events...</p>
+                    <p className="text-xs text-muted-foreground">Loading events…</p>
                   ) : selectedRunEvents && selectedRunEvents.length > 0 ? (
                     <ol className="divide-y divide-border/40">
                       {selectedRunEvents.map((event) => (
@@ -622,5 +622,5 @@ function formatPromptPreview(transcript: unknown): string {
   }
 
   const normalized = transcript.replace(/\s+/g, ' ').trim();
-  return normalized.length > 80 ? `${normalized.slice(0, 80)}...` : normalized;
+  return normalized.length > 80 ? `${normalized.slice(0, 80)}…` : normalized;
 }

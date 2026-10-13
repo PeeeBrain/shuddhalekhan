@@ -797,7 +797,7 @@ describe('Settings section reachability', () => {
     expect(screen.getByText('Version')).toBeInTheDocument();
     expect(screen.getByText('Update status')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Check for Updates' }),
+      screen.getByRole('button', { name: 'Check for updates' }),
     ).toBeInTheDocument();
   });
 

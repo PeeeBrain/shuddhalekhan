@@ -75,7 +75,7 @@ export function CommandPalette({ settingsIpc, onClose, onNavigate, onOpenRun }: 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-background/55 pt-[12vh] backdrop-blur-sm" onMouseDown={dismiss}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-background/75 pt-[12vh]" onMouseDown={dismiss}>
       <div
         role="dialog"
         aria-modal="true"

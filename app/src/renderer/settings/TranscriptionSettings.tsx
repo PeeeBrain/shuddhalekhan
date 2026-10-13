@@ -944,7 +944,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
           disabled={testState === 'checking' || validateLocalWhisperEndpoint(draft) !== null}
           onClick={testConnection}
         >
-          {testState === 'checking' ? 'Checking...' : 'Check server'}
+          {testState === 'checking' ? 'Checking…' : 'Check server'}
         </Button>
         {testState === 'success' ? (
           <Tag tone="success">Reachable</Tag>
@@ -1335,7 +1335,7 @@ function WhisperLiveKitSection({
           disabled={readiness?.state === 'checking'}
           onClick={() => void settingsIpc.checkTranscriptionReadiness().then(onReadinessChange)}
         >
-          {readiness?.state === 'checking' ? 'Checking...' : 'Check readiness'}
+          {readiness?.state === 'checking' ? 'Checking…' : 'Check readiness'}
         </Button>
         {readiness ? <WhisperLiveKitReadinessTag readiness={readiness} /> : null}
       </div>
@@ -1397,7 +1397,7 @@ function CheckServerTest({ provider, settingsIpc, testState, setTestState }: Che
         onClick={check}
         aria-describedby={testState !== 'idle' ? labelId : undefined}
       >
-        {testState === 'checking' ? 'Checking...' : 'Check connectivity'}
+        {testState === 'checking' ? 'Checking…' : 'Check connectivity'}
       </Button>
       {testState === 'success' ? (
         <span id={labelId}><Tag tone="success">Reachable</Tag></span>
@@ -1463,7 +1463,7 @@ function DictionaryRow({ dictionary, disabled = false, description, error, onCha
         value={inputValue}
         onChange={(e) => setInputValue(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Type a word and press Enter..."
+        placeholder="Type a word and press Enter…"
         aria-label="Add dictionary word"
         disabled={disabled}
         aria-invalid={error ? true : undefined}

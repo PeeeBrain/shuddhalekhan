@@ -10,6 +10,10 @@ tags and commit history, not from this file. Keep new entries under
 ### Interface
 - Redesigned Settings: a new Home section (readiness, shortcuts, recent agent runs), a Ctrl+K command palette, searchable and filterable History with simpler run details, and quieter card-based sections. Audio settings moved into Shortcuts. The default menu bar is hidden (Alt reveals it).
 - Redesigned the runtime surfaces: Dictation and Agent Mode recording are distinguished by shape, glyph, and tint, and the waveform stops repainting while the microphone is silent. Agent cards share one header style.
+- Long agent responses keep their newest text in view while streaming and on completion, unless you scroll up to read.
+- Agent responses, History, and release notes now render full GitHub-flavored Markdown (loose and nested lists, tables, blockquotes, strikethrough, task lists). Images in model output render as links instead of loading remote URLs.
+- Cleaned up the tray menu: transcript recovery first, then Microphone, Pause global shortcuts, and Settings; the version line now carries update status, and "Check for updates" only appears when a check can do something. Labels use sentence case.
+- Failure cards size to their message instead of leaving an empty block, and the Home recent-runs list no longer overflows the window.
 - Tool approvals show labeled arguments with the raw JSON collapsed, support Enter/Esc/A shortcuts, and offer **Always allow**, which saves an `alwaysAllow` policy for that tool and applies it to the rest of the run.
 
 ### Runtime Shell

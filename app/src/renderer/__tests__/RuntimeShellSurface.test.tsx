@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { render, screen, cleanup, act, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, act, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RuntimeShellSurface } from '../RuntimeShellSurface';
 import type { RuntimePresentationSnapshot } from '../../types/ipc';
@@ -117,6 +117,25 @@ describe('RuntimeShellSurface agent cards', () => {
         if (typeof height === 'number') expect(height).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+
+  it('follows a growing response until the user scrolls away', () => {
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words.' });
+
+    // happy-dom has no layout, so give the clamped body an overflowing box.
+    const body = screen.getByText('First words.').closest('.overflow-y-auto') as HTMLElement;
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, value: 800 });
+    Object.defineProperty(body, 'clientHeight', { configurable: true, value: 400 });
+
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words. More.', revision: 2 });
+    expect(body.scrollTop).toBe(800);
+
+    body.scrollTop = 0;
+    fireEvent.scroll(body);
+    showCard({ kind: 'agent-completed', agentRunId: 'run-1', response: 'First words. More. Done.', toolSummary: [], revision: 3 });
+    expect(body.scrollTop).toBe(0);
   });
 
   it('sends approval decisions without optional denial feedback', async () => {
