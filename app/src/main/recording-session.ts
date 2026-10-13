@@ -103,7 +103,7 @@ export interface RecordingSessionOptions {
   getSelectedDeviceId?: () => string | null;
   getRecognitionSettings?: () => RecognitionSettings;
   getDictationMode?: () => DictationMode;
-  getReadinessError?: () => Error | null;
+  getReadinessError?: (intent: RecordingIntent) => Error | null;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
   onError?: (error: Error) => void;
   onBegin?: (intent: RecordingIntent) => void;
@@ -151,7 +151,7 @@ export class RecordingSession {
   private getTranscriber: () => Transcriber;
   private getRecognitionSettings: () => RecognitionSettings;
   private getDictationMode: () => DictationMode;
-  private getReadinessError: () => Error | null;
+  private getReadinessError: (intent: RecordingIntent) => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
   private showRecordingPillFn: (
     intent: RecordingIntent,
@@ -221,7 +221,7 @@ export class RecordingSession {
       });
       return false;
     }
-    const readinessError = this.getReadinessError();
+    const readinessError = this.getReadinessError(intent);
     if (readinessError) {
       emitPerformanceMarker('recording.begin.rejected', {
         recordingSessionId,

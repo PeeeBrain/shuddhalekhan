@@ -24,6 +24,7 @@ const CREDENTIAL_KINDS: CredentialKind[] = [
 export function registerCredentialIpcHandlers(
   ipcMain: IpcMainRegistrar,
   vault: Pick<CredentialVault, 'status' | 'save' | 'remove'>,
+  onChanged?: (credential: CredentialKind) => void,
 ): void {
   ipcMain.handle('credential:get-status', (_event, credential: CredentialKind) => {
     return vault.status(requireCredentialKind(credential));
@@ -34,7 +35,9 @@ export function registerCredentialIpcHandlers(
     const kind = requireCredentialKind(credential);
     if (kind === 'google-service-account') parseGoogleServiceAccount(value);
     try {
-      return vault.save(kind, value);
+      const result = vault.save(kind, value);
+      onChanged?.(kind);
+      return result;
     } catch {
       return {
         available: false,
@@ -45,7 +48,10 @@ export function registerCredentialIpcHandlers(
   });
 
   ipcMain.handle('credential:remove', (_event, credential: CredentialKind) => {
-    return vault.remove(requireCredentialKind(credential));
+    const kind = requireCredentialKind(credential);
+    const result = vault.remove(kind);
+    onChanged?.(kind);
+    return result;
   });
 }
 

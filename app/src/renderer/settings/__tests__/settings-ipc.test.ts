@@ -131,6 +131,19 @@ describe('settings IPC adapter', () => {
     expect(invoke).toHaveBeenCalledWith('credential:remove', 'agent-api-key');
   });
 
+  it('routes agent provider checks to their channels', async () => {
+    const provider = config.agent.provider;
+    await ipc.validateAgentProvider(provider);
+    await ipc.testAgentProvider(provider);
+    await ipc.cancelAgentProviderTest();
+    ipc.onAgentProviderInvalidated(() => undefined);
+
+    expect(invoke).toHaveBeenCalledWith('agent:validate-provider', provider);
+    expect(invoke).toHaveBeenCalledWith('agent:test-provider', provider);
+    expect(invoke).toHaveBeenCalledWith('agent:cancel-provider-test');
+    expect(subscribe).toHaveBeenCalledWith('agent:provider-invalidated', expect.any(Function));
+  });
+
   it('subscribes to updater and MCP status events', () => {
     const onUpdate = vi.fn();
     const onMcpStatus = vi.fn();

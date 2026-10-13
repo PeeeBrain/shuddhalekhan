@@ -485,7 +485,7 @@ describe('config store', () => {
     }));
   });
 
-  it('defaults missing provider thinking toggle to enabled', async () => {
+  it('uses provider-default reasoning when no explicit or legacy preference was saved', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-thinking-default`);
 
@@ -499,11 +499,10 @@ describe('config store', () => {
       mcpServers: [],
     } as never);
 
-    expect(getConfig().agent.provider.thinkingEnabled).toBe(true);
-    expect(getConfig().agent.provider.reasoningEffort).toBe('medium');
+    expect(getConfig().agent.provider.reasoning).toBe('default');
   });
 
-  it('preserves stored agent credentials and reasoning effort', async () => {
+  it('preserves stored agent credentials, reasoning effort, and cache breakpoint opt-in', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-agent-provider-settings`);
 
@@ -520,14 +519,32 @@ describe('config store', () => {
       mcpServers: [],
     });
 
-    expect(getConfig().agent.provider).toEqual({
+    expect(getConfig().agent.provider).toMatchObject({
       baseUrl: 'https://openrouter.ai/api/v1',
       model: 'nvidia/nemotron-3-ultra-550b-a55b:free',
       apiKeyEnvVar: '',
       apiKeySource: 'stored',
       thinkingEnabled: true,
       reasoningEffort: 'high',
+      reasoning: 'high',
+      kind: 'openrouter',
+      apiMode: 'chat-completions',
     });
+    const agent = getConfig().agent;
+    setConfig('agent', { ...agent, provider: { ...agent.provider, kind: 'azure-openai',
+      baseUrl: 'https://resource.openai.azure.com/openai/v1', model: 'production', cacheBreakpoints: true } });
+    expect(getConfig().agent.provider.cacheBreakpoints).toBe(true);
+  });
+
+  it('can disable an invalid legacy profile and rejects newly supplied invalid endpoints before storage', async () => {
+    const legacy = { enabled: true, provider: { baseUrl: 'https://resource.openai.azure.com', model: 'production', apiKeyEnvVar: 'AZURE_KEY', thinkingEnabled: true }, mcpServers: [] };
+    storeData.set('agent', legacy);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-invalid-provider`);
+    expect(() => setConfig('agent', { ...getConfig().agent, enabled: false })).not.toThrow();
+    expect(getConfig().agent.enabled).toBe(false);
+    const previous = storeData.get('agent');
+    expect(() => setConfig('agent', { ...getConfig().agent, provider: { ...getConfig().agent.provider, baseUrl: 'https://user:secret@example.com/v1' } })).toThrow();
+    expect(storeData.get('agent')).toEqual(previous);
   });
 
   it('defaults to the explicit Ctrl+Win and Alt+Win bindings', async () => {

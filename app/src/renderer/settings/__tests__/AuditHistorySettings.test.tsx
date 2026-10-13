@@ -60,6 +60,10 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       getCredentialStatus: mock(() => Promise.resolve({ available: true, exists: false })),
       saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
       removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
+      validateAgentProvider: mock(() => Promise.resolve({ issues: [], credentials: 'available' as const })),
+      testAgentProvider: mock(() => Promise.reject(new Error('not used'))),
+      cancelAgentProviderTest: mock(() => Promise.resolve()),
+      onAgentProviderInvalidated: mock(() => undefined),
     };
 
     render(<AuditHistorySettings settingsIpc={settingsIpc} />);
@@ -153,6 +157,10 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       getCredentialStatus: mock(() => Promise.resolve({ available: true, exists: false })),
       saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
       removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
+      validateAgentProvider: mock(() => Promise.resolve({ issues: [], credentials: 'available' as const })),
+      testAgentProvider: mock(() => Promise.reject(new Error('not used'))),
+      cancelAgentProviderTest: mock(() => Promise.resolve()),
+      onAgentProviderInvalidated: mock(() => undefined),
     };
 
     const { container } = render(<AuditHistorySettings settingsIpc={settingsIpc} />);

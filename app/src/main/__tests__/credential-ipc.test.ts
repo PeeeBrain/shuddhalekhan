@@ -10,13 +10,17 @@ describe('credential IPC', () => {
       remove: () => ({ available: true, exists: false }) as const,
     };
 
-    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault);
+    const changes: string[] = [];
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault, kind => changes.push(kind));
 
     const save = handlers.get('credential:save');
     const result = save?.({}, 'agent-api-key', 'new-agent-secret');
 
     expect(result).toEqual({ available: true, exists: true });
     expect(JSON.stringify(result)).not.toContain('new-agent-secret');
+    expect(changes).toEqual(['agent-api-key']);
+    handlers.get('credential:remove')?.({}, 'agent-api-key');
+    expect(changes).toEqual(['agent-api-key', 'agent-api-key']);
     expect(handlers.get('credential:get-status')?.({}, 'azure-speech-key')).toEqual({
       available: true,
       exists: true,

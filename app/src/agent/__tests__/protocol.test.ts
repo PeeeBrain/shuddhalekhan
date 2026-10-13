@@ -17,4 +17,14 @@ describe('parseElectronMessage', () => {
     expect(parseElectronMessage(JSON.stringify({ type: 'agent:unknown', agentRunId: 'run-1' }))).toBeNull();
     expect(parseElectronMessage('{not json')).toBeNull();
   });
+
+  it('requires a correlated, valid provider payload for model testing', () => {
+    const provider = { baseUrl: 'http://localhost:11434/v1', model: 'local', apiKeyEnvVar: '' };
+    expect(parseElectronMessage(JSON.stringify({ type: 'provider:test', requestId: 'check-1', provider }))).toMatchObject({ type: 'provider:test', requestId: 'check-1', provider });
+    for (const message of [
+      { type: 'provider:test', provider },
+      { type: 'provider:test', requestId: 'check-1', provider: { ...provider, auth: 'guess' } },
+      { type: 'provider:cancel-test', requestId: '' },
+    ]) expect(parseElectronMessage(JSON.stringify(message))).toBeNull();
+  });
 });

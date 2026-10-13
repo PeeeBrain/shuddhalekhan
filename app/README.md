@@ -149,11 +149,12 @@ Agent Mode turns a spoken command into a one-off local agent run. It does not re
 Open Settings from the tray menu, then configure:
 
 1. Enable Agent Mode.
-2. Set an OpenAI-compatible provider base URL.
-3. Set the model name.
-4. Set the environment variable name that contains the provider API key.
+2. Choose OpenAI, Azure OpenAI v1, OpenRouter, or a local/custom OpenAI-compatible server.
+3. Set the API base URL and model identifier. Azure needs the **deployment name**.
+4. Choose authentication and either a securely saved key or the environment variable containing it. Unauthenticated local servers can use **None**.
+5. Review the local configuration checks, then click **Test model** before trying a voice command.
 
-The API key value is not stored in Shuddhalekhan config. Only the environment variable name is saved.
+API key values are never stored in the provider config. Saved keys use Electron's encrypted credential vault. Environment variables must be available when the app starts; restart the desktop app after changing them. Settings checks availability without revealing the key.
 
 Examples of provider-style configuration:
 
@@ -161,9 +162,38 @@ Examples of provider-style configuration:
 Base URL: https://openrouter.ai/api/v1
 Model: openai/gpt-5.4-mini
 API key env var: OPENROUTER_API_KEY
+
+Provider: Azure OpenAI (v1)
+Base URL: https://YOUR-RESOURCE.openai.azure.com/openai/v1
+API: Responses (recommended for supported agent models)
+Model: YOUR-DEPLOYMENT-NAME
+Authentication: API key header
+API key env var: AZURE_OPENAI_API_KEY
+
+Provider: Local or custom (OpenAI-compatible)
+Base URL: http://localhost:11434/v1
+Model: YOUR-LOCAL-MODEL
+Authentication: None
 ```
 
-For local providers that do not require an API key, leave the API key environment variable empty if the provider supports that.
+Enter a base URL, not a full `/chat/completions` or `/responses` request URL. Azure v1 does not need a dated `api-version`; legacy deployment URLs are not supported by this profile. Bearer authentication can use a supplied token, but the app does not sign in to Microsoft Entra or refresh expiring tokens.
+
+OpenAI/Azure profiles can choose Chat Completions or Responses. Existing configurations keep Chat Completions; switch to Responses and test when the deployment requires it for reasoning or tools. Custom compatible servers use Chat Completions. Reasoning defaults to the provider's own behavior; explicit efforts must be supported by the selected model. **None** explicitly requests no reasoning rather than silently omitting the setting.
+
+**Test model** sends synthetic prompts and a harmless built-in echo tool. The provider may bill these requests. It checks streamed text and a tool call followed by a model response without recording audio, executing MCP tools, or sending personal content. Tool support depends on the server and model: a successful text response alone is not enough. An inconclusive result can mean the model did not call the tool, exhausted the output budget, or ignored a requested setting. Errors show suggested fixes and redacted technical details. Changes to the provider or its saved credential invalidate results, and tests can be cancelled.
+
+Local HTTP works, including IPv6 loopback. Remote endpoints should use HTTPS; custom servers on a trusted LAN can explicitly allow plain HTTP in Advanced settings. Redirects are blocked so credentials cannot be forwarded to another endpoint.
+
+#### Agent prompt caching
+
+The runtime keeps system instructions and tool ordering stable, sends the current time after that prefix, and reuses the growing message history during tool calls and approvals. Each model step records reported cache reads and writes in the local audit trail. A short prompt, expired cache, or changed toolset can still produce no cache hits. The final guardrail summary changes the toolset and context, so it may reuse less of the cache.
+
+- **OpenAI / Azure:** Supported models cache automatically. Enable **Advanced → Use cache breakpoints** only after confirming GPT-5.6+ breakpoint support; Azure additionally requires a Standard pay-as-you-go deployment. Older models and PTU deployments reject those fields. Run **Test model** after enabling it. The option marks stable instructions and recent input boundaries, uses a stable cache key, and leaves implicit caching and retention defaults intact. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching) and [Azure prompt caching](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/prompt-caching).
+- **OpenRouter:** The app sends explicit block cache markers and a session ID reused throughout each run, allowing supported models to cache instructions and tool results and use sticky routing. The default five-minute marker TTL avoids opting into longer, more expensive writes. OpenRouter translates markers for supported upstream models; actual support, minimum lengths, and pricing vary. See [OpenRouter prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching).
+- **DeepSeek / OpenCode / other compatible endpoints:** Their server owns caching. Direct [DeepSeek context caching](https://api-docs.deepseek.com/guides/kv_cache/) is automatic. Gateway behavior follows the selected model and upstream provider; OpenAI-compatible transport alone does not promise cache support. The app preserves reusable prefixes without sending undocumented cache fields.
+- **Local servers:** Enable caching on the server where required, such as [vLLM prefix caching](https://docs.vllm.ai/en/stable/features/automatic_prefix_caching/). Ollama model residency can be controlled through the server's [OLLAMA_KEEP_ALIVE setting](https://docs.ollama.com/faq#how-do-i-keep-a-model-loaded-in-memory-or-make-it-unload-immediately). The app does not pin models in memory or change your server settings.
+
+**Test model** verifies cache-setting compatibility, not a paid cache-hit benchmark. Cache writes may cost extra, and prompts must meet the selected model's minimum length. The app adds no filler tokens or hidden warm-up requests.
 
 ### MCP Servers
 

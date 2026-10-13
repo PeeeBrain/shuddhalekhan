@@ -23,6 +23,7 @@ export interface SettingsPersistence {
 
 export const SAVE_TOAST_DURATION_MS = 2500;
 const SAVE_TOAST_MESSAGE = 'Settings saved';
+const IPC_ERROR_PREFIX = /^Error invoking remote method '[^']+': (?:\w*Error: )?/;
 
 export function useSettingsPersistence(
   settingsIpc: SettingsIpc,
@@ -74,10 +75,14 @@ export function useSettingsPersistence(
         await settingsIpc.setConfig(key, value);
         clearFieldError(fieldId);
         showToast('success', SAVE_TOAST_MESSAGE);
-      } catch {
+      } catch (error) {
+        // Main's validation errors arrive wrapped by Electron; anything else stays generic.
+        const message = error instanceof Error && IPC_ERROR_PREFIX.test(error.message)
+          ? error.message.replace(IPC_ERROR_PREFIX, '')
+          : '';
         setFieldErrors((current) => ({
           ...current,
-          [fieldId]: 'Could not save this setting.',
+          [fieldId]: message || 'Could not save this setting.',
         }));
       }
     },

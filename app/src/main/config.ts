@@ -9,6 +9,9 @@ import { getDictationCombinationError, getTranscriptionTransportCapabilities, no
 import { preparePersistentStoreDirectory } from './store-path';
 import { isolatePerformanceDriverConfig } from './performance/scenario-driver';
 import { isManagedLocalThreadCount } from './managed-local-threads';
+import { normalizeAgentProvider } from '../shared/agent-provider';
+import { agentProviderSchema, getAgentProviderIssues } from '../shared/agent-provider-validation';
+import { z } from 'zod';
 
 type StoreConfig = Omit<AppConfig, 'dictation'> & {
   dictation?: unknown;
@@ -88,6 +91,7 @@ const store = new Store<StoreConfig>({
         apiKeySource: 'environment',
         thinkingEnabled: true,
         reasoningEffort: 'medium',
+        reasoning: 'default',
       },
       mcpServers: [],
     },
@@ -220,6 +224,8 @@ persistNormalizedDictation();
 
 export function getConfig(): AppConfig {
   const agent = store.get('agent');
+  const parsedProvider = agentProviderSchema.safeParse(agent?.provider ?? {});
+  const provider = parsedProvider.success ? parsedProvider.data : undefined;
   const mcpServers = normalizeMcpServers(agent?.mcpServers);
 
   const storedTranscription = store.get('transcription');
@@ -260,23 +266,29 @@ export function getConfig(): AppConfig {
     dictation: normalizeDictationConfig(store.get('dictation')),
     agent: {
       enabled: agent?.enabled ?? false,
-      provider: {
-        baseUrl: agent?.provider?.baseUrl ?? '',
-        model: agent?.provider?.model ?? '',
-        apiKeyEnvVar: agent?.provider?.apiKeyEnvVar ?? '',
-        apiKeySource: agent?.provider?.apiKeySource === 'stored' ? 'stored' : 'environment',
-        thinkingEnabled: agent?.provider?.thinkingEnabled ?? true,
-        reasoningEffort: agent?.provider?.reasoningEffort === 'low'
-          || agent?.provider?.reasoningEffort === 'high'
-          ? agent.provider.reasoningEffort
-          : 'medium',
-      },
+      provider: { ...provider, ...normalizeAgentProvider(provider) },
       mcpServers,
     },
   }, process.env);
 }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
+  if (key === 'agent') {
+    const parsed = z.object({ enabled: z.boolean(), provider: agentProviderSchema }).safeParse(value);
+    if (!parsed.success) throw new Error('Provider settings contain an invalid value.');
+    const previousAgent = store.get('agent');
+    // Disabling must work even when an existing provider profile is invalid.
+    if (previousAgent?.enabled && !parsed.data.enabled) {
+      store.set('agent', { ...previousAgent, enabled: false });
+      return;
+    }
+    const provider = parsed.data.provider;
+    const issue = getAgentProviderIssues(provider).find(issue =>
+      !(issue.field === 'baseUrl' && !provider.baseUrl.trim())
+      && !(issue.field === 'model' && !provider.model.trim())
+      && !(issue.field === 'apiKeyEnvVar' && !provider.apiKeyEnvVar.trim()));
+    if (issue) throw new Error(issue.message);
+  }
   if (key === 'managedLocalThreads' && value !== null && !isManagedLocalThreadCount(value)) {
     throw new Error('Choose a whole-number thread count within the available CPU range.');
   }

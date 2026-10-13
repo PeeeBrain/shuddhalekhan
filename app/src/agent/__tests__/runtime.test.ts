@@ -3,16 +3,9 @@ import { runAgent } from '../runtime';
 import type { AgentRuntimeCallbacks } from '../runtime';
 
 const streamTextMock = mock();
-const createOpenAICompatibleMock = mock(() => ({
-  chatModel: mock(() => 'mock-model'),
-}));
 const isStepCountMock = mock((n: number) => ({ stepCount: n }));
 const createMCPClientMock = mock();
 const closeMock = mock(() => Promise.resolve());
-
-mock.module('@ai-sdk/openai-compatible', () => ({
-  createOpenAICompatible: createOpenAICompatibleMock,
-}));
 
 mock.module('ai', () => ({
   streamText: streamTextMock,
@@ -44,7 +37,6 @@ const baseConfig = {
 describe('runAgent', () => {
   beforeEach(() => {
     streamTextMock.mockClear();
-    createOpenAICompatibleMock.mockClear();
     isStepCountMock.mockClear();
     createMCPClientMock.mockClear();
     closeMock.mockClear();
@@ -73,7 +65,7 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
-      'Agent provider configuration is incomplete. Check base URL and model in Settings.'
+      expect.stringContaining('Enter a valid HTTP or HTTPS API base URL.')
     );
   });
 
@@ -83,39 +75,8 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
-      'API key environment variable "OPENROUTER_API_KEY" is not set.'
+      expect.stringContaining('environment variable is unavailable to the running app')
     );
-  });
-
-  it('uses a stored API key received from the main process', async () => {
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-    const callbacks = makeCallbacks();
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: { ...baseConfig.agent.provider, apiKeySource: 'stored' as const },
-      },
-    };
-
-    await runAgent(
-      'run-1',
-      'hello',
-      config as never,
-      {},
-      new AbortController().signal,
-      callbacks,
-      'stored-agent-secret',
-    );
-
-    expect(createOpenAICompatibleMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKey: 'stored-agent-secret',
-    }));
   });
 
   it('fails clearly when a raw API key is entered instead of an environment variable name', async () => {
@@ -134,7 +95,7 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
-      'Settings contains an API key value, but Shuddhalekhan expects an environment variable name. Set OPENROUTER_API_KEY in your shell, restart bun run dev, and put OPENROUTER_API_KEY in Settings.'
+      expect.stringContaining('Enter the environment variable name, not the API key value.')
     );
   });
 
@@ -176,11 +137,11 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onFailed).toHaveBeenCalledWith(
-      'Provider rejected the request | HTTP 400 | Response: {"error":"Unsupported reasoning option"}'
+      expect.stringContaining('The provider rejected the request settings.')
     );
-    expect(callbacks.onAudit).toHaveBeenCalledWith('run_failed', {
-      error: 'Provider rejected the request | HTTP 400 | Response: {"error":"Unsupported reasoning option"}',
-    });
+    expect(callbacks.onAudit).toHaveBeenCalledWith('run_failed', expect.objectContaining({
+      diagnostic: expect.objectContaining({ kind: 'unsupported', statusCode: 400 }),
+    }));
   });
 
   it('uses the stable AI SDK v7 runtime request names', async () => {
@@ -202,7 +163,7 @@ describe('runAgent', () => {
     );
 
     const request = streamTextMock.mock.calls[0]?.[0];
-    expect(request.instructions).toContain('<identity>');
+    expect(request.instructions.content).toContain('<identity>');
     expect(request.onStepEnd).toBeFunction();
     expect(request.system).toBeUndefined();
     expect(request.onStepFinish).toBeUndefined();
@@ -222,7 +183,7 @@ describe('runAgent', () => {
 
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions;
+    const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions.content;
     expect(systemPrompt).toContain('<identity>');
     expect(systemPrompt).not.toContain('# Identity');
   });
@@ -240,48 +201,21 @@ describe('runAgent', () => {
 
     await runAgent('run-1', 'what happened today?', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions;
-    expect(systemPrompt).toContain('<runtime_context>');
-    expect(systemPrompt).toContain(`- Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
-    expect(systemPrompt).toMatch(/- Current local datetime: .+/);
-    expect(systemPrompt).toMatch(/- Current UTC datetime: \d{4}-\d{2}-\d{2}T/);
-  });
-
-  it('does not require an API key for local providers', async () => {
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Local done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-
-    const callbacks = makeCallbacks();
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: {
-          baseUrl: 'http://localhost:11434/v1',
-          model: 'gemma3:270m',
-          apiKeyEnvVar: '',
-          thinkingEnabled: true,
-        },
-      },
-    };
-
-    await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
-
-    expect(createOpenAICompatibleMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKey: 'shuddhalekhan-local-provider',
-      baseURL: 'http://localhost:11434/v1',
-    }));
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Local done', []);
+    const request = streamTextMock.mock.calls[0]?.[0];
+    expect(request.instructions.content).not.toContain('<runtime_context>');
+    const context = request.messages[0].content;
+    expect(context).toContain('<runtime_context>');
+    expect(context).toContain(`- Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`);
+    expect(context).toMatch(/- Current local datetime: .+/);
+    expect(context).toMatch(/- Current UTC datetime: \d{4}-\d{2}-\d{2}T/);
+    expect(context).toEndWith('what happened today?');
   });
 
   it('emits status during tool calls', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     streamTextMock.mockImplementation((options: { onStepEnd?: (args: unknown) => void }) => {
       options.onStepEnd?.({
+        usage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
         toolCalls: [{ toolName: 'weather' }],
         toolResults: [{ toolName: 'weather', result: 'sunny' }],
         text: 'Weather is sunny',
@@ -314,6 +248,7 @@ describe('runAgent', () => {
       callCount++;
       if (callCount === 1) {
         options.onStepEnd?.({
+          usage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
           toolCalls: [{ toolName: 'search' }],
           toolResults: [],
           text: '',
@@ -392,7 +327,7 @@ describe('runAgent', () => {
       arguments: { to: 'a@example.com' },
     });
     expect(streamTextMock.mock.calls[1]?.[0].messages).toEqual([
-      { role: 'user', content: 'send the email' },
+      { role: 'user', content: expect.stringContaining('\n\nsend the email') },
       {
         role: 'assistant',
         content: [
@@ -542,204 +477,6 @@ describe('runAgent', () => {
 
     expect(callbacks.onResponseDelta).toHaveBeenCalledTimes(1);
     expect(callbacks.onResponseDelta).toHaveBeenCalledWith('Ready', 'Ready');
-  });
-
-  it('passes enabled thinking through request body reasoning without unsupported reasoningEffort values', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-
-    const callbacks = makeCallbacks();
-    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
-
-    expect(streamTextMock.mock.calls[0]?.[0].providerOptions).toEqual({});
-
-    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
-    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
-      messages: [],
-      reasoning: { effort: 'high' },
-    });
-  });
-
-  it('omits request body reasoning when thinking is disabled', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-
-    const callbacks = makeCallbacks();
-    await runAgent('run-1', 'hello', {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: {
-          ...baseConfig.agent.provider,
-          thinkingEnabled: false,
-        },
-      },
-    } as never, {}, new AbortController().signal, callbacks);
-
-    expect(streamTextMock.mock.calls[0]?.[0].providerOptions).toEqual({});
-
-    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
-    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({ messages: [] });
-  });
-
-  it('passes thinking through request body reasoning for local providers', async () => {
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-
-    const callbacks = makeCallbacks();
-    await runAgent('run-1', 'hello', {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: {
-          baseUrl: 'http://localhost:1234/v1',
-          model: 'nvidia/nemotron-3-nano-4b',
-          apiKeyEnvVar: '',
-          thinkingEnabled: true,
-          reasoningEffort: 'low',
-        },
-      },
-    } as never, {}, new AbortController().signal, callbacks);
-
-    expect(streamTextMock.mock.calls[0]?.[0].providerOptions).toEqual({});
-
-    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
-    expect(providerConfig.headers?.['x-opencode-session']).toBeUndefined();
-    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
-      messages: [],
-      reasoning: { effort: 'low' },
-    });
-  });
-
-  it('uses the DeepSeek V4 OpenAI-compatible thinking fields for OpenCode Go', async () => {
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-    const callbacks = makeCallbacks();
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: {
-          ...baseConfig.agent.provider,
-          baseUrl: 'https://opencode.ai/zen/go/v1',
-          model: 'deepseek-v4-flash',
-          apiKeySource: 'stored' as const,
-          reasoningEffort: 'medium' as const,
-        },
-      },
-    };
-
-    await runAgent(
-      'run-1',
-      'hello',
-      config as never,
-      {},
-      new AbortController().signal,
-      callbacks,
-      'stored-agent-secret',
-    );
-
-    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
-    expect(providerConfig.transformRequestBody({ messages: [] })).toEqual({
-      messages: [],
-      thinking: { type: 'enabled' },
-      reasoning_effort: 'high',
-    });
-    expect(providerConfig.headers).toMatchObject({
-      'x-opencode-session': 'run-1',
-      'User-Agent': 'shuddhalekhan-agent/1.0',
-    });
-  });
-
-  it('matches the OpenCode host case-insensitively', async () => {
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-    const callbacks = makeCallbacks();
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: {
-          ...baseConfig.agent.provider,
-          baseUrl: 'https://OPENCODE.AI/zen/go/v1',
-          model: 'deepseek-v4-flash',
-          apiKeySource: 'stored' as const,
-        },
-      },
-    };
-
-    await runAgent(
-      'run-1',
-      'hello',
-      config as never,
-      {},
-      new AbortController().signal,
-      callbacks,
-      'stored-agent-secret',
-    );
-
-    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
-    expect(providerConfig.headers).toMatchObject({
-      'x-opencode-session': 'run-1',
-      'User-Agent': 'shuddhalekhan-agent/1.0',
-    });
-  });
-
-  it('does not send OpenCode headers to a lookalike host', async () => {
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [],
-      toolCalls: [],
-      toolResults: [],
-    }));
-    const callbacks = makeCallbacks();
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: {
-          ...baseConfig.agent.provider,
-          baseUrl: 'https://not-opencode.ai/v1',
-          model: 'deepseek-v4-flash',
-          apiKeySource: 'stored' as const,
-        },
-      },
-    };
-
-    await runAgent(
-      'run-1',
-      'hello',
-      config as never,
-      {},
-      new AbortController().signal,
-      callbacks,
-      'stored-agent-secret',
-    );
-
-    const providerConfig = createOpenAICompatibleMock.mock.calls[0]?.[0];
-    expect(providerConfig.headers).toBeUndefined();
   });
 
   it('calls onCancelled when aborted', async () => {

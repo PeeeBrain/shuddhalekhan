@@ -23,10 +23,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/azure": "4.0.100",
     "@ai-sdk/mcp": "2.0.10",
+    "@ai-sdk/openai": "4.0.92",
     "@ai-sdk/openai-compatible": "3.0.7",
+    "@openrouter/ai-sdk-provider": "3.1.0",
     "@tailwindcss/vite": "^4.3.2",
-    "ai": "7.0.22",
+    "ai": "7.0.138",
     "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -1,4 +1,6 @@
-import type { AppConfig } from '../types/ipc';
+import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
+import { z } from 'zod';
+import { agentProviderSchema } from '../shared/agent-provider-validation';
 
 export type SidecarReadyEvent = {
   type: 'sidecar:ready';
@@ -95,6 +97,7 @@ export type AgentCancelledEvent = {
 };
 
 export type SidecarEvent =
+  | { type: 'provider:test-result'; requestId: string; result: AgentProviderTestResult }
   | SidecarReadyEvent
   | SidecarShutdownCompleteEvent
   | McpServerStatusEvent
@@ -145,6 +148,8 @@ export type ApprovalDecisionMessage = {
 };
 
 export type ElectronToSidecarMessage =
+  | { type: 'provider:test'; requestId: string; provider: AgentProviderConfig; apiKey?: string }
+  | { type: 'provider:cancel-test'; requestId: string }
   | ConfigUpdateMessage
   | AgentStartMessage
   | AgentCancelMessage
@@ -161,6 +166,17 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
   }
 
   switch (parsed.type) {
+    case 'provider:test': {
+      const result = z.object({
+        type: z.literal('provider:test'), requestId: z.string().min(1),
+        provider: agentProviderSchema, apiKey: z.string().optional(),
+      }).safeParse(parsed);
+      return result.success ? result.data : null;
+    }
+    case 'provider:cancel-test': {
+      const result = z.object({ type: z.literal('provider:cancel-test'), requestId: z.string().min(1) }).safeParse(parsed);
+      return result.success ? result.data : null;
+    }
     case 'config:update':
     case 'agent:start':
     case 'agent:cancel':

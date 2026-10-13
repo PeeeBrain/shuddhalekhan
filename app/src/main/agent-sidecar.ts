@@ -1,6 +1,8 @@
 import { app } from 'electron';
+import { randomUUID } from 'crypto';
 import { join } from 'path';
-import type { AppConfig } from '../types/ipc';
+import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
+import { failedProviderTest } from '../shared/agent-provider';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
 import { getPersistentStoreDirectory } from './store-path';
@@ -44,6 +46,7 @@ export type SidecarManagerDeps = {
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
 
 export class AgentSidecarManager {
+  private providerTest: { requestId: string; resolve: (result: AgentProviderTestResult) => void; cancelTimeout: () => void } | null = null;
   private generation: Generation | null = null;
   private process: GenerationProcess | null = null;
   private nextGenerationId = 1;
@@ -79,6 +82,7 @@ export class AgentSidecarManager {
   }
 
   startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string): void {
+    this.cancelProviderTest();
     emitPerformanceMarker('agent.run.requested', { agentRunId });
     this.start(config, agentApiKey);
     this.sendOrQueue({
@@ -96,6 +100,7 @@ export class AgentSidecarManager {
   }
 
   stop(): Promise<void> {
+    this.cancelProviderTest();
     const generation = this.generation;
     if (!generation) return Promise.resolve();
     if (generation.stopPromise) return generation.stopPromise;
@@ -139,6 +144,39 @@ export class AgentSidecarManager {
       decision,
       message,
     });
+  }
+
+  testProvider(provider: AgentProviderConfig, apiKey?: string): Promise<AgentProviderTestResult> {
+    if (this.providerTest) return Promise.resolve(failedProviderTest({
+      kind: 'busy', message: 'A model test is already running.', action: 'Wait for it to finish or cancel it.',
+    }));
+    this.ensureGeneration();
+    if (!this.generation) return Promise.resolve(failedProviderTest({
+      kind: 'provider', message: 'The Agent sidecar could not start.', action: 'Check runtime availability and try again.',
+    }));
+    const requestId = randomUUID();
+    return new Promise(resolve => {
+      const cancelTimeout = this.scheduleTimeout(() => {
+        this.sendOrQueue({ type: 'provider:cancel-test', requestId });
+        this.finishProviderTest(failedProviderTest({ kind: 'timeout', message: 'The model test timed out.', action: 'Check the model server and retry.' }));
+      }, 90_000);
+      this.providerTest = { requestId, resolve, cancelTimeout };
+      this.sendOrQueue({ type: 'provider:test', requestId, provider, ...(apiKey ? { apiKey } : {}) });
+    });
+  }
+
+  cancelProviderTest(): void {
+    if (!this.providerTest) return;
+    this.sendOrQueue({ type: 'provider:cancel-test', requestId: this.providerTest.requestId });
+    this.finishProviderTest(failedProviderTest({ kind: 'cancelled', message: 'The model test was cancelled.', action: 'Run Test model when ready.' }));
+  }
+
+  private finishProviderTest(result: AgentProviderTestResult): void {
+    const pending = this.providerTest;
+    if (!pending) return;
+    this.providerTest = null;
+    pending.cancelTimeout();
+    pending.resolve(result);
   }
 
   /** Point-update the sidecar config, then reconnect only the named MCP server. */
@@ -225,6 +263,11 @@ export class AgentSidecarManager {
   private handleEvent(generation: Generation, event: SidecarEvent): void {
     if (this.generation !== generation) return;
 
+    if (event.type === 'provider:test-result') {
+      if (event.requestId === this.providerTest?.requestId) this.finishProviderTest(event.result);
+      return;
+    }
+
     if (event.type === 'sidecar:ready') {
       generation.ready = true;
       if (generation.stopping) {
@@ -252,6 +295,7 @@ export class AgentSidecarManager {
     generation.stopping = true;
     generation.pending = [];
     if (this.generation === generation) {
+      this.finishProviderTest(failedProviderTest({ kind: 'provider', message: 'The Agent sidecar stopped during the model test.', action: 'Retry the model test.' }));
       this.generation = null;
       this.process?.stop();
       this.process = null;
