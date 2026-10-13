@@ -94,6 +94,8 @@ const store = new Store<StoreConfig>({
         reasoning: 'default',
       },
       mcpServers: [],
+      disabledSkills: [],
+      memoryEnabled: false,
     },
   },
 });
@@ -268,13 +270,17 @@ export function getConfig(): AppConfig {
       enabled: agent?.enabled ?? false,
       provider: { ...provider, ...normalizeAgentProvider(provider) },
       mcpServers,
+      disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
+      memoryEnabled: agent?.memoryEnabled === true,
     },
   }, process.env);
 }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
   if (key === 'agent') {
-    const parsed = z.object({ enabled: z.boolean(), provider: agentProviderSchema }).safeParse(value);
+    const parsed = z.object({ enabled: z.boolean(), provider: agentProviderSchema,
+      disabledSkills: z.array(z.string().max(64)).max(256).optional(), memoryEnabled: z.boolean().optional(),
+    }).safeParse(value);
     if (!parsed.success) throw new Error('Provider settings contain an invalid value.');
     const previousAgent = store.get('agent');
     // Disabling must work even when an existing provider profile is invalid.

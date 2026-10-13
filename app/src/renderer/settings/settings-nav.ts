@@ -4,6 +4,8 @@ export type SettingsSectionId =
   | 'shortcuts'
   | 'agent'
   | 'mcp'
+  | 'skills'
+  | 'memory'
   | 'history'
   | 'about';
 
@@ -37,6 +39,8 @@ export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
     sections: [
       { id: 'agent', label: 'Agent', group: 'agent' },
       { id: 'mcp', label: 'MCP Servers', group: 'agent' },
+      { id: 'skills', label: 'Skills', group: 'agent' },
+      { id: 'memory', label: 'Memory', group: 'agent' },
       { id: 'history', label: 'History', group: 'agent' },
     ],
   },

@@ -25,6 +25,13 @@ export const SAVE_TOAST_DURATION_MS = 2500;
 const SAVE_TOAST_MESSAGE = 'Settings saved';
 const IPC_ERROR_PREFIX = /^Error invoking remote method '[^']+': (?:\w*Error: )?/;
 
+/** Main's validation errors arrive wrapped by Electron; anything else gets the generic fallback. */
+export function ipcErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && IPC_ERROR_PREFIX.test(error.message)
+    ? error.message.replace(IPC_ERROR_PREFIX, '') || fallback
+    : fallback;
+}
+
 export function useSettingsPersistence(
   settingsIpc: SettingsIpc,
   applyOptimistic: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void,
@@ -76,13 +83,9 @@ export function useSettingsPersistence(
         clearFieldError(fieldId);
         showToast('success', SAVE_TOAST_MESSAGE);
       } catch (error) {
-        // Main's validation errors arrive wrapped by Electron; anything else stays generic.
-        const message = error instanceof Error && IPC_ERROR_PREFIX.test(error.message)
-          ? error.message.replace(IPC_ERROR_PREFIX, '')
-          : '';
         setFieldErrors((current) => ({
           ...current,
-          [fieldId]: message || 'Could not save this setting.',
+          [fieldId]: ipcErrorMessage(error, 'Could not save this setting.'),
         }));
       }
     },

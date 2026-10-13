@@ -74,6 +74,17 @@ describe('config store', () => {
     expect(electronMock.app.getPath).toHaveBeenCalledWith('appData');
   });
 
+  it('defaults legacy profiles to memory off and preserves validated feature settings on save', async () => {
+    storeData.set('agent', { enabled: false, provider: { baseUrl: '', model: '', apiKeyEnvVar: '' }, mcpServers: [] });
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-agent-context`);
+    expect(getConfig().agent).toMatchObject({ memoryEnabled: false, disabledSkills: [] });
+    setConfig('agent', { ...getConfig().agent, memoryEnabled: true, disabledSkills: ['email-style'] });
+    expect(getConfig().agent).toMatchObject({ memoryEnabled: true, disabledSkills: ['email-style'] });
+    const saved = storeData.get('agent');
+    expect(() => Reflect.apply(setConfig, null, ['agent', { ...getConfig().agent, memoryEnabled: 'yes' }])).toThrow();
+    expect(storeData.get('agent')).toEqual(saved);
+  });
+
   it('copies monorepo dev stores only when stable stores do not exist', async () => {
     const sourceDirectory = normalize('/app-data/@shuddhalekhan/app');
     existsSync.mockImplementation((path: string) => path.startsWith(sourceDirectory));

@@ -27,4 +27,12 @@ describe('parseElectronMessage', () => {
       { type: 'provider:cancel-test', requestId: '' },
     ]) expect(parseElectronMessage(JSON.stringify(message))).toBeNull();
   });
+
+  it('validates memory snapshots and correlated commit responses at the sidecar boundary', () => {
+    const start = { type: 'agent:start', agentRunId: 'run-1', transcript: 'hello', context: { skillsDirectory: 'C:/config/skills', memory: { revision: 'rev-1', markdown: '# Memory\n\n- Prefers Marathi.\n' } } };
+    expect(parseElectronMessage(JSON.stringify(start))).toEqual(start);
+    expect(parseElectronMessage(JSON.stringify({ ...start, context: { ...start.context, memory: { revision: 12 } } }))).toBeNull();
+    expect(parseElectronMessage(JSON.stringify({ type: 'memory:commit-result', agentRunId: 'run-1', requestId: 'commit-1', result: { saved: false, message: 'Memory changed.' } }))).toMatchObject({ result: { saved: false } });
+    expect(parseElectronMessage(JSON.stringify({ type: 'memory:commit-result', agentRunId: 'run-1', result: { saved: true } }))).toBeNull();
+  });
 });

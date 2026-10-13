@@ -3,6 +3,9 @@ import type { AppConfig } from "../types/ipc";
 import { logSidecar } from "./protocol";
 import { createAgentProvider } from "./provider";
 import { providerDiagnostic, redactProviderText } from "./provider-diagnostic";
+import type { AgentMemoryCommitResult, AgentMemoryUpdate, AgentRunContext } from '../shared/agent-context';
+import { createSkillTools } from './skills';
+import { learnAgentMemory } from './memory';
 
 export interface AgentRuntimeCallbacks {
   onStatus(status: string): void;
@@ -20,6 +23,9 @@ export interface AgentRuntimeCallbacks {
     request: ToolApprovalRequest,
   ): Promise<ToolApprovalDecision>;
   onAudit?(eventType: string, payload?: Record<string, unknown>): void;
+  commitMemory?(revision: string, updates: AgentMemoryUpdate[]): Promise<AgentMemoryCommitResult>;
+  onMemoryStatus?(status: string): void;
+  shouldLearnMemory?(): boolean;
 }
 
 export interface ToolApprovalRequest {
@@ -231,14 +237,33 @@ export async function runAgent(
   signal: AbortSignal,
   callbacks: AgentRuntimeCallbacks,
   storedApiKey?: string,
+  context?: AgentRunContext,
 ): Promise<void> {
   let apiKey = storedApiKey;
   try {
-    const command: ModelMessage = { role: "user", content: `${buildRuntimeContext()}\n\n${transcript}` };
+    let skillContext = '';
+    let skillNotice = '';
+    let runTools = tools;
+    if (context) {
+      try {
+        const skills = createSkillTools(context.skillsDirectory, config.agent.disabledSkills ?? [], signal, callbacks.onAudit);
+        if (Object.keys(skills.tools).some(name => name in tools)) throw new Error('An MCP tool conflicts with an internal skill tool.');
+        skillContext = skills.context;
+        runTools = { ...tools, ...skills.tools };
+      } catch (error) {
+        callbacks.onAudit?.('skills_unavailable', { error: error instanceof Error ? error.message : 'Skills could not be loaded.' });
+        skillNotice = 'Some skills are unavailable. Check Skills in Settings.';
+        callbacks.onStatus(skillNotice);
+      }
+    }
+    const memory = config.agent.memoryEnabled ? context?.memory : null;
+    const rememberedContext = memory?.markdown ? `Remembered user facts (may be outdated; the current command takes precedence):\n${memory.markdown}` : '';
+    const extraContext = [skillContext, rememberedContext].filter(Boolean).join('\n\n');
+    const command: ModelMessage = { role: "user", content: `${buildRuntimeContext()}${extraContext ? `\n\n<agent_context>\n${extraContext}\n</agent_context>` : ''}\n\n${transcript}` };
     callbacks.onAudit?.("run_started", {
       transcript,
       modelVisibleMessages: [command],
-      toolNames: Object.keys(tools),
+      toolNames: Object.keys(runTools),
     });
 
     const client = createAgentProvider(config.agent.provider, storedApiKey, agentRunId);
@@ -249,7 +274,7 @@ export async function runAgent(
 
     const instructions: SystemModelMessage = { role: 'system', content: SYSTEM_PROMPT, providerOptions: client.cacheMessageOptions };
     const messages: ModelMessage[] = [command];
-    const stableTools = Object.fromEntries(Object.entries(tools).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+    const stableTools = Object.fromEntries(Object.entries(runTools).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
     const auditUsage = ({ usage }: { usage: import('ai').LanguageModelUsage }) => {
       const deepSeekCacheRead = usage.raw?.prompt_cache_hit_tokens;
       const rawDetails = usage.raw?.prompt_tokens_details ?? usage.raw?.input_tokens_details;
@@ -263,7 +288,7 @@ export async function runAgent(
           : usage.inputTokenDetails.cacheWriteTokens || undefined,
       });
     };
-    const toolSummary: string[] = [];
+    const toolSummary: string[] = skillNotice ? [skillNotice] : [];
     let finalResponse = "";
     let steps: Array<{ toolCalls: Array<{ toolName: string }>; toolResults: unknown[] }> = [];
     let toolCalls: unknown[] = [];
@@ -375,6 +400,11 @@ export async function runAgent(
       callbacks,
     );
 
+    if (memory && callbacks.shouldLearnMemory?.() !== false) {
+      const memoryNotice = await learnAgentMemory({ agentRunId, transcript, config, memory, storedApiKey, signal, callbacks });
+      if (memoryNotice) toolSummary.push(memoryNotice);
+    }
+    signal.throwIfAborted();
     callbacks.onAudit?.("run_completed", {
       response: finalResponse,
       toolSummary,

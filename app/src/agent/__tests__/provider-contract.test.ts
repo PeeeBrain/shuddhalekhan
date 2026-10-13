@@ -21,3 +21,7 @@ it('uses the real SDK for provider requests, streaming, tool continuation, and d
 it('preserves provider failures during cancellation races and terminates unexpected sidecar probe rejections', async () => {
   expect(await runFixture('provider-failure')).toContain('Provider failure contracts passed');
 }, 20_000);
+
+it('loads skills through the real SDK, preserves MCP approvals, and learns Markdown memory across runs', async () => {
+  expect(await runFixture('agent-context-contract')).toContain('Agent context contracts passed');
+}, 20_000);

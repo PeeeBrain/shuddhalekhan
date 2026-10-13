@@ -22,6 +22,8 @@ tags and commit history, not from this file. Keep new entries under
 - Removed the deprecated `recordingActivationMode` config alias from the public config surface; existing installs still seed per-intent activation modes from it once during migration.
 
 ### Agent Mode
+- Added Skills settings to create, import, edit, enable, and remove local `skills/<name>/SKILL.md` workflows. Agent runs load relevant instructions and text references on demand while preserving MCP tool approvals.
+- Added optional automatic memory for useful user preferences and facts, stored locally as `agent-memory.md`. Memory settings supports editing, deleting, and clearing saved facts. Learning uses one extra bounded request to the configured model after a successful Agent run; Dictation does not read or write memory.
 - Agent runs now preserve stable prompt prefixes and tool ordering for provider caching, send OpenRouter cache markers and session routing, and record reported cache usage. OpenAI/Azure Settings offers a tested opt-in for supported cache breakpoints.
 - Agent provider settings now distinguish OpenAI, Azure OpenAI v1, OpenRouter, and local/custom compatible endpoints, with explicit API, authentication, and reasoning choices. Existing profiles keep their URL and Chat Completions mode; newly selected OpenAI and Azure profiles recommend Responses.
 - Agent Settings validates configuration and credential availability before recording, and offers a cancellable model test with separate streaming and harmless tool-round-trip results, SDK warnings, and actionable provider errors.

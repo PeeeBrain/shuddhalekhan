@@ -9,6 +9,8 @@ import type { ApprovalDecisionMessage } from './protocol';
 import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
 import { AgentAuditStore } from './audit';
 import { McpRegistry } from './mcp-registry';
+import { AgentMemoryCommitter } from './memory-committer';
+import type { AgentRunContext } from '../shared/agent-context';
 import {
   AisdkMcpClientFactory,
   SidecarOAuthRedirectFactory,
@@ -25,6 +27,7 @@ let approvalQueue: Promise<void> = Promise.resolve();
 let configUpdateQueue: Promise<void> = Promise.resolve();
 let shutdownPromise: Promise<void> | null = null;
 const auditStore = new AgentAuditStore();
+const memoryCommitter = new AgentMemoryCommitter(writeJsonLine);
 const oauthRedirectFactory = new SidecarOAuthRedirectFactory();
 const mcpRegistry = new McpRegistry({
   mcpClientFactory: new AisdkMcpClientFactory(oauthRedirectFactory),
@@ -103,7 +106,10 @@ function handleLine(line: string): void {
       configUpdateQueue = configUpdateQueue.then(() => mcpRegistry.updateConfig(message.config));
       break;
     case 'agent:start':
-      handleAgentStart(message.agentRunId, message.transcript);
+      void handleAgentStart(message.agentRunId, message.transcript, message.context);
+      break;
+    case 'memory:commit-result':
+      memoryCommitter.accept(message);
       break;
     case 'agent:cancel':
       handleAgentCancel(message.agentRunId);
@@ -122,7 +128,7 @@ function handleLine(line: string): void {
   }
 }
 
-async function handleAgentStart(agentRunId: string, transcript: string): Promise<void> {
+async function handleAgentStart(agentRunId: string, transcript: string, context?: AgentRunContext): Promise<void> {
   providerTest?.controller.abort();
   const previousAgentRunId = activeAgentRunId;
   const previousAbortController = activeAbortController;
@@ -136,6 +142,7 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
 
   activeAgentRunId = agentRunId;
   activeAbortController = new AbortController();
+  const runController = activeAbortController;
 
   const currentConfig = config;
   const currentAgentApiKey = agentApiKey;
@@ -148,7 +155,9 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
 
   try {
     await configUpdateQueue;
+    if (activeAgentRunId !== agentRunId || runController.signal.aborted) return;
     const availability = await mcpRegistry.settle(5000);
+    if (activeAgentRunId !== agentRunId || runController.signal.aborted) return;
     if (availability.connected < availability.enabled) {
       const status = `Some Agent tools are unavailable. Connected to ${availability.connected} of ${availability.enabled} MCP servers.`;
       auditStore.record(agentRunId, 'status', { status });
@@ -172,7 +181,7 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
     );
 
     try {
-      await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, activeAbortController.signal, {
+      await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, runController.signal, {
         onStatus: (status) => {
           if (activeAgentRunId !== agentRunId) return;
           auditStore.record(agentRunId, 'status', { status });
@@ -209,7 +218,12 @@ async function handleAgentStart(agentRunId: string, transcript: string): Promise
         },
         requestToolApproval: (request) => requestToolApproval(agentRunId, request),
         onAudit: (eventType, payload) => recordAgentAudit(agentRunId, eventType, payload),
-      }, currentAgentApiKey);
+        commitMemory: (revision, updates) => memoryCommitter.request(agentRunId, revision, updates, runController.signal),
+        shouldLearnMemory: () => config?.agent.memoryEnabled === true && activeAgentRunId === agentRunId,
+        onMemoryStatus: status => {
+          if (activeAgentRunId === agentRunId) writeJsonLine({ type: 'memory:status', agentRunId, status });
+        },
+      }, currentAgentApiKey, context);
     } finally {
       await toolSnapshot.close();
     }
