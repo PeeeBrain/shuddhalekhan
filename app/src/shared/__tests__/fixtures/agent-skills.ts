@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentSkillStore, listSkills, readSkillText } from '../agent-skills';
+import { AgentSkillStore, listSkills, readSkillText } from '../../agent-skills';
 
 const document = (name: string) => `---\nname: ${name}\ndescription: >-\n  Follow a consistent email style.\nlicense: MIT\nmetadata:\n  author: Partha\n---\n\nUse concise paragraphs.\n`;
 

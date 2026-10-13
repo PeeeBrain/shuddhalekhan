@@ -1,13 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AppConfig } from '../../types/ipc';
 import type { AgentMemoryCommitResult, AgentMemorySnapshot, AgentSkillImport } from '../../shared/agent-context';
+import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
-const chooseFolder = mock();
-mock.module('electron', () => ({ ipcMain: { handle: (name: string, handler: (...args: unknown[]) => unknown) => handlers.set(name, handler) }, dialog: { showOpenDialog: chooseFolder }, shell: { openPath: async () => '' } }));
+const chooseFolder = electronMock.dialog.showOpenDialog;
+installElectronMock();
 const { registerAgentContextIpcHandlers } = await import('../agent-context');
 
 describe('Agent context IPC and run lifecycle', () => {
@@ -23,6 +24,8 @@ describe('Agent context IPC and run lifecycle', () => {
   };
   const getMemory = () => invoke('memory:get') as AgentMemorySnapshot;
   beforeEach(() => {
+    resetElectronMock();
+    electronMock.ipcMain.handle.mockImplementation((name: string, handler: (...args: unknown[]) => unknown) => handlers.set(name, handler));
     directory = mkdtempSync(join(tmpdir(), 'shuddha-context-'));
     handlers.clear();
     replies = [];

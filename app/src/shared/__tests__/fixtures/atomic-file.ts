@@ -2,7 +2,7 @@ import { expect, it, spyOn } from 'bun:test';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeAtomicFile } from '../atomic-file';
+import { writeAtomicFile } from '../../atomic-file';
 
 it('preserves the prior file and removes the temporary copy when the OS rejects replacement', () => {
   const directory = fs.mkdtempSync(join(tmpdir(), 'shuddha-atomic-'));

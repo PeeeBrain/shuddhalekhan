@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentMemoryStore } from '../agent-memory';
+import { AgentMemoryStore } from '../../agent-memory';
 
 describe('local Markdown memory', () => {
   let directory: string;

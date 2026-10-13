@@ -36,6 +36,7 @@ export const electronMock = {
     clear: mock(),
   },
   dialog: {
+    showOpenDialog: mock(() => Promise.resolve({ canceled: true, filePaths: [] as string[] })),
     showErrorBox: mock(),
     showMessageBox: mock(() => Promise.resolve({ response: 0 })),
   },
@@ -52,6 +53,7 @@ export const electronMock = {
     isSupported: mock(() => true),
   }),
   shell: {
+    openPath: mock(() => Promise.resolve('')),
     openExternal: mock(() => Promise.resolve()),
   },
   screen: {
@@ -130,6 +132,8 @@ export function resetElectronMock(): void {
   electronMock.nativeImage.createFromBuffer.mockReset();
   electronMock.nativeImage.createFromBuffer.mockReturnValue({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) });
   electronMock.dialog.showErrorBox.mockReset();
+  electronMock.dialog.showOpenDialog.mockReset();
+  electronMock.dialog.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
   electronMock.dialog.showMessageBox.mockReset();
   electronMock.dialog.showMessageBox.mockResolvedValue({ response: 0 });
   electronMock.session.defaultSession.setPermissionRequestHandler.mockReset();
@@ -140,6 +144,8 @@ export function resetElectronMock(): void {
   electronMock.Notification.isSupported.mockReset();
   electronMock.Notification.isSupported.mockReturnValue(true);
   electronMock.shell.openExternal.mockReset();
+  electronMock.shell.openPath.mockReset();
+  electronMock.shell.openPath.mockResolvedValue('');
   electronMock.shell.openExternal.mockResolvedValue(undefined);
   electronMock.screen.getPrimaryDisplay.mockReset();
   electronMock.Tray.mockReset();
