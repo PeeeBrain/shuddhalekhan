@@ -57,6 +57,61 @@ export type CredentialStatus =
 
 export type AgentApiKeySource = 'environment' | 'stored';
 export type AgentReasoningEffort = 'low' | 'medium' | 'high';
+export type AgentProviderKind = 'openai' | 'azure-openai' | 'openrouter' | 'openai-compatible';
+export type AgentApiMode = 'chat-completions' | 'responses';
+export type AgentReasoning = 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** New fields are optional at the storage boundary to accept existing profiles. */
+export interface AgentProviderConfig {
+  baseUrl: string;
+  model: string;
+  apiKeyEnvVar: string;
+  apiKeySource?: AgentApiKeySource;
+  kind?: AgentProviderKind;
+  apiMode?: AgentApiMode;
+  auth?: 'none' | 'bearer' | 'api-key';
+  reasoning?: AgentReasoning;
+  allowInsecureHttp?: boolean;
+  /** Enable only for native OpenAI/Azure models supporting GPT-5.6+ cache breakpoints. */
+  cacheBreakpoints?: boolean;
+  /** Read only when migrating a profile without an explicit reasoning setting. */
+  thinkingEnabled?: boolean;
+  reasoningEffort?: AgentReasoningEffort;
+}
+
+export interface AgentProviderIssue {
+  field: 'kind' | 'baseUrl' | 'model' | 'auth' | 'apiKeyEnvVar' | 'reasoning';
+  message: string;
+}
+
+export interface AgentProviderValidation {
+  issues: AgentProviderIssue[];
+  credentials: 'available' | 'not-required' | 'missing';
+}
+
+export interface AgentProviderDiagnostic {
+  kind: 'configuration' | 'authentication' | 'permission' | 'endpoint' | 'unsupported'
+    | 'rate-limit' | 'quota' | 'network' | 'timeout' | 'busy' | 'cancelled' | 'provider';
+  message: string;
+  action: string;
+  statusCode?: number;
+  requestId?: string;
+  details?: string;
+}
+
+export interface AgentProviderCheck {
+  status: 'passed' | 'failed' | 'not-checked' | 'inconclusive';
+  message: string;
+}
+
+export interface AgentProviderTestResult {
+  checkedAt: string;
+  validation: AgentProviderValidation;
+  streaming: AgentProviderCheck;
+  tools: AgentProviderCheck;
+  warnings: string[];
+  diagnostic?: AgentProviderDiagnostic;
+}
 
 export interface McpHttpOAuthConfig {
   clientId: string;
@@ -175,6 +230,9 @@ export interface RendererToMainInvokeChannels {
     message?: string
   ) => Promise<void>;
   'mcp:test-server': (serverId: string) => Promise<void>;
+  'agent:validate-provider': (provider: AgentProviderConfig) => Promise<AgentProviderValidation>;
+  'agent:test-provider': (provider: AgentProviderConfig) => Promise<AgentProviderTestResult>;
+  'agent:cancel-provider-test': () => Promise<void>;
   'mcp:get-status-snapshot': () => Promise<McpStatusSnapshot>;
   'app:get-info': () => Promise<AppInfo>;
   'app:get-release-notes': () => Promise<VersionReleaseNotes | null>;
@@ -203,6 +261,7 @@ export interface MainToRendererChannels {
   'recording:duration-warning': (remainingSeconds: number | null) => void;
   'audio:level-changed': (level: number) => void;
   'mcp:status-snapshot': (snapshot: McpStatusSnapshot) => void;
+  'agent:provider-invalidated': () => void;
   'updater:status-changed': (status: UpdateStatus) => void;
   'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;
@@ -438,14 +497,7 @@ export interface AppConfig {
   dictation: DictationConfig;
   agent: {
     enabled: boolean;
-    provider: {
-      baseUrl: string;
-      model: string;
-      apiKeyEnvVar: string;
-      apiKeySource?: AgentApiKeySource;
-      thinkingEnabled: boolean;
-      reasoningEffort?: AgentReasoningEffort;
-    };
+    provider: AgentProviderConfig;
     mcpServers: McpServerConfig[];
   };
 }

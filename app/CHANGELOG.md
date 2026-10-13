@@ -22,6 +22,10 @@ tags and commit history, not from this file. Keep new entries under
 - Removed the deprecated `recordingActivationMode` config alias from the public config surface; existing installs still seed per-intent activation modes from it once during migration.
 
 ### Agent Mode
+- Agent runs now preserve stable prompt prefixes and tool ordering for provider caching, send OpenRouter cache markers and session routing, and record reported cache usage. OpenAI/Azure Settings offers a tested opt-in for supported cache breakpoints.
+- Agent provider settings now distinguish OpenAI, Azure OpenAI v1, OpenRouter, and local/custom compatible endpoints, with explicit API, authentication, and reasoning choices. Existing profiles keep their URL and Chat Completions mode; newly selected OpenAI and Azure profiles recommend Responses.
+- Agent Settings validates configuration and credential availability before recording, and offers a cancellable model test with separate streaming and harmless tool-round-trip results, SDK warnings, and actionable provider errors.
+- Fixed provider-specific reasoning requests, Azure deployment handling, OpenRouter reasoning continuation, and IPv6/local authentication. Provider credentials are protected from redirects and raw error logs; remote HTTP requires an explicit opt-in.
 - Agent runs now identify themselves to OpenCode Go with a stable `x-opencode-session` per run and a Shuddhalekhan `User-Agent`, so Console Go requests route correctly instead of failing with `MissingSessionID`.
 - HTTP MCP servers can optionally name a pre-registered OAuth client (client ID, client-secret env var, scopes) in Settings. Servers whose authorization endpoints don't support dynamic client registration, such as Google's hosted MCP endpoints, can now complete browser sign-in and tool authorization; servers without this setting behave exactly as before.
 - MCP server cards now keep their tool policy lists collapsed by default with a one-click expand, and the Add/Edit MCP server panel stays anchored at the top of the section, so servers with many tools no longer push the configuration fields out of view.

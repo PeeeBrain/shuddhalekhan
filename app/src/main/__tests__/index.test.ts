@@ -88,6 +88,8 @@ const agentStop = vi.fn();
 const agentCancelRun = vi.fn();
 const agentSendApprovalDecision = vi.fn();
 const agentTestMcpServer = vi.fn();
+const agentTestProvider = vi.fn();
+const agentCancelProviderTest = vi.fn();
 const credentialVault = { read: vi.fn(() => null) };
 const registerCredentialIpcHandlers = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
@@ -176,6 +178,8 @@ mock.module('../agent-sidecar', () => ({
     cancelRun = agentCancelRun;
     sendApprovalDecision = agentSendApprovalDecision;
     testMcpServer = agentTestMcpServer;
+    testProvider = agentTestProvider;
+    cancelProviderTest = agentCancelProviderTest;
   },
 }));
 mock.module('../runtime-shell', () => ({
@@ -326,6 +330,8 @@ describe('main process IPC orchestration', () => {
     agentCancelRun.mockClear();
     agentSendApprovalDecision.mockClear();
     agentTestMcpServer.mockClear();
+    agentTestProvider.mockReset();
+    agentCancelProviderTest.mockClear();
     credentialVault.read.mockReset();
     credentialVault.read.mockReturnValue(null);
     agentEventHandler = null;
@@ -361,6 +367,9 @@ describe('main process IPC orchestration', () => {
   it('registers the expected IPC handlers and listeners', () => {
     expect([...ipcHandlers.keys()].sort()).toEqual([
       'agent:approval-decision',
+      'agent:cancel-provider-test',
+      'agent:test-provider',
+      'agent:validate-provider',
       'app:get-info',
       'app:get-release-notes',
       'audio:get-devices',
@@ -392,6 +401,38 @@ describe('main process IPC orchestration', () => {
       'runtime:recovery-action',
       'surface-paint-proxy',
     ]);
+  });
+
+  it('validates provider settings locally while disabled and never launches a sidecar test', async () => {
+    const provider = { baseUrl: 'http://[::1]:11434/v1', model: 'local', apiKeyEnvVar: '', auth: 'none' };
+    const validation = await ipcHandlers.get('agent:validate-provider')?.({}, provider);
+    expect(validation).toEqual({ issues: [], credentials: 'not-required' });
+    const result = await ipcHandlers.get('agent:test-provider')?.({}, provider);
+    expect(result).toMatchObject({ diagnostic: { kind: 'configuration', message: 'Agent Mode is disabled.' } });
+    expect(agentTestProvider).not.toHaveBeenCalled();
+    expect(agentStart).not.toHaveBeenCalled();
+  });
+
+  it('blocks known LLM credential errors only for Agent recording', () => {
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...baseConfig.agent, enabled: true, provider: {
+      baseUrl: 'https://resource.openai.azure.com/openai/v1', model: 'production', apiKeyEnvVar: '', apiKeySource: 'stored', auth: 'api-key',
+    } } });
+    expect(sessionOptions.getReadinessError('agent')?.message).toContain('saved API key is unavailable');
+    expect(sessionOptions.getReadinessError('dictation')).toBeNull();
+  });
+
+  it('forwards a saved key to the sidecar probe without returning it to Settings', async () => {
+    const provider = { baseUrl: 'https://resource.openai.azure.com/openai/v1', model: 'production', apiKeyEnvVar: '', apiKeySource: 'stored', auth: 'api-key' };
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...baseConfig.agent, enabled: true } });
+    credentialVault.read.mockReturnValue('saved-agent-secret');
+    agentTestProvider.mockResolvedValue({ diagnostic: { kind: 'authentication', message: 'Rejected' } });
+    const result = await ipcHandlers.get('agent:test-provider')?.({}, provider);
+    expect(agentTestProvider).toHaveBeenCalledWith(expect.objectContaining({ model: 'production', auth: 'api-key' }), 'saved-agent-secret');
+    expect(JSON.stringify(result)).not.toContain('saved-agent-secret');
+    const changed = registerCredentialIpcHandlers.mock.calls.at(-1)?.[2];
+    changed('agent-api-key');
+    expect(agentCancelProviderTest).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('agent:provider-invalidated');
   });
 
   it('pauses shortcuts through IPC and restores capture suspension explicitly', async () => {

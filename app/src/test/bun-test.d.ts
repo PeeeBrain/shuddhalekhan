@@ -11,6 +11,11 @@ declare module 'bun:test' {
 }
 
 declare const Bun: {
+  spawn(args: string[], options: { stdout: 'pipe'; stderr: 'pipe' }): {
+    exited: Promise<number>;
+    stdout: ReadableStream<Uint8Array>;
+    stderr: ReadableStream<Uint8Array>;
+  };
   file(path: string): { text(): Promise<string> };
 };
 

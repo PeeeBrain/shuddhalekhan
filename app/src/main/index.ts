@@ -14,6 +14,9 @@ import {
 import { credentialVault } from './credential-vault';
 import { registerCredentialIpcHandlers } from './credential-ipc';
 import { getAgentSidecarApiKey } from './agent-credential';
+import { failedProviderTest, normalizeAgentProvider } from '../shared/agent-provider';
+import { agentProviderSchema, resolveAgentProviderKey } from '../shared/agent-provider-validation';
+import type { AgentProviderConfig } from '../types/ipc';
 import { setupUpdater, checkForUpdates, getUpdateStatus } from './updater';
 import { getBundledReleaseNotes, getReleaseNotesPreview } from './release-notes';
 import { AgentSidecarManager } from './agent-sidecar';
@@ -156,8 +159,12 @@ const recordingSession = new RecordingSession({
     };
   },
   getTranscriber: () => getTranscriber(getConfig(), credentialVault),
-  getReadinessError: () => {
+  getReadinessError: (intent) => {
     const config = getConfig();
+    if (intent === 'agent') {
+      const providerIssue = validateAgentProvider(config.agent.provider).issues[0];
+      if (providerIssue) return new TranscriptionFailure('endpoint', `Agent Mode: ${providerIssue.message}`);
+    }
     const errors = validateProviderReadiness(
       config.transcription.activeProvider,
       config,
@@ -568,7 +575,42 @@ async function showBundledReleaseNotesAfterInstall(): Promise<void> {
 }
 
 // IPC handlers
-registerCredentialIpcHandlers(ipcMain, credentialVault);
+function invalidateProviderTest(): void {
+  agentSidecar.cancelProviderTest();
+  getSettingsWindow()?.webContents.send('agent:provider-invalidated');
+}
+
+function validateAgentProvider(provider: AgentProviderConfig) {
+  const normalized = normalizeAgentProvider(provider);
+  const apiKey = normalized.auth !== 'none' && normalized.apiKeySource === 'stored'
+    ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+  return resolveAgentProviderKey(provider, apiKey, process.env).validation;
+}
+
+registerCredentialIpcHandlers(ipcMain, credentialVault, credential => {
+  if (credential === 'agent-api-key') invalidateProviderTest();
+});
+
+ipcMain.handle('agent:validate-provider', (_event, value: unknown) => {
+  const parsed = agentProviderSchema.safeParse(value);
+  if (!parsed.success) return { issues: [{ field: 'kind', message: 'Provider settings contain an invalid value.' }], credentials: 'missing' };
+  return validateAgentProvider(parsed.data);
+});
+
+ipcMain.handle('agent:test-provider', async (_event, value: unknown) => {
+  const parsed = agentProviderSchema.safeParse(value);
+  if (!parsed.success) return failedProviderTest({ kind: 'configuration', message: 'Provider settings contain an invalid value.', action: 'Correct the Agent settings.' });
+  const provider = normalizeAgentProvider(parsed.data);
+  const validation = validateAgentProvider(provider);
+  if (validation.issues.length) return failedProviderTest({ kind: 'configuration', message: validation.issues[0].message, action: 'Correct the Agent settings before testing.' }, validation);
+  if (!getConfig().agent.enabled) return failedProviderTest({ kind: 'configuration', message: 'Agent Mode is disabled.', action: 'Enable Agent Mode to test the model. Local validation works while disabled.' }, validation);
+  if (activeAgentRunId) return failedProviderTest({ kind: 'busy', message: 'An agent run is active.', action: 'Wait for the run to finish before testing the model.' }, validation);
+  const apiKey = provider.apiKeySource === 'stored' && provider.auth !== 'none'
+    ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+  return agentSidecar.testProvider(provider, apiKey);
+});
+
+ipcMain.handle('agent:cancel-provider-test', () => { agentSidecar.cancelProviderTest(); });
 
 ipcMain.handle('audio:get-devices', async () => {
   const webContents = recordingSession.getAudioWebContents();
@@ -713,6 +755,7 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
   setConfig(key, value);
   const config = getConfig();
   if (key === 'agent') {
+    invalidateProviderTest();
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
   cachedAgentEnabled = config.agent.enabled;

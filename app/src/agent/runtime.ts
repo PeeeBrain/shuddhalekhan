@@ -1,7 +1,8 @@
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { isStepCount, streamText, type JSONValue, type ModelMessage, type Tool } from "ai";
-import type { AgentReasoningEffort, AppConfig } from "../types/ipc";
+import { isStepCount, streamText, type ModelMessage, type SystemModelMessage, type Tool } from "ai";
+import type { AppConfig } from "../types/ipc";
 import { logSidecar } from "./protocol";
+import { createAgentProvider } from "./provider";
+import { providerDiagnostic, redactProviderText } from "./provider-diagnostic";
 
 export interface AgentRuntimeCallbacks {
   onStatus(status: string): void;
@@ -83,150 +84,15 @@ const LOCAL_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   timeStyle: "long",
 });
 
-function buildSystemPrompt(now = new Date()): string {
+function buildRuntimeContext(now = new Date()): string {
   const localDateTime = LOCAL_DATE_TIME_FORMATTER.format(now);
 
-  return `${SYSTEM_PROMPT}
-
-<runtime_context>
+  return `<runtime_context>
 - Current local datetime: ${localDateTime}
 - Current UTC datetime: ${now.toISOString()}
 - Time zone: ${TIME_ZONE}
 - Use this datetime context when interpreting relative dates like today, tomorrow, yesterday, tonight, this week, current year, or latest.
 </runtime_context>`;
-}
-
-function getApiKey(envVarName: string): string | undefined {
-  return process.env[envVarName];
-}
-
-function requiresApiKey(baseUrl: string): boolean {
-  const parsed = new URL(baseUrl);
-  const hostname = parsed.hostname.toLowerCase();
-  return !["localhost", "127.0.0.1", "::1"].includes(hostname);
-}
-
-function looksLikeRawApiKey(value: string): boolean {
-  return /^sk-[A-Za-z0-9_-]/.test(value.trim());
-}
-
-function getBaseUrlHostname(baseUrl: string): string | null {
-  try {
-    return new URL(baseUrl).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-// Provider-specific identification headers are only sent to exact hosts we
-// recognize; substring matching would leak them to lookalike domains.
-function getProviderHeaders(
-  baseUrl: string,
-  sessionId: string,
-): Record<string, string> | undefined {
-  const hostname = getBaseUrlHostname(baseUrl);
-
-  if (hostname === "opencode.ai") {
-    return {
-      "x-opencode-session": sessionId,
-      "User-Agent": "shuddhalekhan-agent/1.0",
-    };
-  }
-
-  if (hostname !== "openrouter.ai") return undefined;
-
-  return {
-    "HTTP-Referer": "https://github.com/parthashirolkar/shuddhalekhan",
-    "X-OpenRouter-Title": "Shuddhalekhan",
-  };
-}
-
-function applyDefaultReasoningOptions(
-  args: Record<string, unknown>,
-  thinkingEnabled: boolean,
-  reasoningEffort: AgentReasoningEffort,
-  baseUrl: string,
-  model: string,
-): Record<string, unknown> {
-  if (isDeepSeekV4ChatCompletion(baseUrl, model)) {
-    return {
-      ...args,
-      thinking: { type: thinkingEnabled ? "enabled" : "disabled" },
-      ...(thinkingEnabled ? { reasoning_effort: "high" } : {}),
-    };
-  }
-
-  if (!thinkingEnabled) return args;
-
-  return {
-    ...args,
-    reasoning: {
-      ...(typeof args.reasoning === "object" && args.reasoning !== null
-        ? args.reasoning
-        : {}),
-      effort: reasoningEffort,
-    },
-  };
-}
-
-function isDeepSeekV4ChatCompletion(baseUrl: string, model: string): boolean {
-  return (
-    (baseUrl.includes("opencode.ai/zen/") || baseUrl.includes("api.deepseek.com")) &&
-    (model === "deepseek-v4-flash" || model === "deepseek-v4-pro")
-  );
-}
-
-type AgentProviderOptions = Record<string, Record<string, JSONValue>>;
-
-function getDefaultProviderOptions(): AgentProviderOptions {
-  return {};
-}
-
-function formatProviderError(err: unknown): string {
-  const messages = new Set<string>();
-  const visit = (value: unknown) => {
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-
-    if (typeof record.message === "string") {
-      messages.add(record.message);
-    }
-
-    const statusCode = record.statusCode ?? record.status;
-    if (typeof statusCode === "number") {
-      messages.add(`HTTP ${statusCode}`);
-    }
-
-    if (record.responseBody) {
-      messages.add(`Response: ${stringifyForMessage(record.responseBody)}`);
-    }
-
-    if (record.data) {
-      messages.add(`Details: ${stringifyForMessage(record.data)}`);
-    }
-
-    if (record.cause && record.cause !== value) {
-      visit(record.cause);
-    }
-  };
-
-  visit(err);
-
-  if (messages.size === 0) {
-    return err instanceof Error ? err.message : String(err);
-  }
-
-  return Array.from(messages).join(" | ");
-}
-
-function stringifyForMessage(value: unknown): string {
-  if (typeof value === "string") return value;
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
 }
 
 type ApprovalRequestPart = {
@@ -360,88 +226,43 @@ function normalizeFinalResponse(
 export async function runAgent(
   agentRunId: string,
   transcript: string,
-  config: AppConfig,
+  config: Pick<AppConfig, 'agent'>,
   tools: Record<string, Tool>,
   signal: AbortSignal,
   callbacks: AgentRuntimeCallbacks,
   storedApiKey?: string,
 ): Promise<void> {
+  let apiKey = storedApiKey;
   try {
+    const command: ModelMessage = { role: "user", content: `${buildRuntimeContext()}\n\n${transcript}` };
     callbacks.onAudit?.("run_started", {
       transcript,
-      modelVisibleMessages: [{ role: "user", content: transcript }],
+      modelVisibleMessages: [command],
       toolNames: Object.keys(tools),
     });
 
-    const provider = config.agent.provider;
-    if (!provider.baseUrl || !provider.model) {
-      callbacks.onFailed(
-        "Agent provider configuration is incomplete. Check base URL and model in Settings.",
-      );
-      return;
-    }
-
-    let apiKey = "shuddhalekhan-local-provider";
-    if (provider.apiKeySource === 'stored') {
-      if (!storedApiKey) {
-        callbacks.onFailed('The saved API key is unavailable. Replace it in Settings or use an environment variable.');
-        return;
-      }
-      apiKey = storedApiKey;
-    } else if (requiresApiKey(provider.baseUrl)) {
-      if (!provider.apiKeyEnvVar) {
-        callbacks.onFailed(
-          "Agent provider configuration is incomplete. Remote providers require an API key environment variable in Settings.",
-        );
-        return;
-      }
-
-      apiKey = getApiKey(provider.apiKeyEnvVar) ?? "";
-      if (!apiKey) {
-        if (looksLikeRawApiKey(provider.apiKeyEnvVar)) {
-          callbacks.onFailed(
-            "Settings contains an API key value, but Shuddhalekhan expects an environment variable name. Set OPENROUTER_API_KEY in your shell, restart bun run dev, and put OPENROUTER_API_KEY in Settings.",
-          );
-          return;
-        }
-
-        callbacks.onFailed(
-          `API key environment variable "${provider.apiKeyEnvVar}" is not set.`,
-        );
-        return;
-      }
-    } else if (provider.apiKeyEnvVar) {
-      if (looksLikeRawApiKey(provider.apiKeyEnvVar)) {
-        callbacks.onFailed(
-          "Settings contains an API key value, but Shuddhalekhan expects an environment variable name. Leave this field empty for local providers, or enter an environment variable name.",
-        );
-        return;
-      }
-
-      apiKey = getApiKey(provider.apiKeyEnvVar) ?? apiKey;
-    }
-
-    callbacks.onStatus("Connecting to tools...");
-
-    const model = createOpenAICompatible({
-      name: "shuddhalekhan",
-      baseURL: provider.baseUrl,
-      apiKey,
-      headers: getProviderHeaders(provider.baseUrl, agentRunId),
-      transformRequestBody: (args) =>
-        applyDefaultReasoningOptions(
-          args,
-          provider.thinkingEnabled ?? true,
-          provider.reasoningEffort ?? "medium",
-          provider.baseUrl,
-          provider.model,
-        ),
-    }).chatModel(provider.model);
+    const client = createAgentProvider(config.agent.provider, storedApiKey, agentRunId);
+    const { model, providerOptions, prepareStep } = client;
+    apiKey = client.apiKey;
 
     callbacks.onStatus("Thinking...");
 
-    const systemPrompt = buildSystemPrompt();
-    const messages: ModelMessage[] = [{ role: "user", content: transcript }];
+    const instructions: SystemModelMessage = { role: 'system', content: SYSTEM_PROMPT, providerOptions: client.cacheMessageOptions };
+    const messages: ModelMessage[] = [command];
+    const stableTools = Object.fromEntries(Object.entries(tools).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+    const auditUsage = ({ usage }: { usage: import('ai').LanguageModelUsage }) => {
+      const deepSeekCacheRead = usage.raw?.prompt_cache_hit_tokens;
+      const rawDetails = usage.raw?.prompt_tokens_details ?? usage.raw?.input_tokens_details;
+      const cacheRead = rawDetails && typeof rawDetails === 'object' && 'cached_tokens' in rawDetails ? rawDetails.cached_tokens : undefined;
+      const cacheWrite = rawDetails && typeof rawDetails === 'object' && 'cache_write_tokens' in rawDetails ? rawDetails.cache_write_tokens : undefined;
+      callbacks.onAudit?.('provider_usage', {
+        inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+        cacheReadTokens: typeof deepSeekCacheRead === 'number' ? deepSeekCacheRead
+          : typeof cacheRead === 'number' ? cacheRead : usage.inputTokenDetails.cacheReadTokens || undefined,
+        cacheWriteTokens: typeof cacheWrite === 'number' ? cacheWrite
+          : usage.inputTokenDetails.cacheWriteTokens || undefined,
+      });
+    };
     const toolSummary: string[] = [];
     let finalResponse = "";
     let steps: Array<{ toolCalls: Array<{ toolName: string }>; toolResults: unknown[] }> = [];
@@ -453,13 +274,22 @@ export async function runAgent(
       callbacks.onProviderRequestStarted?.();
       const result = streamText({
         model,
-        instructions: systemPrompt,
+        onError: () => undefined,
+        instructions,
         messages,
-        tools,
-        providerOptions: getDefaultProviderOptions(),
+        tools: stableTools,
+        providerOptions,
+        prepareStep,
+        timeout: { firstChunkMs: 180_000, chunkMs: 60_000 },
         stopWhen: isStepCount(5),
         abortSignal: signal,
-        onStepEnd: ({ toolCalls }) => {
+        onStepEnd: ({ toolCalls, warnings, usage }) => {
+          auditUsage({ usage });
+          if (warnings?.length) {
+            callbacks.onAudit?.("provider_warnings", { warnings: warnings.slice(0, 10).map(warning => redactProviderText(JSON.stringify(warning), apiKey).slice(0, 800)) });
+            const warning = "Provider reported unsupported settings. Run Test model in Settings.";
+            if (!toolSummary.includes(warning)) toolSummary.push(warning);
+          }
           if (toolCalls.length > 0) {
             const names = toolCalls.map((t) => String(t.toolName)).join(", ");
             callbacks.onAudit?.("tool_requests", { toolCalls });
@@ -512,9 +342,10 @@ export async function runAgent(
       callbacks.onProviderRequestStarted?.();
       const fallback = streamText({
         model,
-        instructions: systemPrompt,
+        onError: () => undefined,
+        instructions,
         messages: [
-          { role: "user", content: transcript },
+          command,
           {
             role: "assistant",
             content:
@@ -527,7 +358,10 @@ export async function runAgent(
               "You have reached the maximum number of steps. Please provide a concise final response describing what completed and what remains.",
           },
         ],
-        providerOptions: getDefaultProviderOptions(),
+        providerOptions,
+        prepareStep,
+        onStepEnd: auditUsage,
+        timeout: { firstChunkMs: 180_000, chunkMs: 60_000 },
         abortSignal: signal,
       });
       finalResponse = (await consumeGenerationStream(fallback, callbacks)).text;
@@ -552,9 +386,10 @@ export async function runAgent(
       callbacks.onCancelled();
       return;
     }
-    logSidecar("Agent runtime error", err);
-    const error = formatProviderError(err);
-    callbacks.onAudit?.("run_failed", { error });
+    const diagnostic = providerDiagnostic(err, apiKey);
+    const error = `${diagnostic.message} ${diagnostic.action}${diagnostic.statusCode ? ` (HTTP ${diagnostic.statusCode})` : ""}`;
+    logSidecar("Agent runtime error", error);
+    callbacks.onAudit?.("run_failed", { error, diagnostic });
     callbacks.onFailed(error);
   }
 }

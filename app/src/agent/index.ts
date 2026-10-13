@@ -2,6 +2,8 @@ import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import { logSidecar, parseElectronMessage, writeJsonLine } from './protocol';
 import { runAgent } from './runtime';
+import { testAgentProvider } from './provider-test';
+import { failedProviderTest } from '../shared/agent-provider';
 import type { AppConfig } from '../types/ipc';
 import type { ApprovalDecisionMessage } from './protocol';
 import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
@@ -17,6 +19,7 @@ let config: AppConfig | null = null;
 let agentApiKey: string | undefined;
 let activeAgentRunId: string | null = null;
 let activeAbortController: AbortController | null = null;
+let providerTest: { requestId: string; controller: AbortController } | null = null;
 let pendingApproval: PendingApproval | null = null;
 let approvalQueue: Promise<void> = Promise.resolve();
 let configUpdateQueue: Promise<void> = Promise.resolve();
@@ -72,6 +75,27 @@ function handleLine(line: string): void {
   if (shutdownPromise && message.type !== 'sidecar:shutdown') return;
 
   switch (message.type) {
+    case 'provider:test': {
+      if (activeAgentRunId || providerTest) {
+        writeJsonLine({ type: 'provider:test-result', requestId: message.requestId, result: failedProviderTest({
+          kind: 'busy', message: 'Agent Mode is busy.', action: 'Wait for the active run or model test to finish.',
+        }) });
+        break;
+      }
+      const controller = new AbortController();
+      const request = { requestId: message.requestId, controller };
+      providerTest = request;
+      void testAgentProvider(message.provider, controller.signal, message.apiKey)
+        .then(result => writeJsonLine({ type: 'provider:test-result', requestId: message.requestId, result }))
+        .catch(() => writeJsonLine({ type: 'provider:test-result', requestId: message.requestId, result: failedProviderTest({
+          kind: 'provider', message: 'The model test failed unexpectedly.', action: 'Retry the model test.',
+        }) }))
+        .finally(() => { if (providerTest === request) providerTest = null; });
+      break;
+    }
+    case 'provider:cancel-test':
+      if (providerTest?.requestId === message.requestId) providerTest.controller.abort();
+      break;
     case 'config:update':
       config = message.config;
       agentApiKey = message.agentApiKey;
@@ -99,6 +123,7 @@ function handleLine(line: string): void {
 }
 
 async function handleAgentStart(agentRunId: string, transcript: string): Promise<void> {
+  providerTest?.controller.abort();
   const previousAgentRunId = activeAgentRunId;
   const previousAbortController = activeAbortController;
 
@@ -330,6 +355,7 @@ function rejectPendingApproval(agentRunId: string, message: string): void {
 }
 
 async function shutdown(): Promise<void> {
+  providerTest?.controller.abort();
   activeAbortController?.abort();
   if (activeAgentRunId) {
     auditStore.record(activeAgentRunId, 'run_interrupted', { reason: 'sidecar_shutdown' });

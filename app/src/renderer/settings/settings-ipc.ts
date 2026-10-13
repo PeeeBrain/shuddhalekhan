@@ -12,6 +12,9 @@ import type {
   TranscriptionReadiness,
   ManagedLocalModelSnapshot,
   ManagedLocalModelState,
+  AgentProviderConfig,
+  AgentProviderValidation,
+  AgentProviderTestResult,
 } from '../../types/ipc';
 
 type Unsubscribe = () => void;
@@ -47,6 +50,10 @@ export interface SettingsIpc {
   getCredentialStatus: (credential: CredentialKind) => Promise<CredentialStatus>;
   saveCredential: (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
   removeCredential: (credential: CredentialKind) => Promise<CredentialStatus>;
+  validateAgentProvider: (provider: AgentProviderConfig) => Promise<AgentProviderValidation>;
+  testAgentProvider: (provider: AgentProviderConfig) => Promise<AgentProviderTestResult>;
+  cancelAgentProviderTest: () => Promise<void>;
+  onAgentProviderInvalidated: (callback: () => void) => Unsubscribe | undefined;
 }
 
 export function createSettingsIpc(electronAPI: ElectronAPI | undefined): SettingsIpc {
@@ -89,6 +96,12 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     getCredentialStatus: (credential) => requireElectronApi(electronAPI).invoke('credential:get-status', credential),
     saveCredential: (credential, value) => requireElectronApi(electronAPI).invoke('credential:save', credential, value),
     removeCredential: (credential) => requireElectronApi(electronAPI).invoke('credential:remove', credential),
+    validateAgentProvider: (provider) => requireElectronApi(electronAPI).invoke('agent:validate-provider', provider),
+    testAgentProvider: (provider) => requireElectronApi(electronAPI).invoke('agent:test-provider', provider),
+    cancelAgentProviderTest: async () => {
+      await electronAPI?.invoke('agent:cancel-provider-test');
+    },
+    onAgentProviderInvalidated: (callback) => electronAPI?.subscribe('agent:provider-invalidated', callback),
   };
 }
 

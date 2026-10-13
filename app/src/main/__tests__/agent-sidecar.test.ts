@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import type { AppConfig } from '../../types/ipc';
 import type { SidecarEvent } from '../../agent/protocol';
+import { failedProviderTest } from '../../shared/agent-provider';
 import {
   createMarkerCollector,
   resetPerformanceMarkerCollectorForTests,
@@ -510,5 +511,60 @@ describe('AgentSidecarManager', () => {
 
     expect(sentMessages().filter((message) => message.type === 'sidecar:shutdown')).toHaveLength(1);
     expect(jobPort.terminated).toHaveLength(1);
+  });
+
+  it('correlates model checks separately from agent runs and drops late test results', async () => {
+    const { AgentSidecarManager } = await importManager('model-check-correlation');
+    const events: SidecarEvent[] = [];
+    const scheduler = createManualScheduler();
+    const manager = new AgentSidecarManager(event => events.push(event), { jobPort: new FakeJobPort(), scheduleTimeout: scheduler.scheduleTimeout });
+    const pending = manager.testProvider(config.agent.provider, 'saved-secret');
+    stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));
+    const request = sentMessages().find(message => message.type === 'provider:test');
+    expect(request).toMatchObject({ provider: config.agent.provider, apiKey: 'saved-secret' });
+    expect(sentMessages().some(message => message.type === 'agent:start' || message.type === 'config:update')).toBe(false);
+    const result = failedProviderTest({ kind: 'authentication', message: 'Rejected', action: 'Replace key.' });
+    stdoutLines.emit('line', JSON.stringify({ type: 'provider:test-result', requestId: 'wrong-request', result }));
+    expect((await manager.testProvider(config.agent.provider)).diagnostic?.kind).toBe('busy');
+    manager.cancelProviderTest();
+    expect((await pending).diagnostic?.kind).toBe('cancelled');
+    const next = manager.testProvider(config.agent.provider);
+    const nextRequest = sentMessages().filter(message => message.type === 'provider:test').at(-1);
+    stdoutLines.emit('line', JSON.stringify({ type: 'provider:test-result', requestId: request?.requestId, result }));
+    stdoutLines.emit('line', JSON.stringify({ type: 'provider:test-result', requestId: nextRequest?.requestId, result }));
+    expect((await next).diagnostic?.kind).toBe('authentication');
+    expect(events.filter(event => event.type === 'provider:test-result')).toEqual([]);
+    expect(scheduler.scheduled.every(timer => timer.cancelled)).toBe(true);
+  });
+
+  it('terminates a model check on timeout or sidecar loss without leaving its promise pending', async () => {
+    const { AgentSidecarManager } = await importManager('model-check-terminal');
+    const scheduler = createManualScheduler();
+    const manager = new AgentSidecarManager(() => undefined, { jobPort: new FakeJobPort(), scheduleTimeout: scheduler.scheduleTimeout });
+    const timed = manager.testProvider(config.agent.provider);
+    stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));
+    scheduler.runDue();
+    expect((await timed).diagnostic?.kind).toBe('timeout');
+    expect(sentMessages().at(-1)?.type).toBe('provider:cancel-test');
+    const crashed = manager.testProvider(config.agent.provider);
+    child.emit('exit', 1, null);
+    expect((await crashed).diagnostic?.kind).toBe('provider');
+  });
+
+  it('drops an unsent cancelled model check so a startup retry is the only test delivered', async () => {
+    const { AgentSidecarManager } = await importManager('model-check-startup-retry');
+    const manager = new AgentSidecarManager(() => undefined, { jobPort: new FakeJobPort(), scheduleTimeout: createManualScheduler().scheduleTimeout });
+    const cancelled = manager.testProvider(config.agent.provider, 'discarded-secret');
+    manager.cancelProviderTest();
+    expect((await cancelled).diagnostic?.kind).toBe('cancelled');
+    const retry = manager.testProvider(config.agent.provider);
+    stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));
+    const requests = sentMessages().filter(message => message.type === 'provider:test');
+    expect(requests).toHaveLength(1);
+    expect(sentMessages().some(message => message.type === 'provider:cancel-test')).toBe(false);
+    expect(JSON.stringify(sentMessages())).not.toContain('discarded-secret');
+    stdoutLines.emit('line', JSON.stringify({ type: 'provider:test-result', requestId: requests[0]?.requestId,
+      result: failedProviderTest({ kind: 'authentication', message: 'Rejected', action: 'Replace key.' }) }));
+    expect((await retry).diagnostic?.kind).toBe('authentication');
   });
 });

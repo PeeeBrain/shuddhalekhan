@@ -161,6 +161,10 @@ function createMockSettingsIpc(
     getCredentialStatus: mock(() => Promise.resolve(options.credentialStatus ?? { available: true, exists: false })),
     saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
     removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
+    validateAgentProvider: mock(() => Promise.resolve({ issues: [], credentials: 'available' as const })),
+    testAgentProvider: mock(() => Promise.reject(new Error('not used'))),
+    cancelAgentProviderTest: mock(() => Promise.resolve()),
+    onAgentProviderInvalidated: mock(() => undefined),
   };
 }
 
@@ -736,14 +740,14 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Base URL' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Model' })).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: 'Thinking' })).toBeInTheDocument();
-    expect(screen.queryByRole('combobox', { name: 'Reasoning effort' })).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('OpenRouter');
+    expect(screen.getByRole('combobox', { name: 'Reasoning' })).toHaveTextContent('Provider default');
     expect(
       screen.getByRole('textbox', { name: 'Environment variable' }),
     ).toBeInTheDocument();
   });
 
-  it('shows reasoning effort levels when thinking is enabled', async () => {
+  it('migrates a legacy thinking profile to its reasoning level', async () => {
     const config = baseConfig();
     renderSettings({
       config: {
@@ -762,7 +766,7 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(tabByLabel('Agent'));
 
-    expect(screen.getByRole('combobox', { name: 'Reasoning effort' })).toHaveTextContent('Medium');
+    expect(screen.getByRole('combobox', { name: 'Reasoning' })).toHaveTextContent('Medium');
   });
 
   it('shows a saved credential as replaceable without repopulating its value', async () => {
@@ -1109,6 +1113,18 @@ describe('Settings save feedback', () => {
     expect(error).toHaveTextContent('Could not save this setting.');
     expect(cleanToggle).toHaveAttribute('aria-invalid', 'true');
     expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('shows the main process validation message without the Electron IPC prefix', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    spyOn(settingsIpc, 'setConfig').mockRejectedValueOnce(
+      new Error("Error invoking remote method 'config:set': Error: Enter a valid base URL."),
+    );
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Clean transcription' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Enter a valid base URL\.$/);
   });
 });
 
