@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { AgentProviderConfig, AgentProviderIssue, AgentProviderValidation } from '../types/ipc';
-import { isDeepSeekV4Provider, isLoopbackProviderUrl, normalizeAgentProvider } from './agent-provider';
+import { isAgentApiKeyEnvVarName, isDeepSeekV4Provider, isLoopbackProviderUrl, normalizeAgentProvider } from './agent-provider';
 
 export const agentProviderSchema = z.object({
   baseUrl: z.string().default(''),
@@ -46,8 +46,7 @@ export function getAgentProviderIssues(value: AgentProviderConfig): AgentProvide
   if (provider.auth !== 'none' && provider.apiKeySource === 'environment') {
     if (!provider.apiKeyEnvVar) add('apiKeyEnvVar', 'Enter an API key environment variable name, or choose a securely saved key.');
   }
-  if (provider.apiKeyEnvVar && (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(provider.apiKeyEnvVar)
-    || provider.apiKeyEnvVar.length > 128 || /^[A-Fa-f0-9]{32,}$/.test(provider.apiKeyEnvVar))) {
+  if (provider.apiKeyEnvVar && !isAgentApiKeyEnvVarName(provider.apiKeyEnvVar)) {
     add('apiKeyEnvVar', 'Enter the environment variable name, not the API key value.');
   }
   if (isDeepSeekV4Provider(provider.baseUrl, provider.model)

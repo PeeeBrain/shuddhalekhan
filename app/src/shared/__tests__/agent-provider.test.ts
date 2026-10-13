@@ -10,6 +10,12 @@ describe('Agent provider configuration', () => {
     expect(azure).toMatchObject({ kind: 'azure-openai', apiMode: 'chat-completions', auth: 'api-key', reasoning: 'high', model: 'production', cacheBreakpoints: false });
     expect(normalizeAgentProvider(local)).toMatchObject({ auth: 'none', reasoning: 'default', model: 'local', baseUrl: 'http://[::1]:11434/v1' });
     expect(normalizeAgentProvider({ ...local, thinkingEnabled: false })).toMatchObject({ reasoning: 'default' });
+    for (const baseUrl of ['http://localhost:11434/v1', 'http://127.0.0.1:11434/v1', local.baseUrl]) {
+      const legacy = { ...local, baseUrl, apiKeyEnvVar: 'STALE_REMOTE_KEY' };
+      expect(resolveAgentProviderKey(legacy, undefined, {}).validation).toEqual({ credentials: 'not-required', issues: [] });
+      expect(normalizeAgentProvider({ ...legacy, auth: 'bearer' }).auth).toBe('bearer');
+      expect(normalizeAgentProvider({ ...legacy, apiKeySource: 'stored' }).auth).toBe('bearer');
+    }
   });
 
   it('rejects full request routes, URL credentials, legacy Azure URLs, and unsafe remote HTTP', () => {
@@ -34,6 +40,10 @@ describe('Agent provider configuration', () => {
     const stored = resolveAgentProviderKey({ ...local, auth: 'api-key', apiKeySource: 'stored' }, 'saved-secret', {});
     expect(stored.validation).toEqual({ credentials: 'available', issues: [] });
     expect(JSON.stringify(stored.validation)).not.toContain('saved-secret');
+    for (const auth of ['none', 'api-key'] as const) {
+      const inactive = resolveAgentProviderKey({ ...local, auth, apiKeySource: 'stored', apiKeyEnvVar: 'sk-old-unused-key' }, 'saved-secret', {});
+      expect(inactive.validation.issues).toEqual([]);
+    }
     const badHeader = resolveAgentProviderKey({ ...local, auth: 'api-key', apiKeySource: 'stored' }, 'secret\nvalue', {});
     expect(badHeader.validation.issues[0]?.message).toContain('invalid header characters');
     expect(JSON.stringify(badHeader.validation)).not.toContain('secret');

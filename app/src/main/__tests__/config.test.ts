@@ -534,6 +534,10 @@ describe('config store', () => {
     setConfig('agent', { ...agent, provider: { ...agent.provider, kind: 'azure-openai',
       baseUrl: 'https://resource.openai.azure.com/openai/v1', model: 'production', cacheBreakpoints: true } });
     expect(getConfig().agent.provider.cacheBreakpoints).toBe(true);
+    setConfig('agent', { ...getConfig().agent, provider: { ...getConfig().agent.provider,
+      apiKeySource: 'stored', apiKeyEnvVar: 'sk-unused-old-key' } });
+    expect(getConfig().agent.provider.apiKeyEnvVar).toBe('');
+    expect(JSON.stringify(storeData.get('agent'))).not.toContain('sk-unused-old-key');
   });
 
   it('can disable an invalid legacy profile and rejects newly supplied invalid endpoints before storage', async () => {

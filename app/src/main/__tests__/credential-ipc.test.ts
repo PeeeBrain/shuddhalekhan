@@ -2,6 +2,16 @@ import { describe, expect, it } from 'bun:test';
 import { registerCredentialIpcHandlers } from '../credential-ipc';
 
 describe('credential IPC', () => {
+  it('does not disguise a change-notification failure as a vault save failure', () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    let saved = false;
+    const status = { available: true, exists: true } as const;
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, {
+      status: () => status, save: () => { saved = true; return status; }, remove: () => status,
+    }, () => { throw new Error('Notification failed.'); });
+    expect(() => handlers.get('credential:save')?.({}, 'agent-api-key', 'new-agent-secret')).toThrow('Notification failed.');
+    expect(saved).toBe(true);
+  });
   it('returns credential status after a save without returning the supplied secret', () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const vault = {

@@ -24,6 +24,10 @@ export function isDeepSeekV4Provider(baseUrl: string, model: string): boolean {
   }
 }
 
+export function isAgentApiKeyEnvVarName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) && value.length <= 128 && !/^[A-Fa-f0-9]{32,}$/.test(value);
+}
+
 export function normalizeAgentProvider(value?: AgentProviderConfig) {
   const raw = value ?? { baseUrl: '', model: '', apiKeyEnvVar: '' };
   const baseUrl = raw.baseUrl.trim().replace(/\/+$/, '');
@@ -33,13 +37,15 @@ export function normalizeAgentProvider(value?: AgentProviderConfig) {
   const kind = raw.kind ?? (hostname === 'api.openai.com' ? 'openai'
     : hostname.endsWith('.openai.azure.com') || hostname.endsWith('.services.ai.azure.com')
       ? 'azure-openai' : hostname === 'openrouter.ai' ? 'openrouter' : 'openai-compatible');
-  const auth = raw.auth ?? (raw.apiKeySource === 'stored' || raw.apiKeyEnvVar.trim()
-    ? kind === 'azure-openai' ? 'api-key' : 'bearer'
-    : isLoopbackProviderUrl(baseUrl) || !baseUrl ? 'none' : kind === 'azure-openai' ? 'api-key' : 'bearer');
+  const keyedAuth = kind === 'azure-openai' ? 'api-key' : 'bearer';
+  const auth = raw.auth ?? (raw.apiKeySource === 'stored' ? keyedAuth
+    : isLoopbackProviderUrl(baseUrl) || (!baseUrl && !raw.apiKeyEnvVar.trim()) ? 'none' : keyedAuth);
+  const envVar = raw.apiKeyEnvVar.trim();
+  const unusedEnv = auth === 'none' || raw.apiKeySource === 'stored';
   const reasoning = raw.reasoning ?? (raw.thinkingEnabled === true
     ? isDeepSeekV4Provider(baseUrl, model) ? 'high' : raw.reasoningEffort ?? 'medium' : 'default');
   return {
-    baseUrl, model, apiKeyEnvVar: raw.apiKeyEnvVar.trim(), apiKeySource: raw.apiKeySource ?? 'environment',
+    baseUrl, model, apiKeyEnvVar: unusedEnv && !isAgentApiKeyEnvVarName(envVar) ? '' : envVar, apiKeySource: raw.apiKeySource ?? 'environment',
     kind, apiMode: raw.apiMode ?? 'chat-completions', auth, reasoning,
     allowInsecureHttp: raw.allowInsecureHttp ?? false,
     cacheBreakpoints: raw.cacheBreakpoints ?? false,

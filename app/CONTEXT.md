@@ -180,7 +180,7 @@ Global shortcuts are data-driven named recording intents. Dictation defaults to 
 
 Agent Mode reuses the existing Whisper transcription path and configuration. Dictation and Agent Mode share audio capture and transcription; after transcription, Dictation injects text into the focused application while Agent Mode sends the transcript to the sidecar as a one-off agent command.
 
-Agent Mode v4 uses an OpenAI-compatible chat/model provider configuration for the sidecar, with OpenRouter as an expected provider. Settings collect base URL, model name, and an API key environment variable name; v4 does not store model API keys directly. Settings should provide a straightforward connection/configuration experience and should not include a separate "test agent tool call" button.
+Agent Settings supports OpenAI, Azure OpenAI v1, OpenRouter, and custom compatible endpoints, with credentials selected from the process environment or encrypted credential vault. The explicit Test model action checks streaming and a harmless built-in tool round trip without executing configured MCP tools or using voice content. Legacy loopback profiles without an authentication choice remain unauthenticated even if they retain an old env-var name; securely saved keys and explicit authentication choices are preserved.
 
 Agent Mode configuration requires a real settings window rather than tray-only UI. The settings design should remain modern, restrained, and consistent with Shuddhalekhan's existing UI; it should avoid card-heavy dashboard patterns and use focused settings sections for audio, agent provider configuration, MCP server registry, Gmail preset/OAuth status, and per-tool approval policies.
 

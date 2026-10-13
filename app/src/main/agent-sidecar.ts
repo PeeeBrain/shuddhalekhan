@@ -157,7 +157,7 @@ export class AgentSidecarManager {
     const requestId = randomUUID();
     return new Promise(resolve => {
       const cancelTimeout = this.scheduleTimeout(() => {
-        this.sendOrQueue({ type: 'provider:cancel-test', requestId });
+        this.cancelProviderTestRequest(requestId);
         this.finishProviderTest(failedProviderTest({ kind: 'timeout', message: 'The model test timed out.', action: 'Check the model server and retry.' }));
       }, 90_000);
       this.providerTest = { requestId, resolve, cancelTimeout };
@@ -167,8 +167,16 @@ export class AgentSidecarManager {
 
   cancelProviderTest(): void {
     if (!this.providerTest) return;
-    this.sendOrQueue({ type: 'provider:cancel-test', requestId: this.providerTest.requestId });
+    this.cancelProviderTestRequest(this.providerTest.requestId);
     this.finishProviderTest(failedProviderTest({ kind: 'cancelled', message: 'The model test was cancelled.', action: 'Run Test model when ready.' }));
+  }
+
+  private cancelProviderTestRequest(requestId: string): void {
+    if (this.generation && !this.generation.ready) {
+      this.generation.pending = this.generation.pending.filter(message => message.type !== 'provider:test' || message.requestId !== requestId);
+    } else {
+      this.sendOrQueue({ type: 'provider:cancel-test', requestId });
+    }
   }
 
   private finishProviderTest(result: AgentProviderTestResult): void {

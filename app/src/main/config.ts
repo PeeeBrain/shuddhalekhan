@@ -288,6 +288,9 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
       && !(issue.field === 'model' && !provider.model.trim())
       && !(issue.field === 'apiKeyEnvVar' && !provider.apiKeyEnvVar.trim()));
     if (issue) throw new Error(issue.message);
+    store.set('agent', { ...(value as AppConfig['agent']),
+      provider: { ...provider, apiKeyEnvVar: normalizeAgentProvider(provider).apiKeyEnvVar } });
+    return;
   }
   if (key === 'managedLocalThreads' && value !== null && !isManagedLocalThreadCount(value)) {
     throw new Error('Choose a whole-number thread count within the available CPU range.');

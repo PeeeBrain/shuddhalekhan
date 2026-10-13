@@ -550,4 +550,21 @@ describe('AgentSidecarManager', () => {
     child.emit('exit', 1, null);
     expect((await crashed).diagnostic?.kind).toBe('provider');
   });
+
+  it('drops an unsent cancelled model check so a startup retry is the only test delivered', async () => {
+    const { AgentSidecarManager } = await importManager('model-check-startup-retry');
+    const manager = new AgentSidecarManager(() => undefined, { jobPort: new FakeJobPort(), scheduleTimeout: createManualScheduler().scheduleTimeout });
+    const cancelled = manager.testProvider(config.agent.provider, 'discarded-secret');
+    manager.cancelProviderTest();
+    expect((await cancelled).diagnostic?.kind).toBe('cancelled');
+    const retry = manager.testProvider(config.agent.provider);
+    stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));
+    const requests = sentMessages().filter(message => message.type === 'provider:test');
+    expect(requests).toHaveLength(1);
+    expect(sentMessages().some(message => message.type === 'provider:cancel-test')).toBe(false);
+    expect(JSON.stringify(sentMessages())).not.toContain('discarded-secret');
+    stdoutLines.emit('line', JSON.stringify({ type: 'provider:test-result', requestId: requests[0]?.requestId,
+      result: failedProviderTest({ kind: 'authentication', message: 'Rejected', action: 'Replace key.' }) }));
+    expect((await retry).diagnostic?.kind).toBe('authentication');
+  });
 });

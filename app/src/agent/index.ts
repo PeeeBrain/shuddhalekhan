@@ -87,6 +87,9 @@ function handleLine(line: string): void {
       providerTest = request;
       void testAgentProvider(message.provider, controller.signal, message.apiKey)
         .then(result => writeJsonLine({ type: 'provider:test-result', requestId: message.requestId, result }))
+        .catch(() => writeJsonLine({ type: 'provider:test-result', requestId: message.requestId, result: failedProviderTest({
+          kind: 'provider', message: 'The model test failed unexpectedly.', action: 'Retry the model test.',
+        }) }))
         .finally(() => { if (providerTest === request) providerTest = null; });
       break;
     }

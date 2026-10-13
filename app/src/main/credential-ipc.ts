@@ -34,10 +34,9 @@ export function registerCredentialIpcHandlers(
     if (!value) throw new Error('Credential value is required.');
     const kind = requireCredentialKind(credential);
     if (kind === 'google-service-account') parseGoogleServiceAccount(value);
+    let result: CredentialStatus;
     try {
-      const result = vault.save(kind, value);
-      onChanged?.(kind);
-      return result;
+      result = vault.save(kind, value);
     } catch {
       return {
         available: false,
@@ -45,6 +44,8 @@ export function registerCredentialIpcHandlers(
         message: 'Unable to save credential securely.',
       };
     }
+    onChanged?.(kind);
+    return result;
   });
 
   ipcMain.handle('credential:remove', (_event, credential: CredentialKind) => {

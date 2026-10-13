@@ -93,9 +93,11 @@ export async function testAgentProvider(
     }
   } catch (error) {
     result[stage] = { status: 'failed', message: 'This check did not complete.' };
-    result.diagnostic = signal.aborted
+    const interruption = abortSignal.aborted && (error === abortSignal.reason
+      || (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')));
+    result.diagnostic = interruption && signal.aborted && abortSignal.reason === signal.reason
       ? { kind: 'cancelled', message: 'The model test was cancelled.', action: 'Run Test model when ready.' }
-      : deadline.aborted
+      : interruption && deadline.aborted && abortSignal.reason === deadline.reason
         ? { kind: 'timeout', message: 'The model test timed out.', action: 'Check server availability or local model loading, then retry.' }
         : providerDiagnostic(error, apiKey);
   } finally {
