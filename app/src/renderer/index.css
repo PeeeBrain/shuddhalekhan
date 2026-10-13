@@ -52,7 +52,7 @@
 }
 
 .settings-panel {
-  @apply relative grid gap-2;
+  @apply relative grid grid-cols-1 gap-2;
 }
 
 .settings-card {

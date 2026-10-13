@@ -18,15 +18,17 @@ const SHELL_HEIGHT = 52;
 const PREVIEW_WIDTH = 520;
 const PREVIEW_HEIGHT = 116;
 const FAILURE_WIDTH = 520;
-const FAILURE_HEIGHT = 220;
+const FAILURE_HEIGHT = 168;
 const AGENT_CARD_WIDTH = 520;
 const AGENT_STATUS_HEIGHT = 112;
 const AGENT_APPROVAL_HEIGHT = 380;
-const AGENT_FAILED_HEIGHT = 248;
+const AGENT_FAILED_HEIGHT = 168;
 const AGENT_RESPONSE_BASE_HEIGHT = 200;
 const AGENT_RESPONSE_MAX_HEIGHT = 520;
 const AGENT_RESIZE_STEP = 18;
 const AGENT_STATUS_WINDOW_MS = 3500;
+// ponytail: fixed cadence; responses past ~30 KB still parse slower than this, adapt to render cost if that ever matters.
+const AGENT_STREAM_PUBLISH_INTERVAL_MS = 100;
 const BOTTOM_MARGIN = 48;
 
 /** Point-in-time run activity, e.g. tool progress. Auto-hides after a short window. */
@@ -93,6 +95,7 @@ export class RuntimeShell {
   private lastGeometry: WindowGeometry | null = null;
   private statusTimer: ReturnType<typeof setTimeout> | null = null;
   private approvalTimer: ReturnType<typeof setTimeout> | null = null;
+  private streamTimer: ReturnType<typeof setTimeout> | null = null;
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly windows;
 
@@ -315,13 +318,22 @@ export class RuntimeShell {
     // Blank streamed prefixes are never a user-facing response.
     if (!response.trim()) return;
     this.clearAgentTimer('status');
+    const closesApproval = this.agentApproval !== null;
     this.closePendingApproval();
     // Model output supersedes any point-in-time status.
     this.agentStatus = null;
     const previousResponsePhase = this.presentedResponsePhase();
     if (!previousResponsePhase) this.agentResponseHeight = AGENT_RESPONSE_BASE_HEIGHT;
     this.agentStream = { agentRunId, response };
+    // Every delta carries the whole response, and each publish re-sends and
+    // re-parses it, so tokens coalesce: publish now, then at most once per interval.
+    if (this.streamTimer && !closesApproval) return;
     this.republish();
+    if (this.streamTimer) return;
+    this.streamTimer = this.timers.setTimeoutFn(() => {
+      this.streamTimer = null;
+      this.republish();
+    }, AGENT_STREAM_PUBLISH_INTERVAL_MS);
   }
 
   showAgentApproval(approval: {
@@ -694,6 +706,7 @@ export class RuntimeShell {
   private clearAgentTimers(): void {
     this.clearAgentTimer('status');
     this.clearAgentTimer('approval');
+    this.clearAgentTimer('stream');
   }
 
   /** Retires a pending approval once later run activity proves it resolved. */
@@ -703,12 +716,12 @@ export class RuntimeShell {
     this.agentApproval = null;
   }
 
-  private clearAgentTimer(timer: 'status' | 'approval'): void {
-    const existing = timer === 'status' ? this.statusTimer : this.approvalTimer;
+  private clearAgentTimer(timer: 'status' | 'approval' | 'stream'): void {
+    const key = `${timer}Timer` as const;
+    const existing = this[key];
     if (!existing) return;
     this.timers.clearTimeoutFn(existing);
-    if (timer === 'status') this.statusTimer = null;
-    else this.approvalTimer = null;
+    this[key] = null;
   }
 
   private send(channel: string, ...args: unknown[]): void {

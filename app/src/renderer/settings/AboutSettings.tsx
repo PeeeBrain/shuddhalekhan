@@ -52,7 +52,7 @@ export function AboutSettings({
                   });
               }}
             >
-              {updateStatus?.state === 'checking' ? 'Checking...' : 'Check for Updates'}
+              {updateStatus?.state === 'checking' ? 'Checking…' : 'Check for updates'}
             </Button>
             {checkFailed ? (
               <p className="mt-2 text-xs text-destructive" role="alert">

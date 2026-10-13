@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { render, screen, cleanup, act, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, act, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RuntimeShellSurface } from '../RuntimeShellSurface';
 import type { RuntimePresentationSnapshot } from '../../types/ipc';
@@ -117,6 +117,43 @@ describe('RuntimeShellSurface agent cards', () => {
         if (typeof height === 'number') expect(height).toBeGreaterThanOrEqual(0);
       }
     }
+  });
+
+  it('follows a growing response until the user scrolls away', () => {
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words.' });
+
+    // happy-dom has no layout, so emulate a browser box: scrollTop clamps to
+    // the scrollable range and every change fires a scroll event.
+    const body = screen.getByText('First words.').closest('.overflow-y-auto') as HTMLElement;
+    let scrollHeight = 800;
+    let scrollTop = 0;
+    Object.defineProperty(body, 'clientHeight', { configurable: true, value: 400 });
+    Object.defineProperty(body, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(body, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        const next = Math.max(0, Math.min(value, scrollHeight - 400));
+        if (next === scrollTop) return;
+        scrollTop = next;
+        fireEvent.scroll(body);
+      },
+    });
+
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words. More.', revision: 2 });
+    expect(body.scrollTop).toBe(400);
+
+    // The programmatic scroll's own event must not stop the follow.
+    scrollHeight = 1000;
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words. More. Again.', revision: 3 });
+    expect(body.scrollTop).toBe(600);
+
+    body.scrollTop = 0;
+    scrollHeight = 1200;
+    showCard({ kind: 'agent-completed', agentRunId: 'run-1', response: 'First words. More. Again. Done.', toolSummary: [], revision: 4 });
+    expect(body.scrollTop).toBe(0);
   });
 
   it('sends approval decisions without optional denial feedback', async () => {

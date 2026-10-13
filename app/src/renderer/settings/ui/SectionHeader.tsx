@@ -59,7 +59,7 @@ export function SettingsPanelHeader({
   id,
 }: SettingsPanelHeaderProps) {
   return (
-    <header className={cn('flex items-end justify-between gap-4 px-1', className)}>
+    <header className={cn('flex items-end justify-between gap-4', className)}>
       <div className="min-w-0">
         <h3 id={id} className="text-[13px] font-medium text-muted-foreground">{title}</h3>
         {description ? (

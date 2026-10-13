@@ -13,9 +13,9 @@ import { RecordingPopup } from './RecordingPopup';
 import { renderMarkdown } from './markdown';
 
 const ACTION_LABELS: Record<DictationRecoveryAction, string> = {
-  'retry-paste': 'Retry Paste',
-  'copy-full-transcript': 'Copy Full Transcript',
-  'copy-partial-transcript': 'Copy Partial Transcript',
+  'retry-paste': 'Retry paste',
+  'copy-full-transcript': 'Copy full transcript',
+  'copy-partial-transcript': 'Copy partial transcript',
 };
 
 type AgentApprovalSnapshot = Extract<RuntimePresentationSnapshot, { kind: 'agent-approval' }>;
@@ -62,6 +62,7 @@ export function RuntimeShellSurface() {
     case 'agent-streaming':
       return (
         <AgentCard
+          key={snapshot.agentRunId}
           tone="primary"
           icon={Bot}
           title="Agent"
@@ -78,6 +79,7 @@ export function RuntimeShellSurface() {
     case 'agent-completed':
       return (
         <AgentCard
+          key={snapshot.agentRunId}
           tone="success"
           icon={Check}
           title="Agent · Done"
@@ -228,7 +230,7 @@ function FailureView({
                 window.electronAPI.send('runtime:recovery-action', action);
               }}
             >
-              {action === 'retry-paste' && retrying ? 'Retrying...' : ACTION_LABELS[action]}
+              {action === 'retry-paste' && retrying ? 'Retrying…' : ACTION_LABELS[action]}
             </Button>
           ))}
         </div>
@@ -246,7 +248,7 @@ const TONE_TEXT = {
 
 type Tone = keyof typeof TONE_TEXT;
 
-/** Shared island header: a tinted glyph tile names what the surface is about. */
+/** Shared island header: a tone-colored glyph names what the surface is about. */
 function IslandHeader({ icon: Icon, tone, title, meta }: {
   icon: LucideIcon;
   tone: Tone;
@@ -254,10 +256,8 @@ function IslandHeader({ icon: Icon, tone, title, meta }: {
   meta?: ReactNode;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-2.5 px-3 pb-2 pt-3">
-      <span aria-hidden="true" className={`flex size-6 shrink-0 bg-current/15 items-center justify-center rounded-[4px] ${TONE_TEXT[tone]}`}>
-        <Icon className="size-3.5" />
-      </span>
+    <div className="flex shrink-0 items-center gap-2 px-4 pb-1.5 pt-3">
+      <Icon aria-hidden="true" className={`size-3.5 shrink-0 ${TONE_TEXT[tone]}`} />
       <p className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">{title}</p>
       {meta}
     </div>
@@ -295,6 +295,13 @@ function AgentCard({
 }) {
   const cardRef = useRef<HTMLElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  // Growing responses follow their tail until the user scrolls away from it.
+  const followTail = useRef(true);
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (growRef && body && followTail.current) body.scrollTop = body.scrollHeight;
+  }, [growRef, measureKey]);
 
   const publishSize = () => {
     const card = cardRef.current;
@@ -349,6 +356,10 @@ function AgentCard({
       <IslandHeader icon={icon} tone={tone} title={title} />
       <div
         ref={bodyRef}
+        onScroll={(event) => {
+          const body = event.currentTarget;
+          followTail.current = body.scrollHeight - body.scrollTop - body.clientHeight < 8;
+        }}
         className="min-h-0 flex-1 overflow-y-auto break-words px-4 pb-3.5 text-sm leading-relaxed text-foreground"
       >
         {children}

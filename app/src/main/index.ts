@@ -366,15 +366,15 @@ async function pasteLastTranscript(): Promise<void> {
 
   const result = await injectIntoFocusedApp(transcript.text);
   if (result.kind !== 'input-dispatched') {
-    showRecoveryNotification(result, 'Paste Last Transcript failed');
+    showRecoveryNotification(result, 'Paste last transcript failed');
   }
 }
 
 function showLiveCopyOnlyNotification(): void {
   if (!Notification.isSupported()) return;
   new Notification({
-    title: 'Paste Last Transcript unavailable',
-    body: 'Live Dictation may already have inserted this text. Use Copy Last Transcript to avoid duplication.',
+    title: 'Paste last transcript unavailable',
+    body: 'Live Dictation may already have inserted this text. Use “Copy last transcript” in the tray menu to avoid duplication.',
     silent: true,
   }).show();
 }
