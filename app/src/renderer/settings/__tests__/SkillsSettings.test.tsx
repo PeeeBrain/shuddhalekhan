@@ -17,9 +17,9 @@ const skill = (name: string, patch: Partial<AgentSkillSummary> = {}): AgentSkill
 });
 
 /** Renders against an in-memory skills folder; config commits re-render like the real window. */
-async function renderSkills(initial: AgentSkillSummary[] = [], ipc: Partial<SettingsIpc> = {}) {
+async function renderSkills(initial: AgentSkillSummary[] = [], ipc: Partial<SettingsIpc> = {}, disabledSkills = initial.filter(item => !item.enabled).map(item => item.name)) {
   let skills = initial;
-  let agent = { enabled: false, provider: {}, mcpServers: [] } as unknown as AppConfig['agent'];
+  let agent = { enabled: false, provider: {}, mcpServers: [], disabledSkills } as unknown as AppConfig['agent'];
   const settingsIpc = {
     listSkills: mock(() => Promise.resolve(skills)),
     readSkill: mock((name: string) => Promise.resolve({ name, content: `---\nname: ${name}\nlicense: MIT\n---\n\nOld` })),
@@ -139,7 +139,7 @@ describe('SkillsSettings', () => {
 
     await click(screen.getByRole('switch', { name: 'Enable pdf' }));
 
-    expect(agent().disabledSkills).toEqual(['pdf', 'email']);
+    expect(agent().disabledSkills).toEqual(['email', 'pdf']);
     await waitFor(() => expect(settingsIpc.listSkills).toHaveBeenCalledTimes(2));
     expect(screen.getByRole('switch', { name: 'Enable pdf' })).not.toBeChecked();
   });
@@ -153,6 +153,15 @@ describe('SkillsSettings', () => {
 
     expect(settingsIpc.removeSkill).toHaveBeenCalledWith('pdf');
     expect(screen.getByText(/No skills yet/)).toBeInTheDocument();
+  });
+
+  it('preserves disabled invalid and missing skills when toggling or importing another skill', async () => {
+    const { agent } = await renderSkills([skill('email'), skill('broken', { enabled: false, error: 'Invalid frontmatter.' })], {}, ['broken', 'missing']);
+    await click(screen.getByRole('switch', { name: 'Enable email' }));
+    expect(agent().disabledSkills).toEqual(['broken', 'missing', 'email']);
+    await click(screen.getByRole('button', { name: 'Import skill' }));
+    await click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Import' }));
+    expect(agent().disabledSkills).toEqual(['broken', 'missing', 'email', 'pdf']);
   });
 
   it('shows invalid skills with an actionable error and cannot enable them', async () => {

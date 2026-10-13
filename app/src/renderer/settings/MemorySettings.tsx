@@ -16,6 +16,7 @@ export function MemorySettings({ config, persistence, settingsIpc }: SettingsSec
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, { text: string; value: string }>>({});
   const enabledErrorId = useId();
 
   useEffect(() => {
@@ -58,6 +59,14 @@ export function MemorySettings({ config, persistence, settingsIpc }: SettingsSec
 
   const memoryEnabled = config.agent.memoryEnabled ?? false;
   const facts = snapshot?.facts ?? [];
+  const rows = [...facts, ...Object.entries(drafts)
+    .filter(([id]) => !facts.some(fact => fact.id === id))
+    .map(([id, draft]) => ({ id, text: draft.text }))];
+  const discardDraft = (id: string) => setDrafts(current => {
+    const next = { ...current };
+    delete next[id];
+    return next;
+  });
 
   return (
     <div className="space-y-8">
@@ -114,19 +123,27 @@ export function MemorySettings({ config, persistence, settingsIpc }: SettingsSec
           <SettingsCard className="py-8 text-center text-sm text-muted-foreground">
             {loadError ? 'Saved facts are unavailable.' : 'Loading memory…'}
           </SettingsCard>
-        ) : facts.length === 0 ? (
+        ) : rows.length === 0 ? (
           <SettingsCard className="py-8 text-center text-sm text-muted-foreground">
             No saved facts yet.
           </SettingsCard>
         ) : (
           <SettingsCard className="divide-y divide-border/50">
-            {facts.map((fact, index) => (
+            {rows.map((fact, index) => (
               <FactRow
                 key={fact.id}
                 text={fact.text}
+                draft={drafts[fact.id]?.value ?? null}
+                conflict={!facts.some(saved => saved.id === fact.id)}
+                onChange={(value) => setDrafts(current => ({ ...current, [fact.id]: { text: fact.text, value } }))}
+                onDiscard={() => discardDraft(fact.id)}
                 label={`Fact ${index + 1}`}
                 busy={busy}
-                onSave={(text) => mutate((revision) => settingsIpc.editMemoryFact(revision, fact.id, text), 'Could not save this fact.')}
+                onSave={async (text) => {
+                  const saved = await mutate((revision) => settingsIpc.editMemoryFact(revision, fact.id, text), 'Could not save this fact.');
+                  if (saved) discardDraft(fact.id);
+                  return saved;
+                }}
                 onDelete={() => void mutate((revision) => settingsIpc.removeMemoryFact(revision, fact.id), 'Could not delete this fact.')}
               />
             ))}
@@ -152,18 +169,25 @@ export function MemorySettings({ config, persistence, settingsIpc }: SettingsSec
 /** Keeps its draft until a save succeeds, so a failed or conflicting save never loses typing. */
 function FactRow({
   text,
+  draft,
+  conflict,
+  onChange,
+  onDiscard,
   label,
   busy,
   onSave,
   onDelete,
 }: {
   text: string;
+  draft: string | null;
+  conflict: boolean;
+  onChange: (value: string) => void;
+  onDiscard: () => void;
   label: string;
   busy: boolean;
   onSave: (text: string) => Promise<boolean>;
   onDelete: () => void;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? text;
   const dirty = draft !== null && draft.trim() !== text;
 
@@ -172,10 +196,8 @@ function FactRow({
       className="flex items-center gap-2 py-2.5"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!dirty || !value.trim()) return;
-        void onSave(value.trim()).then((saved) => {
-          if (saved) setDraft(null);
-        });
+        if (conflict || !dirty || !value.trim()) return;
+        void onSave(value.trim());
       }}
     >
       <Input
@@ -183,22 +205,28 @@ function FactRow({
         aria-label={label}
         maxLength={512}
         value={value}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === 'Escape') setDraft(null);
+          if (event.key === 'Escape') onDiscard();
         }}
       />
       {dirty ? (
-        <Button type="submit" size="sm" disabled={busy || !value.trim()}>
+        <Button type="submit" size="sm" disabled={busy || conflict || !value.trim()}>
           Save
         </Button>
+      ) : null}
+      {conflict ? (
+        <>
+          <p role="alert" className="text-xs text-destructive">This fact changed or was removed. Your draft is kept; copy it before discarding.</p>
+          <Button type="button" size="sm" variant="ghost" onClick={onDiscard}>Discard draft</Button>
+        </>
       ) : null}
       <Button
         type="button"
         variant="ghost"
         size="sm"
         className="text-muted-foreground hover:text-destructive"
-        disabled={busy}
+        disabled={busy || conflict}
         aria-label={`Delete ${label.toLowerCase()}`}
         onClick={onDelete}
       >

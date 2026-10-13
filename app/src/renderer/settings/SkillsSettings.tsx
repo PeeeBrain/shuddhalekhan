@@ -62,20 +62,21 @@ export function SkillsSettings({ config, persistence, settingsIpc }: SettingsSec
     };
   }, [settingsIpc]);
 
-  // Main reports enablement from config.agent.disabledSkills; commit the whole set so the renderer copy stays authoritative.
-  const commitDisabled = async (list: AgentSkillSummary[]) => {
+  const commitDisabled = async (name: string, enabled: boolean) => {
+    const disabled = new Set(config.agent.disabledSkills ?? []);
+    if (enabled) disabled.delete(name);
+    else disabled.add(name);
     await persistence.commit(
       'agent',
-      { ...config.agent, disabledSkills: list.filter((skill) => !skill.error && !skill.enabled).map((skill) => skill.name) },
+      { ...config.agent, disabledSkills: [...disabled] },
       FIELD_ID_SKILLS,
     );
   };
 
   const toggle = (name: string, enabled: boolean) => {
     if (!skills) return;
-    const next = skills.map((skill) => (skill.name === name ? { ...skill, enabled } : skill));
     void run(async () => {
-      await commitDisabled(next);
+      await commitDisabled(name, enabled);
       setSkills(await settingsIpc.listSkills());
     }, 'Could not change this skill.');
   };
@@ -107,7 +108,7 @@ export function SkillsSettings({ config, persistence, settingsIpc }: SettingsSec
       const next = await settingsIpc.importSkill(preview.token);
       setSkills(next);
       // Main stores the imported skill as disabled; mirror that into the renderer's config copy.
-      await commitDisabled(next);
+      await commitDisabled(preview.name, false);
     }, `Could not import ${preview.name}.`);
   };
 

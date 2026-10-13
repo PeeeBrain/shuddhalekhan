@@ -33,7 +33,9 @@ export class AgentMemoryStore {
       if (lines.some(line => !line.startsWith('- '))) throw new Error('Memory must contain one fact per Markdown bullet. Fix agent-memory.md or clear memory.');
       const facts = memoryFactsSchema.parse(lines.map(line => line.slice(2)));
       if (new Set(facts).size !== facts.length) throw new Error('Memory contains duplicate facts. Remove duplicate bullets or clear memory.');
-      return { revision: `${this.generation}:${hash(raw)}`, markdown: facts.length ? toMarkdown(facts) : '', facts: facts.map(text => ({ id: hash(text), text })), status: this.status, error: null };
+      const markdown = facts.length ? toMarkdown(facts) : '';
+      if (Buffer.byteLength(markdown) > MEMORY_BYTE_LIMIT) throw new Error('Memory exceeds the 8 KiB limit. Shorten agent-memory.md or clear memory.');
+      return { revision: `${this.generation}:${hash(raw)}`, markdown, facts: facts.map(text => ({ id: hash(text), text })), status: this.status, error: null };
     } catch (error) {
       return { revision: `${this.generation}:${hash(raw)}`, markdown: '', facts: [], status: this.status, error: error instanceof Error ? error.message : 'Memory could not be read.' };
     }

@@ -64,6 +64,17 @@ describe('local Markdown memory', () => {
     expect(store.clear(snapshot.revision).error).toBeNull();
   });
 
+  it('rejects a hand-edited file whose normalized Markdown exceeds the byte limit', () => {
+    const raw = Array.from({ length: 16 }, (_, index) => `- ${String(index).padStart(2, '0')}${'x'.repeat(507)}\n`).join('');
+    expect(Buffer.byteLength(raw)).toBe(8192);
+    writeFileSync(join(directory, 'agent-memory.md'), raw);
+    const snapshot = store.snapshot();
+    expect(snapshot.error).toContain('8 KiB');
+    expect(snapshot.markdown).toBe('');
+    expect(store.commit(snapshot.revision, []).saved).toBe(false);
+    expect(store.clear(snapshot.revision).error).toBeNull();
+  });
+
   it('keeps existing facts when the store is full, while still accepting corrections', () => {
     writeFileSync(join(directory, 'agent-memory.md'), `# Memory\n\n${Array.from({ length: 50 }, (_, index) => `- Preference ${index}.\n`).join('')}`);
     const outcome = store.commit(store.snapshot().revision, [{ previous: null, text: 'Extra preference.' }, { previous: 'Preference 0.', text: 'Corrected preference.' }]);

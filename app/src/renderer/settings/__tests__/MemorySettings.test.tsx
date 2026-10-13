@@ -103,6 +103,20 @@ describe('MemorySettings', () => {
     expect(screen.getByText('No saved facts yet.')).toBeInTheDocument();
   });
 
+  it('preserves typing and shows a conflict when learning replaces or removes an edited fact', async () => {
+    const { settingsIpc, push } = await renderMemory(snapshot('r1', ['Prefers tea']));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Fact 1' }), { target: { value: 'My unsaved preference' } });
+    await push(snapshot('r2', ['Prefers coffee']));
+    expect(screen.getByDisplayValue('My unsaved preference')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('This fact changed or was removed');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await push(snapshot('r3', []));
+    expect(screen.getByDisplayValue('My unsaved preference')).toBeInTheDocument();
+    expect(settingsIpc.editMemoryFact).not.toHaveBeenCalled();
+    await click(screen.getByRole('button', { name: 'Discard draft' }));
+    expect(screen.getByText('No saved facts yet.')).toBeInTheDocument();
+  });
+
   it('confirms before clearing and explains that History is kept', async () => {
     const { settingsIpc } = await renderMemory(snapshot('r1', ['Prefers tea']));
 
