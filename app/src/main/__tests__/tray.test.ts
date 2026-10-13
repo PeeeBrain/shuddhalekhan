@@ -136,7 +136,7 @@ describe('tray', () => {
       { deviceId: 'speaker', label: 'Speaker', kind: 'audioinput' },
     ]);
     const latestMenu = menuAt();
-    const deviceItems = latestMenu.find((entry) => entry.label === 'Audio Devices')?.submenu ?? [];
+    const deviceItems = latestMenu.find((entry) => entry.label === 'Microphone')?.submenu ?? [];
     const speakerItem = deviceItems.find((entry) => entry.label === 'Speaker');
 
     expect(deviceItems).toHaveLength(2);
@@ -158,14 +158,13 @@ describe('tray', () => {
     expect(quit).toHaveBeenCalled();
   });
 
-  it('opens settings from the tray and shows agent status', async () => {
+  it('opens settings from the tray', async () => {
     const settingsHandler = vi.fn();
     const { createTray } = await import(`../tray?test=${Date.now()}-settings`);
 
     createTray({ onOpenSettings: settingsHandler });
 
-    expect(text('Agent Mode: Disabled')).toBeDefined();
-    item('Settings...').click();
+    item('Settings…').click();
     expect(settingsHandler).toHaveBeenCalled();
   });
 
@@ -178,13 +177,13 @@ describe('tray', () => {
       isShortcutsPaused: () => false,
       onTogglePause: togglePause,
     });
-    expect(item('Pause Global Shortcuts')).toMatchObject({ type: 'checkbox', checked: false });
-    item('Pause Global Shortcuts').click();
+    expect(item('Pause global shortcuts')).toMatchObject({ type: 'checkbox', checked: false });
+    item('Pause global shortcuts').click();
     expect(togglePause).toHaveBeenCalledWith(true);
 
     updateShortcutPauseState(true);
-    expect(item('Pause Global Shortcuts').checked).toBe(true);
-    item('Pause Global Shortcuts').click();
+    expect(item('Pause global shortcuts').checked).toBe(true);
+    item('Pause global shortcuts').click();
     expect(togglePause).toHaveBeenLastCalledWith(false);
   });
 
@@ -200,23 +199,40 @@ describe('tray', () => {
       checkedAt: new Date().toISOString(),
     });
 
-    expect(text('Shuddhalekhan v4.0.0')).toBeDefined();
-    expect(text('Update status: latest (4.0.0)')).toBeDefined();
+    expect(text('Shuddhalekhan v4.0.0 · Up to date')).toBeDefined();
+    expect(item('Check for updates').enabled).toBe(true);
   });
 
-  it('shows Check for Updates menu item that triggers the check handler', async () => {
+  it('replaces the check action with install timing once an update downloads', async () => {
+    const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-downloaded`);
+
+    createTray({ onOpenSettings: vi.fn() });
+    updateUpdaterStatus({
+      state: 'downloaded',
+      currentVersion: '4.0.0',
+      availableVersion: '4.1.0',
+      releaseNotes: [],
+      message: 'Shuddhalekhan v4.1.0 is ready to install.',
+      checkedAt: new Date().toISOString(),
+    });
+
+    expect(text('Shuddhalekhan v4.0.0 · v4.1.0 installs on exit')).toMatchObject({ enabled: false });
+    expect(menuAt().some((entry) => entry.label?.startsWith('Check'))).toBe(false);
+  });
+
+  it('shows a check for updates item that triggers the check handler', async () => {
     const checkHandler = vi.fn();
     const { createTray } = await import(`../tray?test=${Date.now()}-check-updates`);
 
     createTray({ onOpenSettings: vi.fn(), onCheckForUpdates: checkHandler });
 
-    const checkItem = item('Check for Updates');
+    const checkItem = item('Check for updates');
     expect(checkItem.enabled).toBe(true);
     checkItem.click();
     expect(checkHandler).toHaveBeenCalled();
   });
 
-  it('disables Check for Updates item while checking', async () => {
+  it('disables the check for updates item while checking', async () => {
     const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-checking-state`);
 
     createTray({ onOpenSettings: vi.fn() });
@@ -227,7 +243,7 @@ describe('tray', () => {
       checkedAt: null,
     });
 
-    expect(item('Checking...')).toMatchObject({ enabled: false });
+    expect(item('Checking for updates…')).toMatchObject({ enabled: false });
   });
 
   it('exposes paste and copy last transcript actions when handlers are provided', async () => {
@@ -237,12 +253,12 @@ describe('tray', () => {
 
     createTray({ onOpenSettings: vi.fn(), onPasteLastTranscript: pasteHandler, onCopyLastTranscript: copyHandler });
 
-    const pasteItem = item('Paste Last Transcript');
+    const pasteItem = item('Paste last transcript');
     expect(pasteItem.enabled).toBe(true);
     pasteItem.click();
     expect(pasteHandler).toHaveBeenCalled();
 
-    const copyItem = item('Copy Last Transcript');
+    const copyItem = item('Copy last transcript');
     expect(copyItem.enabled).toBe(true);
     copyItem.click();
     expect(copyHandler).toHaveBeenCalled();
@@ -253,7 +269,7 @@ describe('tray', () => {
 
     createTray({ onOpenSettings: vi.fn() });
 
-    expect(item('Paste Last Transcript')).toMatchObject({ enabled: false });
-    expect(item('Copy Last Transcript')).toMatchObject({ enabled: false });
+    expect(item('Paste last transcript')).toMatchObject({ enabled: false });
+    expect(item('Copy last transcript')).toMatchObject({ enabled: false });
   });
 });

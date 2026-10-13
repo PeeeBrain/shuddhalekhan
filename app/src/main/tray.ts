@@ -48,10 +48,6 @@ export function createTray(handlers: TrayHandlers): Tray {
 
   updateTrayMenu();
 
-  tray.on('click', () => {
-    // Optional: show main window on click
-  });
-
   return tray;
 }
 
@@ -60,33 +56,28 @@ export function updateTrayMenu(): void {
 
   const config = getConfig();
   const deviceSubmenu = buildDeviceSubmenu(audioDevices, config.selectedDeviceId);
+  const updateStatusLabel = getUpdateStatusLabel(updateStatus);
+  // Downloads start automatically and install on exit, so checking only makes sense before or after one.
+  const canCheckForUpdates = ['idle', 'checking', 'latest', 'error'].includes(updateStatus.state);
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `Shuddhalekhan v${app.getVersion()}`,
-      enabled: false,
+      label: 'Paste last transcript',
+      enabled: !!pasteLastTranscriptHandler,
+      click: () => pasteLastTranscriptHandler?.(),
     },
     {
-      label: getUpdateMenuLabel(updateStatus),
-      enabled: false,
-    },
-    {
-      label: updateStatus.state === 'checking' ? 'Checking...' : 'Check for Updates',
-      enabled: updateStatus.state !== 'checking',
-      click: () => checkForUpdatesHandler?.(),
+      label: 'Copy last transcript',
+      enabled: !!copyLastTranscriptHandler,
+      click: () => copyLastTranscriptHandler?.(),
     },
     { type: 'separator' },
     {
-      label: 'Audio Devices',
+      label: 'Microphone',
       submenu: deviceSubmenu,
     },
-    { type: 'separator' },
     {
-      label: `Agent Mode: ${config.agent.enabled ? 'Enabled' : 'Disabled'}`,
-      enabled: false,
-    },
-    {
-      label: 'Pause Global Shortcuts',
+      label: 'Pause global shortcuts',
       type: 'checkbox',
       checked: shortcutsPaused,
       click: () => {
@@ -94,24 +85,22 @@ export function updateTrayMenu(): void {
       },
     },
     {
-      label: 'Settings...',
+      label: 'Settings…',
       click: () => openSettingsHandler?.(),
     },
     { type: 'separator' },
     {
-      label: 'Paste Last Transcript',
-      enabled: !!pasteLastTranscriptHandler,
-      click: () => pasteLastTranscriptHandler?.(),
+      label: `Shuddhalekhan v${app.getVersion()}${updateStatusLabel ? ` · ${updateStatusLabel}` : ''}`,
+      enabled: false,
     },
-    {
-      label: 'Copy Last Transcript',
-      enabled: !!copyLastTranscriptHandler,
-      click: () => copyLastTranscriptHandler?.(),
-    },
+    ...(canCheckForUpdates ? [{
+      label: updateStatus.state === 'checking' ? 'Checking for updates…' : 'Check for updates',
+      enabled: updateStatus.state !== 'checking',
+      click: () => checkForUpdatesHandler?.(),
+    }] : []),
     { type: 'separator' },
     {
       label: 'Exit',
-      accelerator: 'CommandOrControl+Q',
       click: () => app.quit(),
     },
   ]);
@@ -156,24 +145,24 @@ function buildDeviceSubmenu(
   return deviceSubmenu;
 }
 
-function getUpdateMenuLabel(status: UpdateStatus): string {
+/** Suffix for the version line; empty when there is nothing worth saying. */
+function getUpdateStatusLabel(status: UpdateStatus): string {
   switch (status.state) {
-    case 'checking':
-      return 'Update status: checking...';
     case 'available':
-      return `Update status: v${status.availableVersion} available`;
+      return `Downloading v${status.availableVersion}`;
     case 'downloading':
       return status.percent === null
-        ? `Update status: downloading v${status.availableVersion}`
-        : `Update status: downloading v${status.availableVersion} (${status.percent}%)`;
+        ? `Downloading v${status.availableVersion}`
+        : `Downloading v${status.availableVersion} (${status.percent}%)`;
     case 'downloaded':
-      return `Update status: v${status.availableVersion} ready to install`;
+      return `v${status.availableVersion} installs on exit`;
     case 'latest':
-      return `Update status: latest (${status.latestVersion})`;
+      return 'Up to date';
     case 'error':
-      return 'Update status: check failed';
+      return 'Update check failed';
     case 'idle':
-      return 'Update status: not checked yet';
+    case 'checking':
+      return '';
   }
 }
 

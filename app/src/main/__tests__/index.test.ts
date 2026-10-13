@@ -609,8 +609,8 @@ describe('main process IPC orchestration', () => {
 
     expect(simulatePaste).not.toHaveBeenCalled();
     expect(electronMock.Notification).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Paste Last Transcript unavailable',
-      body: expect.stringContaining('Use Copy Last Transcript'),
+      title: 'Paste last transcript unavailable',
+      body: expect.stringContaining('Use “Copy last transcript”'),
     }));
   });
 
