@@ -54,7 +54,8 @@ import { transcribe as transcribeLocalFixture } from './whisper';
 import { RuntimeShell } from './runtime-shell';
 import { createRuntimeShellPresenter } from './agent-presentation';
 import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
-import { preparePersistentStoreDirectory } from './store-path';
+import { getPersistentStoreDirectory, preparePersistentStoreDirectory } from './store-path';
+import { registerAgentContextIpcHandlers } from './agent-context';
 import {
   configureManagedLocal,
   getManagedLocalModelManager,
@@ -115,6 +116,7 @@ const sidecarEventRouter = createSidecarEventRouter({
   mergeDiscoveredTools,
   getConfig,
   recordMcpStatus: (status) => mcpStatusStore.record(status),
+  onMemoryEvent: event => agentContext.handleMemoryEvent(event),
   onAgentTerminal: (agentRunId) => {
     if (activeAgentRunId === agentRunId) activeAgentRunId = null;
     agentTerminalWaiters.get(agentRunId)?.();
@@ -133,6 +135,13 @@ const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
       activeAgentRunId = null;
     }
   },
+});
+const agentContext = registerAgentContextIpcHandlers(getPersistentStoreDirectory(), {
+  getConfig,
+  setAgent: agent => setConfig('agent', agent),
+  getActiveAgentRunId: () => activeAgentRunId,
+  reply: (agentRunId, requestId, result) => agentSidecar.sendMemoryResult(agentRunId, requestId, result),
+  publish: snapshot => getSettingsWindow()?.webContents.send('memory:changed', snapshot),
 });
 const recordingSession = new RecordingSession({
   runtimeShell,
@@ -508,6 +517,7 @@ function startAgentRun(text: string, config: AppConfig): Promise<void> {
     text,
     config,
     getAgentSidecarApiKey(config, credentialVault),
+    agentContext.createRunContext(),
   );
   console.log(`Started Agent Mode run ${agentRunId}`);
   getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);
@@ -755,6 +765,7 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
   setConfig(key, value);
   const config = getConfig();
   if (key === 'agent') {
+    if (previousConfig.agent.memoryEnabled !== config.agent.memoryEnabled || previousConfig.agent.enabled !== config.agent.enabled) agentContext.invalidateMemory();
     invalidateProviderTest();
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
@@ -955,6 +966,7 @@ if (!gotSingleInstanceLock) {
     event.preventDefault();
     if (quitCleanupStarted) return;
     quitCleanupStarted = true;
+    agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
     void Promise.all([agentSidecar.stop(), managedLocalTranscriber.shutdown()]).finally(() => {

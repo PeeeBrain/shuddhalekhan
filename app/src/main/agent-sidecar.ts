@@ -8,6 +8,7 @@ import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-ma
 import { getPersistentStoreDirectory } from './store-path';
 import { emitPerformanceMarker } from './performance/marker-collector';
 import { KoffiJobObjectPort, type JobObjectPort } from './native/job-object';
+import type { AgentMemoryCommitResult, AgentRunContext } from '../shared/agent-context';
 
 export type SidecarLifecycleError =
   | { reason: 'job-creation-failed' }
@@ -81,7 +82,7 @@ export class AgentSidecarManager {
     });
   }
 
-  startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string): void {
+  startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string, context?: AgentRunContext): void {
     this.cancelProviderTest();
     emitPerformanceMarker('agent.run.requested', { agentRunId });
     this.start(config, agentApiKey);
@@ -89,6 +90,7 @@ export class AgentSidecarManager {
       type: 'agent:start',
       agentRunId,
       transcript,
+      ...(context ? { context } : {}),
     });
   }
 
@@ -97,6 +99,10 @@ export class AgentSidecarManager {
       type: 'agent:cancel',
       agentRunId,
     });
+  }
+
+  sendMemoryResult(agentRunId: string, requestId: string, result: AgentMemoryCommitResult): void {
+    this.sendOrQueue({ type: 'memory:commit-result', agentRunId, requestId, result });
   }
 
   stop(): Promise<void> {

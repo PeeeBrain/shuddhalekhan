@@ -51,6 +51,12 @@ const baseConfig: AppConfig = {
 };
 
 describe('getSidecarConfigAction', () => {
+  it('sends feature changes to an enabled sidecar and keeps them dormant while disabled', () => {
+    expect(getSidecarConfigAction(baseConfig, { ...baseConfig, agent: { ...baseConfig.agent, memoryEnabled: true } })).toBe('start');
+    expect(getSidecarConfigAction(baseConfig, { ...baseConfig, agent: { ...baseConfig.agent, disabledSkills: ['email-style'] } })).toBe('start');
+    const disabled = { ...baseConfig, agent: { ...baseConfig.agent, enabled: false } };
+    expect(getSidecarConfigAction(disabled, { ...disabled, agent: { ...disabled.agent, memoryEnabled: true } })).toBe('none');
+  });
   it('ignores audio-only config changes', () => {
     expect(getSidecarConfigAction(baseConfig, { ...baseConfig, whisperUrl: 'http://new' })).toBe('none');
     expect(getSidecarConfigAction(baseConfig, { ...baseConfig, selectedDeviceId: 'mic-1' })).toBe('none');

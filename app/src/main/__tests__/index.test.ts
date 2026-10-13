@@ -384,11 +384,22 @@ describe('main process IPC orchestration', () => {
       'managed-local:install-model',
       'mcp:get-status-snapshot',
       'mcp:test-server',
+      'memory:clear',
+      'memory:edit',
+      'memory:get',
+      'memory:remove',
       'settings:open',
       'shortcuts:begin-capture',
       'shortcuts:end-capture',
        'shortcuts:get-paused',
        'shortcuts:set-paused',
+      'skills:import',
+      'skills:list',
+      'skills:open-folder',
+      'skills:read',
+      'skills:remove',
+      'skills:save',
+      'skills:select-import',
        'transcription:check-readiness',
        'transcription:check-server',
       'updater:check',
@@ -554,7 +565,8 @@ describe('main process IPC orchestration', () => {
     };
     await sessionOptions.onResult(result);
 
-    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined);
+    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined,
+      { memory: null, skillsDirectory: expect.stringContaining('skills') });
     expect(simulatePaste).not.toHaveBeenCalled();
   });
 
@@ -588,6 +600,7 @@ describe('main process IPC orchestration', () => {
       'Quick brown fox jumps over the lazy dog.',
       config,
       undefined,
+      { memory: null, skillsDirectory: expect.stringContaining('skills') },
     );
     expect(simulatePaste).not.toHaveBeenCalled();
   });

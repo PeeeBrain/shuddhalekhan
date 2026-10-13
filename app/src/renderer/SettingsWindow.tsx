@@ -10,7 +10,9 @@ import type {
 } from '../types/ipc';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
+  BookOpen,
   Bot,
+  Brain,
   FileText,
   History as HistoryIcon,
   House,
@@ -36,6 +38,8 @@ import { ShortcutsSettings } from './settings/ShortcutsSettings';
 import { AgentSettings } from './settings/AgentSettings';
 import { AboutSettings } from './settings/AboutSettings';
 import { McpSettings } from './settings/McpSettings';
+import { SkillsSettings } from './settings/SkillsSettings';
+import { MemorySettings } from './settings/MemorySettings';
 import { AuditHistorySettings } from './settings/AuditHistorySettings';
 import { HomeSettings } from './settings/HomeSettings';
 import { CommandPalette } from './settings/CommandPalette';
@@ -52,6 +56,8 @@ const NAV_ICONS: Record<SettingsSectionId, React.ElementType> = {
   shortcuts: Keyboard,
   agent: Bot,
   mcp: Plug,
+  skills: BookOpen,
+  memory: Brain,
   history: HistoryIcon,
   about: Info,
 };
@@ -275,6 +281,12 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
                       settingsIpc.testMcpServer(serverId);
                     }}
                   />
+                ) : null}
+                {activeSection === 'skills' ? (
+                  <SkillsSettings {...sectionProps} />
+                ) : null}
+                {activeSection === 'memory' ? (
+                  <MemorySettings {...sectionProps} />
                 ) : null}
                 {activeSection === 'about' ? (
                   <AboutSettings {...sectionProps} />

@@ -1,6 +1,7 @@
 import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
 import { z } from 'zod';
 import { agentProviderSchema } from '../shared/agent-provider-validation';
+import { memoryUpdatesSchema, type AgentMemoryCommitResult, type AgentMemoryUpdate, type AgentRunContext } from '../shared/agent-context';
 
 export type SidecarReadyEvent = {
   type: 'sidecar:ready';
@@ -97,6 +98,8 @@ export type AgentCancelledEvent = {
 };
 
 export type SidecarEvent =
+  | { type: 'memory:propose'; agentRunId: string; requestId: string; revision: string; updates: AgentMemoryUpdate[] }
+  | { type: 'memory:status'; agentRunId: string; status: string }
   | { type: 'provider:test-result'; requestId: string; result: AgentProviderTestResult }
   | SidecarReadyEvent
   | SidecarShutdownCompleteEvent
@@ -123,6 +126,7 @@ export type AgentStartMessage = {
   type: 'agent:start';
   agentRunId: string;
   transcript: string;
+  context?: AgentRunContext;
 };
 
 export type AgentCancelMessage = {
@@ -148,6 +152,7 @@ export type ApprovalDecisionMessage = {
 };
 
 export type ElectronToSidecarMessage =
+  | { type: 'memory:commit-result'; agentRunId: string; requestId: string; result: AgentMemoryCommitResult }
   | { type: 'provider:test'; requestId: string; provider: AgentProviderConfig; apiKey?: string }
   | { type: 'provider:cancel-test'; requestId: string }
   | ConfigUpdateMessage
@@ -177,8 +182,19 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
       const result = z.object({ type: z.literal('provider:cancel-test'), requestId: z.string().min(1) }).safeParse(parsed);
       return result.success ? result.data : null;
     }
+    case 'memory:commit-result': {
+      const result = z.object({ type: z.literal('memory:commit-result'), agentRunId: z.string().min(1), requestId: z.string().min(1),
+        result: z.discriminatedUnion('saved', [z.object({ saved: z.literal(true), message: z.string().optional() }), z.object({ saved: z.literal(false), message: z.string() })]),
+      }).safeParse(parsed);
+      return result.success ? result.data : null;
+    }
+    case 'agent:start': {
+      const result = z.object({ type: z.literal('agent:start'), agentRunId: z.string().min(1), transcript: z.string(), context: z.object({
+        skillsDirectory: z.string().min(1), memory: z.object({ revision: z.string(), markdown: z.string().max(8192) }).nullable(),
+      }).optional() }).safeParse(parsed);
+      return result.success ? result.data : null;
+    }
     case 'config:update':
-    case 'agent:start':
     case 'agent:cancel':
     case 'approval:decision':
     case 'mcp:test-server':
@@ -187,6 +203,10 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
     default:
       return null;
   }
+}
+
+export function parseMemoryProposal(event: unknown) {
+  return z.object({ type: z.literal('memory:propose'), agentRunId: z.string().min(1), requestId: z.string().min(1), revision: z.string(), updates: memoryUpdatesSchema }).safeParse(event);
 }
 
 export function writeJsonLine(event: SidecarEvent): void {

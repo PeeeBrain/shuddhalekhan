@@ -1,3 +1,5 @@
+import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
+
 export type AudioDevice = {
   deviceId: string;
   label: string;
@@ -216,6 +218,17 @@ export type InjectResult =
   | { kind: 'error'; message: string };
 
 export interface RendererToMainInvokeChannels {
+  'skills:list': () => Promise<AgentSkillSummary[]>;
+  'skills:read': (name: string) => Promise<AgentSkillDocument>;
+  'skills:save': (document: AgentSkillDocument & { create: boolean }) => Promise<AgentSkillSummary[]>;
+  'skills:select-import': () => Promise<AgentSkillImport | null>;
+  'skills:import': (token: string) => Promise<AgentSkillSummary[]>;
+  'skills:remove': (name: string) => Promise<AgentSkillSummary[]>;
+  'skills:open-folder': () => Promise<void>;
+  'memory:get': () => Promise<AgentMemorySnapshot>;
+  'memory:edit': (revision: string, id: string, text: string) => Promise<AgentMemorySnapshot>;
+  'memory:remove': (revision: string, id: string) => Promise<AgentMemorySnapshot>;
+  'memory:clear': (revision: string) => Promise<AgentMemorySnapshot>;
   'audio:get-devices': () => Promise<AudioDevice[]>;
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
@@ -254,6 +267,7 @@ export interface RendererToMainInvokeChannels {
 }
 
 export interface MainToRendererChannels {
+  'memory:changed': (snapshot: AgentMemorySnapshot) => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;
   'recording:pill-show': (recordingSessionId?: string, envelope?: RecordingPresentationEnvelope) => void;
@@ -499,6 +513,8 @@ export interface AppConfig {
     enabled: boolean;
     provider: AgentProviderConfig;
     mcpServers: McpServerConfig[];
+    disabledSkills?: string[];
+    memoryEnabled?: boolean;
   };
 }
 

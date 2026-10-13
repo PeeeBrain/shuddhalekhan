@@ -21,6 +21,8 @@ export function getSidecarConfigAction(previousConfig: AppConfig, nextConfig: Ap
 function isSidecarRuntimeConfigEqual(previousConfig: AppConfig, nextConfig: AppConfig): boolean {
   return (
     JSON.stringify(previousConfig.agent.provider) === JSON.stringify(nextConfig.agent.provider) &&
-    JSON.stringify(previousConfig.agent.mcpServers) === JSON.stringify(nextConfig.agent.mcpServers)
+    JSON.stringify(previousConfig.agent.mcpServers) === JSON.stringify(nextConfig.agent.mcpServers) &&
+    (previousConfig.agent.memoryEnabled ?? false) === (nextConfig.agent.memoryEnabled ?? false) &&
+    JSON.stringify(previousConfig.agent.disabledSkills ?? []) === JSON.stringify(nextConfig.agent.disabledSkills ?? [])
   );
 }

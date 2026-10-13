@@ -13,6 +13,7 @@ interface SidecarEventRouterDeps {
   getConfig: () => { agent: { mcpServers: Array<{ id: string; displayName: string }> } };
   recordMcpStatus: (status: McpServerRuntimeStatus) => McpStatusSnapshot;
   onAgentTerminal?: (agentRunId: string) => void;
+  onMemoryEvent?: (event: Extract<SidecarEvent, { type: 'memory:propose' | 'memory:status' }>) => void;
 }
 
 type SidecarEventHandler<T extends SidecarEvent['type']> = (event: Extract<SidecarEvent, { type: T }>) => void;
@@ -32,6 +33,8 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
   };
 
   const handlers: SidecarEventHandlers = {
+    'memory:propose': event => deps.onMemoryEvent?.(event),
+    'memory:status': event => deps.onMemoryEvent?.(event),
     'sidecar:ready': () => {
       console.log('Agent sidecar ready');
       emitPerformanceMarker('sidecar.ready');

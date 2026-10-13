@@ -144,6 +144,37 @@ describe('settings IPC adapter', () => {
     expect(subscribe).toHaveBeenCalledWith('agent:provider-invalidated', expect.any(Function));
   });
 
+  it('routes skills and memory management to their channels', async () => {
+    const document = { name: 'email-style', content: 'Be brief.', create: true };
+    await ipc.listSkills();
+    await ipc.readSkill('email-style');
+    await ipc.saveSkill(document);
+    await ipc.selectSkillImport();
+    await ipc.importSkill('token-1');
+    await ipc.removeSkill('email-style');
+    await ipc.openSkillsFolder();
+    await ipc.getMemory();
+    await ipc.editMemoryFact('r1', 'f1', 'Prefers metric units');
+    await ipc.removeMemoryFact('r1', 'f1');
+    await ipc.clearMemory('r1');
+    ipc.onMemoryChanged(() => undefined);
+
+    expect(invoke.mock.calls).toEqual([
+      ['skills:list'],
+      ['skills:read', 'email-style'],
+      ['skills:save', document],
+      ['skills:select-import'],
+      ['skills:import', 'token-1'],
+      ['skills:remove', 'email-style'],
+      ['skills:open-folder'],
+      ['memory:get'],
+      ['memory:edit', 'r1', 'f1', 'Prefers metric units'],
+      ['memory:remove', 'r1', 'f1'],
+      ['memory:clear', 'r1'],
+    ]);
+    expect(subscribe).toHaveBeenCalledWith('memory:changed', expect.any(Function));
+  });
+
   it('subscribes to updater and MCP status events', () => {
     const onUpdate = vi.fn();
     const onMcpStatus = vi.fn();

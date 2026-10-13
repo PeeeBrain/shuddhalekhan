@@ -165,6 +165,18 @@ function createMockSettingsIpc(
     testAgentProvider: mock(() => Promise.reject(new Error('not used'))),
     cancelAgentProviderTest: mock(() => Promise.resolve()),
     onAgentProviderInvalidated: mock(() => undefined),
+    listSkills: mock(() => Promise.resolve([])),
+    readSkill: mock(() => Promise.reject(new Error('not used'))),
+    saveSkill: mock(() => Promise.reject(new Error('not used'))),
+    selectSkillImport: mock(() => Promise.resolve(null)),
+    importSkill: mock(() => Promise.reject(new Error('not used'))),
+    removeSkill: mock(() => Promise.reject(new Error('not used'))),
+    openSkillsFolder: mock(() => Promise.resolve()),
+    getMemory: mock(() => Promise.resolve({ revision: 'r0', markdown: '', facts: [], status: null, error: null })),
+    editMemoryFact: mock(() => Promise.reject(new Error('not used'))),
+    removeMemoryFact: mock(() => Promise.reject(new Error('not used'))),
+    clearMemory: mock(() => Promise.reject(new Error('not used'))),
+    onMemoryChanged: mock(() => undefined),
   };
 }
 
@@ -301,7 +313,7 @@ describe('Settings navigation', () => {
     }
   });
 
-  it('lists the seven destinations in order', async () => {
+  it('lists the nine destinations in order', async () => {
     renderSettings();
     await waitForLoaded();
 
@@ -311,6 +323,8 @@ describe('Settings navigation', () => {
       'Shortcuts',
       'Agent',
       'MCP Servers',
+      'Skills',
+      'Memory',
       'History',
       'About',
     ];
@@ -856,6 +870,19 @@ describe('Settings section reachability', () => {
 
     fireEvent.click(tabByLabel('MCP Servers'));
     expect(await screen.findByText('connected')).toBeInTheDocument();
+  });
+
+  it('manages skills and memory while Agent Mode is off', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+
+    fireEvent.click(tabByLabel('Skills'));
+    expect(await screen.findByText(/No skills yet/)).toBeInTheDocument();
+    fireEvent.click(tabByLabel('Memory'));
+    expect(await screen.findByText('No saved facts yet.')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Enable memory' })).not.toBeChecked();
+    expect(settingsIpc.listSkills).toHaveBeenCalled();
+    expect(settingsIpc.getMemory).toHaveBeenCalled();
   });
 
   it('exposes the agent run history on the History section', async () => {

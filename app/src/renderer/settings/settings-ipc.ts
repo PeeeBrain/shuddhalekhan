@@ -16,6 +16,12 @@ import type {
   AgentProviderValidation,
   AgentProviderTestResult,
 } from '../../types/ipc';
+import type {
+  AgentMemorySnapshot,
+  AgentSkillDocument,
+  AgentSkillImport,
+  AgentSkillSummary,
+} from '../../shared/agent-context';
 
 type Unsubscribe = () => void;
 
@@ -54,6 +60,18 @@ export interface SettingsIpc {
   testAgentProvider: (provider: AgentProviderConfig) => Promise<AgentProviderTestResult>;
   cancelAgentProviderTest: () => Promise<void>;
   onAgentProviderInvalidated: (callback: () => void) => Unsubscribe | undefined;
+  listSkills: () => Promise<AgentSkillSummary[]>;
+  readSkill: (name: string) => Promise<AgentSkillDocument>;
+  saveSkill: (document: AgentSkillDocument & { create: boolean }) => Promise<AgentSkillSummary[]>;
+  selectSkillImport: () => Promise<AgentSkillImport | null>;
+  importSkill: (token: string) => Promise<AgentSkillSummary[]>;
+  removeSkill: (name: string) => Promise<AgentSkillSummary[]>;
+  openSkillsFolder: () => Promise<void>;
+  getMemory: () => Promise<AgentMemorySnapshot>;
+  editMemoryFact: (revision: string, id: string, text: string) => Promise<AgentMemorySnapshot>;
+  removeMemoryFact: (revision: string, id: string) => Promise<AgentMemorySnapshot>;
+  clearMemory: (revision: string) => Promise<AgentMemorySnapshot>;
+  onMemoryChanged: (callback: (snapshot: AgentMemorySnapshot) => void) => Unsubscribe | undefined;
 }
 
 export function createSettingsIpc(electronAPI: ElectronAPI | undefined): SettingsIpc {
@@ -102,6 +120,18 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await electronAPI?.invoke('agent:cancel-provider-test');
     },
     onAgentProviderInvalidated: (callback) => electronAPI?.subscribe('agent:provider-invalidated', callback),
+    listSkills: () => requireElectronApi(electronAPI).invoke('skills:list'),
+    readSkill: (name) => requireElectronApi(electronAPI).invoke('skills:read', name),
+    saveSkill: (document) => requireElectronApi(electronAPI).invoke('skills:save', document),
+    selectSkillImport: () => requireElectronApi(electronAPI).invoke('skills:select-import'),
+    importSkill: (token) => requireElectronApi(electronAPI).invoke('skills:import', token),
+    removeSkill: (name) => requireElectronApi(electronAPI).invoke('skills:remove', name),
+    openSkillsFolder: () => requireElectronApi(electronAPI).invoke('skills:open-folder'),
+    getMemory: () => requireElectronApi(electronAPI).invoke('memory:get'),
+    editMemoryFact: (revision, id, text) => requireElectronApi(electronAPI).invoke('memory:edit', revision, id, text),
+    removeMemoryFact: (revision, id) => requireElectronApi(electronAPI).invoke('memory:remove', revision, id),
+    clearMemory: (revision) => requireElectronApi(electronAPI).invoke('memory:clear', revision),
+    onMemoryChanged: (callback) => electronAPI?.subscribe('memory:changed', callback),
   };
 }
 

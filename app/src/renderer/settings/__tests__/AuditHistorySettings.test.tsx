@@ -64,6 +64,18 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       testAgentProvider: mock(() => Promise.reject(new Error('not used'))),
       cancelAgentProviderTest: mock(() => Promise.resolve()),
       onAgentProviderInvalidated: mock(() => undefined),
+      listSkills: mock(() => Promise.resolve([])),
+      readSkill: mock(() => Promise.reject(new Error('unused'))),
+      saveSkill: mock(() => Promise.reject(new Error('unused'))),
+      selectSkillImport: mock(() => Promise.resolve(null)),
+      importSkill: mock(() => Promise.reject(new Error('unused'))),
+      removeSkill: mock(() => Promise.reject(new Error('unused'))),
+      openSkillsFolder: mock(() => Promise.resolve()),
+      getMemory: mock(() => Promise.reject(new Error('unused'))),
+      editMemoryFact: mock(() => Promise.reject(new Error('unused'))),
+      removeMemoryFact: mock(() => Promise.reject(new Error('unused'))),
+      clearMemory: mock(() => Promise.reject(new Error('unused'))),
+      onMemoryChanged: mock(() => undefined),
     };
 
     render(<AuditHistorySettings settingsIpc={settingsIpc} />);
@@ -161,6 +173,18 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       testAgentProvider: mock(() => Promise.reject(new Error('not used'))),
       cancelAgentProviderTest: mock(() => Promise.resolve()),
       onAgentProviderInvalidated: mock(() => undefined),
+      listSkills: mock(() => Promise.resolve([])),
+      readSkill: mock(() => Promise.reject(new Error('unused'))),
+      saveSkill: mock(() => Promise.reject(new Error('unused'))),
+      selectSkillImport: mock(() => Promise.resolve(null)),
+      importSkill: mock(() => Promise.reject(new Error('unused'))),
+      removeSkill: mock(() => Promise.reject(new Error('unused'))),
+      openSkillsFolder: mock(() => Promise.resolve()),
+      getMemory: mock(() => Promise.reject(new Error('unused'))),
+      editMemoryFact: mock(() => Promise.reject(new Error('unused'))),
+      removeMemoryFact: mock(() => Promise.reject(new Error('unused'))),
+      clearMemory: mock(() => Promise.reject(new Error('unused'))),
+      onMemoryChanged: mock(() => undefined),
     };
 
     const { container } = render(<AuditHistorySettings settingsIpc={settingsIpc} />);
