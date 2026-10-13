@@ -1,17 +1,21 @@
-import type { ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const HEADING = 'mb-1 mt-2 text-sm font-semibold first:mt-0';
 const LINK = 'text-primary underline underline-offset-2';
 
+/** Images inside a link render as its label, since anchors can't nest. */
+const InsideLink = createContext(false);
+
 /**
  * Agent responses, run history, and release notes share one GFM renderer.
  * Headings stay paragraph-sized so a model's `#` can't outshout the card, and
- * images render as links so untrusted output never loads remote URLs.
+ * images render as links so untrusted output never loads remote URLs. Raw HTML
+ * is never rendered, and unsafe URL schemes are stripped by react-markdown.
  */
 const components: Components = {
-  p: ({ node: _node, ...props }) => <p {...props} className="my-1.5 whitespace-pre-wrap first:mt-0 last:mb-0" />,
+  p: ({ node: _node, ...props }) => <p {...props} className="my-1.5 first:mt-0 last:mb-0" />,
   h1: ({ node: _node, ...props }) => <p {...props} className={HEADING} />,
   h2: ({ node: _node, ...props }) => <p {...props} className={HEADING} />,
   h3: ({ node: _node, ...props }) => <p {...props} className={HEADING} />,
@@ -45,11 +49,41 @@ const components: Components = {
   td: ({ node: _node, ...props }) => <td {...props} className="border border-border px-2 py-1 align-top" />,
   strong: ({ node: _node, ...props }) => <strong {...props} className="font-semibold text-foreground" />,
   em: ({ node: _node, ...props }) => <em {...props} className="italic" />,
-  a: ({ node: _node, ...props }) => <a {...props} className={LINK} />,
-  img: ({ src, alt }) => (typeof src === 'string' && src ? <a href={src} className={LINK}>{alt || src}</a> : null),
+  // Unsafe schemes are stripped to an empty href, which would reload this window; keep them as text.
+  a: ({ node: _node, href, children, ...props }) => (href ? (
+    <InsideLink.Provider value>
+      <a {...props} href={href} className={LINK}>{children}</a>
+    </InsideLink.Provider>
+  ) : <>{children}</>),
+  img: function ImageLink({ src, alt }) {
+    const insideLink = useContext(InsideLink);
+    const label = alt || (typeof src === 'string' ? src : '');
+    if (insideLink || typeof src !== 'string' || !src) return label ? <>{label}</> : null;
+    return <a href={src} className={LINK}>{label}</a>;
+  },
 };
 
-const remarkPlugins = [remarkGfm];
+type MdNode = { type: string; value?: string; children?: MdNode[] };
+
+/** Single newlines become line breaks, the way chat models expect their text to read. */
+function remarkSoftBreaks() {
+  return (tree: MdNode) => splitNewlines(tree);
+}
+
+function splitNewlines(node: MdNode): void {
+  if (!node.children) return;
+  node.children = node.children.flatMap((child): MdNode[] => {
+    if (child.type !== 'text' || !child.value?.includes('\n')) {
+      splitNewlines(child);
+      return [child];
+    }
+    return child.value.split('\n').flatMap((value, index) => (
+      index === 0 ? [{ type: 'text', value }] : [{ type: 'break' }, { type: 'text', value }]
+    ));
+  });
+}
+
+const remarkPlugins = [remarkGfm, remarkSoftBreaks];
 
 export function renderMarkdown(markdown: string): ReactNode {
   return <Markdown remarkPlugins={remarkPlugins} components={components}>{markdown}</Markdown>;

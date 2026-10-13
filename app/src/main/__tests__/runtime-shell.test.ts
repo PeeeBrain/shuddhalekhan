@@ -326,21 +326,27 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(window.hide).toHaveBeenCalled();
   });
 
-  it('ignores blank streamed prefixes and publishes non-empty streams once per content change', async () => {
+  it('ignores blank streamed prefixes and coalesces token deltas into one publish per interval', async () => {
+    const timers: Array<() => void> = [];
+    const setTimeoutFn = vi.fn((fn: () => void) => timers.push(fn)) as unknown as typeof setTimeout;
     const { send, window } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => window);
-    const shell = await createShell('agent-streaming');
+    const shell = await createShell('agent-streaming', { setTimeoutFn, clearTimeoutFn: vi.fn() as unknown as typeof clearTimeout });
     shell.prepare();
 
     shell.showAgentStreaming('run-1', '   \n');
     expect(snapshotsOf(send)).toEqual([]);
 
     shell.showAgentStreaming('run-1', 'Here');
+    shell.showAgentStreaming('run-1', 'Here is');
     shell.showAgentStreaming('run-1', 'Here is what I found.');
-    shell.showAgentStreaming('run-1', 'Here is what I found.');
+    expect(snapshotsOf(send).map((snapshot) => snapshot.response)).toEqual(['Here']);
 
+    // The trailing publish sends only the latest text; an unchanged one is deduped.
+    timers.shift()?.();
+    timers.shift()?.();
     const snapshots = snapshotsOf(send);
-    expect(snapshots.map((snapshot) => snapshot.kind)).toEqual(['agent-streaming', 'agent-streaming']);
+    expect(snapshots.map((snapshot) => snapshot.response)).toEqual(['Here', 'Here is what I found.']);
     expect(snapshots.map((snapshot) => snapshot.revision)).toEqual([1, 2]);
     expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
   });
@@ -402,7 +408,7 @@ describe('Agent Mode runtime shell presentation', () => {
       arguments: {},
       expiresAt: firstExpiry,
     });
-    const firstTimer = timers[0];
+    const firstTimer = timers[1]; // timers[0] is the stream publish timer.
 
     const secondExpiry = new Date(Date.now() + 60000).toISOString();
     shell.showAgentApproval({
@@ -415,7 +421,7 @@ describe('Agent Mode runtime shell presentation', () => {
       expiresAt: secondExpiry,
     });
 
-    expect(clearTimeoutFn).toHaveBeenCalledWith(1);
+    expect(clearTimeoutFn).toHaveBeenCalledWith(2);
     firstTimer.fn();
     expect(snapshotsOf(send).at(-1)).toMatchObject({
       kind: 'agent-approval',
@@ -424,7 +430,7 @@ describe('Agent Mode runtime shell presentation', () => {
     });
 
     shell.clearAgentRun();
-    expect(clearTimeoutFn).toHaveBeenLastCalledWith(2);
+    expect(clearTimeoutFn).toHaveBeenCalledWith(3);
     expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'idle' });
   });
 
