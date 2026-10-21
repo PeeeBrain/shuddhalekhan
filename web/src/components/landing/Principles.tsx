@@ -1,50 +1,93 @@
-import { KeyRound, ScrollText, WifiOff } from 'lucide-react';
+import { useRef } from 'react';
+import { useInView } from 'motion/react';
+import { Cpu, Plug } from 'lucide-react';
 import { Reveal } from '@/components/motion/Reveal';
-import { Eyebrow } from '@/components/landing/Eyebrow';
 
-const PRINCIPLES = [
+/* Logos from svgl.app (dark variants), saved under public/logos. */
+type Provider = { name: string; logo?: string; icon?: typeof Cpu };
+
+const ROWS: { use: string; reverse?: boolean; providers: Provider[] }[] = [
   {
-    icon: WifiOff,
-    title: 'Local by default',
-    text: 'Run Whisper on your own machine and dictation works with the network unplugged. Audio goes nowhere else unless you point it at a cloud endpoint.',
+    use: 'Speech to text',
+    providers: [
+      { name: 'NVIDIA Parakeet, on your PC', logo: 'nvidia' },
+      { name: 'whisper.cpp', icon: Cpu },
+      { name: 'OpenAI', logo: 'openai' },
+      { name: 'Azure Speech', logo: 'azure' },
+      { name: 'Google Cloud', logo: 'google-cloud' },
+      { name: 'NVIDIA NIM', logo: 'nvidia' },
+      { name: 'Any compatible endpoint', icon: Plug },
+    ],
   },
   {
-    icon: KeyRound,
-    title: 'Your keys, your providers',
-    text: 'Bring any OpenAI-compatible endpoint for Agent Mode. API keys live in environment variables. Config stores their names, never their values.',
-  },
-  {
-    icon: ScrollText,
-    title: 'Everything on the record',
-    text: 'Shuddhalekhan records every agent run, tool call, and approval in a SQLite database on your disk. Nothing goes to a remote service.',
+    use: 'Agent Mode',
+    reverse: true,
+    providers: [
+      { name: 'OpenAI', logo: 'openai' },
+      { name: 'Azure OpenAI', logo: 'azure' },
+      { name: 'OpenRouter', logo: 'openrouter' },
+      { name: 'Ollama', logo: 'ollama' },
+      { name: 'Any OpenAI-compatible endpoint', icon: Plug },
+    ],
   },
 ];
 
 export function Principles() {
   return (
-    <section id="principles" className="relative scroll-mt-20 py-28 md:py-36">
+    <section id="providers" className="scroll-mt-20 py-24 md:py-36">
       <div className="mx-auto max-w-6xl px-6">
-        <Reveal className="mx-auto max-w-2xl text-center">
-          <Eyebrow>Privacy</Eyebrow>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.02em] sm:text-5xl">
-            It only talks to servers you choose.
+        <Reveal className="max-w-2xl">
+          <h2 className="font-display text-[clamp(2.25rem,1.5rem+2.8vw,3.75rem)] leading-[1.02] font-semibold tracking-[-0.035em] text-balance">
+            Bring your own models.
           </h2>
+          <p className="mt-6 max-w-[46ch] text-[17px] leading-relaxed text-muted-foreground text-pretty">
+            Run speech recognition on your PC, or use providers you already pay for. No account and no telemetry.
+          </p>
         </Reveal>
 
-        <div className="mt-14 grid gap-4 md:grid-cols-3">
-          {PRINCIPLES.map(({ icon: Icon, title, text }, i) => (
-            <Reveal key={title} delay={0.08 + i * 0.08} className="h-full">
-              <article className="group h-full rounded-2xl border border-white/[0.07] bg-white/[0.02] p-7 transition-colors duration-500 hover:border-white/[0.14] hover:bg-white/[0.035]">
-                <div className="flex size-10 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] transition-colors duration-500 group-hover:border-voice/30">
-                  <Icon className="size-4.5 text-voice" aria-hidden="true" />
-                </div>
-                <h3 className="mt-5 text-base font-semibold text-white">{title}</h3>
-                <p className="mt-2.5 text-[13px] leading-relaxed text-muted-foreground">{text}</p>
-              </article>
-            </Reveal>
-          ))}
-        </div>
+        <Reveal delay={0.08} className="mt-14">
+          <dl className="space-y-8">
+            {ROWS.map((row) => (
+              <div key={row.use} className="grid items-center gap-x-8 gap-y-3 md:grid-cols-[9rem_1fr]">
+                <dt className="text-[13px] font-medium text-muted-foreground">{row.use}</dt>
+                <dd className="min-w-0">
+                  <Marquee providers={row.providers} reverse={row.reverse} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </Reveal>
       </div>
     </section>
+  );
+}
+
+/**
+ * Infinite logo strip: the list renders twice and the track slides by half its width.
+ * Transform-only, paused off-screen and on hover, static under reduced motion.
+ */
+function Marquee({ providers, reverse }: { providers: Provider[]; reverse?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref);
+
+  return (
+    <div ref={ref} className="marquee overflow-hidden" data-paused={!inView}>
+      <div className="marquee-track flex w-max" data-reverse={reverse}>
+        {[0, 1].map((copy) => (
+          <ul key={copy} aria-hidden={copy === 1} className="flex shrink-0 items-center gap-10 pr-10">
+            {providers.map(({ name, logo, icon: Icon }) => (
+              <li key={name} className="flex items-center gap-3 text-[clamp(1.0625rem,1rem+0.3vw,1.25rem)] font-medium whitespace-nowrap">
+                {logo ? (
+                  <img src={`/logos/${logo}.svg`} alt="" width={24} height={24} className="size-6 object-contain" />
+                ) : Icon ? (
+                  <Icon className="size-5 text-muted-foreground" aria-hidden="true" />
+                ) : null}
+                {name}
+              </li>
+            ))}
+          </ul>
+        ))}
+      </div>
+    </div>
   );
 }

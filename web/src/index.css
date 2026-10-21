@@ -1,62 +1,62 @@
 @import "tailwindcss";
 
 @theme inline {
+  --color-canvas: var(--canvas);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
+  --color-card-foreground: var(--foreground);
+  --color-raised: var(--raised);
+  --color-primary: var(--voice);
+  --color-primary-foreground: var(--on-signal);
+  --color-secondary: var(--raised);
+  --color-secondary-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--raised);
+  --color-accent-foreground: var(--foreground);
   --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  /* Brand signals — one hue per voice, taken from the real recording pill */
+  --color-border: var(--hairline);
+  --color-input: var(--hairline);
+  --color-ring: var(--voice);
+  --color-on-signal: var(--on-signal);
+  /* Signal hues, one job each: voice = Dictation and interaction, agent = Agent Mode */
   --color-voice: var(--voice);
   --color-agent: var(--agent);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-deva: "Nirmala UI", "Noto Sans Devanagari", "Kohinoor Devanagari", sans-serif;
 }
 
 /*
- * Ink & Signal — Shuddhalekhan design language
- * Canvas: layered near-black ink. Type: Inter, off-white, tight display tracking.
- * Signals: periwinkle = dictation, coral = agent mode. Nothing else gets color.
+ * Lampblack & Cinnabar: same tokens as the desktop app (DESIGN.md).
+ * Warm ink surfaces, parchment text, color only where it carries meaning.
  */
 :root {
-  font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
   color: var(--foreground);
   background: var(--background);
   font-synthesis: none;
   text-rendering: optimizelegibility;
   -webkit-font-smoothing: antialiased;
 
-  --background: #060609;
-  --foreground: #f5f5f7;
-  --card: #0c0c12;
-  --card-foreground: #f5f5f7;
-  --primary: #f5f5f7;
-  --primary-foreground: #0a0a10;
-  --secondary: #16161d;
-  --secondary-foreground: #f5f5f7;
-  --muted: #16161d;
-  --muted-foreground: #8b8b96;
-  --accent: #16161d;
-  --accent-foreground: #f5f5f7;
-  --destructive: #ff6a6a;
-  --border: rgba(255, 255, 255, 0.08);
-  --input: rgba(255, 255, 255, 0.1);
-  --ring: rgba(133, 146, 255, 0.6);
-
-  --voice: #8592ff;
-  --agent: #ff6a6a;
-
-  /* Shared motion vocabulary */
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --canvas: #0e0d0b;
+  --background: #12100f;
+  --card: #191715;
+  --raised: #262422;
+  --muted: #312e2b;
+  --hairline: #393632;
+  --foreground: #f1efe9;
+  --muted-foreground: #9c958b;
+  --on-signal: #141210;
+  --voice: #719ed6;
+  --agent: #e08652;
+  --success: #5eba8f;
+  --warning: #daa64e;
+  --destructive: #d1616a;
 }
 
 html {
@@ -64,8 +64,8 @@ html {
 }
 
 ::selection {
-  background: rgba(133, 146, 255, 0.32);
-  color: #ffffff;
+  background: color-mix(in oklab, var(--voice) 35%, transparent);
+  color: var(--foreground);
 }
 
 @layer base {
@@ -74,61 +74,109 @@ html {
   }
 
   body {
-    @apply m-0 min-w-80 bg-background text-foreground antialiased;
-
-    font-feature-settings: "cv11", "ss01";
+    @apply m-0 min-w-80 bg-background font-sans text-foreground antialiased;
   }
 
-  button,
-  a {
+  a,
+  button {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
   }
 }
 
-/* ---- Motion primitives (compositor-only: transform + opacity) ---- */
+/* Recording pill: same shapes as app/src/renderer/RecordingPopup.css.
+   Dictation and Agent Mode differ by shape and glyph, not color alone. */
+.pill {
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--voice);
+}
 
-@keyframes caret-blink {
-  0%, 100% { opacity: 1; }
+.pill .pill-glyph {
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--voice) 16%, transparent);
+}
+
+.pill[data-intent="agent"],
+.agent-island {
+  border-radius: 6px;
+  border: 1px solid color-mix(in oklab, var(--agent) 40%, transparent);
+  background: color-mix(in oklab, var(--card) 94%, var(--agent));
+}
+
+.pill[data-intent="agent"] {
+  color: var(--agent);
+}
+
+.pill[data-intent="agent"] .pill-glyph {
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--agent) 18%, transparent);
+}
+
+/* Level bars only exist while the pill is mounted, so idle never repaints. */
+.pill-bar {
+  width: 2px;
+  height: 16px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: scaleY(0.3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pill-bar {
+    animation: pill-level 0.9s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes pill-level {
+  to { transform: scaleY(var(--peak, 0.9)); }
+}
+
+/* Key-styled push-to-talk control for the demo. Feedback lives on the press. */
+.keycap {
+  box-shadow: inset 0 -2px 0 var(--canvas), 0 1px 0 color-mix(in oklab, var(--foreground) 6%, transparent);
+  transition: transform 100ms ease-out, background-color 100ms ease-out, box-shadow 100ms ease-out;
+}
+
+[data-pressed="true"] .keycap {
+  transform: translateY(1px) scale(0.97);
+  background: var(--muted);
+  box-shadow: inset 0 -1px 0 var(--canvas);
+}
+
+/* Caret blinks a few times after text lands, then rests solid. */
+@media (prefers-reduced-motion: no-preference) {
+  .caret {
+    animation: caret 1.1s steps(1) 5;
+  }
+}
+
+@keyframes caret {
   50% { opacity: 0; }
 }
 
-.animate-caret {
-  animation: caret-blink 1.1s steps(1) 6;
+/* Provider logo strips: edges fade out; the track slides one copy's width and loops. */
+.marquee {
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
 }
 
-/* Recording-pill level bars — pure CSS loop, no JS re-renders */
-@keyframes eq-bar {
-  0%, 100% { transform: scaleY(0.35); }
-  50% { transform: scaleY(1); }
-}
-
-.eq-bar {
-  transform-origin: center;
-  animation: eq-bar 1.4s ease-in-out 3;
-}
-
-@keyframes live-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-.animate-live-dot {
-  animation: live-dot 2s ease-in-out 3;
-}
-
-@keyframes content-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
+@media (prefers-reduced-motion: no-preference) {
+  .marquee-track {
+    animation: marquee 40s linear infinite;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+
+  .marquee-track[data-reverse="true"] {
+    animation-direction: reverse;
+  }
+
+  .marquee[data-paused="true"] .marquee-track,
+  .marquee:hover .marquee-track {
+    animation-play-state: paused;
   }
 }
 
-.animate-content-in {
-  animation: content-in 0.24s var(--ease-out-expo) both;
+@keyframes marquee {
+  to { transform: translateX(-50%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -136,17 +184,9 @@ html {
     scroll-behavior: auto;
   }
 
-  .animate-caret,
-  .animate-live-dot {
-    animation: none;
-  }
-
-  .animate-content-in {
-    animation: none;
-  }
-
-  .eq-bar {
-    animation: none;
-    transform: scaleY(0.6);
-  }
+  /* No motion: show one copy, wrapped */
+  .marquee { mask-image: none; }
+  .marquee-track { width: auto; }
+  .marquee-track > ul { flex-wrap: wrap; row-gap: 0.75rem; }
+  .marquee-track > ul[aria-hidden="true"] { display: none; }
 }
