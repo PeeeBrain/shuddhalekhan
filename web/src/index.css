@@ -187,6 +187,6 @@ html {
   /* No motion: show one copy, wrapped */
   .marquee { mask-image: none; }
   .marquee-track { width: auto; }
-  .marquee-track > ul { flex-wrap: wrap; row-gap: 0.75rem; }
+  .marquee-track > ul { flex-shrink: 1; flex-wrap: wrap; row-gap: 0.75rem; }
   .marquee-track > ul[aria-hidden="true"] { display: none; }
 }

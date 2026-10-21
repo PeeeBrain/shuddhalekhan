@@ -47,6 +47,7 @@ export function DictationDemo() {
 
   const phaseRef = useRef<Phase>('idle');
   const pressStartRef = useRef(0);
+  const releasedAtRef = useRef(0);
   const nextPhraseRef = useRef(reduceMotion ? 1 : 0);
   const interactedRef = useRef(false);
   const timersRef = useRef<number[]>([]);
@@ -94,6 +95,7 @@ export function DictationDemo() {
   };
 
   const release = () => {
+    releasedAtRef.current = performance.now();
     setPressed(false);
     if (!pressStartRef.current || phaseRef.current !== 'recording') return;
     const heldFor = performance.now() - pressStartRef.current;
@@ -228,6 +230,12 @@ export function DictationDemo() {
           onKeyDown={onKeyDown}
           onKeyUp={onKeyUp}
           onBlur={() => pressed && release()}
+          // Click-only activation (screen readers) acts as a tap; clicks trailing a press are already handled.
+          onClick={() => {
+            if (performance.now() - releasedAtRef.current < 100) return;
+            press();
+            release();
+          }}
         >
           <kbd className="keycap inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-raised px-4 font-sans text-[14px] font-medium text-foreground">
             <Mic className="size-4 text-voice" aria-hidden="true" />
