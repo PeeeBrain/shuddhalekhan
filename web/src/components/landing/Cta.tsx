@@ -1,82 +1,50 @@
-import { motion, useReducedMotion, useScroll, useTransform } from 'motion/react';
-import { useRef } from 'react';
 import { LatestWindowsDownloadLink } from '@/components/LatestWindowsDownloadLink';
 import { Button } from '@/components/ui/button';
 import { Reveal } from '@/components/motion/Reveal';
-import { Logomark } from '@/components/brand/Logo';
+import { Wordmark } from '@/components/brand/Logo';
+import { WindowsGlyph } from '@/components/landing/Hero';
+
+const REPO = 'https://github.com/PeeeBrain/shuddhalekhan';
+
+const FOOTER_LINKS = [
+  { href: `${REPO}/releases/latest`, label: 'Releases' },
+  { href: `${REPO}/issues`, label: 'Report an issue' },
+  { href: REPO, label: 'GitHub' },
+];
 
 export function Cta() {
-  const sectionRef = useRef<HTMLElement>(null);
-  const reduceMotion = useReducedMotion();
-  const { scrollYProgress } = useScroll({ target: sectionRef, offset: ['start end', 'start center'] });
-
-  // The closing glow gathers strength as the CTA approaches.
-  const glowOpacity = useTransform(scrollYProgress, [0, 1], [0.25, 1]);
-
   return (
     <>
-      <section id="download" ref={sectionRef} className="relative scroll-mt-20 overflow-hidden px-6 py-32 md:py-44">
-        <motion.div
-          aria-hidden="true"
-          style={{ opacity: reduceMotion ? 1 : glowOpacity }}
-          className="pointer-events-none absolute top-[-180px] left-1/2 h-[520px] w-[900px] -translate-x-1/2 bg-[radial-gradient(closest-side,rgba(133,146,255,0.16),transparent)]"
-        />
-
-        <Reveal className="relative mx-auto max-w-2xl text-center">
-          <p className="font-mono text-[11px] font-medium tracking-[0.24em] text-voice uppercase">
-            Your computer. Your rules.
-          </p>
-          <h2 className="mt-5 text-balance text-4xl font-semibold tracking-[-0.03em] sm:text-6xl">
-            Stop paying monthly to type with your voice.
-          </h2>
-          <p className="mx-auto mt-5 max-w-md text-pretty leading-relaxed text-muted-foreground">
-            Download Shuddhalekhan, point it at a Whisper server, and start dictating in any app. Free and open
-            source.
-          </p>
-          <Button
-            asChild
-            className="mx-auto mt-9 h-12 rounded-full bg-foreground px-8 text-sm font-semibold text-primary-foreground transition-[background-color,transform] duration-300 hover:bg-white active:scale-[0.98]"
-          >
-            <LatestWindowsDownloadLink>Download for Windows</LatestWindowsDownloadLink>
-          </Button>
-          <div className="mt-4 font-mono text-[11px] text-zinc-500">Windows 10 / 11 · x64 · installer auto-updates</div>
+      <section id="download" className="scroll-mt-20 px-6 pt-12 pb-28 md:pb-40">
+        <Reveal className="mx-auto max-w-6xl rounded-[20px] border border-border bg-card px-6 py-16 sm:px-12 md:py-24">
+          <div className="flex flex-col gap-10 md:flex-row md:items-end md:justify-between">
+            <h2 className="max-w-[16ch] font-display text-[clamp(2.5rem,1.5rem+4vw,4.75rem)] leading-[1] font-semibold tracking-[-0.04em] text-balance">
+              Voice typing without a subscription.
+            </h2>
+            <div className="shrink-0">
+              <Button asChild className="h-12 rounded-full px-7 text-[15px] font-semibold transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97]">
+                <LatestWindowsDownloadLink>
+                  <WindowsGlyph />
+                  Download for Windows
+                </LatestWindowsDownloadLink>
+              </Button>
+              <p className="mt-3 text-[13px] text-muted-foreground">Windows 10 and 11, x64.</p>
+            </div>
+          </div>
         </Reveal>
       </section>
 
-      <footer className="relative border-t border-white/[0.06]">
-        <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 py-14 md:flex-row md:items-start md:justify-between">
-          <div className="max-w-xs">
-            <Logomark className="size-8" />
-            <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-              Free &amp; open source voice dictation for Windows. Speak freely.
-            </p>
-          </div>
-
-          <nav className="flex gap-16" aria-label="Footer">
-            <div>
-              <div className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">Project</div>
-              <ul className="mt-4 space-y-2.5 text-sm">
-                <li><a className="text-zinc-300 transition-colors hover:text-white" href="https://github.com/PeeeBrain/shuddhalekhan/releases/latest" target="_blank" rel="noreferrer">Releases</a></li>
-                <li><a className="text-zinc-300 transition-colors hover:text-white" href="https://github.com/PeeeBrain/shuddhalekhan/issues" target="_blank" rel="noreferrer">Report an issue</a></li>
-                <li><a className="text-zinc-300 transition-colors hover:text-white" href="https://github.com/PeeeBrain/shuddhalekhan" target="_blank" rel="noreferrer">GitHub</a></li>
-              </ul>
-            </div>
-            <div>
-              <div className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">Page</div>
-              <ul className="mt-4 space-y-2.5 text-sm">
-                <li><a className="text-zinc-300 transition-colors hover:text-white" href="#how-it-works">How it works</a></li>
-                <li><a className="text-zinc-300 transition-colors hover:text-white" href="#agent-mode">Agent mode</a></li>
-                <li><a className="text-zinc-300 transition-colors hover:text-white" href="#why-open-source">Why open source</a></li>
-              </ul>
-            </div>
+      <footer className="border-t border-border/60">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-10 sm:flex-row sm:items-center sm:justify-between">
+          <Wordmark />
+          <nav aria-label="Footer" className="flex flex-wrap gap-x-6 gap-y-2 text-[13px]">
+            {FOOTER_LINKS.map((link) => (
+              <a key={link.label} href={link.href} target="_blank" rel="noreferrer" className="rounded-sm text-muted-foreground transition-colors duration-150 hover:text-foreground">
+                {link.label}
+              </a>
+            ))}
           </nav>
-        </div>
-
-        <div className="border-t border-white/[0.05]">
-          <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-6 py-6 font-mono text-[11px] text-zinc-600 sm:flex-row">
-            <span>Shuddhalekhan · MIT licensed</span>
-            <span>शुद्धलेखन · correct writing</span>
-          </div>
+          <p className="text-[13px] text-muted-foreground">MIT licensed</p>
         </div>
       </footer>
     </>

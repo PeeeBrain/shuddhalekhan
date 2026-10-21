@@ -1,160 +1,241 @@
-import { useEffect, useState } from 'react';
-import { useReducedMotion } from 'motion/react';
-import { Check } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useInView, useReducedMotion } from 'motion/react';
+import { Ban, Check, RotateCcw, ShieldQuestion } from 'lucide-react';
 import { Reveal } from '@/components/motion/Reveal';
-import { Eyebrow } from '@/components/landing/Eyebrow';
+import { RecordingPill } from '@/components/landing/Pill';
+import { cn } from '@/lib/utils';
 
-const TICK_DURATIONS = [700, 2100, 1200, 1600, 1200, 2800, 900, 3400];
+type Policy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
+type Run = {
+  phase: 'listening' | 'working' | 'approval' | 'done';
+  completed: number;
+  result: 'opened' | 'denied' | 'disabled' | null;
+};
 
-const DEMO_STEPS: { label: string; tool: string; runAt: number; doneAt: number; waitAt?: number[] }[] = [
-  { label: 'Read this week’s commits', tool: 'git · log', runAt: 2, doneAt: 3 },
-  { label: 'Draft the release notes', tool: 'notes · write', runAt: 3, doneAt: 4 },
-  { label: 'Open the pull request', tool: 'github · create_pull', runAt: 4, doneAt: 7, waitAt: [5, 6] },
+const POLICIES: { id: Policy; label: string; note: string }[] = [
+  { id: 'disabled', label: 'Disabled', note: 'The agent never sees this tool.' },
+  { id: 'alwaysAsk', label: 'Always ask', note: 'The run stops and waits for your answer. New tools get this setting.' },
+  { id: 'alwaysAllow', label: 'Always allow', note: 'The tool runs without asking. The audit log still records each call.' },
 ];
+
+const STEPS = [
+  { label: "Read this week's commits", tool: 'git:log' },
+  { label: 'Draft the release notes', tool: 'notes:write' },
+  { label: 'Open the pull request', tool: 'github:create_pull' },
+];
+
+const RESULTS = {
+  opened: 'Drafted the release notes and opened pull request #214 against main.',
+  denied: 'Drafted the release notes. You denied github:create_pull, so no pull request was opened.',
+  disabled: 'Drafted the release notes. Opening a pull request needs github:create_pull, which is disabled.',
+};
+
+const START: Run = { phase: 'listening', completed: 0, result: null };
+const SPRING = { type: 'spring', bounce: 0, duration: 0.35 } as const;
+
+/** The next scripted state, or null when the run is waiting on the visitor or finished. */
+function advance(run: Run, policy: Policy): Run | null {
+  if (run.phase === 'listening') return { ...run, phase: 'working' };
+  if (run.phase !== 'working') return null;
+  if (run.completed === 2) return { phase: 'done', completed: 3, result: 'opened' };
+  const completed = run.completed + 1;
+  if (completed === 2 && policy === 'disabled') return { phase: 'done', completed, result: 'disabled' };
+  if (completed === 2 && policy === 'alwaysAsk') return { phase: 'approval', completed, result: null };
+  return { ...run, completed };
+}
 
 export function AgentSection() {
   const reduceMotion = useReducedMotion();
-  const [tick, setTick] = useState(0);
-  const finalTick = TICK_DURATIONS.length - 1;
-  const demoTick = reduceMotion ? finalTick : tick;
+  const stageRef = useRef<HTMLDivElement>(null);
+  const inView = useInView(stageRef, { once: true, amount: 0.4 });
+  const [policy, setPolicy] = useState<Policy>('alwaysAsk');
+  const [run, setRun] = useState<Run>(START);
+  const [seconds, setSeconds] = useState(1);
 
-  // Plays one scripted agent run, then leaves the completed result in place.
   useEffect(() => {
-    if (reduceMotion || tick >= finalTick) return undefined;
-    const timeout = setTimeout(() => setTick((current) => current + 1), TICK_DURATIONS[tick]);
+    if (!inView) return undefined;
+    const next = advance(run, policy);
+    if (!next) return undefined;
+    const timeout = setTimeout(() => setRun(next), run.phase === 'listening' ? 2200 : 1100);
     return () => clearTimeout(timeout);
-  }, [finalTick, reduceMotion, tick]);
+  }, [inView, policy, run]);
+
+  useEffect(() => {
+    if (!inView || run.phase !== 'listening') return undefined;
+    const interval = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [inView, run.phase]);
+
+  const restart = (nextPolicy = policy) => {
+    setPolicy(nextPolicy);
+    setSeconds(1);
+    setRun(START);
+  };
+
+  const decide = (choice: 'approved' | 'denied' | 'always-allow') => {
+    if (choice === 'always-allow') setPolicy('alwaysAllow');
+    setRun(choice === 'denied' ? { phase: 'done', completed: 2, result: 'denied' } : { phase: 'working', completed: 2, result: null });
+  };
+
+  const status =
+    run.phase === 'listening' ? 'Listening'
+    : run.phase === 'working' ? 'Working'
+    : run.phase === 'approval' ? 'Waiting for approval'
+    : run.result === 'opened' ? 'Done'
+    : 'Done, one step skipped';
+
+  const enterFromBelow = reduceMotion
+    ? { initial: false as const, exit: { opacity: 0, transition: { duration: 0 } } }
+    : { initial: { opacity: 0, y: 12 }, exit: { opacity: 0, y: 12, transition: { duration: 0.15, ease: 'easeIn' as const } } };
 
   return (
-    <section id="agent-mode" className="relative scroll-mt-20 overflow-hidden py-28 md:py-36">
-      {/* Coral signal glow — the visual signature of Agent Mode */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute top-10 right-[-240px] h-[560px] w-[560px] bg-[radial-gradient(closest-side,rgba(255,106,106,0.07),transparent)]"
-      />
-
-      <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-6 lg:grid-cols-12">
+    <section id="agent-mode" className="scroll-mt-20 py-24 md:py-36">
+      <div className="mx-auto grid max-w-6xl gap-x-16 gap-y-12 px-6 lg:grid-cols-12">
         <Reveal className="lg:col-span-5">
-          <Eyebrow tone="agent">Agent mode</Eyebrow>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.02em] sm:text-5xl">
-            One sentence in.
-            <span className="block text-muted-foreground">Finished work out.</span>
+          <p className="text-[15px] font-medium text-agent">Agent Mode</p>
+          <h2 className="mt-5 font-display text-[clamp(2.25rem,1.5rem+2.8vw,3.75rem)] leading-[1.02] font-semibold tracking-[-0.035em] text-balance">
+            Delegate one-off tasks to agents.
           </h2>
-          <p className="mt-5 max-w-md leading-relaxed text-muted-foreground">
-            Some tasks were never typing tasks. Describe the outcome, and Shuddhalekhan plans the steps, calls your
-            tools, and brings back finished work. You talk. It works.
+          <p className="mt-6 max-w-[44ch] text-[17px] leading-relaxed text-muted-foreground text-pretty">
+            Press the Agent Mode shortcut and say what you want done. The agent uses the model provider you set up and calls
+            tools from the MCP servers you connect. Each command is a separate run with no chat history.
           </p>
 
-          <div className="mt-9 space-y-6">
-            <div className="border-l border-agent/60 pl-4">
-              <h3 className="text-sm font-semibold text-white">Speak the outcome, skip the steps</h3>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-                A sentence becomes a plan: read, draft, create, file. The agent works through it while you talk or
-                walk away.
-              </p>
+          <div className="mt-10">
+            <p id="policy-label" className="text-[13px] font-medium">
+              Policy for <code className="font-mono text-[12px] text-muted-foreground">github:create_pull</code>
+            </p>
+            <div role="group" aria-labelledby="policy-label" className="mt-3 inline-flex rounded-[10px] border border-border bg-card p-1">
+              {POLICIES.map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={policy === id}
+                  onClick={() => restart(id)}
+                  className={cn(
+                    'relative h-8 cursor-pointer rounded-md px-3.5 text-[13px] font-medium transition-colors duration-150 active:scale-[0.97]',
+                    policy === id ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {policy === id && (
+                    <motion.span layoutId="policy-thumb" transition={reduceMotion ? { duration: 0 } : SPRING} className="absolute inset-0 rounded-md bg-raised" />
+                  )}
+                  <span className="relative">{label}</span>
+                </button>
+              ))}
             </div>
-            <div className="border-l border-agent/60 pl-4">
-              <h3 className="text-sm font-semibold text-white">Every tool on your terms</h3>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
-                Connect MCP servers, then decide tool by tool what runs unattended and what asks first. Guarded calls
-                pause for a one-tap approval.
-              </p>
-            </div>
+            <p className="mt-3 min-h-5 text-[13px] text-muted-foreground">{POLICIES.find((p) => p.id === policy)?.note}</p>
           </div>
         </Reveal>
 
-        <Reveal delay={0.1} className="lg:col-span-7">
-          <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0a0b11] p-6 sm:p-8">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">
-                <span className="animate-live-dot size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
-                Agent run · live demo
-              </span>
-              <span className="font-mono text-[10px] text-zinc-600">hands-free</span>
-            </div>
-
-            <div
-              className={`mt-7 transition-all duration-700 ease-out ${demoTick >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'}`}
-            >
-              <div className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">You said</div>
-              <p className="mt-2.5 text-lg leading-relaxed text-zinc-100 sm:text-xl">
-                &ldquo;Draft release notes from this week&rsquo;s commits and open a PR.&rdquo;
-              </p>
-            </div>
-
-            <div className="mt-7 border-t border-white/[0.06] pt-5">
-              <div className="font-mono text-[10px] tracking-[0.2em] text-zinc-500 uppercase">Agent did</div>
-              <ul className="mt-3.5 space-y-3">
-                {DEMO_STEPS.map((step) => {
-                  const status =
-                    demoTick >= step.doneAt ? 'done'
-                    : step.waitAt?.includes(demoTick) ? 'waiting'
-                    : demoTick === step.runAt ? 'running'
-                    : 'pending';
-                  return (
-                    <li
-                      key={step.label}
-                      className={`flex items-center gap-3 text-sm transition-opacity duration-500 ${status === 'pending' ? 'opacity-30' : 'opacity-100'}`}
-                    >
-                      <span className="flex size-4 shrink-0 items-center justify-center">
-                        {status === 'done' ? (
-                          <Check className="size-3.5 text-emerald-400" aria-hidden="true" />
-                        ) : status === 'running' ? (
-                          <span className="motion-safe:animate-spin size-3 rounded-full border border-zinc-700 border-t-agent" aria-hidden="true" />
-                        ) : status === 'waiting' ? (
-                          <span className="animate-live-dot size-2 rounded-full bg-agent" aria-hidden="true" />
-                        ) : (
-                          <span className="size-2 rounded-full border border-zinc-700" aria-hidden="true" />
-                        )}
-                      </span>
-                      <span className={status === 'waiting' ? 'text-agent' : status === 'done' ? 'text-zinc-300' : 'text-zinc-400'}>
-                        {step.label}
-                      </span>
-                      <span className="ml-auto font-mono text-[10px] text-zinc-600">{step.tool}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-
-            <div className="mt-6 min-h-7">
-              <div
-                className={`flex items-center gap-2 text-sm transition-all duration-700 ease-out ${demoTick >= 7 ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'}`}
-                style={{ transitionTimingFunction: 'cubic-bezier(0.16, 1, 0.3, 1)' }}
-              >
-                <Check className="size-4 text-emerald-400" aria-hidden="true" />
-                <span className="text-zinc-200">Pull request opened.</span>
-                <span className="ml-auto font-mono text-[10px] text-zinc-500">one approval · zero keystrokes</span>
-              </div>
-            </div>
-
-            {/* Approval toast — slides in while a guarded tool waits */}
-            <div
-              role="presentation"
-              className={`absolute right-4 bottom-4 w-64 rounded-xl border border-agent/25 bg-[#141010]/95 p-4 shadow-2xl backdrop-blur transition-all duration-500 ${
-                demoTick === 5 || demoTick === 6 ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'
-              }`}
-            >
-              <div className="font-mono text-[9px] tracking-[0.18em] text-agent/90 uppercase">Approval needed</div>
-              <div className="mt-1.5 font-mono text-xs font-semibold text-white">github · create_pull</div>
-              <p className="mt-1 text-[11px] leading-snug text-zinc-400">
-                Writes to your repository. You marked this tool as ask-first.
-              </p>
-              <div className="mt-3 flex gap-1.5">
-                <span
-                  className={`rounded-md px-2.5 py-1 text-[10px] font-semibold transition-all duration-300 ${
-                    demoTick === 6 ? 'scale-95 bg-emerald-400 text-zinc-950' : 'bg-zinc-100 text-zinc-950'
-                  }`}
-                >
-                  Allow
+        <Reveal delay={0.08} className="lg:col-span-7">
+          <div ref={stageRef} className="flex min-h-[29rem] flex-col rounded-[20px] border border-border bg-canvas p-5 sm:p-8">
+            <div className="flex items-center justify-between text-[13px]">
+              <span className="text-muted-foreground" aria-live="polite">
+                Agent run <span className="mx-1.5 text-border">/</span>
+                <span className={cn(run.phase === 'approval' ? 'text-warning' : run.phase === 'done' ? 'text-success' : 'text-foreground')}>
+                  {status}
                 </span>
-                <span className="rounded-md border border-white/10 px-2.5 py-1 text-[10px] font-medium text-zinc-400">Always</span>
-                <span className="rounded-md border border-white/10 px-2.5 py-1 text-[10px] font-medium text-zinc-400">Deny</span>
-              </div>
+              </span>
+              {run.phase === 'done' && (
+                <button
+                  type="button"
+                  onClick={() => restart()}
+                  className="flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 font-medium text-voice transition-colors duration-150 hover:bg-raised active:scale-[0.97]"
+                >
+                  <RotateCcw className="size-3.5" aria-hidden="true" /> Run again
+                </button>
+              )}
+            </div>
+
+            <p className={cn('mt-6 text-[19px] leading-snug text-pretty transition-opacity duration-200', run.phase === 'listening' && 'opacity-0')}>
+              "Draft release notes from this week's commits and open a pull request."
+            </p>
+
+            <ol className="mt-7 space-y-3.5 border-t border-border/70 pt-6">
+              {STEPS.map((step, i) => {
+                const state =
+                  i < run.completed ? 'done'
+                  : i === 2 && run.phase === 'approval' ? 'waiting'
+                  : i === 2 && run.result && run.result !== 'opened' ? 'skipped'
+                  : i === run.completed && run.phase === 'working' ? 'running'
+                  : 'pending';
+                return (
+                  <li key={step.tool} className={cn('flex items-center gap-3 text-[15px] transition-opacity duration-200', state === 'pending' && 'opacity-40')}>
+                    <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden="true">
+                      {state === 'done' ? <Check className="size-4 text-success" />
+                      : state === 'skipped' ? <Ban className="size-3.5 text-muted-foreground" />
+                      : state === 'waiting' ? <ShieldQuestion className="size-4 text-warning" />
+                      : state === 'running' ? <span className="size-2 rounded-full bg-agent" />
+                      : <span className="size-2 rounded-full border border-muted-foreground/60" />}
+                    </span>
+                    <span className={cn(state === 'skipped' && 'text-muted-foreground line-through')}>{step.label}</span>
+                    <code className="ml-auto hidden font-mono text-[12px] text-muted-foreground sm:block">{step.tool}</code>
+                  </li>
+                );
+              })}
+            </ol>
+
+            {/* Every agent surface appears in the same spot, like the app's runtime shell */}
+            <div className="mt-auto flex min-h-40 items-end justify-center pt-8 sm:justify-end">
+              <AnimatePresence mode="wait" initial={false}>
+                {run.phase === 'listening' && inView ? (
+                  <motion.div key="pill" {...enterFromBelow} animate={{ opacity: 1, y: 0, transition: SPRING }} className="sm:mx-auto">
+                    <RecordingPill intent="agent" seconds={seconds} />
+                  </motion.div>
+                ) : run.phase === 'approval' ? (
+                  <motion.div key="approval" {...enterFromBelow} animate={{ opacity: 1, y: 0, transition: SPRING }} className="agent-island w-full max-w-sm">
+                    <ApprovalCard onDecide={decide} />
+                  </motion.div>
+                ) : run.phase === 'done' && run.result ? (
+                  <motion.div key={`done-${run.result}`} {...enterFromBelow} animate={{ opacity: 1, y: 0, transition: SPRING }} className="agent-island w-full max-w-sm p-4">
+                    <p className="flex items-center gap-2 text-[13px] font-semibold">
+                      {run.result === 'opened' ? <Check className="size-4 text-success" aria-hidden="true" /> : <Ban className="size-4 text-muted-foreground" aria-hidden="true" />}
+                      Agent finished
+                    </p>
+                    <p className="mt-1.5 text-[13px] leading-5 text-muted-foreground">{RESULTS[run.result]}</p>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
           </div>
         </Reveal>
       </div>
     </section>
+  );
+}
+
+/** Mirrors the app's approval card: header, labeled arguments, three choices. */
+function ApprovalCard({ onDecide }: { onDecide: (choice: 'approved' | 'denied' | 'always-allow') => void }) {
+  const button = 'h-8 cursor-pointer rounded-md px-3 text-[13px] font-medium transition-[background-color,transform] duration-150 active:scale-[0.97]';
+  return (
+    <>
+      <div className="flex items-center gap-2.5 px-4 pt-3.5">
+        <ShieldQuestion className="size-4 text-warning" aria-hidden="true" />
+        <span className="text-[13px] font-semibold">Approval needed</span>
+        <code className="ml-auto font-mono text-[11px] text-muted-foreground">github:create_pull</code>
+      </div>
+      <div className="px-4 pt-3 pb-3.5">
+        <p className="text-[15px] font-semibold">Create pull</p>
+        <dl className="mt-2 grid grid-cols-[5rem_1fr] gap-y-1 text-[13px] leading-5">
+          <dt className="text-muted-foreground">Title</dt>
+          <dd>Release notes, week 43</dd>
+          <dt className="text-muted-foreground">Base</dt>
+          <dd>main</dd>
+        </dl>
+      </div>
+      <div className="flex items-center gap-1.5 border-t border-border/60 px-3 py-2.5">
+        <button type="button" onClick={() => onDecide('always-allow')} className={cn(button, 'hover:bg-raised')}>
+          Always allow
+        </button>
+        <span className="flex-1" />
+        <button type="button" onClick={() => onDecide('denied')} className={cn(button, 'bg-raised hover:bg-muted')}>
+          Deny
+        </button>
+        <button type="button" onClick={() => onDecide('approved')} className={cn(button, 'bg-voice text-on-signal hover:bg-voice/90')}>
+          Approve
+        </button>
+      </div>
+    </>
   );
 }

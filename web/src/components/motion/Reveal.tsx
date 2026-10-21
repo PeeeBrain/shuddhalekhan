@@ -1,32 +1,29 @@
 import { motion, useReducedMotion } from 'motion/react';
 import type { ReactNode } from 'react';
 
-const EASE_OUT_EXPO = [0.16, 1, 0.3, 1] as const;
+const EASE_OUT_QUART = [0.25, 1, 0.5, 1] as const;
 
 type RevealProps = {
   children: ReactNode;
   className?: string;
-  /** Seconds to wait before the reveal starts — used to stagger siblings. */
+  /** Seconds to wait before the reveal starts; used to stagger siblings. */
   delay?: number;
-  /** Vertical travel in px. */
-  y?: number;
-  once?: boolean;
 };
 
 /**
- * Fade-and-rise entrance when the element scrolls into view.
- * Transform/opacity only; collapses to a static render for reduced motion.
+ * Short fade-and-rise when the element scrolls into view, once.
+ * Transform/opacity only; renders static under reduced motion.
  */
-export function Reveal({ children, className, delay = 0, y = 28, once = true }: RevealProps) {
+export function Reveal({ children, className, delay = 0 }: RevealProps) {
   const reduceMotion = useReducedMotion();
 
   return (
     <motion.div
       className={className}
-      initial={reduceMotion ? false : { opacity: 0, y }}
+      initial={reduceMotion ? false : { opacity: 0, y: 16 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once, margin: '-72px' }}
-      transition={{ duration: 0.8, delay, ease: EASE_OUT_EXPO }}
+      viewport={{ once: true, margin: '-64px' }}
+      transition={{ duration: 0.6, delay, ease: EASE_OUT_QUART }}
     >
       {children}
     </motion.div>
