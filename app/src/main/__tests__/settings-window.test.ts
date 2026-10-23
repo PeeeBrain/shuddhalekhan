@@ -48,6 +48,18 @@ describe('settings window', () => {
     send.mockClear();
   });
 
+  it('creates the settings window hidden and shows it once ready', async () => {
+    const { openSettingsWindow } = await import(`../settings-window?test=${Date.now()}-1`);
+
+    openSettingsWindow();
+    expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({ show: false }));
+    expect(show).not.toHaveBeenCalled();
+
+    const readyToShow = once.mock.calls.find((call: unknown[]) => call[0] === 'ready-to-show')?.[1] as () => void;
+    readyToShow();
+    expect(show).toHaveBeenCalledTimes(1);
+  });
+
   it('focuses the existing settings window instead of creating another one', async () => {
     const { openSettingsWindow } = await import(`../settings-window?test=${Date.now()}-2`);
 
