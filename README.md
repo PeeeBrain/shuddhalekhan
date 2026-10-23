@@ -28,12 +28,12 @@ bun run dev:web
 Run repository checks:
 
 ```powershell
-bun run typecheck
-bun run lint
-bun test
+bun run check
 ```
 
 Typechecking uses TypeScript 7.0.2 throughout the monorepo. Oxlint runs the
 existing workspace lint checks without depending on the legacy compiler API.
+The check command runs typechecking, linting, and tests together. Tests run in
+four isolated worker processes; use `bun run test` to run just the tests.
 
 See [`app/README.md`](app/README.md) for desktop application details.

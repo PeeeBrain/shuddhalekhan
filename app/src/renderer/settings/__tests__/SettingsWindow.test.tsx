@@ -268,7 +268,12 @@ describe('Settings navigation', () => {
         }),
         managedLocalModelReady: true,
       });
-      fireEvent.click(await screen.findByRole('button', { name: 'Start microphone check' }));
+      await waitFor(() => expect(screen.getByRole('button', {
+        name: 'Start microphone check',
+      }).hasAttribute('disabled')).toBe(false));
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Start microphone check' }));
+      });
       expect(await screen.findByRole('alert')).toHaveTextContent('Microphone access failed');
       expect(stop).toHaveBeenCalledTimes(1);
     } finally {

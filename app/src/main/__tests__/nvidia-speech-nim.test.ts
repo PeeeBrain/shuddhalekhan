@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { AppConfig } from '../../types/ipc';
-import { getTranscriber } from '../providers';
+import { installElectronMock } from '../../test/electron-mock';
 import { validateProviderReadiness } from '../transcription';
+
+installElectronMock();
+// Provider tests receive config explicitly and do not use the native settings store.
+mock.module('electron-store', () => ({ default: class {
+  get() { return undefined; }
+  set() {}
+} }));
+const { getTranscriber } = await import('../providers');
 
 function config(auth: 'none' | 'bearer' | 'header' = 'none'): AppConfig {
   return {
