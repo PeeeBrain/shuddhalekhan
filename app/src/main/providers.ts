@@ -1,3 +1,4 @@
+import { createSarvamTranscriber } from './sarvam';
 import {
   buildOpenAiEndpoint,
   cleanFillerWords,
@@ -43,6 +44,10 @@ export function getTranscriber(
 
   if (provider === 'openai') {
     return createOpenAiTranscriber(config, vault);
+  }
+
+  if (provider === 'sarvam') {
+    return createSarvamTranscriber(config.transcription.providers.sarvam, vault.read('sarvam-api-key'));
   }
 
   if (provider === 'azure-speech') {

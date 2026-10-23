@@ -14,6 +14,7 @@ const CREDENTIAL_KINDS: CredentialKind[] = [
   'openai-api-key',
   'custom-open-ai-compatible-bearer',
   'custom-open-ai-compatible-header',
+  'sarvam-api-key',
   'azure-speech-key',
   'nvidia-nim-bearer',
   'nvidia-nim-header',

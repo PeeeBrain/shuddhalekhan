@@ -1,3 +1,4 @@
+import { DEFAULT_SARVAM_CONFIG, sarvamConfigSchema } from '../shared/sarvam';
 import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
@@ -48,6 +49,7 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
   providers: {
     localWhisperCpp: { endpoint: DEFAULT_LOCAL_ENDPOINT },
     openai: { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+    sarvam: { ...DEFAULT_SARVAM_CONFIG },
     azureSpeech: { endpoint: '', region: '' },
     googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
     nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -145,6 +147,7 @@ function maybeMigrateTranscriptionConfig(): void {
     providers: {
       localWhisperCpp: { endpoint },
       openai: transcription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+      sarvam: sarvamConfigSchema.safeParse(transcription?.providers?.sarvam).data ?? { ...DEFAULT_SARVAM_CONFIG },
       azureSpeech: transcription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
       googleCloudSpeech: transcription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: transcription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -241,6 +244,7 @@ export function getConfig(): AppConfig {
     providers: {
       localWhisperCpp: { endpoint: localEndpoint },
       openai: storedTranscription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+      sarvam: sarvamConfigSchema.safeParse(storedTranscription?.providers?.sarvam).data ?? { ...DEFAULT_SARVAM_CONFIG },
       azureSpeech: storedTranscription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
       googleCloudSpeech: storedTranscription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: storedTranscription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -335,6 +339,7 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
 
   if (key === 'transcription') {
     const transcription = value as TranscriptionConfig;
+    sarvamConfigSchema.parse(transcription.providers.sarvam);
     if (transcription.activeProvider !== store.get('transcription')?.activeProvider) {
       assertDictationCombination({
         dictation: normalizeDictationConfig(store.get('dictation')),
@@ -355,6 +360,7 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
       providers: {
         localWhisperCpp: { endpoint: value as string },
         openai: existing?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
+        sarvam: sarvamConfigSchema.safeParse(existing?.providers?.sarvam).data ?? { ...DEFAULT_SARVAM_CONFIG },
         azureSpeech: existing?.providers?.azureSpeech ?? { endpoint: '', region: '' },
         googleCloudSpeech: existing?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
         nvidiaSpeechNim: existing?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -369,6 +375,7 @@ function isTranscriptionProviderId(value: unknown): value is TranscriptionProvid
   return value === 'managed-local'
     || value === 'local-whisper-cpp'
     || value === 'openai'
+    || value === 'sarvam'
     || value === 'azure-speech'
     || value === 'google-cloud-speech-v2'
     || value === 'nvidia-speech-nim'

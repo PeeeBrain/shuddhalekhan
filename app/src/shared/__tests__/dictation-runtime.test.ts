@@ -44,6 +44,7 @@ describe('Dictation config normalization', () => {
       'managed-local',
       'local-whisper-cpp',
       'openai',
+      'sarvam',
       'azure-speech',
       'google-cloud-speech-v2',
       'nvidia-speech-nim',

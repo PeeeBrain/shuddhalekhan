@@ -19,6 +19,7 @@ function config(auth: 'none' | 'bearer' | 'header' = 'none'): AppConfig {
       providers: {
         localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        sarvam: { model: 'saaras:v4', mode: 'transcribe' },
         azureSpeech: { endpoint: '', region: '' },
         googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
         nvidiaSpeechNim: {

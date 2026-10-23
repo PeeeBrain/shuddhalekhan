@@ -31,6 +31,8 @@ describe('credential IPC', () => {
     expect(changes).toEqual(['agent-api-key']);
     handlers.get('credential:remove')?.({}, 'agent-api-key');
     expect(changes).toEqual(['agent-api-key', 'agent-api-key']);
+    expect(save?.({}, 'sarvam-api-key', 'sarvam-secret')).toEqual({ available: true, exists: true });
+    expect(changes.at(-1)).toBe('sarvam-api-key');
     expect(handlers.get('credential:get-status')?.({}, 'azure-speech-key')).toEqual({
       available: true,
       exists: true,

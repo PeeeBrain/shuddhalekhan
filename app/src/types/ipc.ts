@@ -45,6 +45,7 @@ export type CredentialKind =
   | 'openai-api-key'
   | 'custom-open-ai-compatible-bearer'
   | 'custom-open-ai-compatible-header'
+  | 'sarvam-api-key'
   | 'azure-speech-key'
   | 'nvidia-nim-bearer'
   | 'nvidia-nim-header'
@@ -275,6 +276,7 @@ export interface MainToRendererChannels {
   'recording:duration-warning': (remainingSeconds: number | null) => void;
   'audio:level-changed': (level: number) => void;
   'mcp:status-snapshot': (snapshot: McpStatusSnapshot) => void;
+  'credential:changed': (credential: CredentialKind) => void;
   'agent:provider-invalidated': () => void;
   'updater:status-changed': (status: UpdateStatus) => void;
   'settings:navigate': (section: 'about') => void;
@@ -364,6 +366,7 @@ export type TranscriptionProviderId =
   | 'managed-local'
   | 'local-whisper-cpp'
   | 'openai'
+  | 'sarvam'
   | 'azure-speech'
   | 'google-cloud-speech-v2'
   | 'nvidia-speech-nim'
@@ -420,6 +423,7 @@ export interface TranscriptionConfig {
   providers: {
     localWhisperCpp: LocalWhisperCppProviderConfig;
     openai: OpenAiProviderConfig;
+    sarvam: import('zod').infer<typeof import('../shared/sarvam').sarvamConfigSchema>;
     azureSpeech: AzureSpeechProviderConfig;
     googleCloudSpeech: GoogleCloudSpeechProviderConfig;
     nvidiaSpeechNim: NvidiaSpeechNimProviderConfig;

@@ -17,6 +17,7 @@ import type {
   UpdateStatus,
   VersionReleaseNotes,
   CredentialStatus,
+  CredentialKind,
   TranscriptionReadiness,
 } from '../../../types/ipc';
 import { SettingsWindow } from '../../SettingsWindow';
@@ -35,6 +36,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       providers: {
       localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      sarvam: { model: 'saaras:v4', mode: 'transcribe' },
       azureSpeech: { endpoint: '', region: '' },
       googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -158,6 +160,7 @@ function createMockSettingsIpc(
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
     getAuditRunDetail: mock(() => Promise.resolve(options.auditRunDetail ?? [])),
     onAuditRunUpdated: mock((_callback: (runId: string) => void) => undefined),
+    onCredentialChanged: mock(() => undefined),
     getCredentialStatus: mock(() => Promise.resolve(options.credentialStatus ?? { available: true, exists: false })),
     saveCredential: mock(() => Promise.resolve({ available: true, exists: true })),
     removeCredential: mock(() => Promise.resolve({ available: true, exists: false })),
@@ -373,6 +376,41 @@ describe('Settings navigation', () => {
 });
 
 describe('Settings section reachability', () => {
+  for (const provider of ['sarvam', 'openai'] as const) {
+    it(`refreshes ${provider} setup after saving and removing credentials without changing config`, async () => {
+      const config = baseConfig();
+      config.transcription.activeProvider = provider;
+      config.transcription.providers.openai.model = 'whisper-1';
+      const settingsIpc = createMockSettingsIpc({ config });
+      let exists = false;
+      let notify: (credential: CredentialKind) => void = () => undefined;
+      settingsIpc.onCredentialChanged = mock((callback: (credential: CredentialKind) => void) => {
+        notify = callback;
+        return undefined;
+      });
+      settingsIpc.getCredentialStatus = mock(async () => ({ available: true, exists }));
+      settingsIpc.saveCredential = mock(async (credential: CredentialKind) => {
+        exists = true;
+        notify(credential);
+        return { available: true, exists };
+      });
+      settingsIpc.removeCredential = mock(async (credential: CredentialKind) => {
+        exists = false;
+        notify(credential);
+        return { available: true, exists };
+      });
+      render(<SettingsWindow settingsIpc={settingsIpc} />);
+      await waitForLoaded();
+      expect(await screen.findByText('Credential required')).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(provider === 'sarvam' ? 'Sarvam API key' : 'OpenAI API key'), { target: { value: 'test-secret' } });
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save key' })); });
+      expect(await screen.findByText('Configured')).toBeInTheDocument();
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Remove key' })); });
+      expect(await screen.findByText('Credential required')).toBeInTheDocument();
+      expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    });
+  }
+
   it('shows provider-neutral local transcription controls', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
@@ -434,7 +472,7 @@ describe('Settings section reachability', () => {
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
   });
 
-  it('groups all seven provider choices with descriptions and readiness', async () => {
+  it('groups all provider choices with descriptions and readiness', async () => {
     renderSettings();
     await waitForLoaded();
 
@@ -442,7 +480,7 @@ describe('Settings section reachability', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
 
     const options = await screen.findAllByRole('option');
-    expect(options).toHaveLength(8);
+    expect(options).toHaveLength(9);
     for (const name of [
       'Local whisper.cpp',
       'OpenAI',
@@ -451,6 +489,7 @@ describe('Settings section reachability', () => {
       'NVIDIA Speech NIM',
        'Custom OpenAI-compatible',
        'WhisperLiveKit',
+      'Sarvam AI',
     ]) {
       expect(options.some((option) => option.textContent?.includes(name))).toBe(true);
     }
@@ -578,6 +617,55 @@ describe('Settings section reachability', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Authentication' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Bearer token' }));
     expect(await screen.findByLabelText('Bearer token')).toBeInTheDocument();
+  });
+
+  function sarvamConfig(overrides: Partial<AppConfig> = {}, sarvam: AppConfig['transcription']['providers']['sarvam'] = { model: 'saaras:v4', mode: 'transcribe' }): AppConfig {
+    const current = baseConfig(overrides);
+    return {
+      ...current,
+      transcription: {
+        ...current.transcription,
+        activeProvider: 'sarvam',
+        providers: { ...current.transcription.providers, sarvam },
+      },
+    };
+  }
+
+  it('shows Sarvam setup and switches dictionary and filler controls with model and mode', async () => {
+    const { settingsIpc } = renderSettings({
+      config: sarvamConfig({ language: 'hi', dictionary: ['Shuddhalekhan'] }, { model: 'saaras:v4', mode: 'verbatim' }),
+    });
+    await waitForLoaded();
+
+    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('Sarvam AI');
+    expect(screen.getByLabelText('Sarvam API key')).toBeInTheDocument();
+    expect(settingsIpc.getCredentialStatus).toHaveBeenCalledWith('sarvam-api-key');
+    expect(screen.getByRole('combobox', { name: 'Spoken language' })).toHaveTextContent('Hindi');
+    expect(screen.getByText(/stop automatically at Sarvam.s 30-second/i)).toBeInTheDocument();
+    expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Sarvam AI');
+    expect(screen.getByRole('switch', { name: 'Clean transcription' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Model' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Saaras v3' }));
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeDisabled());
+    expect(screen.getByText(/Saaras v3 does not support key terms/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Shuddhalekhan' })).toBeDisabled();
+    expect(settingsIpc.setConfig).toHaveBeenCalledWith('transcription', expect.objectContaining({
+      providers: expect.objectContaining({ sarvam: { model: 'saaras:v3', mode: 'verbatim' } }),
+    }));
+    expect(settingsIpc.setConfig).not.toHaveBeenCalledWith('dictionary', expect.anything());
+  });
+
+  it('replaces the Sarvam output mode for translation and flags unsupported languages without overwriting them', async () => {
+    const { settingsIpc } = renderSettings({ config: sarvamConfig({ task: 'translate', language: 'fr' }) });
+    await waitForLoaded();
+
+    expect(screen.queryByRole('combobox', { name: 'Output mode' })).toBeNull();
+    expect(screen.getByText(/Sarvam returns English text/)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('is not supported by Sarvam AI. Choose a supported language or Auto-detect.');
+    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
   });
 
   it('shows the microphone on the Shortcuts section without a shared activation setting', async () => {
@@ -1101,6 +1189,7 @@ describe('Settings validation', () => {
           providers: {
             localWhisperCpp: { endpoint: 'http://127.0.0.1:9090/inference' },
             openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+            sarvam: { model: 'saaras:v4', mode: 'transcribe' },
             azureSpeech: { endpoint: '', region: '' },
             googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
             nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },

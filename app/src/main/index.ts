@@ -598,6 +598,7 @@ function validateAgentProvider(provider: AgentProviderConfig) {
 }
 
 registerCredentialIpcHandlers(ipcMain, credentialVault, credential => {
+  getSettingsWindow()?.webContents.send('credential:changed', credential);
   if (credential === 'agent-api-key') invalidateProviderTest();
 });
 

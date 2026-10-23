@@ -240,3 +240,7 @@ Approval card displayed in the runtime shell when the Agent requests to execute 
 
 ### Agent Response Window
 Terminal result card displayed in the runtime shell that shows the Agent's final response after its reasoning and tool loop completes. Agent responses are visual-only in v4, are not read aloud by default, and are not injected into the focused application by default.
+
+## Sarvam transcription
+
+Sarvam uses the synchronous `/speech-to-text` REST endpoint for Dictation and Agent Mode audio. Its API key is stored in the Electron credential vault. Saaras v4 is the default; v3 remains selectable. Both support transcription, English translation, verbatim, transliteration, and code-mixed output. The shared translation task overrides the provider output mode. Verbatim preserves fillers. Only v4 sends dictionary entries as JSON keyterms (up to 50 distinct terms, 64 characters each). The existing recording duration controller warns and stops at 30 seconds. This integration supports Batch and Corrected Dictation; Sarvam streaming and asynchronous jobs are not implemented.

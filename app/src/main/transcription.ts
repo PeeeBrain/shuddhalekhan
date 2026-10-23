@@ -1,3 +1,4 @@
+import { getSarvamSettingsErrors } from '../shared/sarvam';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -223,6 +224,11 @@ export function validateProviderReadiness(
     if (!model.trim()) errors.push('OpenAI model is not configured.');
     const apiKey = vault.read('openai-api-key');
     if (!apiKey) errors.push('OpenAI API key is not configured. Save one in Settings.');
+  }
+
+  if (providerId === 'sarvam') {
+    errors.push(...getSarvamSettingsErrors(config.transcription.providers.sarvam, config.language, config.dictionary));
+    if (!vault.read('sarvam-api-key')) errors.push('Sarvam API key is not configured. Save one in Settings.');
   }
 
   if (providerId === 'azure-speech') {

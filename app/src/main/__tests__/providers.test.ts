@@ -30,6 +30,7 @@ const BASE_CONFIG: AppConfig = {
     providers: {
       localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: 'whisper-1' },
+      sarvam: { model: 'saaras:v4', mode: 'transcribe' },
       azureSpeech: { endpoint: '', region: '' },
       googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -550,6 +551,17 @@ describe('Microsoft Azure Speech provider', () => {
 });
 
 describe('getTranscriber provider selection', () => {
+  it('routes Sarvam with its model capabilities and validates saved credentials before recording', async () => {
+    const { getTranscriber } = await import('../providers');
+    const config: AppConfig = { ...BASE_CONFIG, transcription: { ...BASE_CONFIG.transcription, activeProvider: 'sarvam', providers: { ...BASE_CONFIG.transcription.providers } } };
+    expect(validateProviderReadiness('sarvam', config, createVault())).toEqual(['Sarvam API key is not configured. Save one in Settings.']);
+    expect(validateProviderReadiness('sarvam', config, createVault({ 'sarvam-api-key': 'secret' }))).toEqual([]);
+    const transcriber = getTranscriber(config, createVault({ 'sarvam-api-key': 'secret' }));
+    expect(transcriber.id).toBe('sarvam');
+    expect(transcriber.capabilities.dictionaryHints).toBe(true);
+    config.transcription.providers.sarvam = { model: 'saaras:v3', mode: 'verbatim' };
+    expect(getTranscriber(config, createVault()).capabilities.dictionaryHints).toBe(false);
+  });
   it('returns the isolated managed local transcriber for managed-local', async () => {
     const { getTranscriber } = await import('../providers');
     const config = {
