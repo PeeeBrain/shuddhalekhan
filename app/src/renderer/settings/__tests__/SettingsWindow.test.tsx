@@ -658,21 +658,23 @@ describe('Settings section reachability', () => {
     expect(settingsIpc.setConfig).not.toHaveBeenCalledWith('dictionary', expect.anything());
   });
 
-  it('keeps the shared Hindi language usable after switching from Sarvam to OpenAI and local Whisper', async () => {
-    const { settingsIpc } = renderSettings({ config: sarvamConfig() });
-    await waitForLoaded();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Spoken language' }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Hindi' }));
-    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('language', 'hi'));
+  for (const [language, code] of [['Hindi', 'hi'], ['Nepali', 'ne'], ['Sindhi', 'sd'], ['Sanskrit', 'sa'], ['Assamese', 'as']] as const) {
+    it(`keeps shared ${language} usable after switching from Sarvam to OpenAI and local Whisper`, async () => {
+      const { settingsIpc } = renderSettings({ config: sarvamConfig() });
+      await waitForLoaded();
+      fireEvent.click(screen.getByRole('combobox', { name: 'Spoken language' }));
+      fireEvent.click(await screen.findByRole('option', { name: language }));
+      await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('language', code));
 
-    for (const provider of ['OpenAI', 'Local whisper.cpp']) {
-      fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
-      fireEvent.click(await screen.findByRole('option', { name: new RegExp(`^${provider}`) }));
-      await waitFor(() => expect(screen.getByRole('combobox', { name: 'Spoken language' })).toHaveTextContent('Hindi'));
-      expect((await settingsIpc.getConfig()).language).toBe('hi');
-      expect(screen.queryByRole('alert')).toBeNull();
-    }
-  });
+      for (const provider of ['OpenAI', 'Local whisper.cpp']) {
+        fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
+        fireEvent.click(await screen.findByRole('option', { name: new RegExp(`^${provider}`) }));
+        await waitFor(() => expect(screen.getByRole('combobox', { name: 'Spoken language' })).toHaveTextContent(language));
+        expect((await settingsIpc.getConfig()).language).toBe(code);
+        expect(screen.queryByRole('alert')).toBeNull();
+      }
+    });
+  }
 
   it('replaces the Sarvam output mode for translation and flags unsupported languages without overwriting them', async () => {
     const { settingsIpc } = renderSettings({ config: sarvamConfig({ task: 'translate', language: 'fr' }) });
