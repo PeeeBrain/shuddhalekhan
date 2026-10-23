@@ -11,6 +11,8 @@
 
 ## Build Tool
 - **Frontend + Main + Preload**: `electron-vite` (Vite-based, preserves existing frontend build pipeline).
+- **Typechecking and linting**: TypeScript 7.0.2 is pinned as `typescript` across the monorepo. Oxlint replaces typescript-eslint so linting does not require a legacy TypeScript compiler. Workspace lint rules preserve the existing recommended checks, React rules and exclusions.
+- **Lint migration details**: Native React rules replace the Hooks and Refresh plugins. The Markdown renderer-map helper is excluded only from `react/only-export-components`, which mistakes its nested render functions for module exports. React Compiler configuration/gating checks are omitted because Oxlint has fixed compiler options; this app does not configure React Compiler gating. Strict mode replaces the old duplicate-argument and legacy-octal checks.
 
 ## Agent Runtime
 - **Library**: Vercel AI SDK with `@ai-sdk/mcp`.

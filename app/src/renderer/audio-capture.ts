@@ -18,7 +18,7 @@ export const MAX_IN_FLIGHT_PCM_CHUNKS = 50;
 export interface StreamingPcmChunk {
   recordingSessionId: string;
   sequence: number;
-  pcm: Uint8Array;
+  pcm: Uint8Array<ArrayBuffer>;
 }
 
 export interface StreamingRecordingOptions {
@@ -32,7 +32,7 @@ interface StreamingCapture {
   readonly realtimeEnabled: boolean;
   push(channels: Float32Array[], sampleRate: number): StreamingPcmChunk[];
   acknowledge(sequence: number): void;
-  finish(): Uint8Array;
+  finish(): Uint8Array<ArrayBuffer>;
 }
 
 function createStreamingCapture(options: {
@@ -341,7 +341,7 @@ export async function startRecording(
   }
 }
 
-export function stopRecording(): Uint8Array {
+export function stopRecording(): Uint8Array<ArrayBuffer> {
   isRecording = false;
   teardownCapture();
 
@@ -365,7 +365,7 @@ function encodeWAV(
   buffers: Float32Array[],
   sampleRate: number,
   numChannels: number
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   const merged = mergeBuffers(buffers);
   const length = merged.length * numChannels * 2 + 44;
   const buffer = new ArrayBuffer(length);
@@ -420,7 +420,7 @@ function mergeBuffers(buffers: Float32Array[]): Float32Array {
   return result;
 }
 
-function pcm16Bytes(samples: number[]): Uint8Array {
+function pcm16Bytes(samples: number[]): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(samples.length * 2);
   const view = new DataView(bytes.buffer);
   for (let index = 0; index < samples.length; index += 1) {
@@ -429,7 +429,7 @@ function pcm16Bytes(samples: number[]): Uint8Array {
   return bytes;
 }
 
-function encodePcm16Wav(samples: number[], sampleRate: number): Uint8Array {
+function encodePcm16Wav(samples: number[], sampleRate: number): Uint8Array<ArrayBuffer> {
   const pcm = pcm16Bytes(samples);
   const wav = new Uint8Array(44 + pcm.byteLength);
   const view = new DataView(wav.buffer);

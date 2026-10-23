@@ -33,4 +33,7 @@ bun run lint
 bun test
 ```
 
+Typechecking uses TypeScript 7.0.2 throughout the monorepo. Oxlint checks
+JavaScript, TypeScript, and React without depending on the legacy compiler API.
+
 See [`app/README.md`](app/README.md) for desktop application details.
