@@ -13,6 +13,11 @@ import { installElectronMock, resetElectronMock } from '../../test/electron-mock
 const vi = { fn: mock };
 
 installElectronMock();
+// Provider tests receive config explicitly and do not use the native settings store.
+mock.module('electron-store', () => ({ default: class {
+  get() { return undefined; }
+  set() {}
+} }));
 
 function createVault(keys: Partial<Record<string, string>> = {}) {
   return { read: (id: string) => keys[id] ?? null };

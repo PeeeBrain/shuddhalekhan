@@ -18,12 +18,33 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Bun
+        id: bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
 
+      - name: Cache Bun packages
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/bun-install-cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun.outputs.bun-version }}-
+
+      - name: Cache Electron and installer downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ runner.temp }}/electron-cache
+            ${{ runner.temp }}/electron-builder-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
 
       - name: Derive application version from release tag
         id: release_version
@@ -42,14 +63,8 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Building Shuddhalekhan $version from tag $tag."
 
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Test
-        run: bun test
+      - name: Typecheck, lint, and test
+        run: bun run check
 
       - name: Generate release notes from merged pull requests
         shell: pwsh
@@ -96,9 +111,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package and publish Electron app
-        run: bun run --cwd app dist -- --publish always
+        run: bun run --cwd app dist -- --publish always -c.electronDownload.cache="${{ runner.temp }}/electron-cache"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
       - name: Finalize GitHub release metadata
         shell: pwsh

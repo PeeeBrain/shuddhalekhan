@@ -10,6 +10,7 @@
     "dev": "bun run dev:app",
     "dev:app": "bun run --cwd app dev",
     "dev:web": "bun run --cwd web dev",
+    "check": "bun run --parallel typecheck lint test",
     "typecheck": "bun run --parallel --filter \"@shuddhalekhan/*\" typecheck",
     "lint": "bun run --parallel --filter \"@shuddhalekhan/*\" lint",
     "lint:fix": "bun run --parallel --filter \"@shuddhalekhan/*\" lint:fix",

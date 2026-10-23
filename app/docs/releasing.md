@@ -53,9 +53,7 @@ version bumps are never committed to the repository.
 3. Run the release checks:
 
    ```powershell
-   bun run lint
-   bun run typecheck
-   bun test
+   bun run check
    ```
 
 4. Review the `Unreleased` section in `CHANGELOG.md`. It must be non-empty and
