@@ -118,15 +118,6 @@ describe('McpSettings pre-registered OAuth client', () => {
   });
 });
 
-describe('McpSettings registry header', () => {
-  it('shows a compact configured-servers header without a count chip', () => {
-    renderSettings([makeServer(httpTransport), makeServer(httpTransport, [], 'srv-2')]);
-
-    expect(screen.getByRole('heading', { name: 'Configured servers' })).toBeDefined();
-    expect(screen.getByText('2 configured')).toBeDefined();
-  });
-});
-
 it('requires Agent Mode before reconnecting a server', () => {
   renderSettings([makeServer(httpTransport)], false);
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();

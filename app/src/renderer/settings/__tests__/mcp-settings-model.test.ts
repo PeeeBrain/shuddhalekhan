@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { McpServerConfig } from '../../../types/ipc';
 import {
-  createBlankMcpServer,
   createHttpMcpTransport,
   formatTransport,
   normalizeDraftServer,
@@ -10,24 +9,6 @@ import {
 } from '../mcp-settings-model';
 
 describe('MCP settings model helpers', () => {
-  it('creates a blank stdio server draft', () => {
-    const server = createBlankMcpServer(() => 'mcp-fixed');
-
-    expect(server).toEqual({
-      id: 'mcp-fixed',
-      displayName: '',
-      enabled: false,
-      transport: {
-        type: 'stdio',
-        command: '',
-        args: [],
-        envVarNames: [],
-      },
-      discoveredTools: [],
-      toolPolicies: {},
-    });
-  });
-
   it('creates new HTTP transports with redirects denied', () => {
     expect(createHttpMcpTransport()).toEqual({
       type: 'http',

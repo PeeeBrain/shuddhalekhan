@@ -68,6 +68,23 @@ We need to be on the same page with terminology. When communicating, use this la
 - Upon request, user-visible UI changes get one integrated pass in the real Electron app (`bun run dev`). Do not launch browsers or computer-use sessions unless I explicitly ask. Subagents do not start their own Electron instances.
 - Skip packaging verification (`bun run build` / `bun run dist`) unless the change is specifically about build, updater, or release artifacts.
 
+### Tests must earn their keep
+
+Before adding a test, name the user-visible behavior or contract it protects and the realistic bug that would make it fail. If you can't, don't write it.
+
+Do not write tests that:
+- only mirror a declaration: types, IPC channel names, cosmetic literals (window sizes, colors, tooltips), or `package.json` versions. Defaults that carry behavior or security (hidden-until-ready windows, `contextIsolation`, MCP redirects denied) are contracts; keep those tested;
+- copy an inventory (IPC handlers, settings tabs, exports) that must be hand-edited whenever one is added;
+- assert a mock returned what the mock was told to return, or that a one-line forwarder called its target;
+- re-test a dependency (react-markdown/GFM, Electron, AI SDK) instead of our customization of it;
+- only check that a section "renders" when a component test already covers its behavior;
+- grep source or config files for strings.
+
+One owner per contract: test it once, at the strongest boundary (pure function > module > `index.ts` orchestration). Don't replay the same scenario at every layer it passes through.
+Never add an export, parameter, flag, or `*ForTest` hook to production code just so a test can reach it.
+Benchmark/tooling tests that spawn processes or burn CPU stay out of default `bun test`; gate them behind an env var.
+Bug fixes get one regression test that fails on the old code.
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.

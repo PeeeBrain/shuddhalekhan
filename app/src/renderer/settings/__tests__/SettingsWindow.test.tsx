@@ -194,10 +194,6 @@ async function waitForLoaded() {
   fireEvent.click(screen.getByRole('tab', { name: 'Transcription' }));
 }
 
-function getTabs() {
-  return screen.getAllByRole('tab');
-}
-
 function tabByLabel(label: string) {
   return screen.getByRole('tab', { name: label });
 }
@@ -300,40 +296,6 @@ describe('Settings navigation', () => {
 
     await waitForLoaded();
     expect(screen.queryByRole('region', { name: 'First-run setup' })).toBeNull();
-  });
-
-  it('groups destinations into General, Agent, and System', async () => {
-    renderSettings();
-    await waitForLoaded();
-
-    const groupLabels = ['General', 'Agent', 'System'];
-    for (const label of groupLabels) {
-      expect(
-        screen.getAllByText(label).some((el) => el.id === `settings-group-${label.toLowerCase()}`),
-      ).toBe(true);
-      expect(screen.getByRole('tablist', { name: label })).toHaveAttribute(
-        'aria-orientation',
-        'vertical',
-      );
-    }
-  });
-
-  it('lists the nine destinations in order', async () => {
-    renderSettings();
-    await waitForLoaded();
-
-    const expected = [
-      'Home',
-      'Transcription',
-      'Shortcuts',
-      'Agent',
-      'MCP Servers',
-      'Skills',
-      'Memory',
-      'History',
-      'About',
-    ];
-    expect(getTabs().map((tab) => tab.textContent ?? '')).toEqual(expected);
   });
 
   it('opens on Home as the initial destination', async () => {
@@ -750,22 +712,6 @@ describe('Settings section reachability', () => {
     ), { timeout: SLOW_CI_TIMEOUT });
   }, SLOW_CI_TEST_TIMEOUT);
 
-  it('shows agent provider controls on the Agent section', async () => {
-    renderSettings();
-    await waitForLoaded();
-
-    fireEvent.click(tabByLabel('Agent'));
-
-    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Base URL' })).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Model' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('OpenRouter');
-    expect(screen.getByRole('combobox', { name: 'Reasoning' })).toHaveTextContent('Provider default');
-    expect(
-      screen.getByRole('textbox', { name: 'Environment variable' }),
-    ).toBeInTheDocument();
-  });
-
   it('migrates a legacy thinking profile to its reasoning level', async () => {
     const config = baseConfig();
     renderSettings({
@@ -811,19 +757,6 @@ describe('Settings section reachability', () => {
     expect(screen.getByText('Saved securely')).toBeInTheDocument();
   });
 
-  it('shows update controls on the About section', async () => {
-    renderSettings();
-    await waitForLoaded();
-
-    fireEvent.click(tabByLabel('About'));
-
-    expect(screen.getByText('Version')).toBeInTheDocument();
-    expect(screen.getByText('Update status')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Check for updates' }),
-    ).toBeInTheDocument();
-  });
-
   it('shows the release-scoped notes bundled with the installed version', async () => {
     renderSettings({
       releaseNotes: {
@@ -838,20 +771,6 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('heading', { name: "What's new" })).toBeInTheDocument();
     expect(screen.getByText('v4.6.0')).toBeInTheDocument();
     expect(screen.getByText('Added visible release notes.')).toBeInTheDocument();
-  });
-
-  it('exposes MCP server configuration on the MCP Servers section', async () => {
-    renderSettings();
-    await waitForLoaded();
-
-    fireEvent.click(tabByLabel('MCP Servers'));
-    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
-
-    expect(
-      screen.getByRole('button', { name: 'Save Server' }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Name' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Transport' })).toBeInTheDocument();
   });
 
   it('hydrates MCP connection status from the main-owned snapshot', async () => {
@@ -888,21 +807,6 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('switch', { name: 'Enable memory' })).not.toBeChecked();
     expect(settingsIpc.listSkills).toHaveBeenCalled();
     expect(settingsIpc.getMemory).toHaveBeenCalled();
-  });
-
-  it('exposes the agent run history on the History section', async () => {
-    renderSettings({ auditRuns: [] });
-    await waitForLoaded();
-
-    fireEvent.click(tabByLabel('History'));
-
-    expect(screen.getByRole('listbox', { name: 'Agent run history' })).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Refresh agent history' }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByText('No agent runs recorded yet.'),
-    ).toBeInTheDocument();
   });
 
   it('shows the first-run setup checklist on Transcription until dismissed', async () => {
