@@ -227,6 +227,7 @@ describe('config store', () => {
       providers: {
         localWhisperCpp: { endpoint: 'http://existing.test/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        sarvam: { model: 'saaras:v4', mode: 'transcribe' },
         azureSpeech: { endpoint: '', region: '' },
         googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
         nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -245,6 +246,7 @@ describe('config store', () => {
       providers: {
         localWhisperCpp: { endpoint: 'https://private.test/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        sarvam: { model: 'saaras:v4', mode: 'transcribe' },
         azureSpeech: { endpoint: '', region: '' },
         googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
         nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
@@ -256,6 +258,17 @@ describe('config store', () => {
     expect(getConfig().transcription.providers.localWhisperCpp.endpoint).toBe(
       'https://private.test/inference',
     );
+  });
+
+  it('defaults Sarvam for upgraded profiles and preserves its inactive settings across local endpoint edits', async () => {
+    givenExistingStoreFile();
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-sarvam-retention`);
+    const transcription = getConfig().transcription;
+    expect(transcription.providers.sarvam).toEqual({ model: 'saaras:v4', mode: 'transcribe' });
+    setConfig('transcription', { ...transcription, activeProvider: 'sarvam', providers: { ...transcription.providers, sarvam: { model: 'saaras:v3', mode: 'codemix' } } });
+    setConfig('whisperUrl', 'http://localhost:9000/inference');
+    expect(getConfig().transcription.activeProvider).toBe('sarvam');
+    expect(getConfig().transcription.providers.sarvam).toEqual({ model: 'saaras:v3', mode: 'codemix' });
   });
 
   it('retains inactive Microsoft Azure Speech configuration', async () => {
@@ -292,6 +305,7 @@ describe('config store', () => {
       providers: {
         localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        sarvam: { model: 'saaras:v4', mode: 'transcribe' },
         azureSpeech: { endpoint: '', region: '' },
         googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
         nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },

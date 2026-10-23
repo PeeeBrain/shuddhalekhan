@@ -7,6 +7,10 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Transcription
+- Provider setup status refreshes automatically when credentials are saved or removed.
+- Added Sarvam AI with Saaras v4/v3, English translation, verbatim, romanized and code-mixed output, supported language selection, and v4 dictionary hints. Recordings stop at the 30-second REST limit.
+
 ### Interface
 - Redesigned Settings: a new Home section (readiness, shortcuts, recent agent runs), a Ctrl+K command palette, searchable and filterable History with simpler run details, and quieter card-based sections. Audio settings moved into Shortcuts. The default menu bar is hidden (Alt reveals it).
 - Redesigned the runtime surfaces: Dictation and Agent Mode recording are distinguished by shape, glyph, and tint, and the waveform stops repainting while the microphone is silent. Agent cards share one header style.

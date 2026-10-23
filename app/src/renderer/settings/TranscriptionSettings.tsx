@@ -33,6 +33,13 @@ import {
   getAppConfigDictationError,
   classifyFormatterEndpoint,
 } from '../../shared/dictation-runtime';
+import {
+  SARVAM_LANGUAGES,
+  SARVAM_MODELS,
+  SARVAM_MODES,
+  getSarvamSettingsErrors,
+  sarvamLanguageCode,
+} from '../../shared/sarvam';
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';
 
@@ -80,6 +87,7 @@ const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: Pro
     label: 'Cloud',
     options: [
       { value: 'openai', label: 'OpenAI', description: 'OpenAI batch audio transcription.' },
+      { value: 'sarvam', label: 'Sarvam AI', description: 'Saaras speech-to-text for Indian languages and English.' },
       { value: 'azure-speech', label: 'Microsoft Azure Speech', description: 'Azure Speech Fast Transcription.' },
       { value: 'google-cloud-speech-v2', label: 'Google Cloud Speech-to-Text v2', description: 'Google synchronous Speech-to-Text v2.' },
     ],
@@ -122,14 +130,22 @@ function ProviderSelector({
     let current = true;
     const kind = providerCredentialKind(config, value);
     if (!kind) return () => { current = false; };
-    settingsIpc.getCredentialStatus(kind)
-      .then((status) => {
-        if (current) setCredentialResult({ kind, ready: status.available && status.exists });
-      })
-      .catch(() => {
-        if (current) setCredentialResult({ kind, ready: false });
-      });
-    return () => { current = false; };
+    let revision = 0;
+    const check = () => {
+      const request = ++revision;
+      settingsIpc.getCredentialStatus(kind)
+        .then((status) => {
+          if (current && request === revision) setCredentialResult({ kind, ready: status.available && status.exists });
+        })
+        .catch(() => {
+          if (current && request === revision) setCredentialResult({ kind, ready: false });
+        });
+    };
+    const off = settingsIpc.onCredentialChanged((credential) => {
+      if (credential === kind) check();
+    });
+    check();
+    return () => { current = false; off?.(); };
   }, [config, settingsIpc, value]);
 
   const credentialReady = credentialKind === null
@@ -190,6 +206,7 @@ function providerCredentialKind(
   provider: TranscriptionProviderId,
 ): CredentialKind | null {
   if (provider === 'openai') return 'openai-api-key';
+  if (provider === 'sarvam') return 'sarvam-api-key';
   if (provider === 'azure-speech') return 'azure-speech-key';
   if (provider === 'google-cloud-speech-v2') {
     return config.transcription.providers.googleCloudSpeech.credentialSource === 'service-account'
@@ -220,6 +237,7 @@ function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderI
   const providers = config.transcription.providers;
   switch (provider) {
     case 'managed-local':
+    case 'sarvam':
       return true;
     case 'local-whisper-cpp':
       return Boolean(providers.localWhisperCpp.endpoint.trim());
@@ -354,11 +372,26 @@ const PRIVACY_MESSAGES: Record<TranscriptionProviderId, string> = {
   'managed-local': 'Recorded audio stays on this device and is transcribed by Shuddhalekhan local speech recognition.',
   'local-whisper-cpp': 'Recorded audio is sent to the configured local endpoint for transcription.',
   'openai': 'Recorded audio is sent to OpenAI for transcription. Review OpenAI\'s data handling policies.',
+  'sarvam': 'Recorded audio is sent to Sarvam AI for transcription. Review Sarvam\'s data handling policies.',
   'azure-speech': 'Recorded audio is sent to Microsoft Azure Speech for transcription. Review Microsoft\'s data handling policies.',
   'google-cloud-speech-v2': 'Recorded audio is sent to Google Cloud Speech-to-Text for transcription. Review Google Cloud data handling policies.',
   'nvidia-speech-nim': 'Recorded audio is sent to the configured NVIDIA Speech NIM endpoint for transcription.',
   'custom-open-ai-compatible': 'Recorded audio is sent to the configured custom endpoint for transcription.',
   'whisper-live-kit': 'Recorded audio is sent to your configured WhisperLiveKit service. The service receives audio only while recording or checking readiness.',
+};
+
+type SarvamConfig = AppConfig['transcription']['providers']['sarvam'];
+
+const SARVAM_MODEL_LABELS: Record<SarvamConfig['model'], string> = {
+  'saaras:v4': 'Saaras v4 (recommended)',
+  'saaras:v3': 'Saaras v3',
+};
+
+const SARVAM_MODE_COPY: Record<SarvamConfig['mode'], { label: string; description: string }> = {
+  transcribe: { label: 'Transcribe', description: 'Text in the spoken language\'s native script, with punctuation and numbers formatted.' },
+  verbatim: { label: 'Verbatim', description: 'Word-for-word text with filler words and spoken numbers kept as said.' },
+  translit: { label: 'Transliterate', description: 'Romanized text: the spoken language written in Latin script.' },
+  codemix: { label: 'Code-mixed', description: 'English words in Latin script, Indian-language words in their native script.' },
 };
 
 const AUTH_OPTIONS: Array<{ value: string; label: string }> = [
@@ -399,6 +432,30 @@ export function TranscriptionSettings({
     ...config,
     dictation,
   });
+
+  const sarvam = config.transcription.providers.sarvam;
+  const sarvamVerbatim = provider === 'sarvam' && sarvam.mode === 'verbatim' && config.task === 'transcribe';
+  const languageOptions = provider === 'managed-local'
+    ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
+      ? { ...option, label: 'Automatic language detection' }
+      : { ...option, disabled: true })
+    : provider === 'google-cloud-speech-v2'
+    ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
+      ? { ...option, label: 'Auto-detect (not supported by Google synchronous recognition)', disabled: true }
+      : option)
+    : provider === 'sarvam'
+    ? SARVAM_LANGUAGES
+    : WHISPER_LANGUAGES;
+  // Sarvam accepts plain codes like `hi` as `hi-IN`; show the mapped option instead of a blank select.
+  const languageValue = provider === 'sarvam'
+    ? sarvamLanguageCode(config.language) ?? config.language
+    : config.language;
+  const languageError = languageOptions.some((option) => option.value === languageValue)
+    ? undefined
+    : `${WHISPER_LANGUAGES.find((option) => option.value === config.language)?.label ?? config.language} is not supported by ${PROVIDER_OPTIONS.find((option) => option.value === provider)!.label}. Choose a supported language${provider === 'sarvam' ? ' or Auto-detect' : ''}.`;
+  const dictionaryError = provider === 'sarvam' && sarvam.model === 'saaras:v4'
+    ? getSarvamSettingsErrors(sarvam, 'auto', config.dictionary).join(' ') || undefined
+    : undefined;
 
   const handleProviderChange = async (value: string) => {
     const nextProvider = value as TranscriptionProviderId;
@@ -491,6 +548,10 @@ export function TranscriptionSettings({
           <OpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
         ) : null}
 
+        {provider === 'sarvam' ? (
+          <SarvamSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+        ) : null}
+
         {provider === 'azure-speech' ? (
           <AzureSpeechSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
         ) : null}
@@ -524,8 +585,11 @@ export function TranscriptionSettings({
         <SettingsCard>
         <ToggleRow
           title="Clean transcription"
-          description="Remove common filler words before dictation text is injected."
-          checked={config.removeFillerWords}
+          description={sarvamVerbatim
+            ? 'Off while Sarvam verbatim mode is selected, so filler words stay exactly as spoken. Your saved choice applies to other modes.'
+            : 'Remove common filler words before dictation text is injected.'}
+          checked={config.removeFillerWords && !sarvamVerbatim}
+          disabled={sarvamVerbatim}
           errorId={useId()}
           error={fieldErrors[FIELD_ID_FILER]}
           onChange={(checked) => commit('removeFillerWords', checked, FIELD_ID_FILER)}
@@ -564,7 +628,9 @@ export function TranscriptionSettings({
                   ? 'Translate speech to English (not supported by Azure Fast Transcription)'
                   : provider === 'google-cloud-speech-v2'
                     ? 'Translate speech to English (not supported by Google synchronous recognition)'
-                    : 'Translate speech to English',
+                    : provider === 'sarvam'
+                      ? 'Translate speech to English (Sarvam translate mode)'
+                      : 'Translate speech to English',
               disabled: provider === 'managed-local' || provider === 'azure-speech' || provider === 'google-cloud-speech-v2' || provider === 'whisper-live-kit',
             },
           ]}
@@ -576,41 +642,43 @@ export function TranscriptionSettings({
               ? 'Azure Fast Transcription supports transcription only. Translation is not sent to another service.'
               : provider === 'google-cloud-speech-v2'
                 ? 'Google synchronous recognition transcribes only. Shuddhalekhan does not invoke Google Translate.'
-                : undefined}
+                : provider === 'sarvam'
+                  ? 'Translate always returns English text and replaces the Sarvam output mode.'
+                  : undefined}
           errorId={useId()}
           error={fieldErrors[FIELD_ID_TASK]}
           onChange={(value) => commit('task', value as AppConfig['task'], FIELD_ID_TASK)}
         />
         <SelectRow
           label="Spoken language"
-          value={config.language}
-          options={provider === 'managed-local'
-            ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
-              ? { ...option, label: 'Automatic language detection' }
-              : { ...option, disabled: true })
-            : provider === 'google-cloud-speech-v2'
-            ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
-              ? { ...option, label: 'Auto-detect (not supported by Google synchronous recognition)', disabled: true }
-              : option)
-            : WHISPER_LANGUAGES}
+          value={languageValue}
+          options={languageOptions}
           description={provider === 'managed-local'
             ? 'The installed model detects its supported European languages automatically.'
             : provider === 'google-cloud-speech-v2'
             ? 'Choose an explicit language. Shuddhalekhan does not substitute the Windows language.'
+            : provider === 'sarvam'
+            ? sarvam.model === 'saaras:v4'
+              ? 'Sarvam supports 22 Indian languages and English, including global English accents on Saaras v4.'
+              : 'Sarvam supports 22 Indian languages and Indian English.'
             : undefined}
           errorId={useId()}
-          error={fieldErrors[FIELD_ID_LANGUAGE]}
-          onChange={(value) => commit('language', value, FIELD_ID_LANGUAGE)}
+          error={fieldErrors[FIELD_ID_LANGUAGE] ?? languageError}
+          onChange={(value) => commit('language', provider === 'sarvam' ? value.split('-')[0] : value, FIELD_ID_LANGUAGE)}
         />
         <DictionaryRow
           dictionary={config.dictionary}
-          disabled={provider === 'managed-local' || provider === 'whisper-live-kit'}
+          disabled={provider === 'managed-local' || provider === 'whisper-live-kit' || (provider === 'sarvam' && sarvam.model === 'saaras:v3')}
           description={provider === 'managed-local'
             ? 'Managed Local does not support dictionary hints. Saved words stay available for other providers.'
             : provider === 'whisper-live-kit'
               ? 'WhisperLiveKit does not support dictionary hints. Saved words stay available for other providers.'
+            : provider === 'sarvam'
+              ? sarvam.model === 'saaras:v3'
+                ? 'Saaras v3 does not support key terms, so your dictionary is not sent. Saved words stay available for Saaras v4 and other providers.'
+                : 'Sent to Saaras v4 as key terms: up to 50 names, brands, or technical terms. Press Enter to add.'
             : undefined}
-          error={fieldErrors[FIELD_ID_DICTIONARY]}
+          error={fieldErrors[FIELD_ID_DICTIONARY] ?? dictionaryError}
           onChange={(next) => commit('dictionary', next, FIELD_ID_DICTIONARY)}
         />
         </SettingsCard>
@@ -1003,6 +1071,57 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
           settingsIpc={settingsIpc}
         />
       </div>
+    </>
+  );
+}
+
+function SarvamSection({ config, persistence, settingsIpc }: Props) {
+  const { commit, fieldErrors } = persistence;
+  const sarvam = config.transcription.providers.sarvam;
+  const modeErrorId = useId();
+  const save = (next: SarvamConfig, field: string) => commit('transcription', {
+    ...config.transcription,
+    providers: { ...config.transcription.providers, sarvam: next },
+  }, field);
+
+  return (
+    <>
+      <SelectRow
+        label="Model"
+        value={sarvam.model}
+        options={SARVAM_MODELS.map((model) => ({ value: model, label: SARVAM_MODEL_LABELS[model] }))}
+        description={sarvam.model === 'saaras:v4'
+          ? 'Latest Saaras model. Supports global English and dictionary key terms.'
+          : 'Previous Saaras model. Indian English only, no dictionary key terms.'}
+        errorId={useId()}
+        error={fieldErrors['sarvam-model']}
+        onChange={(value) => save({ ...sarvam, model: value as SarvamConfig['model'] }, 'sarvam-model')}
+      />
+      {config.task === 'transcribe' ? (
+        <SelectRow
+          label="Output mode"
+          value={sarvam.mode}
+          options={SARVAM_MODES.map((mode) => ({ value: mode, label: SARVAM_MODE_COPY[mode].label }))}
+          description={SARVAM_MODE_COPY[sarvam.mode].description}
+          errorId={modeErrorId}
+          error={fieldErrors['sarvam-mode']}
+          onChange={(value) => save({ ...sarvam, mode: value as SarvamConfig['mode'] }, 'sarvam-mode')}
+        />
+      ) : (
+        <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
+          Task is set to translate, so Sarvam returns English text. Set Task to transcribe to choose an output mode.
+        </p>
+      )}
+      <div className="border-b border-border/50 py-3.5 last:border-b-0">
+        <CredentialControl
+          credential="sarvam-api-key"
+          label="Sarvam API key"
+          settingsIpc={settingsIpc}
+        />
+      </div>
+      <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
+        Recordings stop automatically at Sarvam's 30-second REST limit. Works with Batch and Corrected Dictation; Live Dictation is not available.
+      </p>
     </>
   );
 }

@@ -58,6 +58,7 @@ const TRANSCRIPTION_TRANSPORT_CAPABILITIES = {
   'managed-local': { batch: true, streaming: false },
   'local-whisper-cpp': { batch: true, streaming: false },
   openai: { batch: true, streaming: false },
+  sarvam: { batch: true, streaming: false },
   'azure-speech': { batch: true, streaming: false },
   'google-cloud-speech-v2': { batch: true, streaming: false },
   'nvidia-speech-nim': { batch: true, streaming: false },

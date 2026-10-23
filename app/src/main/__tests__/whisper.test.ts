@@ -12,6 +12,7 @@ const config: AppConfig = {
     providers: {
       localWhisperCpp: { endpoint: 'http://whisper.test/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      sarvam: { model: 'saaras:v4', mode: 'transcribe' },
       azureSpeech: { endpoint: '', region: '' },
       googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
       nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },

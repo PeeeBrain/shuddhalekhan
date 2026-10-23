@@ -22,6 +22,7 @@ const getConfig = vi.fn(() => ({
     providers: {
       localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
       openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+      sarvam: { model: 'saaras:v4', mode: 'transcribe' },
       azureSpeech: { endpoint: '', region: '' },
       customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
     },
@@ -228,6 +229,7 @@ describe('main process IPC orchestration', () => {
       providers: {
         localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
         openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
+        sarvam: { model: 'saaras:v4', mode: 'transcribe' },
         azureSpeech: { endpoint: '', region: '' },
         customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
       },

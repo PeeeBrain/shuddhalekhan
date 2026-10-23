@@ -80,6 +80,7 @@ interface ToggleRowProps {
   description?: string;
   checked: boolean;
   tone?: 'default' | 'agent';
+  disabled?: boolean;
   errorId: string;
   error?: string;
   onChange: (checked: boolean) => void;
@@ -90,6 +91,7 @@ export function ToggleRow({
   description,
   checked,
   tone = 'default',
+  disabled,
   errorId,
   error,
   onChange,
@@ -116,6 +118,7 @@ export function ToggleRow({
       </div>
       <Switch
         checked={checked}
+        disabled={disabled}
         onCheckedChange={onChange}
         aria-label={title}
         aria-describedby={describedBy}
