@@ -352,7 +352,7 @@ export class RecordingSession {
 
   /** Runs the pinned benchmark audio through the normal batch transcription path without using the live microphone. */
   async runPerformanceFixture(
-    audioData: Uint8Array,
+    audioData: Uint8Array<ArrayBuffer>,
     playbackDurationMs: number,
     transcriber: Transcriber,
   ): Promise<RecordingResult | null> {
@@ -426,7 +426,7 @@ export class RecordingSession {
   }
 
   async complete(
-    audioData: Uint8Array,
+    audioData: Uint8Array<ArrayBuffer>,
     transcriberOverride?: Transcriber,
     notifyResult = true,
   ): Promise<RecordingResult | null> {
@@ -666,7 +666,7 @@ export class RecordingSession {
   private async transcribeCompletedAudio(
     run: RecordingRunContext,
     transcriber: Transcriber,
-    audioData: Uint8Array,
+    audioData: Uint8Array<ArrayBuffer>,
   ): Promise<string | null> {
     const streaming = run.streaming;
     if (streaming) {

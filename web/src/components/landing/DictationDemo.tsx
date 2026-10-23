@@ -112,7 +112,7 @@ export function DictationDemo() {
       later(() => !interactedRef.current && stop(), 3300);
     }
     return () => timers.forEach(clearTimeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, []);
 
   // Timer ticks at 1 Hz while recording; a forgotten toggle stops itself.
@@ -124,7 +124,7 @@ export function DictationDemo() {
 
   useEffect(() => {
     if (seconds >= MAX_SECONDS) stop();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, [seconds]);
 
   const onKeyDown = (event: KeyboardEvent) => {

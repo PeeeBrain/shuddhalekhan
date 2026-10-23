@@ -77,7 +77,7 @@ export function createAzureSpeechTranscriber(
 }
 
 async function transcribeAzureSpeech(
-  audioData: Uint8Array,
+  audioData: Uint8Array<ArrayBuffer>,
   recognition: RecognitionSettings,
   endpoint: string,
   apiKey: string,

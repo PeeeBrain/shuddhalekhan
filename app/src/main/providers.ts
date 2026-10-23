@@ -243,7 +243,7 @@ function mapNimLanguage(language: string): string {
 }
 
 export async function transcribeOpenAiLike(
-  audioData: Uint8Array,
+  audioData: Uint8Array<ArrayBuffer>,
   recognition: RecognitionSettings,
   endpoint: string,
   model: string | undefined,

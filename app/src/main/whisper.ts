@@ -27,7 +27,7 @@ export const localWhisperCppTranscriber: Transcriber = {
   },
 };
 
-export async function transcribe(audioData: Uint8Array, config?: AppConfig): Promise<string> {
+export async function transcribe(audioData: Uint8Array<ArrayBuffer>, config?: AppConfig): Promise<string> {
   const runtimeConfig = config ?? await loadRuntimeConfig();
   return transcribeLocalWhisper(audioData, runtimeConfig.whisperUrl, {
     removeFillerWords: runtimeConfig.removeFillerWords,
@@ -38,7 +38,7 @@ export async function transcribe(audioData: Uint8Array, config?: AppConfig): Pro
 }
 
 async function transcribeLocalWhisper(
-  audioData: Uint8Array,
+  audioData: Uint8Array<ArrayBuffer>,
   whisperUrl: string,
   recognition: RecognitionSettings,
 ): Promise<string> {

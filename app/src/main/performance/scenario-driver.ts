@@ -29,7 +29,7 @@ type EnabledDriverConfig = Extract<PerformanceScenarioDriverConfig, { enabled: t
 export interface PerformanceScenarioDriverDeps {
   openSettings: () => void | Promise<void>;
   runRecording: (fixture: {
-    wav: Uint8Array;
+    wav: Uint8Array<ArrayBuffer>;
     playbackDurationMs: number;
     transcriptionEndpoint: string;
   }) => Promise<unknown>;
@@ -229,7 +229,7 @@ export function createPerformanceScenarioDriver(
   };
 }
 
-export function wrapPcm16LeAsWav(pcm: Uint8Array, sampleRateHz: number): Buffer {
+export function wrapPcm16LeAsWav(pcm: Uint8Array, sampleRateHz: number): Buffer<ArrayBuffer> {
   const header = Buffer.alloc(44);
   header.write('RIFF', 0, 'ascii');
   header.writeUInt32LE(36 + pcm.byteLength, 4);

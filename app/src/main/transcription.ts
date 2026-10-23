@@ -20,7 +20,7 @@ export interface RecognitionSettings {
 }
 
 export interface TranscriptionRequest {
-  audio: Uint8Array;
+  audio: Uint8Array<ArrayBuffer>;
   recognition: RecognitionSettings;
 }
 
