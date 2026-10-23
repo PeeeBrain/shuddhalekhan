@@ -73,7 +73,7 @@ We need to be on the same page with terminology. When communicating, use this la
 Before adding a test, name the user-visible behavior or contract it protects and the realistic bug that would make it fail. If you can't, don't write it.
 
 Do not write tests that:
-- restate types, IPC channel names, config defaults, window options, or `package.json` versions — `typecheck` and install already enforce those;
+- only mirror a declaration: types, IPC channel names, cosmetic literals (window sizes, colors, tooltips), or `package.json` versions. Defaults that carry behavior or security (hidden-until-ready windows, `contextIsolation`, MCP redirects denied) are contracts; keep those tested;
 - copy an inventory (IPC handlers, settings tabs, exports) that must be hand-edited whenever one is added;
 - assert a mock returned what the mock was told to return, or that a one-line forwarder called its target;
 - re-test a dependency (react-markdown/GFM, Electron, AI SDK) instead of our customization of it;
