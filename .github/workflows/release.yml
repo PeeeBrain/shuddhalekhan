@@ -111,7 +111,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package and publish Electron app
-        run: bun run --cwd app dist -- --publish always -c.electronDownload.cache="${{ runner.temp }}/electron-cache"
+        run: bun run --cwd app dist -- --publish always "-c.electronDownload.cache=${{ runner.temp }}/electron-cache"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
