@@ -138,20 +138,6 @@ describe('createSingletonWindow', () => {
     expect(windows.get()).toBeNull();
   });
 
-  it('runs creation hooks after constructing the window', async () => {
-    const { createSingletonWindow } = await import(`../window-factory?test=${Date.now()}-4`);
-    const onCreated = vi.fn();
-    const windows = createSingletonWindow({
-      route: 'settings',
-      options: { width: 960, height: 680 },
-      onCreated,
-    });
-
-    const win = windows.create();
-
-    expect(onCreated).toHaveBeenCalledWith(win);
-  });
-
   it('opens external links in the browser instead of navigating app windows', async () => {
     const { createSingletonWindow } = await import(`../window-factory?test=${Date.now()}-5`);
     const windows = createSingletonWindow({

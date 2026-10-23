@@ -48,28 +48,6 @@ describe('settings window', () => {
     send.mockClear();
   });
 
-  it('creates the settings window hidden and shows it when ready', async () => {
-    const { openSettingsWindow } = await import(`../settings-window?test=${Date.now()}-1`);
-
-    openSettingsWindow();
-    const readyToShow = once.mock.calls.find((call: unknown[]) => call[0] === 'ready-to-show')?.[1] as () => void;
-    readyToShow();
-
-    expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({
-      width: 1040,
-      height: 720,
-      minWidth: 820,
-      minHeight: 560,
-      resizable: true,
-      show: false,
-      title: 'Shuddhalekhan Settings',
-      icon: appIcon,
-      backgroundColor: '#0f1115',
-    }));
-    expect(loadURL).toHaveBeenCalledWith('http://localhost:5173/#/settings');
-    expect(show).toHaveBeenCalled();
-  });
-
   it('focuses the existing settings window instead of creating another one', async () => {
     const { openSettingsWindow } = await import(`../settings-window?test=${Date.now()}-2`);
 

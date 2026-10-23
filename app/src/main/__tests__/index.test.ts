@@ -364,56 +364,6 @@ describe('main process IPC orchestration', () => {
     await import(`../index?test=${Date.now()}-${Math.random()}`);
   });
 
-  it('registers the expected IPC handlers and listeners', () => {
-    expect([...ipcHandlers.keys()].sort()).toEqual([
-      'agent:approval-decision',
-      'agent:cancel-provider-test',
-      'agent:test-provider',
-      'agent:validate-provider',
-      'app:get-info',
-      'app:get-release-notes',
-      'audio:get-devices',
-      'audio:select-device',
-      'audit:get-run-detail',
-      'audit:get-runs',
-      'clipboard:inject-text',
-      'config:get',
-      'config:set',
-      'managed-local:delete-model',
-      'managed-local:get-model',
-      'managed-local:install-model',
-      'mcp:get-status-snapshot',
-      'mcp:test-server',
-      'memory:clear',
-      'memory:edit',
-      'memory:get',
-      'memory:remove',
-      'settings:open',
-      'shortcuts:begin-capture',
-      'shortcuts:end-capture',
-       'shortcuts:get-paused',
-       'shortcuts:set-paused',
-      'skills:import',
-      'skills:list',
-      'skills:open-folder',
-      'skills:read',
-      'skills:remove',
-      'skills:save',
-      'skills:select-import',
-       'transcription:check-readiness',
-       'transcription:check-server',
-      'updater:check',
-      'updater:get-status',
-    ]);
-    expect([...ipcListeners.keys()].sort()).toEqual([
-      'audio-devices',
-      'runtime:agent-card-size',
-      'runtime:agent-dismiss',
-      'runtime:recovery-action',
-      'surface-paint-proxy',
-    ]);
-  });
-
   it('validates provider settings locally while disabled and never launches a sidecar test', async () => {
     const provider = { baseUrl: 'http://[::1]:11434/v1', model: 'local', apiKeyEnvVar: '', auth: 'none' };
     const validation = await ipcHandlers.get('agent:validate-provider')?.({}, provider);

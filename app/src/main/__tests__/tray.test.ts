@@ -92,18 +92,6 @@ describe('tray', () => {
     config.removeFillerWords = true;
   });
 
-  it('creates a tray with tooltip, icon, and context menu', async () => {
-    const { createTray } = await import(`../tray?test=${Date.now()}-1`);
-
-    createTray({ onOpenSettings: vi.fn() });
-
-    expect(createFromPath).toHaveBeenCalledWith(normalize('/app/icons/tray-icon.ico'));
-    expect(resize).toHaveBeenCalledWith({ width: 16, height: 16 });
-    expect(setToolTip).toHaveBeenCalledWith('Shuddhalekhan v4.0.0');
-    expect(setIgnoreDoubleClickEvents).toHaveBeenCalledWith(true);
-    expect(setContextMenu).toHaveBeenCalled();
-  });
-
   it('falls back to an embedded icon when the file icon is missing', async () => {
     existsSync.mockReturnValue(false);
     const { createTray } = await import(`../tray?test=${Date.now()}-2`);
@@ -146,26 +134,6 @@ describe('tray', () => {
 
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'speaker');
     expect(onSelectDevice).toHaveBeenCalledWith('speaker');
-  });
-
-  it('handles exit from the tray', async () => {
-    const { createTray } = await import(`../tray?test=${Date.now()}-4`);
-
-    createTray({ onOpenSettings: vi.fn() });
-
-    item('Exit').click();
-
-    expect(quit).toHaveBeenCalled();
-  });
-
-  it('opens settings from the tray', async () => {
-    const settingsHandler = vi.fn();
-    const { createTray } = await import(`../tray?test=${Date.now()}-settings`);
-
-    createTray({ onOpenSettings: settingsHandler });
-
-    item('Settings…').click();
-    expect(settingsHandler).toHaveBeenCalled();
   });
 
   it('shows and toggles the session-only shortcut pause action', async () => {

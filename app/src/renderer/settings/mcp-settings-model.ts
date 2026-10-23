@@ -10,9 +10,9 @@ export function createHttpMcpTransport(): Extract<McpServerConfig['transport'], 
   };
 }
 
-export function createBlankMcpServer(makeId: IdFactory = () => makeServerId('mcp')): McpServerConfig {
+export function createBlankMcpServer(): McpServerConfig {
   return {
-    id: makeId(),
+    id: makeServerId('mcp'),
     displayName: '',
     enabled: false,
     transport: {
