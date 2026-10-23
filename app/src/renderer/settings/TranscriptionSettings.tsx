@@ -664,7 +664,7 @@ export function TranscriptionSettings({
             : undefined}
           errorId={useId()}
           error={fieldErrors[FIELD_ID_LANGUAGE] ?? languageError}
-          onChange={(value) => commit('language', value, FIELD_ID_LANGUAGE)}
+          onChange={(value) => commit('language', provider === 'sarvam' ? value.split('-')[0] : value, FIELD_ID_LANGUAGE)}
         />
         <DictionaryRow
           dictionary={config.dictionary}
