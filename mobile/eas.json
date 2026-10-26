@@ -1,0 +1,18 @@
+{
+  "cli": {
+    "version": ">= 25.3.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "sideloadly": {
+      "distribution": "internal",
+      "node": "24.16.0",
+      "bun": "1.4.2",
+      "ios": {
+        "image": "sdk-58",
+        "withoutCredentials": true,
+        "config": "sideloadly.yml"
+      }
+    }
+  }
+}

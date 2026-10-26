@@ -1,0 +1,31 @@
+# Upload the mobile app and workspace metadata needed by the frozen Bun install.
+/*
+!/package.json
+!/bun.lock
+!/bunfig.toml
+!/app
+/app/*
+!/app/package.json
+!/web
+/web/*
+!/web/package.json
+!/mobile
+!/mobile/**
+/mobile/.expo
+/mobile/dist
+/mobile/build
+/mobile/ios
+/mobile/android
+/mobile/.claude
+
+# Keep local credentials and generated files out of source uploads.
+**/node_modules
+**/.env*
+**/credentials.json
+**/*.p8
+**/*.p12
+**/*.key
+**/*.pem
+**/*.mobileprovision
+**/*.ipa
+**/.DS_Store

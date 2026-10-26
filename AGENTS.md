@@ -48,7 +48,7 @@ We need to be on the same page with terminology. When communicating, use this la
 
 ## Dev servers
 
-- `bun install` from the repo root. Workspaces are `app/` (Electron desktop) and `web/` (landing page). If native modules look broken after install, run `bun x electron-builder install-app-deps` from `app/`.
+- `bun install` from the repo root. Workspaces are `app/` (Electron desktop), `web/` (landing page), and `mobile/` (Expo iOS). For mobile-only work, use `bun install --frozen-lockfile --ignore-scripts` to skip Electron hooks. If desktop native modules look broken after install, run `bun x electron-builder install-app-deps` from `app/`.
 - `bun run dev` (or `bun run dev:app`) starts the Electron app via `electron-vite`. Prefer this for almost all product work.
 - `bun run dev:web` starts the Vite landing page. Only needed when touching `web/`.
 - Dictation needs a Whisper-compatible HTTP endpoint. Default is `http://localhost:8080/inference`. The app does not start Whisper; keep your local whisper.cpp (or other) server running separately.
@@ -67,6 +67,15 @@ We need to be on the same page with terminology. When communicating, use this la
 - Dictation and Agent Mode stay separate intents. A Dictation-only change must not require Agent Mode to be enabled to verify; an Agent Mode change must not break users who only dictate.
 - Upon request, user-visible UI changes get one integrated pass in the real Electron app (`bun run dev`). Do not launch browsers or computer-use sessions unless I explicitly ask. Subagents do not start their own Electron instances.
 - Skip packaging verification (`bun run build` / `bun run dist`) unless the change is specifically about build, updater, or release artifacts.
+
+### Mobile verification
+
+- For mobile changes, follow [mobile verification](mobile/README.md#verification), including the USB logging commands when debugging a phone. Use focused mobile Bun tests; run the mobile typecheck and lint when the change warrants them. Windows checks cannot verify native background execution.
+- Native Swift, Expo module, or keyboard-extension changes need a new Release IPA from the EAS `sideloadly` profile. Share the completed build's direct IPA download link; the maintainer installs it with iLoader or Sideloadly using the same Apple ID and retaining the keyboard extension. Verify the installed app build number before interpreting its logs. Metro or a JavaScript update cannot replace native code.
+- For a device bug, connect the unlocked, trusted iPhone over USB and start a filtered `pymobiledevice3 syslog live` capture before asking the maintainer to reproduce. Record the capture PID, device/build, reproduction steps, and timestamps. Keep logs in ignored `.cache/`, redact shared excerpts, and stop only the capture PID you started. Capture historical archives separately because collection can disconnect the live stream.
+- For keyboard dictation, start a session in the foreground app, switch to Notes, select the Shuddhalekhan keyboard with Full Access, Dictate, speak, then Stop and insert. Success means the recording acknowledgement arrives, native transcription completes, and text appears exactly once at the cursor while the app stays backgrounded. A countdown alone is not proof. Check a second utterance and a second host app for session changes.
+- For changes to session lifetime or audio, check cancellation, hiding/reopening the keyboard, expiry, and interruptions. Verify in-app Dictation separately; test Agent Mode only when affected. Distinguish maintainer-confirmed phone results from automated checks and cases not yet exercised.
+- For startup work, measure tap-to-session-ready and first-utterance latency separately for process-cold and repeated starts. Record permission prompts and model preparation separately; a warm retry does not establish cold-start performance.
 
 ### Tests must earn their keep
 
@@ -121,7 +130,8 @@ Deeper product/architecture language lives in `app/CONTEXT.md` and `app/docs/adr
 - `app/CONTEXT.md` — durable product/architecture decisions and domain language. Update when behavior or boundaries change meaningfully.
 - `app/docs/adr/` — architecture decision records for larger choices.
 - `web/` — React/Vite marketing/landing site. Keep product behavior changes out of here unless the task is explicitly about the site.
-- Root `package.json` — Bun workspaces (`app`, `web`) and monorepo scripts.
+- `mobile/` — Expo iOS app, local speech module, UIKit dictation keyboard, native protocol checks, and EAS build setup. See `mobile/README.md` for device verification and USB debugging.
+- Root `package.json` — Bun workspaces (`app`, `web`, `mobile`) and monorepo scripts.
 
 ## Taste
 
