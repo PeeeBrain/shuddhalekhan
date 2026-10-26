@@ -27,6 +27,7 @@ final class KeyboardSessionHost {
   private static let maxUtteranceSeconds: TimeInterval = 120
 
   private let speech: ParakeetEngine
+  private var configuration: ParakeetConfiguration?
   private let onChange: @MainActor (KeyboardSession.State) -> Void
   private let audio = AVAudioEngine()
   private let sink = UtteranceSink()
@@ -47,7 +48,7 @@ final class KeyboardSessionHost {
     server.onFailure = { [weak self] in self?.end(reason: "The keyboard connection stopped. Start a new session.") }
   }
 
-  func start(minutes: Int) async throws {
+  func start(minutes: Int, configuration: ParakeetConfiguration) async throws {
     guard (1...30).contains(minutes) else { throw KeyboardSessionError.invalidDuration }
     guard !starting, !state.isLive(now: KeyboardSession.nowMs()) else { return }
     starting = true
@@ -65,7 +66,8 @@ final class KeyboardSessionHost {
     guard await AVAudioApplication.requestRecordPermission() else { throw KeyboardSessionError.microphoneDenied }
     mark("permission")
     // Load Parakeet now so the first utterance is not a cold load while the app is in the background.
-    try await speech.prepare()
+    try await speech.prepare(configuration: configuration)
+    self.configuration = configuration
     mark("model_ready")
 
     guard UIApplication.shared.applicationState == .active else { throw KeyboardSessionError.bridgeUnavailable }
@@ -177,16 +179,16 @@ final class KeyboardSessionHost {
     utteranceTimer?.invalidate()
     utteranceTimer = nil
     let wrote = sink.end()
-    guard let url = utteranceURL, let id = next.requestId, wrote else {
+    guard let url = utteranceURL, let id = next.requestId, let configuration, wrote else {
       discardUtterance()
       settle(next.with(.failed, requestId: next.requestId, error: "The recording could not be saved."))
       return
     }
     utteranceURL = nil
     publish(next)
-    Task { [speech] in
+    Task { [speech, configuration] in
       let result: Result<String, Error>
-      do { result = .success(try await speech.transcribe(url)) } catch { result = .failure(error) }
+      do { result = .success(try await speech.transcribe(url, configuration: configuration)) } catch { result = .failure(error) }
       try? FileManager.default.removeItem(at: url)
       self.complete(id, result)
     }

@@ -23,78 +23,89 @@ private enum SpeechError: LocalizedError {
 actor ParakeetEngine {
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "SpeechPerf")
   private var manager: AsrManager?
-  private var managerLoad: Task<AsrManager, Error>?
+  private var managerModel: ParakeetModel?
+  private var managerLoad: (model: ParakeetModel, task: Task<AsrManager, Error>)?
   private var inferenceInProgress = false
 
-  func install(progress: @escaping ProgressHandler) async throws {
-    _ = try await loadManager(downloadIfMissing: true, progress: progress)
+  func install(configuration: ParakeetConfiguration, progress: @escaping ProgressHandler) async throws {
+    _ = try await loadManager(configuration: configuration, downloadIfMissing: true, progress: progress)
   }
 
-  func prepare() async throws {
-    _ = try await loadManager(downloadIfMissing: false)
+  func prepare(configuration: ParakeetConfiguration) async throws {
+    _ = try await loadManager(configuration: configuration, downloadIfMissing: false)
   }
 
-  func transcribe(_ url: URL) async throws -> String {
+  func transcribe(_ url: URL, configuration: ParakeetConfiguration) async throws -> String {
     guard !inferenceInProgress else { throw SpeechError.busy }
     inferenceInProgress = true
     defer { inferenceInProgress = false }
     let operation = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
-    let cached = manager != nil
+    let cached = managerModel == configuration.model && manager != nil
     log.notice("SpeechPerf transcription id=\(operation, privacy: .public) stage=requested cached=\(cached, privacy: .public)")
-    let manager = try await loadManager(downloadIfMissing: false)
+    let manager = try await loadManager(configuration: configuration, downloadIfMissing: false)
 
     var state = try TdtDecoderState()
-    let text = try await manager.transcribe(url, decoderState: &state).text
+    let text = try await manager.transcribe(
+      url, decoderState: &state,
+      language: configuration.model == .multilingual ? Language(rawValue: configuration.language) : nil
+    ).text
     let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
     log.notice("SpeechPerf transcription id=\(operation, privacy: .public) stage=done elapsed_ms=\(elapsed, privacy: .public)")
     return text
   }
 
   private func loadManager(
+    configuration: ParakeetConfiguration,
     downloadIfMissing: Bool,
     progress: ProgressHandler? = nil
   ) async throws -> AsrManager {
-    if let manager { return manager }
+    if managerModel == configuration.model, let manager { return manager }
     if let managerLoad {
-      let manager = try await managerLoad.value
-      self.manager = manager
-      return manager
+      guard managerLoad.model == configuration.model else { throw SpeechError.busy }
+      return try await managerLoad.task.value
     }
+    // Keep only one encoder resident, including when switching languages.
+    manager = nil
+    managerModel = nil
 
     let task = Task<AsrManager, Error> {
       let started = ProcessInfo.processInfo.systemUptime
       log.notice("SpeechPerf model stage=requested")
-      let directory = AsrModels.defaultCacheDirectory(for: .v3)
+      let version: AsrModelVersion = configuration.model == .english ? .v2 : .v3
+      let directory = AsrModels.defaultCacheDirectory(for: version)
       let models: AsrModels
       if downloadIfMissing {
         models = try await AsrModels.downloadAndLoad(
-          version: .v3,
+          version: version,
           encoderPrecision: .int8,
           progressHandler: progress
         )
       } else {
-        guard AsrModels.modelsExist(at: directory, version: .v3, encoderPrecision: .int8) else {
+        guard AsrModels.modelsExist(at: directory, version: version, encoderPrecision: .int8) else {
           throw SpeechError.modelMissing
         }
         models = try await AsrModels.load(
           from: directory,
-          version: .v3,
+          version: version,
           encoderPrecision: .int8
         )
       }
 
-      let manager = AsrManager()
+      // v3's mel prepend and parallel chunks can switch languages at chunk boundaries; v2 keeps FluidAudio's defaults.
+      let config = configuration.model == .english ? ASRConfig.default : ASRConfig(parallelChunkConcurrency: 1, melChunkContext: false)
+      let manager = AsrManager(config: config)
       try await manager.loadModels(models)
       let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
       log.notice("SpeechPerf model stage=ready elapsed_ms=\(elapsed, privacy: .public)")
       return manager
     }
-    managerLoad = task
+    managerLoad = (configuration.model, task)
 
     do {
       let manager = try await task.value
       self.manager = manager
+      managerModel = configuration.model
       managerLoad = nil
       return manager
     } catch {
@@ -113,12 +124,16 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
     Name("ShuddhalekhanSpeech")
     Events("onModelProgress", "onKeyboardSession")
 
+    AsyncFunction("signGoogleJwt") { (privateKey: String, input: String) throws -> String in
+      try GoogleJwt.sign(privateKey: privateKey, input: input)
+    }
+
     AsyncFunction("getKeyboardSession") { () async -> [String: Any] in
       Self.payload(await self.sessionHost().state)
     }
 
-    AsyncFunction("startKeyboardSession") { (minutes: Int) async throws -> [String: Any] in
-      try await self.sessionHost().start(minutes: minutes)
+    AsyncFunction("startKeyboardSession") { (minutes: Int, language: String) async throws -> [String: Any] in
+      try await self.sessionHost().start(minutes: minutes, configuration: ParakeetConfiguration(language: language))
       return Self.payload(await self.sessionHost().state)
     }
 
@@ -126,18 +141,20 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
       await self.sessionHost().end()
     }
 
-    AsyncFunction("getModelState") { () -> String in
-      let directory = AsrModels.defaultCacheDirectory(for: .v3)
-      return AsrModels.modelsExist(at: directory, version: .v3, encoderPrecision: .int8)
+    AsyncFunction("getModelState") { (language: String) throws -> String in
+      let configuration = try ParakeetConfiguration(language: language)
+      let version: AsrModelVersion = configuration.model == .english ? .v2 : .v3
+      let directory = AsrModels.defaultCacheDirectory(for: version)
+      return AsrModels.modelsExist(at: directory, version: version, encoderPrecision: .int8)
         ? "ready" : "missing"
     }
 
-    AsyncFunction("prepareModel") { () async throws in
-      try await self.engine.prepare()
+    AsyncFunction("prepareModel") { (language: String) async throws in
+      try await self.engine.prepare(configuration: ParakeetConfiguration(language: language))
     }
 
-    AsyncFunction("installModel") { () async throws in
-      try await self.engine.install { [weak self] progress in
+    AsyncFunction("installModel") { (language: String) async throws in
+      try await self.engine.install(configuration: ParakeetConfiguration(language: language)) { [weak self] progress in
         let phase: String
         switch progress.phase {
         case .compiling(_): phase = "installing"
@@ -152,7 +169,7 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
       }
     }
 
-    AsyncFunction("transcribe") { (uri: String) async throws -> String in
+    AsyncFunction("transcribe") { (uri: String, language: String) async throws -> String in
       guard let url = URL(string: uri),
             url.isFileURL,
             (url.host == nil || url.host == "" || url.host == "localhost"),
@@ -168,7 +185,7 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
             !isDirectory.boolValue else {
         throw SpeechError.invalidRecording
       }
-      return try await self.engine.transcribe(fileURL)
+      return try await self.engine.transcribe(fileURL, configuration: ParakeetConfiguration(language: language))
     }
   }
 

@@ -6,6 +6,12 @@
 !/app
 /app/*
 !/app/package.json
+# Mobile reuses the desktop Sarvam schema and language list.
+!/app/src
+/app/src/*
+!/app/src/shared
+/app/src/shared/*
+!/app/src/shared/sarvam.ts
 !/web
 /web/*
 !/web/package.json

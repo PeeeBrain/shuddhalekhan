@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-for tool in bun pod xcodebuild swiftc node zip; do
+for tool in bun pod xcodebuild swiftc node zip openssl; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "Required build tool not found: $tool" >&2
     exit 1
@@ -78,6 +78,20 @@ swiftc -swift-version 6 \
   "$mobile_dir/native-checks/KeyboardBridgeCheck.swift" \
   -o "$build_dir/check-keyboard-bridge"
 "$build_dir/check-keyboard-bridge"
+swiftc \
+  "$mobile_dir/modules/shuddhalekhan-speech/ios/ParakeetConfiguration.swift" \
+  "$mobile_dir/native-checks/ParakeetConfigurationCheck.swift" \
+  -o "$build_dir/check-parakeet-configuration"
+"$build_dir/check-parakeet-configuration"
+# A throwaway PKCS#8 key, like a Google service-account export; OpenSSL produces the reference RS256 signature.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$build_dir/google-check.pem" 2>/dev/null
+jwt_input="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJjaGVja0BleGFtcGxlLmNvbSJ9"
+jwt_expected="$(printf '%s' "$jwt_input" | openssl dgst -sha256 -sign "$build_dir/google-check.pem" | base64 | tr -d '\n=' | tr '+/' '-_')"
+swiftc \
+  "$mobile_dir/modules/shuddhalekhan-speech/ios/GoogleJwt.swift" \
+  "$mobile_dir/native-checks/GoogleJwtCheck.swift" \
+  -o "$build_dir/check-google-jwt"
+"$build_dir/check-google-jwt" "$build_dir/google-check.pem" "$jwt_input" "$jwt_expected"
 
 xcodebuild \
   -workspace "$workspace" \
