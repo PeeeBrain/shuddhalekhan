@@ -4,6 +4,7 @@ import { requireOptionalNativeModule } from 'expo';
 type Progress = { phase: 'downloading' | 'installing'; fraction: number };
 type NativeSpeech = {
   getModelState(): Promise<'missing' | 'ready'>;
+  prepareModel(): Promise<void>;
   installModel(): Promise<void>;
   transcribe(uri: string): Promise<string>;
   getKeyboardSession(): Promise<NativeKeyboardSession>;
@@ -34,10 +35,12 @@ export async function transcribeOnDevice(uri: string, signal: AbortSignal): Prom
   return text;
 }
 
-export function useOnDeviceModel() {
+export function useOnDeviceModel(preloadInstalledModel: boolean) {
   const [localModel, setModel] = useState<LocalModelState>({ kind: speech ? 'checking' : 'unavailable' });
   const mounted = useRef(false);
   const installing = useRef(false);
+  const prepared = useRef(false);
+  const [preparingModel, setPreparingModel] = useState(false);
   useEffect(() => {
     mounted.current = true;
     const subscription = speech?.addListener('onModelProgress', progress => {
@@ -54,6 +57,19 @@ export function useOnDeviceModel() {
     return () => { mounted.current = false; subscription?.remove(); };
   }, []);
 
+  useEffect(() => {
+    if (!preloadInstalledModel || localModel.kind !== 'ready' || !speech || prepared.current) return;
+    prepared.current = true;
+    setPreparingModel(true);
+    // Preparation shares native's existing load task; it never downloads or opens the microphone.
+    void Promise.resolve().then(() => speech.prepareModel()).catch(() => {
+      // A session or transcription retries preparation and reports failure when explicitly requested.
+      prepared.current = false;
+    }).finally(() => {
+      if (mounted.current) setPreparingModel(false);
+    });
+  }, [preloadInstalledModel, localModel.kind]);
+
   const installLocalModel = async () => {
     if (!speech || installing.current) return;
     installing.current = true;
@@ -65,7 +81,7 @@ export function useOnDeviceModel() {
       if (mounted.current) setModel({ kind: 'error', message: 'Parakeet could not be downloaded or loaded. Check your connection and free storage, then retry.' });
     } finally { installing.current = false; }
   };
-  return { localModel, installLocalModel };
+  return { localModel, installLocalModel, preparingModel };
 }
 
 export const keyboardSessionMinutes = 10;

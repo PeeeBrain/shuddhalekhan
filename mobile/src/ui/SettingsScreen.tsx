@@ -127,7 +127,7 @@ export function SettingsScreen({
                 onChangeText={(v) => set('agentEndpoint', v)}
                 placeholder="https://api.openai.com/v1/chat/completions"
                 keyboardType="url"
-                hint="Full URL of an OpenAI-compatible chat completions endpoint. For LM Studio on your computer (e.g. over Tailscale): http://<computer IP>:1234/v1/chat/completions, with Serve on Local Network on in LM Studio and Allow unencrypted HTTP on below."
+                hint="Full OpenAI-compatible chat completions URL. For LM Studio: http://<computer IP>:1234/v1/chat/completions with Serve on Local Network on in LM Studio and Allow unencrypted HTTP on below."
               />
               <Field
                 label="Model"
@@ -263,8 +263,8 @@ function LocalModel({ model, onInstall }: { model: LocalModelState; onInstall: (
     case 'ready':
       return (
         <Text style={type.footnote}>
-          <Text style={{ color: color.green }}>Model ready. </Text>
-          Transcription runs on this iPhone. Agent Mode still sends the transcript to your agent endpoint. {languages}
+          <Text style={{ color: color.green }}>Model installed. </Text>
+          Agent Mode still sends the transcript to your agent endpoint. {languages}
         </Text>
       );
     case 'error':

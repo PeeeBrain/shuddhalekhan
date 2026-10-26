@@ -13,6 +13,9 @@ final class KeyboardViewController: UIInputViewController {
   private let cancelButton = UIButton(type: .system)
   private let shiftButton = UIButton(type: .system)
   private let keyRows = UIStackView()
+  private let keyPreview = UILabel()
+  private weak var previewKey: UIButton?
+  private lazy var statusHeight = statusLabel.heightAnchor.constraint(equalToConstant: 0)
   private var isUppercase = false
   private var isSymbolsMode = false
 
@@ -42,15 +45,23 @@ final class KeyboardViewController: UIInputViewController {
       keyboard.topAnchor.constraint(equalTo: view.topAnchor),
       keyboard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       keyboard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      keyboard.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-      view.heightAnchor.constraint(equalToConstant: 316)
+      keyboard.bottomAnchor.constraint(equalTo: view.bottomAnchor)
     ])
+    // Below required so it never fights the system's own keyboard height constraint while appearing.
+    let height = view.heightAnchor.constraint(equalToConstant: 316)
+    height.priority = UILayoutPriority(rawValue: 999)
+    height.isActive = true
 
     statusLabel.font = .preferredFont(forTextStyle: .footnote)
     statusLabel.adjustsFontForContentSizeCategory = true
     statusLabel.textColor = .secondaryLabel
     statusLabel.numberOfLines = 2
-    clockLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+    // Always reserves two lines (see viewWillLayoutSubviews) so status changes never move the buttons or keys.
+    statusHeight.constant = ceil(statusLabel.font.lineHeight * 2)
+    statusHeight.isActive = true
+    clockLabel.font = UIFontMetrics(forTextStyle: .footnote)
+      .scaledFont(for: .monospacedDigitSystemFont(ofSize: 13, weight: .semibold))
+    clockLabel.adjustsFontForContentSizeCategory = true
     clockLabel.textColor = .secondaryLabel
     clockLabel.setContentHuggingPriority(.required, for: .horizontal)
     clockLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -58,40 +69,72 @@ final class KeyboardViewController: UIInputViewController {
     statusRow.spacing = 8
     statusRow.isLayoutMarginsRelativeArrangement = true
     statusRow.layoutMargins = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 6)
+    statusRow.setContentHuggingPriority(.defaultHigh, for: .vertical)
     keyboard.addArrangedSubview(statusRow)
 
-    dictateButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
-    dictateButton.titleLabel?.adjustsFontForContentSizeCategory = true
-    dictateButton.tintColor = .white
-    dictateButton.layer.cornerRadius = 12
+    // Filled configurations darken on touch down and dim when disabled, like system buttons.
+    var dictateStyle = UIButton.Configuration.filled()
+    dictateStyle.cornerStyle = .fixed
+    dictateStyle.background.cornerRadius = 12
+    dictateStyle.imagePadding = 8
+    dictateStyle.baseForegroundColor = .white
+    dictateStyle.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+      var attributes = attributes
+      attributes.font = .preferredFont(forTextStyle: .headline)
+      return attributes
+    }
+    dictateButton.configuration = dictateStyle
     dictateButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
     dictateButton.addTarget(self, action: #selector(dictateTapped), for: .touchUpInside)
-    cancelButton.setImage(UIImage(systemName: "xmark"), for: .normal)
-    cancelButton.tintColor = .white
-    cancelButton.backgroundColor = UIColor(white: 0.24, alpha: 1)
-    cancelButton.layer.cornerRadius = 12
+    var cancelStyle = dictateStyle
+    cancelStyle.image = UIImage(systemName: "xmark")
+    cancelStyle.baseBackgroundColor = UIColor(white: 0.24, alpha: 1)
+    cancelButton.configuration = cancelStyle
     cancelButton.accessibilityLabel = "Cancel dictation"
     cancelButton.widthAnchor.constraint(equalToConstant: 56).isActive = true
     cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
     let dictationRow = UIStackView(arrangedSubviews: [dictateButton, cancelButton])
     dictationRow.spacing = 6
+    dictationRow.setContentHuggingPriority(.defaultHigh, for: .vertical)
     keyboard.addArrangedSubview(dictationRow)
 
+    // The key rows take the keyboard's spare height, split evenly, so no state change resizes them.
     keyRows.axis = .vertical
     keyRows.spacing = 8
+    keyRows.distribution = .fillEqually
     keyboard.addArrangedSubview(keyRows)
 
+    styleKey(shiftButton, function: true)
     shiftButton.setImage(UIImage(systemName: "shift"), for: .normal)
     shiftButton.accessibilityLabel = "Shift"
     shiftButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
     shiftButton.addTarget(self, action: #selector(toggleShift), for: .touchUpInside)
-    styleKey(shiftButton, function: true, selected: false)
     showKeyRows()
     render()
+
+    // Decorative and last in the subview list, so it draws over the keys without catching taps or VoiceOver focus.
+    keyPreview.isUserInteractionEnabled = false
+    keyPreview.isAccessibilityElement = false
+    keyPreview.accessibilityElementsHidden = true
+    keyPreview.isHidden = true
+    keyPreview.textAlignment = .center
+    keyPreview.font = .systemFont(ofSize: 32)
+    keyPreview.textColor = .white
+    keyPreview.backgroundColor = UIColor(white: 0.33, alpha: 1)
+    keyPreview.layer.cornerRadius = 8
+    keyPreview.layer.masksToBounds = true
+    view.addSubview(keyPreview)
+  }
+
+  override func viewWillLayoutSubviews() {
+    super.viewWillLayoutSubviews()
+    let twoLines = ceil(statusLabel.font.lineHeight * 2)
+    if statusHeight.constant != twoLines { statusHeight.constant = twoLines }
   }
 
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
+    log.notice("SpeechPerf keyboard stage=appear")
     // Updates only the countdown text, once a second, while the keyboard is on screen.
     clock = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated { self?.tick() }
@@ -104,6 +147,7 @@ final class KeyboardViewController: UIInputViewController {
     // Closing the authenticated connection cancels its utterance on the app side.
     if let pendingId { send(.cancel, id: pendingId) }
     pendingId = nil
+    hideKeyPreview()
     clock?.invalidate()
     clock = nil
     disconnect()
@@ -142,6 +186,7 @@ final class KeyboardViewController: UIInputViewController {
     channel = link
     link.onOpen = { [weak self, weak link] in
       guard let self, let link, self.channel === link else { return }
+      self.log.notice("SpeechPerf keyboard stage=connected")
       link.send(KeyboardSession.Request(token: bridge.token, command: nil))
     }
     link.onMessage = { [weak self, weak link] data in
@@ -182,6 +227,7 @@ final class KeyboardViewController: UIInputViewController {
       insertedIds.insert(pendingId)
       self.pendingId = nil
       textDocumentProxy.insertText(text)
+      log.notice("SpeechPerf keyboard stage=inserted id=\(pendingId, privacy: .public)")
       render(message: "Inserted.")
       return
     }
@@ -233,6 +279,7 @@ final class KeyboardViewController: UIInputViewController {
       render(message: "Keyboard connection unavailable. Open Shuddhalekhan and start a new session.")
       return false
     }
+    log.notice("SpeechPerf keyboard stage=\(action.rawValue, privacy: .public) id=\(id, privacy: .public)")
     channel.send(KeyboardSession.Request(token: bridge.token,
       command: .init(id: id, action: action, sentAt: KeyboardSession.nowMs())))
     return true
@@ -251,12 +298,15 @@ final class KeyboardViewController: UIInputViewController {
     case (_, .transcribing?): ("Transcribing…", "waveform", UIColor(white: 0.24, alpha: 1))
     default: (pendingId == nil ? "Dictate" : "Starting…", "mic.fill", .systemBlue)
     }
-    dictateButton.setTitle("  " + title, for: .normal)
-    dictateButton.setImage(UIImage(systemName: symbol), for: .normal)
-    dictateButton.backgroundColor = background
+    var style = dictateButton.configuration
+    style?.title = title
+    style?.image = UIImage(systemName: symbol)
+    style?.baseBackgroundColor = background
+    dictateButton.configuration = style
     dictateButton.accessibilityLabel = title
     dictateButton.isEnabled = phase != .transcribing
-    cancelButton.isHidden = phase == nil
+    // Dimmed rather than hidden, so the Dictate button keeps its width across states.
+    cancelButton.isEnabled = phase != nil
     let text = message ?? defaultStatus(phase)
     if statusLabel.text != text {
       statusLabel.text = text
@@ -267,7 +317,7 @@ final class KeyboardViewController: UIInputViewController {
 
   private func defaultStatus(_ phase: KeyboardSession.State.Phase?) -> String {
     switch phase {
-    case .recording?: return "Listening. Tap Stop to insert at the cursor."
+    case .recording?: return "Listening…"
     case .transcribing?: return "Transcribing on this iPhone…"
     default: return session == nil ? "No active keyboard session." : "Tap Dictate, speak, then tap Stop."
     }
@@ -276,18 +326,21 @@ final class KeyboardViewController: UIInputViewController {
   private func tick() {
     guard let session else { clockLabel.text = nil; return }
     let remaining = max(0, Int((session.sessionEndsAt - KeyboardSession.nowMs()) / 1_000))
-    var text = String(format: "Session %d:%02d", remaining / 60, remaining % 60)
+    var text = String(format: "%d:%02d", remaining / 60, remaining % 60)
+    var label = "\(remaining / 60) minutes \(remaining % 60) seconds left in the keyboard session"
     if activePhase == .recording, let pendingSince {
       let elapsed = Int(Date().timeIntervalSince(pendingSince))
-      text = String(format: "● %d:%02d · ", elapsed / 60, elapsed % 60) + text
+      text = String(format: "● %d:%02d", elapsed / 60, elapsed % 60)
+      label = "Recording \(elapsed / 60) minutes \(elapsed % 60) seconds. " + label
     }
     clockLabel.text = text
-    clockLabel.accessibilityLabel = "\(remaining / 60) minutes \(remaining % 60) seconds left in the keyboard session"
+    clockLabel.accessibilityLabel = label
   }
 
   // MARK: Keys
 
   private func showKeyRows() {
+    hideKeyPreview()
     for row in keyRows.arrangedSubviews {
       keyRows.removeArrangedSubview(row)
       row.removeFromSuperview()
@@ -310,12 +363,12 @@ final class KeyboardViewController: UIInputViewController {
 
     if needsInputModeSwitchKey {
       let nextKeyboardButton = UIButton(type: .system)
+      styleKey(nextKeyboardButton, function: true)
       nextKeyboardButton.setImage(UIImage(systemName: "globe"), for: .normal)
       nextKeyboardButton.accessibilityLabel = "Next keyboard"
       nextKeyboardButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
       nextKeyboardButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
       nextKeyboardButton.addTarget(self, action: #selector(handleInputModeList(from:with:)), for: .allTouchEvents)
-      styleKey(nextKeyboardButton, function: true, selected: false)
       bottomRow.addArrangedSubview(nextKeyboardButton)
     }
 
@@ -340,6 +393,9 @@ final class KeyboardViewController: UIInputViewController {
       let title = letters && !isUppercase ? key.lowercased() : key
       let button = makeKey(title, label: title, width: nil, action: #selector(insertInputKey(_:)))
       button.accessibilityIdentifier = key
+      button.addTarget(self, action: #selector(showKeyPreview(_:)), for: [.touchDown, .touchDragEnter])
+      button.addTarget(self, action: #selector(releaseKeyPreview(_:)),
+        for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
       row.addArrangedSubview(button)
     }
     return row
@@ -351,7 +407,7 @@ final class KeyboardViewController: UIInputViewController {
     row.spacing = 5
 
     shiftButton.accessibilityValue = isUppercase ? "Uppercase" : "Lowercase"
-    styleKey(shiftButton, function: true, selected: isUppercase)
+    shiftButton.isSelected = isUppercase
     row.addArrangedSubview(shiftButton)
 
     let letters = keyRow("ZXCVBNM", letters: true)
@@ -383,24 +439,38 @@ final class KeyboardViewController: UIInputViewController {
 
   private func makeKey(_ title: String, label: String, width: CGFloat?, function: Bool = false, action: Selector) -> UIButton {
     let button = UIButton(type: .system)
+    styleKey(button, function: function)
     button.setTitle(title, for: .normal)
-    button.titleLabel?.font = function ? .systemFont(ofSize: 15) : .systemFont(ofSize: 22)
     button.accessibilityLabel = label
     button.heightAnchor.constraint(greaterThanOrEqualToConstant: 42).isActive = true
     if let width {
       button.widthAnchor.constraint(equalToConstant: width).isActive = true
     }
     button.addTarget(self, action: action, for: .touchUpInside)
-    styleKey(button, function: function, selected: false)
     return button
   }
 
-  private func styleKey(_ button: UIButton, function: Bool, selected: Bool) {
-    button.backgroundColor = selected ? UIColor(white: 0.85, alpha: 1) : UIColor(white: function ? 0.2 : 0.33, alpha: 1)
-    button.tintColor = selected ? .black : .white
-    button.setTitleColor(.white, for: .normal)
-    button.layer.cornerRadius = 6
-    button.accessibilityTraits = selected ? [.button, .selected] : .button
+  /// Keys swap to the other key shade the moment a finger lands, like the system keyboard.
+  /// Selected keys (shift on) are light with a dark glyph.
+  private func styleKey(_ button: UIButton, function: Bool) {
+    var style = UIButton.Configuration.plain()
+    style.contentInsets = .zero
+    style.background.cornerRadius = 6
+    style.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+      var attributes = attributes
+      attributes.font = .systemFont(ofSize: function ? 15 : 22)
+      return attributes
+    }
+    button.configuration = style
+    button.configurationUpdateHandler = { button in
+      let shade: CGFloat = if button.isSelected { button.isHighlighted ? 0.65 : 0.85 }
+        else if button.isHighlighted { function ? 0.33 : 0.2 }
+        else { function ? 0.2 : 0.33 }
+      var style = button.configuration
+      style?.background.backgroundColor = UIColor(white: shade, alpha: 1)
+      style?.baseForegroundColor = button.isSelected ? .black : .white
+      button.configuration = style
+    }
   }
 
   @objc private func insertInputKey(_ sender: UIButton) {
@@ -412,13 +482,41 @@ final class KeyboardViewController: UIInputViewController {
     }
   }
 
+  /// Enlarged copy of a character key above the finger. A keyboard extension can't draw outside its own view,
+  /// so the bubble is clamped inside it and overlaps the row (or dictation controls) above.
+  private static func previewFrame(key: CGRect, bounds: CGRect) -> CGRect {
+    let size = CGSize(width: min(key.width + 20, bounds.width), height: min(key.height + 14, bounds.height))
+    let x = min(max(key.midX - size.width / 2, bounds.minX), bounds.maxX - size.width)
+    let y = min(max(key.minY - size.height - 4, bounds.minY), bounds.maxY - size.height)
+    return CGRect(origin: CGPoint(x: x, y: y), size: size)
+  }
+
+  @objc private func showKeyPreview(_ sender: UIButton) {
+    previewKey = sender
+    keyPreview.text = sender.title(for: .normal)
+    keyPreview.frame = Self.previewFrame(key: sender.convert(sender.bounds, to: view), bounds: view.bounds)
+    assert(view.bounds.contains(keyPreview.frame), "Key preview must stay inside the keyboard")
+    keyPreview.isHidden = false
+  }
+
+  /// Only the key that owns the bubble hides it, so a lifting first finger doesn't clear a second key's preview.
+  @objc private func releaseKeyPreview(_ sender: UIButton) {
+    if sender === previewKey { hideKeyPreview() }
+  }
+
+  private func hideKeyPreview() {
+    previewKey = nil
+    keyPreview.isHidden = true
+  }
+
   @objc private func toggleShift() {
     isUppercase.toggle()
     updateShift()
   }
 
   private func updateShift() {
-    styleKey(shiftButton, function: true, selected: isUppercase)
+    hideKeyPreview()
+    shiftButton.isSelected = isUppercase
     shiftButton.accessibilityValue = isUppercase ? "Uppercase" : "Lowercase"
     refreshLetterKeys(in: keyRows)
   }
