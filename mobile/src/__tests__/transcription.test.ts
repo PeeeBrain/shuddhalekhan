@@ -270,6 +270,28 @@ describe('provider request contracts', () => {
     });
   });
 
+  test('Google accepts a late automatic stop but rejects audio beyond its synchronous limit before authentication', async () => {
+    let uploads = 0;
+    await withServer(async request => {
+      if (new URL(request.url).pathname === '/token') return Response.json({ access_token: 'google-token' });
+      await request.json();
+      uploads++;
+      return Response.json({ results: [{ alternatives: [{ transcript: 'kept dictation' }] }] });
+    }, async url => {
+      const config = settings('', { transcriptionProvider: 'google-cloud-speech-v2', googleProject: 'my-project',
+        googleServiceAccount: JSON.stringify({ type: 'service_account', client_email: 'dictation@project.iam.gserviceaccount.com',
+          private_key: '-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----\n' }) });
+      let signatures = 0;
+      const invoke = (seconds: number) => transcribe({ settings: config, signal: new AbortController().signal, fetch: viaLocal(url),
+        audio: new Blob([new Uint8Array(44 + seconds * 32_000)], { type: 'audio/wav' }),
+        signGoogleJwt: async () => { signatures++; return 'signature'; } });
+      await expect(invoke(recordingLimitSeconds(config) + 2)).resolves.toBe('kept dictation');
+      await expect(invoke(60)).rejects.toThrow('Keep Google Cloud Speech recordings under 55 seconds.');
+      expect(uploads).toBe(1);
+      expect(signatures).toBe(1);
+    });
+  });
+
   test('whisper.cpp gets deterministic decoding and the base language, with no model or credential', async () => {
     let received: Record<string, unknown> | null = null;
     await withServer(async request => {

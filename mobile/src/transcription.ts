@@ -28,7 +28,8 @@ export async function transcribe({ audio, settings, signal, fetch, signGoogleJwt
   let text: string;
   if (provider === 'google-cloud-speech-v2') {
     if (!language) throw new Error('Google Cloud Speech needs an explicit spoken language.');
-    if (audio.size > 1_800_000) throw new Error('Keep Google Cloud Speech recordings under 55 seconds.');
+    // Allow recorder latency after the 55-second stop point, staying below Google's one-minute limit.
+    if (audio.size > 1_900_000) throw new Error('Keep Google Cloud Speech recordings under 55 seconds.');
     const token = await googleAccessToken({ settings, signal, fetch, signGoogleJwt });
     const content = base64(new Uint8Array(await audio.arrayBuffer()));
     const data = await send(JSON.stringify({ config: {

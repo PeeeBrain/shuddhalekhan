@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { isParakeetLanguage, languageLabel } from '../languages';
-import { transcriptionReady } from '../providers';
+import { recordingLimitSeconds, transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
 import { Button, Card, Segment, color, styles as kit, type } from './kit';
 
@@ -169,6 +169,8 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
   }
 
   const disabled = phase !== 'idle' || !configured || app.keyboardSession.active;
+  const limit = recordingLimitSeconds(app.settings);
+  const limitLabel = limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`;
   return (
     <View style={home.recordWrap}>
       <Pressable
@@ -176,7 +178,7 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
         disabled={disabled}
         accessibilityRole="button"
         accessibilityLabel={agent ? 'Record agent command' : 'Start dictation'}
-        accessibilityHint={configured ? 'Records up to five minutes' : setupHint}
+        accessibilityHint={configured ? `Records up to ${limitLabel}` : setupHint}
         accessibilityState={{ disabled }}
         style={({ pressed }) => [
           home.record,
@@ -189,7 +191,7 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
         <View style={[home.micGlyph, { backgroundColor: tint, borderRadius: agent ? 3 : 10 }]} />
       </Pressable>
       <Text style={[type.headline, { color: tint }]}>{agent ? 'Ask agent' : 'Dictate'}</Text>
-      <Text style={type.footnote}>Record up to five minutes.</Text>
+      <Text style={type.footnote}>Record up to {limitLabel}.</Text>
     </View>
   );
 }
