@@ -32,6 +32,7 @@ function when(controller: MobileController, predicate: () => boolean): Promise<v
 describe('mobile command lifecycle', () => {
   test('local dictation never uploads audio', async () => {
     const order: string[] = [];
+    let selectedLanguage: string | undefined;
     let networkCalls = 0;
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
       networkCalls++;
@@ -44,15 +45,17 @@ describe('mobile command lifecycle', () => {
       },
         fetch,
         loadSettings: async () => ({ ...defaultSettings, transcriptionSource: 'on-device',
+          language: 'English',
           allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` }),
         saveSettings: async value => value,
-        transcribeOnDevice: async () => '  Local speech.  ',
+        transcribeOnDevice: async (_signal, language) => { selectedLanguage = language; return '  Local speech.  '; },
       });
       await controller.initialize();
       await controller.startRecording('dictation');
       await controller.stopRecording();
       expect(order).toEqual(['permission']);
       expect(networkCalls).toBe(0);
+      expect(selectedLanguage).toBe('en');
       expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', transcript: 'Local speech.', error: null });
       controller.clearResults();
       expect(controller.getSnapshot().transcript).toBe('');
@@ -110,7 +113,7 @@ describe('mobile command lifecycle', () => {
     } });
     try {
       const native = recorder();
-      const controller = createController(native.port, { ...defaultSettings, allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` });
+      const controller = createController(native.port, { ...defaultSettings, transcriptionProvider: 'custom-open-ai-compatible', agentProvider: 'openai-compatible', allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` });
       await controller.initialize();
       await controller.startRecording('dictation');
       const finishing = controller.stopRecording();
@@ -128,7 +131,7 @@ describe('mobile command lifecycle', () => {
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() { received.resolve(); return reply.promise; } });
     try {
       const native = recorder();
-      const controller = createController(native.port, { ...defaultSettings, allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` });
+      const controller = createController(native.port, { ...defaultSettings, transcriptionProvider: 'custom-open-ai-compatible', agentProvider: 'openai-compatible', allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` });
       await controller.initialize();
       await controller.startRecording('dictation');
       const finishing = controller.stopRecording();
@@ -156,7 +159,7 @@ describe('mobile command lifecycle', () => {
     try {
       const base = `http://127.0.0.1:${server.port}`;
       const native = recorder();
-      const controller = createController(native.port, { ...defaultSettings, allowInsecureHTTP: true, agentEnabled: true, transcriptionEndpoint: `${base}/inference`, agentEndpoint: `${base}/chat` });
+      const controller = createController(native.port, { ...defaultSettings, transcriptionProvider: 'custom-open-ai-compatible', agentProvider: 'openai-compatible', allowInsecureHTTP: true, agentEnabled: true, transcriptionEndpoint: `${base}/inference`, agentEndpoint: `${base}/chat` });
       await controller.initialize();
       await controller.startRecording('agent');
       await controller.stopRecording();
@@ -198,7 +201,7 @@ describe('mobile command lifecycle', () => {
     } });
     try {
       const native = recorder();
-      const controller = createController(native.port, { ...defaultSettings, allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` });
+      const controller = createController(native.port, { ...defaultSettings, transcriptionProvider: 'custom-open-ai-compatible', agentProvider: 'openai-compatible', allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` });
       await controller.initialize();
       await controller.startRecording('dictation');
       await controller.stopRecording();

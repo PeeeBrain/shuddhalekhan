@@ -4,19 +4,25 @@
 
 ## Supported services
 
-- OpenAI-compatible transcription endpoints.
-- OpenAI-compatible Chat Completions endpoints for Agent Mode.
+- Transcription providers matching the desktop: OpenAI, Sarvam AI, Azure Speech, Google Cloud Speech v2, NVIDIA Speech NIM, a whisper.cpp server, WhisperLiveKit, and custom OpenAI-compatible endpoints.
+- Agent Mode providers matching the desktop: OpenAI and Azure OpenAI (Responses or Chat Completions), OpenRouter, and custom OpenAI-compatible Chat Completions endpoints, with reasoning-effort and prompt-caching options.
 - Streamable HTTP MCP servers with bearer tokens.
 - API keys saved with Expo SecureStore in the iOS Keychain.
-- On-device Parakeet TDT v3 INT8 through FluidAudio/Core ML.
+- On-device Parakeet TDT v2 (English) and v3 (multilingual) INT8 through FluidAudio/Core ML.
 
-Mobile settings are separate from the Electron desktop settings. The app does not import the desktop config or desktop model files. Existing saved settings keep the endpoint source after upgrading.
+Mobile settings are separate from the Electron desktop settings. The app does not import the desktop config or desktop model files. Existing saved settings keep the endpoint source after upgrading; their endpoints move to the custom OpenAI-compatible provider.
+
+Google Cloud Speech v2 takes a service-account JSON key, stored in the Keychain. The app signs the token request on the phone and only sends it to `oauth2.googleapis.com`; the key's own `token_uri` is ignored. Recognition goes to the regional host for the chosen location. Remote providers receive the selected language in their own format (for example `en-IN` for Azure, Sarvam and Google). Choose your actual language and region rather than Auto-detect when a provider misidentifies it.
+
+Sarvam recording stops automatically after 28 seconds, leaving two seconds for timer and recorder latency before its 30-second limit. Model downloads wait until launch-time preparation finishes. Older on-device settings with an unsupported endpoint language upgrade to Auto-detect without clearing credentials or MCP servers.
 
 ## Use Parakeet on this iPhone
 
-In Settings, select **Transcription → On this iPhone**, confirm **Download model**, and keep the app open through download and preparation. The model is about 480 MB; Core ML also needs storage for its prepared models. Save the source selection, then record a short dictation. After setup, test it in airplane mode with Dictation selected. Agent Mode still sends the resulting text to its configured model endpoint.
+In Settings, select **Transcription → On this iPhone**, choose a language, confirm **Download model**, and keep the app open through download and preparation. Each model is about 0.5 GB; Core ML also needs storage for its prepared models. Save the source selection, then record a short dictation. After setup, test it in airplane mode with Dictation selected. Agent Mode still sends the resulting text to its configured model endpoint.
 
-The app uses the earlier inference bridge with FluidAudio pinned to v0.15.5, v3 and an INT8 encoder. The encoder uses CPU plus Apple Neural Engine; preprocessing also uses CPU. This is the Core ML export, not the desktop ONNX or Docker GGML files. Parakeet v3 supports 25 European languages, including English. It does not support Hindi or Marathi, and the endpoint dictionary/language fields do not configure local inference.
+The language decides the model. Any English variant, including English (India), uses the English-only Parakeet v2. Another supported language uses Parakeet v3 with that language as a script hint, one chunk at a time, without mel chunk context, as FluidAudio recommends for multilingual audio. Auto-detect uses v3 with no hint and can pick the wrong language or script. Only one model stays loaded; switching language may need the other download. NVIDIA reports an English average WER of 6.05% for v2 against 6.34% for v3, and FluidAudio reports LibriSpeech 2.1% against 2.5%. Accuracy on Indian-accented English has not been measured, so whether v2 fixes Cyrillic or Slavic-language output is unknown.
+
+FluidAudio is pinned to v0.15.5 with INT8 encoders. The encoder uses CPU plus Apple Neural Engine; preprocessing also uses CPU. This is the Core ML export, not the desktop ONNX or Docker GGML files. Parakeet v3 supports 25 European languages. Neither model supports Hindi or Marathi, and the remote dictionary fields do not configure local inference.
 
 When on-device transcription is selected and the model is installed, the app starts preparing it on launch without opening the microphone or downloading anything. Home shows a preparation notice while this runs. A session started during preparation awaits the same native load. First use after an update can still require Core ML preparation; moving that work before the session tap does not shorten compilation. Endpoint-only launches do not preload the local model. See the [startup measurements](docs/performance/2026-10-26-startup.md) for measured cases and pending device checks.
 
@@ -26,7 +32,7 @@ iOS does not let keyboards use the microphone or open their app. So the app reco
 
 1. Install the IPA with its keyboard extension retained.
 2. On the phone, open **Settings → General → Keyboard → Keyboards → Add New Keyboard → Shuddhalekhan**. Tap that keyboard and enable **Allow Full Access**. The keyboard uses it only to exchange start, stop, and the finished text with the app. The keyboard connects only to the app on this iPhone and cannot use the microphone.
-3. Download Parakeet. On Home, tap **Start keyboard session**. The session lasts 10 minutes. Home shows a countdown and a **Stop session** button, and iOS shows its recording indicator.
+3. Download Parakeet for your language. On Home, tap **Start keyboard session**. The session lasts 10 minutes. Home shows a countdown and a **Stop session** button, and iOS shows its recording indicator.
 4. In Notes or another app, switch to the Shuddhalekhan keyboard with the globe key. Tap **Dictate**, speak, then tap **Stop and insert**. The app transcribes the audio with Parakeet on the phone, and the keyboard types the text at the cursor. The **×** button cancels an utterance.
 
 What happens to audio and text during a session:
@@ -44,7 +50,7 @@ Secure fields and apps that disallow third-party keyboards use the system keyboa
 
 1. Load a chat model in LM Studio and start its server. Under **Developer → Server Settings**, enable **Serve on Local Network**. The default server port is `1234`.
 2. On the desktop, run `tailscale ip -4`. With Tailscale connected on the phone, open `http://DESKTOP_TAILSCALE_IP:1234/v1/models` in Safari. If it cannot connect, fix the server binding, Tailscale permissions, or Windows firewall before testing the app.
-3. In Shuddhalekhan Settings, enable Agent Mode. Set **Chat completions endpoint** to `http://DESKTOP_TAILSCALE_IP:1234/v1/chat/completions`, **Model** to the exact loaded identifier returned by `/v1/models`, and leave the key blank unless LM Studio authentication is enabled. For an authenticated server, enter its token.
+3. In Shuddhalekhan Settings, enable Agent Mode. Choose **Custom OpenAI-compatible**, set **Endpoint** to `http://DESKTOP_TAILSCALE_IP:1234/v1/chat/completions`, **Model** to the exact loaded identifier returned by `/v1/models`, and leave the key blank unless LM Studio authentication is enabled. For an authenticated server, enter its token.
 4. Enable **Allow unencrypted HTTP** for an `http://` endpoint, save, select Agent on Home, and record a command. Tailscale encrypts traffic between its devices even though the application URL uses HTTP.
 
 Start with no MCP servers and a simple question. To test tools, add reachable HTTP MCP endpoints to the app and use a model with tool support. The mobile app discovers and executes those tools with individual approvals; LM Studio's desktop chat configuration and MCP connections are not imported.
@@ -82,6 +88,8 @@ For a small logic change, run the relevant test file from `mobile/`, for example
 5. For keyboard dictation, download Parakeet, enable the keyboard and Full Access, start a session in the foreground app, switch to Notes, Dictate, speak, and Stop and insert. Confirm recording acknowledgement, transcription, and exactly one insertion at the cursor while the app is backgrounded. Try another utterance without restarting the session, then another host app. Report session loss separately from transcription success.
 
 On October 26, 2026, the maintainer installed build 2 with iLoader and confirmed background recording, on-device transcription, and insertion in Notes. Repeated utterances, session persistence, expiry, and interruptions still need their own checks. Use the [device checks](#device-checks) for changes affecting those behaviors. Test ordinary in-app Dictation independently; include Agent Mode when changing its code.
+
+Build 8 adds the desktop transcription and agent providers and English routing to Parakeet v2. None of it has been tested on a phone yet. Check v2 and v3 downloads, a language switch between them, the keyboard with each model, and each remote provider you use. Recognition on Google, Azure and Sarvam has only been tested against local stand-in servers.
 
 For performance changes, measure tap-to-session-ready and Stop-to-insertion separately. Compare a process-cold launch with a second session in the same process, recording permission prompts and model preparation separately. Record the device, iOS version, build number, and timings; one fast retry does not establish cold-start performance.
 

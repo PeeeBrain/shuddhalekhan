@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defaultSettings, mobileSettingsSchema, type MobileSettings } from './settings';
+import { isParakeetLanguage } from './languages';
 
 const metadataKey = 'shuddhalekhan.settings';
 const secretPrefix = 'shuddhalekhan.settings';
@@ -9,20 +10,14 @@ const serverSettingsSchema = mobileSettingsSchema.shape.mcpServers.element
   .extend({ tokenRef: z.string().min(1).nullable() })
   .strict();
 
-const storedSettingsSchema = z.object({
-  transcriptionSource: mobileSettingsSchema.shape.transcriptionSource,
-  transcriptionEndpoint: mobileSettingsSchema.shape.transcriptionEndpoint,
-  transcriptionModel: mobileSettingsSchema.shape.transcriptionModel,
-  language: mobileSettingsSchema.shape.language,
-  dictionary: mobileSettingsSchema.shape.dictionary,
-  agentEnabled: mobileSettingsSchema.shape.agentEnabled,
-  agentEndpoint: mobileSettingsSchema.shape.agentEndpoint,
-  agentModel: mobileSettingsSchema.shape.agentModel,
-  systemPrompt: mobileSettingsSchema.shape.systemPrompt,
+const storedSettingsSchema = z.object(mobileSettingsSchema.shape).omit({
+  transcriptionKey: true, agentKey: true, googleServiceAccount: true, mcpServers: true,
+}).extend({
+  transcriptionProvider: mobileSettingsSchema.shape.transcriptionProvider.removeDefault().optional(),
   mcpServers: z.array(serverSettingsSchema).max(10),
-  allowInsecureHTTP: mobileSettingsSchema.shape.allowInsecureHTTP,
   transcriptionKeyRef: z.string().min(1).nullable(),
   agentKeyRef: z.string().min(1).nullable(),
+  googleServiceAccountRef: z.string().min(1).nullable().default(null),
 }).strict();
 
 const envelopeSchema = z.object({
@@ -56,9 +51,13 @@ function readEnvelope(raw: string): Envelope | null {
   try {
     const decoded: unknown = JSON.parse(raw);
     const envelope = envelopeSchema.parse(decoded);
+    // Old local inference ignored the endpoint language; keep that behavior when upgrading.
+    if (envelope.settings.transcriptionProvider === undefined && envelope.settings.transcriptionSource === 'on-device'
+      && !isParakeetLanguage(envelope.settings.language)) envelope.settings.language = '';
     const refs = [
       [envelope.settings.transcriptionKeyRef, secretKey(envelope.generation, 'transcription')],
       [envelope.settings.agentKeyRef, secretKey(envelope.generation, 'agent')],
+      [envelope.settings.googleServiceAccountRef, secretKey(envelope.generation, 'google')],
       ...envelope.settings.mcpServers.map((server, index) => [server.tokenRef, secretKey(envelope.generation, `mcp-${index}`)]),
     ];
     if (refs.some(([ref, expected]) => ref !== null && ref !== expected)) return null;
@@ -72,6 +71,7 @@ function referencedSecrets(envelope: Envelope): string[] {
   return [
     envelope.settings.transcriptionKeyRef,
     envelope.settings.agentKeyRef,
+    envelope.settings.googleServiceAccountRef,
     ...envelope.settings.mcpServers.map(server => server.tokenRef),
   ].filter((ref): ref is string => ref !== null);
 }
@@ -96,15 +96,17 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
         if (value === null) throw new Error();
         return value;
       };
-      const [transcriptionKey, agentKey, ...serverTokens] = await Promise.all([
+      const [transcriptionKey, agentKey, googleServiceAccount, ...serverTokens] = await Promise.all([
         loadSecret(envelope.settings.transcriptionKeyRef),
         loadSecret(envelope.settings.agentKeyRef),
+        loadSecret(envelope.settings.googleServiceAccountRef),
         ...envelope.settings.mcpServers.map(server => loadSecret(server.tokenRef)),
       ]);
       return mobileSettingsSchema.parse({
         ...envelope.settings,
         transcriptionKey,
         agentKey,
+        googleServiceAccount,
         mcpServers: envelope.settings.mcpServers.map((server, index) => ({
           id: server.id,
           name: server.name,
@@ -146,6 +148,7 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
     try {
       const transcriptionKeyRef = await storeSecret('transcription', parsed.data.transcriptionKey);
       const agentKeyRef = await storeSecret('agent', parsed.data.agentKey);
+      const googleServiceAccountRef = await storeSecret('google', parsed.data.googleServiceAccount);
       const mcpServers = [];
       for (const [index, server] of parsed.data.mcpServers.entries()) {
         mcpServers.push({
@@ -156,23 +159,16 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
           tokenRef: await storeSecret(`mcp-${index}`, server.token),
         });
       }
+      const { transcriptionKey: _transcriptionKey, agentKey: _agentKey, googleServiceAccount: _googleServiceAccount, mcpServers: _servers, ...publicSettings } = parsed.data;
       const envelope: Envelope = {
         version: 1,
         generation,
         settings: {
-          transcriptionSource: parsed.data.transcriptionSource,
-          transcriptionEndpoint: parsed.data.transcriptionEndpoint,
-          transcriptionModel: parsed.data.transcriptionModel,
-          language: parsed.data.language,
-          dictionary: parsed.data.dictionary,
-          agentEnabled: parsed.data.agentEnabled,
-          agentEndpoint: parsed.data.agentEndpoint,
-          agentModel: parsed.data.agentModel,
-          systemPrompt: parsed.data.systemPrompt,
+          ...publicSettings,
           transcriptionKeyRef,
           agentKeyRef,
+          googleServiceAccountRef,
           mcpServers,
-          allowInsecureHTTP: parsed.data.allowInsecureHTTP,
         },
       };
       await metadata.setItem(metadataKey, JSON.stringify(envelope));

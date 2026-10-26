@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { requireOptionalNativeModule } from 'expo';
+import { isParakeetLanguage, languageBase } from './languages';
 
 type Progress = { phase: 'downloading' | 'installing'; fraction: number };
 type NativeSpeech = {
-  getModelState(): Promise<'missing' | 'ready'>;
-  prepareModel(): Promise<void>;
-  installModel(): Promise<void>;
-  transcribe(uri: string): Promise<string>;
+  getModelState(language: string): Promise<'missing' | 'ready'>;
+  prepareModel(language: string): Promise<void>;
+  installModel(language: string): Promise<void>;
+  transcribe(uri: string, language: string): Promise<string>;
+  signGoogleJwt(privateKey: string, input: string): Promise<string>;
   getKeyboardSession(): Promise<NativeKeyboardSession>;
-  startKeyboardSession(minutes: number): Promise<NativeKeyboardSession>;
+  startKeyboardSession(minutes: number, language: string): Promise<NativeKeyboardSession>;
   stopKeyboardSession(): Promise<void>;
   addListener(event: 'onModelProgress', listener: (progress: Progress) => void): { remove(): void };
   addListener(event: 'onKeyboardSession', listener: (session: NativeKeyboardSession) => void): { remove(): void };
@@ -23,65 +25,91 @@ export type LocalModelState =
 
 const speech = requireOptionalNativeModule<NativeSpeech>('ShuddhalekhanSpeech');
 
-export async function transcribeOnDevice(uri: string, signal: AbortSignal): Promise<string> {
+export function localModelKey(language: string): 'english' | 'multilingual' {
+  return languageBase(language) === 'en' ? 'english' : 'multilingual';
+}
+
+function checkedLocalLanguage(language: string): string {
+  if (!isParakeetLanguage(language)) throw new Error('Parakeet does not support this language. Choose a supported language or use an endpoint.');
+  return languageBase(language);
+}
+
+export async function signGoogleJwt(privateKey: string, input: string): Promise<string> {
+  if (!speech) throw new Error('Google service-account authentication requires the updated native app build.');
+  try { return await speech.signGoogleJwt(privateKey, input); }
+  catch { throw new Error('Could not sign with this Google service-account key. Check its private key.'); }
+}
+
+export async function transcribeOnDevice(uri: string, signal: AbortSignal, language: string): Promise<string> {
   signal.throwIfAborted();
   if (!speech) throw new Error('On-device Parakeet requires the updated native app build.');
-  if (await speech.getModelState() !== 'ready') throw new Error('Download Parakeet in Settings first.');
+  const selected = checkedLocalLanguage(language);
+  if (await speech.getModelState(selected) !== 'ready') throw new Error('Download Parakeet for the selected language in Settings first.');
   signal.throwIfAborted();
   let text: string;
-  try { text = await speech.transcribe(uri); }
+  try { text = await speech.transcribe(uri, selected); }
   catch { throw new Error('Parakeet could not transcribe this recording. Try a shorter recording, or restart the app.'); }
   signal.throwIfAborted();
   return text;
 }
 
-export function useOnDeviceModel(preloadInstalledModel: boolean) {
-  const [localModel, setModel] = useState<LocalModelState>({ kind: speech ? 'checking' : 'unavailable' });
+/** preloadLanguage prepares that language's installed model in the background; null skips preparation. */
+export function useOnDeviceModel(preloadLanguage: string | null) {
+  const initial: LocalModelState = { kind: speech ? 'checking' : 'unavailable' };
+  const [localModels, setModels] = useState<Record<'english' | 'multilingual', LocalModelState>>({ english: initial, multilingual: initial });
+  const setModel = (key: 'english' | 'multilingual', state: LocalModelState) => setModels(models => ({ ...models, [key]: state }));
   const mounted = useRef(false);
-  const installing = useRef(false);
-  const prepared = useRef(false);
+  const installing = useRef<'english' | 'multilingual' | null>(null);
+  const prepared = useRef<'english' | 'multilingual' | null>(null);
   const [preparingModel, setPreparingModel] = useState(false);
   useEffect(() => {
     mounted.current = true;
     const subscription = speech?.addListener('onModelProgress', progress => {
       if (mounted.current && installing.current && Number.isFinite(progress.fraction) &&
           (progress.phase === 'downloading' || progress.phase === 'installing')) {
-        setModel({ kind: progress.phase, fraction: Math.max(0, Math.min(1, progress.fraction)) });
+        setModel(installing.current, { kind: progress.phase, fraction: Math.max(0, Math.min(1, progress.fraction)) });
       }
     });
-    void speech?.getModelState().then(kind => {
-      if (mounted.current && !installing.current) setModel({ kind });
-    }).catch(() => {
-      if (mounted.current && !installing.current) setModel({ kind: 'error', message: 'Could not check the local model. Try downloading it again.' });
-    });
+    for (const language of ['en', '']) {
+      const key = localModelKey(language);
+      void speech?.getModelState(language).then(kind => {
+        if (mounted.current && installing.current !== key) setModel(key, { kind });
+      }).catch(() => {
+        if (mounted.current && installing.current !== key) setModel(key, { kind: 'error', message: 'Could not check the local model. Try downloading it again.' });
+      });
+    }
     return () => { mounted.current = false; subscription?.remove(); };
   }, []);
 
+  const preloadKey = preloadLanguage === null ? null : localModelKey(preloadLanguage);
+  const preloadReady = preloadKey !== null && localModels[preloadKey].kind === 'ready';
   useEffect(() => {
-    if (!preloadInstalledModel || localModel.kind !== 'ready' || !speech || prepared.current) return;
-    prepared.current = true;
+    if (preloadLanguage === null || !isParakeetLanguage(preloadLanguage) || !preloadReady || !speech || prepared.current === preloadKey) return;
+    prepared.current = preloadKey;
     setPreparingModel(true);
     // Preparation shares native's existing load task; it never downloads or opens the microphone.
-    void Promise.resolve().then(() => speech.prepareModel()).catch(() => {
+    void Promise.resolve().then(() => speech.prepareModel(checkedLocalLanguage(preloadLanguage))).catch(() => {
       // A session or transcription retries preparation and reports failure when explicitly requested.
-      prepared.current = false;
+      prepared.current = null;
     }).finally(() => {
       if (mounted.current) setPreparingModel(false);
     });
-  }, [preloadInstalledModel, localModel.kind]);
+  }, [preloadLanguage, preloadKey, preloadReady]);
 
-  const installLocalModel = async () => {
+  const installLocalModel = async (language: string) => {
     if (!speech || installing.current) return;
-    installing.current = true;
-    setModel({ kind: 'downloading', fraction: 0 });
+    const selected = checkedLocalLanguage(language);
+    const key = localModelKey(selected);
+    installing.current = key;
+    setModel(key, { kind: 'downloading', fraction: 0 });
     try {
-      await speech.installModel();
-      if (mounted.current) setModel({ kind: 'ready' });
+      await speech.installModel(selected);
+      if (mounted.current) setModel(key, { kind: 'ready' });
     } catch {
-      if (mounted.current) setModel({ kind: 'error', message: 'Parakeet could not be downloaded or loaded. Check your connection and free storage, then retry.' });
-    } finally { installing.current = false; }
+      if (mounted.current) setModel(key, { kind: 'error', message: 'Parakeet could not be downloaded or loaded. Check your connection and free storage, then retry.' });
+    } finally { installing.current = null; }
   };
-  return { localModel, installLocalModel, preparingModel };
+  return { localModels, installLocalModel, preparingModel };
 }
 
 export const keyboardSessionMinutes = 10;
@@ -107,10 +135,11 @@ export function useKeyboardSession() {
     return () => clearInterval(timer);
   }, [session.endsAt]);
 
-  const startKeyboardSession = async () => {
+  const startKeyboardSession = async (language: string) => {
     if (!speech || starting) return;
     setStarting(true);
-    try { setSession(await speech.startKeyboardSession(keyboardSessionMinutes)); }
+    const selected = checkedLocalLanguage(language);
+    try { setSession(await speech.startKeyboardSession(keyboardSessionMinutes, selected)); }
     catch { throw new Error('Could not start the keyboard session. Check microphone access and that Parakeet is downloaded, then try again.'); }
     finally { setStarting(false); }
   };

@@ -8,6 +8,8 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Mobile
+- Added the desktop transcription providers (OpenAI, Sarvam AI, Azure Speech, Google Cloud Speech v2, NVIDIA Speech NIM, whisper.cpp, WhisperLiveKit) and Agent Mode providers (OpenAI and Azure OpenAI with Responses or Chat Completions, OpenRouter) to the iOS app. Existing endpoints move to the custom OpenAI-compatible provider.
+- On-device transcription now uses the English-only Parakeet v2 for any English language choice. Other languages use Parakeet v3 with a language hint and multilingual chunk settings. This targets English coming out in another language or script, but accuracy on Indian-accented English hasn't been measured.
 - Stabilized the iOS dictation keyboard panel and added immediate key highlighting and enlarged character previews. Home prioritizes active keyboard sessions. Installed on-device speech models now prepare on launch without opening the microphone, and keyboard commands no longer send duplicate state acknowledgements.
 - Fixed the iOS dictation keyboard command handoff being blocked when the recording app is in the background. Commands and results now use an authenticated connection confined to the iPhone.
 - Added on-device Parakeet v3 setup and a keyboard for dictation into other apps during a microphone session. Existing endpoint settings are preserved. Added LM Studio setup guidance for voice agents over Tailscale.

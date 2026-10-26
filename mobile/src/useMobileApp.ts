@@ -5,7 +5,8 @@ import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
 import { MobileController, type Recorder } from './controller';
 import { loadSettings, saveSettings } from './native-settings';
-import { transcribeOnDevice, useKeyboardSession, useOnDeviceModel } from './on-device';
+import { localModelKey, signGoogleJwt, transcribeOnDevice, useKeyboardSession, useOnDeviceModel } from './on-device';
+import { recordingLimitSeconds } from './providers';
 
 const recordingOptions: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -72,16 +73,16 @@ export function useMobileApp() {
         }
       },
     };
-    return new MobileController({ recorder: nativeRecorder, fetch, loadSettings, saveSettings,
-      transcribeOnDevice: async signal => {
+    return new MobileController({ recorder: nativeRecorder, fetch, loadSettings, saveSettings, signGoogleJwt,
+      transcribeOnDevice: async (signal, language) => {
         if (!recordingFile?.exists) throw new Error('The recording file is unavailable. Record again.');
-        return transcribeOnDevice(recordingFile.uri, signal);
+        return transcribeOnDevice(recordingFile.uri, signal, language);
       },
     });
   });
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
-  const { localModel, installLocalModel, preparingModel } = useOnDeviceModel(
-    state.phase !== 'loading' && state.settings.transcriptionSource === 'on-device',
+  const { localModels, installLocalModel, preparingModel } = useOnDeviceModel(
+    state.phase !== 'loading' && state.settings.transcriptionSource === 'on-device' ? state.settings.language : null,
   );
   const [now, setNow] = useState(Date.now);
 
@@ -102,19 +103,19 @@ export function useMobileApp() {
       const currentTime = Date.now();
       const elapsed = Math.floor((currentTime - started) / 1000);
       setNow(currentTime);
-      if (elapsed >= 300) void controller.stopRecording();
+      if (elapsed >= recordingLimitSeconds(controller.getSnapshot().settings)) void controller.stopRecording();
     }, 1000);
     return () => clearInterval(timer);
   }, [controller, state.phase, state.recordingStartedAt]);
 
   return {
     ...state, elapsedSeconds: state.phase === 'recording' && state.recordingStartedAt !== null ? Math.max(0, Math.floor((now - state.recordingStartedAt) / 1000)) : 0,
-    localModel, installLocalModel, preparingModel,
+    localModel: localModels[localModelKey(state.settings.language)], localModels, installLocalModel, preparingModel,
     keyboardSession, stopKeyboardSession,
     startKeyboardSession: async () => {
       // The session holds the microphone; in-app recording stays disabled until it ends.
       if (controller.getSnapshot().phase !== 'idle') throw new Error('Finish the current command first.');
-      await startKeyboardSession();
+      await startKeyboardSession(controller.getSnapshot().settings.language);
     },
     startRecording: controller.startRecording, stopRecording: controller.stopRecording, cancel: controller.cancel,
     retryAgent: controller.retryAgent, resolveApproval: controller.resolveApproval,
