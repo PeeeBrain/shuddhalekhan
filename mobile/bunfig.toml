@@ -1,0 +1,3 @@
+[test]
+# Mobile protocol tests use Bun's native fetch and streams, without Electron's DOM preload.
+preload = []

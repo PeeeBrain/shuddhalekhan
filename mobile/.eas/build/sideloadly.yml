@@ -1,0 +1,16 @@
+build:
+  name: Unsigned Release IPA for Sideloadly
+  steps:
+    - eas/checkout
+    - run:
+        name: Install workspace dependencies without Electron hooks
+        working_directory: ..
+        command: bun install --frozen-lockfile --ignore-scripts
+    - run:
+        name: Build unsigned iPhone Release app
+        command: bash scripts/build-ios.sh
+    - eas/upload_artifact:
+        name: Unsigned device IPA
+        inputs:
+          type: application-archive
+          path: mobile/build/ipa/Shuddhalekhan-unsigned.ipa

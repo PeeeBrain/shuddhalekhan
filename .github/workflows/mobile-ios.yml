@@ -1,0 +1,101 @@
+name: Mobile iOS
+
+on:
+  pull_request:
+    paths:
+      - "mobile/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/mobile-ios.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/mobile-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Mobile checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install workspace dependencies without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Test mobile logic
+        run: bun run --cwd mobile test
+
+      - name: Typecheck mobile app
+        run: bun run --cwd mobile typecheck
+
+      - name: Lint mobile app
+        run: bun run --cwd mobile lint
+
+      - name: Verify Expo native dependencies
+        working-directory: mobile
+        run: bunx expo-doctor
+
+      - name: Export iOS JavaScript bundle
+        run: bun run --cwd mobile export:ios
+
+  unsigned-ipa:
+    name: Build unsigned iOS IPA
+    if: github.event_name == 'workflow_dispatch'
+    needs: checks
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install workspace dependencies without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Check Xcode version
+        run: xcodebuild -version
+
+      - name: Build release IPA without code signing
+        run: bash mobile/scripts/build-ios.sh
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shuddhalekhan-unsigned-ipa
+          path: mobile/build/ipa/Shuddhalekhan-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7

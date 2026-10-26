@@ -4,7 +4,8 @@
   "version": "0.0.0-development",
   "workspaces": [
     "app",
-    "web"
+    "web",
+    "mobile"
   ],
   "scripts": {
     "dev": "bun run dev:app",

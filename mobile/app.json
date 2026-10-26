@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "Shuddhalekhan",
+    "slug": "shuddhalekhan-mobile",
+    "version": "1.0.0",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "platforms": [
+      "ios"
+    ],
+    "ios": {
+      "buildNumber": "2",
+      "bundleIdentifier": "com.shuddhalekhan.mobile",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "Connect to transcription and MCP services configured on your local network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Shuddhalekhan to record audio after you tap Record, or during a keyboard session you start.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0",
+            "extraPods": [
+              {
+                "name": "FluidAudio",
+                "git": "https://github.com/FluidInference/FluidAudio.git",
+                "tag": "v0.15.5"
+              }
+            ]
+          }
+        }
+      ],
+      "@bacons/apple-targets"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6c292dda-4e19-40cb-9d00-1a0900fd0775"
+      }
+    },
+    "owner": "parthashirolkar"
+  }
+}
