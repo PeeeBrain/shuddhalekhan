@@ -18,6 +18,8 @@ In Settings, select **Transcription → On this iPhone**, confirm **Download mod
 
 The app uses the earlier inference bridge with FluidAudio pinned to v0.15.5, v3 and an INT8 encoder. The encoder uses CPU plus Apple Neural Engine; preprocessing also uses CPU. This is the Core ML export, not the desktop ONNX or Docker GGML files. Parakeet v3 supports 25 European languages, including English. It does not support Hindi or Marathi, and the endpoint dictionary/language fields do not configure local inference.
 
+When on-device transcription is selected and the model is installed, the app starts preparing it on launch without opening the microphone or downloading anything. Home shows a preparation notice while this runs. A session started during preparation awaits the same native load. First use after an update can still require Core ML preparation; moving that work before the session tap does not shorten compilation. Endpoint-only launches do not preload the local model. See the [startup measurements](docs/performance/2026-10-26-startup.md) for measured cases and pending device checks.
+
 ## Dictate in another app with the keyboard
 
 iOS does not let keyboards use the microphone or open their app. So the app records during a **keyboard session** that you start, and the keyboard tells it when to start and stop.

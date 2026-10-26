@@ -53,23 +53,39 @@ final class KeyboardSessionHost {
     starting = true
     defer { starting = false }
 
+    let operation = UUID().uuidString
+    let started = ProcessInfo.processInfo.systemUptime
+    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+    func mark(_ stage: String) {
+      let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+      log.notice("SpeechPerf session id=\(operation, privacy: .public) build=\(build, privacy: .public) stage=\(stage, privacy: .public) elapsed_ms=\(elapsed, privacy: .public)")
+    }
+    mark("requested")
+
     guard await AVAudioApplication.requestRecordPermission() else { throw KeyboardSessionError.microphoneDenied }
+    mark("permission")
     // Load Parakeet now so the first utterance is not a cold load while the app is in the background.
     try await speech.prepare()
+    mark("model_ready")
 
     guard UIApplication.shared.applicationState == .active else { throw KeyboardSessionError.bridgeUnavailable }
     let session = AVAudioSession.sharedInstance()
     try session.setCategory(.record, mode: .default)
+    mark("category_set")
     try session.setActive(true)
+    mark("audio_active")
     let input = audio.inputNode
     let format = input.outputFormat(forBus: 0)
+    mark("input_ready")
     guard format.sampleRate > 0, format.channelCount > 0 else {
       try? session.setActive(false, options: .notifyOthersOnDeactivation)
       throw KeyboardSessionError.noInput
     }
     input.installTap(onBus: 0, bufferSize: 4_096, format: format, block: Self.tap(into: sink))
+    mark("tap_installed")
     do {
       try audio.start()
+      mark("engine_started")
     } catch {
       input.removeTap(onBus: 0)
       try? session.setActive(false, options: .notifyOthersOnDeactivation)
@@ -79,6 +95,7 @@ final class KeyboardSessionHost {
     let endsAt = Date().addingTimeInterval(TimeInterval(minutes * 60))
     do {
       let bridge = try await server.start(expiresAt: KeyboardSession.nowMs(endsAt))
+      mark("listener_ready")
       guard UIApplication.shared.applicationState == .active,
             let board = UIPasteboard(name: UIPasteboard.Name(KeyboardSession.discoveryPasteboard), create: true),
             let payload = KeyboardSession.encode(bridge) else { throw KeyboardSessionError.bridgeUnavailable }
@@ -100,6 +117,7 @@ final class KeyboardSessionHost {
     }
     publish(KeyboardSession.State(
       sessionEndsAt: KeyboardSession.nowMs(endsAt), requestId: nil, phase: .idle, text: nil, error: nil))
+    mark("ready")
   }
 
   /// Ends the session now. An utterance in flight is discarded and the keyboard sees the session end.

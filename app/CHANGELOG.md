@@ -8,6 +8,7 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Mobile
+- Stabilized the iOS dictation keyboard panel and added immediate key highlighting and enlarged character previews. Home prioritizes active keyboard sessions. Installed on-device speech models now prepare on launch without opening the microphone, and keyboard commands no longer send duplicate state acknowledgements.
 - Fixed the iOS dictation keyboard command handoff being blocked when the recording app is in the background. Commands and results now use an authenticated connection confined to the iPhone.
 - Added on-device Parakeet v3 setup and a keyboard for dictation into other apps during a microphone session. Existing endpoint settings are preserved. Added LM Studio setup guidance for voice agents over Tailscale.
 - Added a standalone React Native/Expo iOS app for recording, OpenAI-compatible transcription, copy/share, and one-off voice agents with approval-gated HTTP MCP tools. Includes secure credential storage and a macOS workflow for building unsigned IPAs for Sideloadly.
