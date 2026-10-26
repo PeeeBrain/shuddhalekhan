@@ -101,7 +101,10 @@ final class KeyboardSessionServer {
         if command.action != .start && self.owners[id] != command.id { return client.send(self.state) }
         if command.action == .start && !self.state.isBusy { self.owners[id] = command.id }
         self.log.notice("KeyboardBridge command \(command.action.rawValue, privacy: .public)")
+        let previousState = self.state
         self.onCommand(command)
+        // A transition already published its acknowledgement to every authenticated peer.
+        if self.state != previousState { return }
       }
       client.send(self.state)
     }
