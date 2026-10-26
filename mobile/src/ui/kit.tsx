@@ -1,6 +1,6 @@
 /* oxlint-disable react/only-export-components -- Native screens share these controls and their style tokens. */
-import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Switch, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import { FlatList, Modal, Pressable, StyleSheet, Switch, Text, TextInput, View, type TextInputProps } from 'react-native';
 
 // Lampblack & Cinnabar tokens from DESIGN.md. Blue = Dictation/interaction, Vermilion = Agent Mode only.
 export const color = {
@@ -192,6 +192,91 @@ export function Segment({
   );
 }
 
+type Option = { value: string; label: string };
+
+// A labelled row that opens a sheet of options. Long lists get a search field; `custom` lets it accept a typed value.
+export function Choice({
+  label,
+  value,
+  options,
+  onChange,
+  hint,
+  custom,
+}: {
+  label: string;
+  value: string;
+  options: readonly Option[];
+  onChange: (value: string) => void;
+  hint?: string;
+  custom?: (query: string) => Option | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const current = options.find((option) => option.value === value)?.label ?? value;
+  const needle = query.trim().toLowerCase();
+  const matches = needle ? options.filter((option) => `${option.label} ${option.value}`.toLowerCase().includes(needle)) : options;
+  const typed = needle && custom ? custom(query) : null;
+  const shown = typed && !options.some((option) => option.value === typed.value) ? [...matches, typed] : matches;
+  const close = () => { setOpen(false); setQuery(''); };
+  return (
+    <View style={styles.field}>
+      <Text style={type.caption}>{label}</Text>
+      <Pressable
+        onPress={() => setOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}: ${current}`}
+        accessibilityHint={hint ?? 'Opens a list of options'}
+        style={({ pressed }) => [styles.input, styles.choice, pressed && { opacity: 0.75 }]}
+      >
+        <Text style={[type.body, { flex: 1 }]} numberOfLines={1}>{current}</Text>
+        <Text style={type.body} importantForAccessibility="no">›</Text>
+      </Pressable>
+      {hint ? <Text style={type.footnote}>{hint}</Text> : null}
+      <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
+        <View style={styles.sheet}>
+          <View style={styles.sheetHeader}>
+            <Text style={type.headline} accessibilityRole="header">{label}</Text>
+            <Button label="Done" kind="ghost" onPress={close} />
+          </View>
+          {options.length > 8 || custom ? (
+            <TextInput
+              accessibilityLabel={`Search ${label}`}
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardAppearance="dark"
+              placeholderTextColor={color.muted}
+              selectionColor={color.blue}
+              style={styles.input}
+            />
+          ) : null}
+          <FlatList
+            data={shown}
+            keyExtractor={(option) => option.value || 'none'}
+            keyboardShouldPersistTaps="handled"
+            renderItem={({ item }) => {
+              const selected = item.value === value;
+              return (
+                <Pressable
+                  onPress={() => { onChange(item.value); close(); }}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  style={({ pressed }) => [styles.option, pressed && { backgroundColor: color.raised }]}
+                >
+                  <Text style={[type.body, { flex: 1, color: selected ? color.blue : color.text }]}>{item.label}</Text>
+                  {selected ? <Text style={[type.body, { color: color.blue }]} importantForAccessibility="no">✓</Text> : null}
+                </Pressable>
+              );
+            }}
+          />
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
 export const styles = StyleSheet.create({
   segments: {
     flexDirection: 'row',
@@ -239,4 +324,8 @@ export const styles = StyleSheet.create({
   multiline: { minHeight: 88, textAlignVertical: 'top' },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 44 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  choice: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sheet: { flex: 1, backgroundColor: color.page, padding: 16, gap: 12 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  option: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.hairline },
 });

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { isParakeetLanguage, languageLabel } from '../languages';
+import { transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
 import { Button, Card, Segment, color, styles as kit, type } from './kit';
 
@@ -24,8 +26,7 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
   const intent: Intent = idle ? (settings.agentEnabled ? picked : 'dictation') : app.intent;
   const agent = intent === 'agent';
   const onDevice = settings.transcriptionSource === 'on-device';
-  const configured = onDevice ? app.localModel.kind === 'ready' : settings.transcriptionEndpoint.trim() !== '' &&
-    (!settings.transcriptionEndpoint.startsWith('https://api.openai.com/') || settings.transcriptionKey !== '');
+  const configured = onDevice ? app.localModel.kind === 'ready' : transcriptionReady(settings);
   const setupHint = onDevice ? localModelHint(app.localModel) : 'Add a transcription API key or endpoint in Settings.';
   const canRetry = idle && settings.agentEnabled && transcript.trim() !== '';
   // The keyboard session holds the microphone, so the in-app recorder has nothing to offer until it ends.
@@ -64,7 +65,7 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
           <Card>
             <Text style={type.headline}>{onDevice ? 'Set up on-device transcription' : 'Set up transcription'}</Text>
             <Text style={type.footnote}>
-              {onDevice ? setupHint : "Add your transcription API key or Whisper-compatible endpoint in Settings. On your phone, use your computer's LAN address instead of localhost."}
+              {onDevice ? setupHint : "Add your transcription provider credentials or endpoint in Settings. On your phone, use your computer's LAN address instead of localhost."}
             </Text>
             <Button label="Open Settings" kind="primary" onPress={onOpenSettings} />
           </Card>
@@ -216,14 +217,17 @@ function KeyboardSessionCard({ app, onOpenSettings }: { app: App; onOpenSettings
       </Card>
     );
   }
-  const ready = app.localModel.kind === 'ready';
+  const supported = isParakeetLanguage(app.settings.language);
+  const ready = supported && app.localModel.kind === 'ready';
   return (
     <Card>
       <Text style={type.headline} accessibilityRole="header">Dictate in any app</Text>
       <Text style={type.footnote}>
         {ready
           ? 'Start a 10-minute session, then use the Shuddhalekhan keyboard in any app: tap Dictate, speak, and tap Stop.'
-          : 'Keyboard dictation runs on this iPhone. Download Parakeet in Settings first.'}
+          : supported
+            ? 'Keyboard dictation runs on this iPhone. Download Parakeet for your language in Settings first.'
+            : `Keyboard dictation runs on this iPhone with Parakeet, which does not support ${languageLabel(app.settings.language)}. Choose a supported language in Settings.`}
       </Text>
       {session.endedReason ? <Text style={[type.footnote, { color: color.red }]}>Last session ended: {session.endedReason}</Text> : null}
       {app.preparingModel ? <Text style={type.footnote} accessibilityLiveRegion="polite">Preparing speech recognition. The first session after an update may take longer.</Text> : null}
@@ -249,7 +253,7 @@ function localModelHint(model: App['localModel']): string {
     case 'installing': return 'Preparing the on-device model for this iPhone. The first time can take a few minutes.';
     case 'unavailable': return 'Install the updated native app to use on-device Parakeet, or switch to an endpoint in Settings.';
     case 'error': return 'The on-device model could not be installed. Retry in Settings.';
-    case 'missing': return 'Download the Parakeet model (about 480 MB) in Settings to record on this iPhone.';
+    case 'missing': return 'Download the Parakeet model for your language (about 0.5 GB) in Settings to record on this iPhone.';
   }
 }
 

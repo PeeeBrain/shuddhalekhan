@@ -27,7 +27,8 @@ export class MobileController {
 
   constructor(private readonly ports: {
     recorder: Recorder; fetch: Fetch;
-    transcribeOnDevice?(signal: AbortSignal): Promise<string>;
+    transcribeOnDevice?(signal: AbortSignal, language: string): Promise<string>;
+    signGoogleJwt?(privateKey: string, input: string): Promise<string>;
     loadSettings(): Promise<MobileSettings>;
     saveSettings(settings: MobileSettings): Promise<MobileSettings>;
   }) {}
@@ -72,11 +73,11 @@ export class MobileController {
       let transcript: string;
       if (this.state.settings.transcriptionSource === 'on-device') {
         if (!this.ports.transcribeOnDevice) throw new Error('On-device Parakeet is unavailable in this build.');
-        transcript = (await this.ports.transcribeOnDevice(active.signal)).trim();
+        transcript = (await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim();
         if (!transcript) throw new Error('No speech was recognized. Record again.');
         if (transcript.length > 200_000) throw new Error('The local transcript is too large. Record a shorter clip.');
       } else {
-        transcript = await transcribe({ audio, settings: this.state.settings, fetch: this.ports.fetch, signal: active.signal });
+        transcript = await transcribe({ audio, settings: this.state.settings, fetch: this.ports.fetch, signal: active.signal, signGoogleJwt: this.ports.signGoogleJwt });
       }
       active.signal.throwIfAborted();
       this.update({ transcript });

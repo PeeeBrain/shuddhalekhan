@@ -73,6 +73,20 @@ describe('settings storage', () => {
     expect(await store.loadSettings()).toEqual(local);
   });
 
+  test('settings saved before providers existed keep their generic behavior and normalize the free-text language', async () => {
+    const { store, metadataItems } = createHarness(['generation-1']);
+    const original = configuredSettings({ transcriptionProvider: 'custom-open-ai-compatible', agentProvider: 'openai-compatible',
+      transcriptionEndpoint: 'https://whisper.example/inference', language: 'en-IN', systemPrompt: 'Saved instructions. '.repeat(300) });
+    await store.saveSettings(original);
+    const raw = JSON.parse(metadataItems.get(metadataKey)!) as { settings: Record<string, unknown> };
+    for (const key of ['transcriptionProvider', 'transcriptionAuth', 'transcriptionHeaderName', 'azureRegion', 'googleProject',
+      'googleLocation', 'googleServiceAccountRef', 'sarvamMode', 'nimAutoLanguage', 'nimDictionary',
+      'agentProvider', 'agentApiMode', 'agentAuth', 'agentReasoning', 'agentCache']) delete raw.settings[key];
+    raw.settings.language = 'en_in';
+    metadataItems.set(metadataKey, JSON.stringify(raw));
+    expect(await store.loadSettings()).toEqual(original);
+  });
+
   test('keeps credentials out of metadata and retires old generation secrets after commit', async () => {
     const { store, metadataItems, secretItems } = createHarness(['generation-1', 'generation-2']);
     const firstServer: MobileSettings['mcpServers'][number] = {
@@ -82,11 +96,12 @@ describe('settings storage', () => {
       token: 'mcp-secret',
       enabled: true,
     };
-    const first = configuredSettings({ mcpServers: [firstServer] });
+    const first = configuredSettings({ mcpServers: [firstServer], googleServiceAccount: '{"private_key":"google-secret"}' });
     const second = configuredSettings({
       transcriptionKey: 'next-transcription-secret',
       agentKey: 'next-agent-secret',
       mcpServers: [{ ...firstServer, token: 'next-mcp-secret' }],
+      googleServiceAccount: '{"private_key":"next-google-secret"}',
     });
 
     await store.saveSettings(first);
@@ -97,6 +112,7 @@ describe('settings storage', () => {
     expect(metadata).not.toContain(first.transcriptionKey);
     expect(metadata).not.toContain(first.agentKey);
     expect(metadata).not.toContain(firstServer.token);
+    expect(metadata).not.toContain('google-secret');
     expect(oldKeys.every(key => !secretItems.has(key))).toBe(true);
     expect(await store.loadSettings()).toEqual(second);
   });
