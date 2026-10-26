@@ -1,0 +1,8 @@
+{
+  "type": "keyboard",
+  "name": "transcript-keyboard",
+  "displayName": "Shuddhalekhan",
+  "bundleIdentifier": ".transcript-keyboard",
+  "deploymentTarget": "17.0",
+  "exportJs": false
+}
