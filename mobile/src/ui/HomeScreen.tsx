@@ -28,6 +28,10 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
     (!settings.transcriptionEndpoint.startsWith('https://api.openai.com/') || settings.transcriptionKey !== '');
   const setupHint = onDevice ? localModelHint(app.localModel) : 'Add a transcription API key or endpoint in Settings.';
   const canRetry = idle && settings.agentEnabled && transcript.trim() !== '';
+  // The keyboard session holds the microphone, so the in-app recorder has nothing to offer until it ends.
+  const sessionOn = app.keyboardSession.active;
+  const showRecorder = !(sessionOn && idle);
+  const keyboardCard = <KeyboardSessionCard app={app} onOpenSettings={onOpenSettings} />;
 
   return (
     <SafeAreaView style={home.screen} edges={['top', 'left', 'right']}>
@@ -54,7 +58,9 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
           </View>
         ) : null}
 
-        {idle && !configured ? (
+        {sessionOn ? keyboardCard : null}
+
+        {idle && !configured && !sessionOn ? (
           <Card>
             <Text style={type.headline}>{onDevice ? 'Set up on-device transcription' : 'Set up transcription'}</Text>
             <Text style={type.footnote}>
@@ -64,20 +70,23 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
           </Card>
         ) : null}
 
-        {settings.agentEnabled ? (
+        {settings.agentEnabled && showRecorder ? (
           <View style={kit.segments} accessibilityRole="radiogroup" accessibilityLabel="Mode">
             <Segment label="Dictation" selected={!agent} disabled={!idle} onPress={() => setPicked('dictation')} />
             <Segment label="Agent" agent selected={agent} disabled={!idle} onPress={() => setPicked('agent')} />
           </View>
         ) : null}
 
-        <RecordControl app={app} intent={intent} configured={configured} setupHint={setupHint} />
+        {showRecorder ? (
+          <>
+            <RecordControl app={app} intent={intent} configured={configured} setupHint={setupHint} />
+            <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>
+              {idle && !configured ? setupHint : status || busyLabel[phase] || (agent ? 'Speak one command for the agent.' : 'Tap to dictate.')}
+            </Text>
+          </>
+        ) : null}
 
-        <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>
-          {idle && !configured ? setupHint : status || busyLabel[phase] || (agent ? 'Speak one command for the agent.' : 'Tap to dictate.')}
-        </Text>
-
-        <KeyboardSessionCard app={app} onOpenSettings={onOpenSettings} />
+        {sessionOn ? null : keyboardCard}
 
         {transcript ? (
           <Card>
@@ -166,7 +175,7 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
         disabled={disabled}
         accessibilityRole="button"
         accessibilityLabel={agent ? 'Record agent command' : 'Start dictation'}
-        accessibilityHint={configured ? undefined : setupHint}
+        accessibilityHint={configured ? 'Records up to five minutes' : setupHint}
         accessibilityState={{ disabled }}
         style={({ pressed }) => [
           home.record,
@@ -179,7 +188,7 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
         <View style={[home.micGlyph, { backgroundColor: tint, borderRadius: agent ? 3 : 10 }]} />
       </Pressable>
       <Text style={[type.headline, { color: tint }]}>{agent ? 'Ask agent' : 'Dictate'}</Text>
-      <Text style={type.footnote}>{app.keyboardSession.active ? 'Stop the keyboard session to record here.' : 'Record up to five minutes.'}</Text>
+      <Text style={type.footnote}>Record up to five minutes.</Text>
     </View>
   );
 }
@@ -193,13 +202,15 @@ function KeyboardSessionCard({ app, onOpenSettings }: { app: App; onOpenSettings
     const s = String(session.remainingSeconds % 60).padStart(2, '0');
     return (
       <Card>
-        <Text style={type.headline} accessibilityRole="header">Keyboard session on</Text>
-        <Text style={[type.title, home.timer, { color: color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>
-          {m}:{s}
-        </Text>
+        <View style={home.sessionHeader}>
+          <Text style={[type.headline, { flex: 1 }]} accessibilityRole="header">Keyboard session on</Text>
+          <Text style={[type.title, home.timer, { color: color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>
+            {m}:{s}
+          </Text>
+        </View>
         <Text style={type.footnote}>
-          The microphone stays open until the timer ends or you stop, and iOS shows the recording indicator. Audio is kept only
-          between Dictate and Stop on the Shuddhalekhan keyboard, and it is transcribed on this iPhone.
+          Use the Shuddhalekhan keyboard in any app. The microphone stays open until the timer ends or you stop. Only audio
+          between Dictate and Stop is kept, and it is transcribed on this iPhone.
         </Text>
         <Button label="Stop session" kind="destructive" onPress={() => { void app.stopKeyboardSession(); }} />
       </Card>
@@ -211,10 +222,11 @@ function KeyboardSessionCard({ app, onOpenSettings }: { app: App; onOpenSettings
       <Text style={type.headline} accessibilityRole="header">Dictate in any app</Text>
       <Text style={type.footnote}>
         {ready
-          ? 'Start a 10-minute session, then switch apps and use the Shuddhalekhan keyboard: tap Dictate, speak, and tap Stop. The text is typed at the cursor.'
+          ? 'Start a 10-minute session, then use the Shuddhalekhan keyboard in any app: tap Dictate, speak, and tap Stop.'
           : 'Keyboard dictation runs on this iPhone. Download Parakeet in Settings first.'}
       </Text>
       {session.endedReason ? <Text style={[type.footnote, { color: color.red }]}>Last session ended: {session.endedReason}</Text> : null}
+      {app.preparingModel ? <Text style={type.footnote} accessibilityLiveRegion="polite">Preparing speech recognition. The first session after an update may take longer.</Text> : null}
       <Button
         label={session.starting ? 'Starting…' : 'Start keyboard session'}
         kind="primary"
@@ -288,5 +300,6 @@ const home = StyleSheet.create({
   micGlyph: { width: 28, height: 28 },
   stopGlyph: { width: 26, height: 26, borderRadius: 4, backgroundColor: color.onSignal },
   timer: { fontVariant: ['tabular-nums'] },
+  sessionHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   status: { textAlign: 'center' },
 });

@@ -16,7 +16,6 @@ const recordingOptions: RecordingOptions = {
 };
 
 export function useMobileApp() {
-  const { localModel, installLocalModel } = useOnDeviceModel();
   const { keyboardSession, startKeyboardSession, stopKeyboardSession } = useKeyboardSession();
   const controllerRef = useRef<MobileController | null>(null);
   const recorder = useAudioRecorder(recordingOptions, status => {
@@ -81,6 +80,9 @@ export function useMobileApp() {
     });
   });
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const { localModel, installLocalModel, preparingModel } = useOnDeviceModel(
+    state.phase !== 'loading' && state.settings.transcriptionSource === 'on-device',
+  );
   const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
@@ -107,7 +109,7 @@ export function useMobileApp() {
 
   return {
     ...state, elapsedSeconds: state.phase === 'recording' && state.recordingStartedAt !== null ? Math.max(0, Math.floor((now - state.recordingStartedAt) / 1000)) : 0,
-    localModel, installLocalModel,
+    localModel, installLocalModel, preparingModel,
     keyboardSession, stopKeyboardSession,
     startKeyboardSession: async () => {
       // The session holds the microphone; in-app recording stays disabled until it ends.

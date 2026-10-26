@@ -79,6 +79,11 @@ struct KeyboardBridgeCheck {
     let final = KeyboardSession.State(sessionEndsAt: 0, requestId: id, phase: .done, text: text, error: nil)
     server.stop(final: final)
     let done = await peer.phase(.done)
+    // Receiving the final frame also drains all earlier acknowledgements on this ordered connection.
+    precondition(peer.states.filter { $0.requestId == id && $0.phase == .recording }.count == 1,
+      "Start acknowledgement was published more than once")
+    precondition(peer.states.filter { $0.requestId == id && $0.phase == .transcribing }.count == 1,
+      "Stop acknowledgement was published more than once")
     precondition(KeyboardSession.insertion(done, pendingId: id, inserted: []) == text, "Final result lost")
     precondition(KeyboardSession.insertion(done, pendingId: id, inserted: [id]) == nil, "Duplicate insertion")
 

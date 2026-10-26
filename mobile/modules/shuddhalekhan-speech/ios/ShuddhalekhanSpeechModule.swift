@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import FluidAudio
 import Foundation
+import OSLog
 
 private enum SpeechError: LocalizedError {
   case modelMissing
@@ -20,6 +21,7 @@ private enum SpeechError: LocalizedError {
 }
 
 actor ParakeetEngine {
+  private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "SpeechPerf")
   private var manager: AsrManager?
   private var managerLoad: Task<AsrManager, Error>?
   private var inferenceInProgress = false
@@ -36,10 +38,17 @@ actor ParakeetEngine {
     guard !inferenceInProgress else { throw SpeechError.busy }
     inferenceInProgress = true
     defer { inferenceInProgress = false }
+    let operation = UUID().uuidString
+    let started = ProcessInfo.processInfo.systemUptime
+    let cached = manager != nil
+    log.notice("SpeechPerf transcription id=\(operation, privacy: .public) stage=requested cached=\(cached, privacy: .public)")
     let manager = try await loadManager(downloadIfMissing: false)
 
     var state = try TdtDecoderState()
-    return try await manager.transcribe(url, decoderState: &state).text
+    let text = try await manager.transcribe(url, decoderState: &state).text
+    let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+    log.notice("SpeechPerf transcription id=\(operation, privacy: .public) stage=done elapsed_ms=\(elapsed, privacy: .public)")
+    return text
   }
 
   private func loadManager(
@@ -54,6 +63,8 @@ actor ParakeetEngine {
     }
 
     let task = Task<AsrManager, Error> {
+      let started = ProcessInfo.processInfo.systemUptime
+      log.notice("SpeechPerf model stage=requested")
       let directory = AsrModels.defaultCacheDirectory(for: .v3)
       let models: AsrModels
       if downloadIfMissing {
@@ -75,6 +86,8 @@ actor ParakeetEngine {
 
       let manager = AsrManager()
       try await manager.loadModels(models)
+      let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+      log.notice("SpeechPerf model stage=ready elapsed_ms=\(elapsed, privacy: .public)")
       return manager
     }
     managerLoad = task
@@ -117,6 +130,10 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
       let directory = AsrModels.defaultCacheDirectory(for: .v3)
       return AsrModels.modelsExist(at: directory, version: .v3, encoderPrecision: .int8)
         ? "ready" : "missing"
+    }
+
+    AsyncFunction("prepareModel") { () async throws in
+      try await self.engine.prepare()
     }
 
     AsyncFunction("installModel") { () async throws in
