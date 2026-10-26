@@ -68,7 +68,7 @@ export const mobileSettingsSchema = z.object({
     catch { issue('transcriptionEndpoint', 'Enter a full transcription endpoint URL.'); }
   }
   const endpoints = [
-    ...(settings.transcriptionSource === 'endpoint' && endpoint ? [['transcriptionEndpoint', endpoint]] : []),
+    ...(settings.transcriptionSource === 'endpoint' ? [['transcriptionEndpoint', endpoint]] : []),
     ...(settings.agentEnabled ? [['agentEndpoint', settings.agentEndpoint]] : []),
     ...(settings.agentEnabled ? settings.mcpServers.filter(server => server.enabled).map(server => [`mcpServers.${server.id}`, server.endpoint]) : []),
   ];

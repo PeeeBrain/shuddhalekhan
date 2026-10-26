@@ -87,6 +87,18 @@ describe('settings storage', () => {
     expect(await store.loadSettings()).toEqual(original);
   });
 
+  test('legacy local settings ignore an unsupported endpoint language without losing credentials or MCP setup', async () => {
+    const { store, metadataItems } = createHarness(['generation-1']);
+    const original = configuredSettings({ transcriptionSource: 'on-device', language: '' });
+    await store.saveSettings(original);
+    const raw = JSON.parse(metadataItems.get(metadataKey)!) as { settings: Record<string, unknown> };
+    delete raw.settings.transcriptionProvider;
+    raw.settings.language = 'hi';
+    metadataItems.set(metadataKey, JSON.stringify(raw));
+    expect(await store.loadSettings()).toEqual({ ...original, transcriptionProvider: 'custom-open-ai-compatible' });
+    expect(metadataItems.get(metadataKey)).toContain('"language":"hi"');
+  });
+
   test('keeps credentials out of metadata and retires old generation secrets after commit', async () => {
     const { store, metadataItems, secretItems } = createHarness(['generation-1', 'generation-2']);
     const firstServer: MobileSettings['mcpServers'][number] = {

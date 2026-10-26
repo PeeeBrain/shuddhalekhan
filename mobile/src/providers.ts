@@ -69,7 +69,8 @@ export function transcriptionEndpoint(settings: MobileSettings): string {
 
 /** Sarvam's REST API takes 30 s of audio; Google's synchronous recognize takes about a minute. */
 export function recordingLimitSeconds(settings: MobileSettings): number {
-  if (settings.transcriptionSource === 'endpoint' && settings.transcriptionProvider === 'sarvam') return 30;
+  // Leave two seconds for the one-second UI timer and recorder stop latency before Sarvam's hard limit.
+  if (settings.transcriptionSource === 'endpoint' && settings.transcriptionProvider === 'sarvam') return 28;
   if (settings.transcriptionSource === 'endpoint' && settings.transcriptionProvider === 'google-cloud-speech-v2') return 55;
   return 300;
 }

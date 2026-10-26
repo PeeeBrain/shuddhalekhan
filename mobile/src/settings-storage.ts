@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defaultSettings, mobileSettingsSchema, type MobileSettings } from './settings';
+import { isParakeetLanguage } from './languages';
 
 const metadataKey = 'shuddhalekhan.settings';
 const secretPrefix = 'shuddhalekhan.settings';
@@ -12,6 +13,7 @@ const serverSettingsSchema = mobileSettingsSchema.shape.mcpServers.element
 const storedSettingsSchema = z.object(mobileSettingsSchema.shape).omit({
   transcriptionKey: true, agentKey: true, googleServiceAccount: true, mcpServers: true,
 }).extend({
+  transcriptionProvider: mobileSettingsSchema.shape.transcriptionProvider.removeDefault().optional(),
   mcpServers: z.array(serverSettingsSchema).max(10),
   transcriptionKeyRef: z.string().min(1).nullable(),
   agentKeyRef: z.string().min(1).nullable(),
@@ -49,6 +51,9 @@ function readEnvelope(raw: string): Envelope | null {
   try {
     const decoded: unknown = JSON.parse(raw);
     const envelope = envelopeSchema.parse(decoded);
+    // Old local inference ignored the endpoint language; keep that behavior when upgrading.
+    if (envelope.settings.transcriptionProvider === undefined && envelope.settings.transcriptionSource === 'on-device'
+      && !isParakeetLanguage(envelope.settings.language)) envelope.settings.language = '';
     const refs = [
       [envelope.settings.transcriptionKeyRef, secretKey(envelope.generation, 'transcription')],
       [envelope.settings.agentKeyRef, secretKey(envelope.generation, 'agent')],

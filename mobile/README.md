@@ -14,6 +14,8 @@ Mobile settings are separate from the Electron desktop settings. The app does no
 
 Google Cloud Speech v2 takes a service-account JSON key, stored in the Keychain. The app signs the token request on the phone and only sends it to `oauth2.googleapis.com`; the key's own `token_uri` is ignored. Recognition goes to the regional host for the chosen location. Remote providers receive the selected language in their own format (for example `en-IN` for Azure, Sarvam and Google). Choose your actual language and region rather than Auto-detect when a provider misidentifies it.
 
+Sarvam recording stops automatically after 28 seconds, leaving two seconds for timer and recorder latency before its 30-second limit. Model downloads wait until launch-time preparation finishes. Older on-device settings with an unsupported endpoint language upgrade to Auto-detect without clearing credentials or MCP servers.
+
 ## Use Parakeet on this iPhone
 
 In Settings, select **Transcription → On this iPhone**, choose a language, confirm **Download model**, and keep the app open through download and preparation. Each model is about 0.5 GB; Core ML also needs storage for its prepared models. Save the source selection, then record a short dictation. After setup, test it in airplane mode with Dictation selected. Agent Mode still sends the resulting text to its configured model endpoint.

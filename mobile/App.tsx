@@ -25,6 +25,7 @@ function Main() {
         <SettingsScreen
           settings={app.settings}
           localModels={app.localModels}
+          preparingModel={app.preparingModel}
           onInstallLocalModel={app.installLocalModel}
           canSave={app.phase === 'idle'}
           onSave={app.saveSettings}

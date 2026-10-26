@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { transcribe } from '../transcription';
 import { defaultSettings, type MobileSettings } from '../settings';
+import { recordingLimitSeconds } from '../providers';
 
 async function withServer<T>(
   handler: (request: Request) => Response | Promise<Response>,
@@ -170,6 +171,23 @@ function viaLocal(base: string, hosts: string[] = []): typeof fetch {
 const audio = () => new Blob(['audio bytes'], { type: 'audio/wav' });
 
 describe('provider request contracts', () => {
+  test('Sarvam accepts audio when automatic stop arrives over one timer tick late', async () => {
+    let uploads = 0;
+    await withServer(async request => {
+      const form = await request.formData();
+      expect(form.get('file')).toBeInstanceOf(File);
+      uploads++;
+      return Response.json({ transcript: 'kept dictation' });
+    }, async url => {
+      const config = settings('', { transcriptionProvider: 'sarvam', transcriptionModel: 'saaras:v4' });
+      const delayedStopSeconds = recordingLimitSeconds(config) + 1.25;
+      const recording = new Blob([new Uint8Array(44 + delayedStopSeconds * 32_000)], { type: 'audio/wav' });
+      await expect(transcribe({ audio: recording, settings: config, signal: new AbortController().signal,
+        fetch: viaLocal(url) })).resolves.toBe('kept dictation');
+      expect(uploads).toBe(1);
+    });
+  });
+
   test('Azure fast transcription sends the regional locale and phrase list with its subscription key', async () => {
     let received: { path: string; key: string | null; definition: unknown; audio: boolean } | null = null;
     await withServer(async request => {

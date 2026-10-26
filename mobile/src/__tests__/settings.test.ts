@@ -36,3 +36,9 @@ test('changing the agent API keeps a standard endpoint pointed at that API', () 
   expect(selectAgentApiMode(azure, 'chat-completions').agentEndpoint).toBe('https://r.openai.azure.com/openai/v1/chat/completions');
   expect(mobileSettingsSchema.safeParse({ ...azure, agentEnabled: true, agentModel: 'd', agentProvider: 'openrouter' }).success).toBe(false);
 });
+
+test('empty remote endpoints fail validation while unused local endpoints remain editable', () => {
+  const incomplete = { ...defaultSettings, transcriptionEndpoint: '' };
+  expect(mobileSettingsSchema.safeParse(incomplete).success).toBe(false);
+  expect(mobileSettingsSchema.safeParse({ ...incomplete, transcriptionSource: 'on-device' }).success).toBe(true);
+});

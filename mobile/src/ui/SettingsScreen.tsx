@@ -17,6 +17,7 @@ type Update = (update: (d: MobileSettings) => MobileSettings) => void;
 export function SettingsScreen({
   settings,
   localModels,
+  preparingModel,
   onInstallLocalModel,
   canSave,
   onSave,
@@ -24,6 +25,7 @@ export function SettingsScreen({
 }: {
   settings: MobileSettings;
   localModels: Record<'english' | 'multilingual', LocalModelState>;
+  preparingModel: boolean;
   onInstallLocalModel: (language: string) => Promise<void>;
   canSave: boolean;
   onSave: (settings: MobileSettings) => Promise<void>;
@@ -92,6 +94,7 @@ export function SettingsScreen({
               />
               <LocalModel
                 model={localModels[localKey]}
+                preparing={preparingModel}
                 english={localKey === 'english'}
                 onInstall={() => onInstallLocalModel(normalizeLanguage(draft.language))}
               />
@@ -397,7 +400,7 @@ function AgentProvider({ draft, set, setDraft }: { draft: MobileSettings; set: S
 }
 
 // Status and install action for the Parakeet model the selected language uses. Install runs outside the Settings draft.
-function LocalModel({ model, english, onInstall }: { model: LocalModelState; english: boolean; onInstall: () => Promise<void> }) {
+function LocalModel({ model, english, preparing, onInstall }: { model: LocalModelState; english: boolean; preparing: boolean; onInstall: () => Promise<void> }) {
   const name = english ? 'Parakeet v2 (English)' : 'Parakeet v3 (multilingual)';
   const confirmInstall = () =>
     Alert.alert(
@@ -419,7 +422,8 @@ function LocalModel({ model, english, onInstall }: { model: LocalModelState; eng
       return (
         <>
           <Text style={type.footnote}>{name} needs a one-time download of about 0.5 GB. Once installed, transcription runs on this iPhone. {languages}</Text>
-          <Button label="Download model…" kind="primary" onPress={confirmInstall} />
+          {preparing ? <Text style={type.footnote}>Preparing the installed model. Wait for preparation to finish before downloading another.</Text> : null}
+          <Button label="Download model…" kind="primary" onPress={confirmInstall} disabled={preparing} />
         </>
       );
     case 'downloading':
@@ -456,7 +460,8 @@ function LocalModel({ model, english, onInstall }: { model: LocalModelState; eng
           <Text style={[type.footnote, { color: color.red }]} accessibilityRole="alert" selectable>
             {model.message}
           </Text>
-          <Button label="Retry download…" kind="primary" onPress={confirmInstall} />
+          {preparing ? <Text style={type.footnote}>Preparing the installed model. Wait for preparation to finish before downloading another.</Text> : null}
+          <Button label="Retry download…" kind="primary" onPress={confirmInstall} disabled={preparing} />
         </>
       );
   }
