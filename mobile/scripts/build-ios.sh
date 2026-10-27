@@ -66,6 +66,13 @@ for shared in KeyboardSessionProtocol.swift KeyboardSessionChannel.swift; do
   cmp "$mobile_dir/targets/transcript-keyboard/$shared" \
     "$mobile_dir/modules/shuddhalekhan-speech/ios/$shared"
 done
+cmp "$mobile_dir/targets/agent-activity/AgentActivityAttributes.swift" \
+  "$mobile_dir/modules/shuddhalekhan-agent-activity/ios/AgentActivityAttributes.swift"
+swiftc -swift-version 6 \
+  "$mobile_dir/modules/shuddhalekhan-agent-activity/ios/AgentRunRecord.swift" \
+  "$mobile_dir/native-checks/AgentRunCheck.swift" \
+  -o "$build_dir/check-agent-run"
+"$build_dir/check-agent-run"
 swiftc \
   "$mobile_dir/targets/transcript-keyboard/KeyboardSessionProtocol.swift" \
   "$mobile_dir/native-checks/KeyboardSessionCheck.swift" \
@@ -157,16 +164,36 @@ if ! /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$info_plist" | grep 
   exit 1
 fi
 
-keyboard_bundles=("$app_bundle"/PlugIns/*.appex)
-if [[ ${#keyboard_bundles[@]} -ne 1 ]]; then
-  echo "Expected one embedded dictation keyboard; found ${#keyboard_bundles[@]}." >&2
+extension_bundles=("$app_bundle"/PlugIns/*.appex)
+if [[ ${#extension_bundles[@]} -ne 2 ]]; then
+  echo "Expected the dictation keyboard and agent activity; found ${#extension_bundles[@]} extensions." >&2
   exit 1
 fi
-keyboard_plist="${keyboard_bundles[0]}/Info.plist"
-keyboard_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$keyboard_plist")"
-extension_type="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$keyboard_plist")"
-if [[ "$keyboard_id" != "$expected_bundle_id.transcript-keyboard" || "$extension_type" != "com.apple.keyboard-service" ]]; then
-  echo "The embedded extension is not the expected Shuddhalekhan keyboard." >&2
+keyboard_found=false
+activity_found=false
+for extension in "${extension_bundles[@]}"; do
+  extension_plist="$extension/Info.plist"
+  extension_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extension_plist")"
+  extension_type="$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$extension_plist")"
+  if [[ "$extension_id" == "$expected_bundle_id.transcript-keyboard" && "$extension_type" == "com.apple.keyboard-service" ]]; then
+    keyboard_found=true
+  elif [[ "$extension_id" == "$expected_bundle_id.agent-activity" && "$extension_type" == "com.apple.widgetkit-extension" ]]; then
+    activity_found=true
+  else
+    echo "Unexpected embedded extension: $extension_id ($extension_type)." >&2
+    exit 1
+  fi
+done
+if [[ "$keyboard_found" != true || "$activity_found" != true ]]; then
+  echo "A required iOS extension is missing." >&2
+  exit 1
+fi
+if [[ "$(/usr/libexec/PlistBuddy -c 'Print :NSSupportsLiveActivities' "$info_plist")" != true ]]; then
+  echo "The app is missing Live Activity support." >&2
+  exit 1
+fi
+if [[ "$(/usr/libexec/PlistBuddy -c 'Print :BGTaskSchedulerPermittedIdentifiers:0' "$info_plist")" != "$expected_bundle_id.agent.*" ]]; then
+  echo "The app is missing the continued-processing task identifier." >&2
   exit 1
 fi
 

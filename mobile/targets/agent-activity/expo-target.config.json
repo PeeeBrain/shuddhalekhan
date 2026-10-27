@@ -1,0 +1,8 @@
+{
+  "type": "widget",
+  "name": "agent-activity",
+  "displayName": "Shuddhalekhan Agent",
+  "bundleIdentifier": ".agent-activity",
+  "deploymentTarget": "17.0",
+  "exportJs": false
+}

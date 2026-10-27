@@ -29,6 +29,7 @@ export default function App() {
 function Main() {
   const app = useMobileApp();
   const [screen, setScreen] = useState<'home' | 'settings'>('home');
+  useEffect(() => { if (app.activityOpenCount) setScreen('home'); }, [app.activityOpenCount]);
 
   return (
     <>

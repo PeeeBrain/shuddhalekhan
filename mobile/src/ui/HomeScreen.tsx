@@ -60,6 +60,8 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
           </View>
         ) : null}
 
+        {app.activityNotice ? <Text style={type.footnote} accessibilityLiveRegion="polite">{app.activityNotice}</Text> : null}
+
         {sessionOn ? keyboardCard : null}
 
         {setupCard ? (

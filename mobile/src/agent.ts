@@ -44,7 +44,7 @@ type AvailableTool = { connection: MCPConnection; tool: MCPTool };
 
 export async function runAgent({ transcript, settings, signal, fetch, onStatus, approve }: {
   transcript: string; settings: MobileSettings; signal: AbortSignal; fetch: Fetch;
-  onStatus: (status: string) => void;
+  onStatus: (status: string, completedSteps: number) => void;
   approve: (request: ToolApproval) => Promise<boolean>;
 }): Promise<string> {
   if (!settings.agentEnabled) throw new Error('Enable Agent Mode in Settings first.');
@@ -52,7 +52,9 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
   // Custom servers may run without a key even when a header mode is saved; hosted providers never do.
   if (settings.agentProvider !== 'openai-compatible' && settings.agentAuth !== 'none' && !settings.agentKey) throw new Error('Enter the agent provider API key in Settings.');
   // Name the failing stage; "could not reach the endpoint" alone doesn't say whether the model or an MCP server failed.
-  const stage = <T>(label: string, work: Promise<T>) => work.catch((error: unknown) => {
+  let completedSteps = 0;
+  const status = (message: string) => onStatus(message, completedSteps);
+  const stage = <T>(label: string, work: Promise<T>) => work.then(result => { completedSteps++; return result; }).catch((error: unknown) => {
     if (signal.aborted || !(error instanceof Error)) throw error;
     throw new Error(`${label}: ${error.message}`);
   });
@@ -66,7 +68,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
   try {
     for (const server of settings.mcpServers.filter(server => server.enabled)) {
       signal.throwIfAborted();
-      onStatus(`Connecting to ${server.name}…`);
+      status(`Connecting to ${server.name}…`);
       const connection = new MCPConnection(server, fetch, settings.allowInsecureHTTP);
       connections.push(connection);
       const tools = await stage(`MCP server "${server.name}"`, connection.connect(signal));
@@ -79,7 +81,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
     let toolCalls = 0;
     for (let step = 0; step < 8; step++) {
       signal.throwIfAborted();
-      onStatus('Waiting for the agent…');
+      status('Waiting for the agent…');
       const body = {
         model: settings.agentModel, stream: false, ...reasoningOptions(settings),
         ...(responses ? { input: withCache(settings, input), store: false, include: ['reasoning.encrypted_content'] } : { messages: withCache(settings, messages) }),
@@ -126,6 +128,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
       }
       if (!calls.length) {
         if (!text.trim()) throw new Error('The agent returned an empty response.');
+        status('Agent finished.');
         return text.trim();
       }
       for (const call of calls) {
@@ -140,11 +143,11 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
         let raw: unknown;
         try { raw = JSON.parse(call.arguments); } catch { throw new Error('The agent returned invalid tool arguments.'); }
         const args = parseResponse(jsonObjectSchema, raw);
-        onStatus('Waiting for your tool approval…');
+        status('Waiting for your tool approval…');
         const approved = await approve({ serverName: selected.connection.server.name, toolName: selected.tool.name, arguments: JSON.stringify(args, null, 2) });
         signal.throwIfAborted();
         if (!approved) throw new Error('Tool denied. The agent run stopped. Earlier approved actions may already have completed.');
-        onStatus(`Running ${selected.connection.server.name} / ${selected.tool.name}…`);
+        status(`Running ${selected.connection.server.name} / ${selected.tool.name}…`);
         const result = await stage(`MCP server "${selected.connection.server.name}"`, selected.connection.call(selected.tool.name, args, signal));
         signal.throwIfAborted();
         if (result.length > 100_000) throw new Error('The tool result is too large. The action may already have completed.');

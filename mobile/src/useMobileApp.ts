@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { AppState, Platform } from 'react-native';
+import { AppState, Linking, Platform } from 'react-native';
 import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions } from 'expo-audio';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
@@ -7,6 +7,7 @@ import { MobileController, type Recorder } from './controller';
 import { loadSettings, saveSettings } from './native-settings';
 import { localModelKey, signGoogleJwt, transcribeOnDevice, useKeyboardSession, useOnDeviceModel } from './on-device';
 import { recordingLimitSeconds } from './providers';
+import { agentActivity, onAgentRunStopped } from './native-agent-activity';
 
 const recordingOptions: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -73,7 +74,7 @@ export function useMobileApp() {
         }
       },
     };
-    return new MobileController({ recorder: nativeRecorder, fetch, loadSettings, saveSettings, signGoogleJwt,
+    return new MobileController({ recorder: nativeRecorder, fetch, loadSettings, saveSettings, signGoogleJwt, activity: agentActivity,
       transcribeOnDevice: async (signal, language) => {
         if (!recordingFile?.exists) throw new Error('The recording file is unavailable. Record again.');
         return transcribeOnDevice(recordingFile.uri, signal, language);
@@ -89,11 +90,16 @@ export function useMobileApp() {
   useEffect(() => {
     controllerRef.current = controller;
     void controller.initialize();
+    const stopped = onAgentRunStopped(controller.agentRunStopped);
+    const open = (url: string) => { void controller.initialize().then(() => { controller.openActivity(url); }); };
+    const links = Linking.addEventListener('url', event => open(event.url));
+    void Linking.getInitialURL().then(url => { if (url) open(url); }).catch(() => {});
     const subscription = AppState.addEventListener('change', next => {
       // The permission prompt and share sheet can make iOS inactive without backgrounding the app.
-      if (next === 'background') controller.cancel();
+      if (next === 'background') void controller.enterBackground();
+      if (next === 'active') void controller.enterForeground();
     });
-    return () => { subscription.remove(); controllerRef.current = null; controller.cancel(); };
+    return () => { subscription.remove(); links.remove(); stopped?.remove(); controllerRef.current = null; controller.cancel(); };
   }, [controller]);
 
   useEffect(() => {

@@ -8,6 +8,7 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Mobile
+- Added iOS Agent Mode Live Activities for progress, approval requests, and final-answer previews. On iOS 26, foreground-started runs request continued background processing. Approval taps open the app for review; interrupted runs never replay automatically. The last answer is saved locally until cleared or replaced.
 - Fixed keyboard transcription cancellation and serialized model replacement with inference. Listener startup callbacks and timeouts now stop with their session. Failed temporary audio cleanup and startup scans are logged and retried before recording again.
 - Improved iOS sheet safe areas, reduced-motion behavior, option search, field focus, and recording-limit warnings. Settings now confirms discarding unsaved edits, and tool approval content stays visible during dismissal.
 - Added the desktop transcription providers (OpenAI, Sarvam AI, Azure Speech, Google Cloud Speech v2, NVIDIA Speech NIM, whisper.cpp, WhisperLiveKit) and Agent Mode providers (OpenAI and Azure OpenAI with Responses or Chat Completions, OpenRouter) to the iOS app. Existing endpoints move to the custom OpenAI-compatible provider.

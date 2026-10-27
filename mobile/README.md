@@ -97,6 +97,22 @@ Build 10 fixes cancellation and speech-operation admission, listener startup lif
 
 Build 11 retries a failed startup scan before admitting keyboard audio. Its new controlled listener check delivers a stale callback during replacement startup. EAS build `a825ca0f-de7b-4be9-bf12-706cc561454e` passed all six native checks and the Release archive. Both new regressions were verified to fail against the historical broken source and pass after the fixes. Phone validation remains pending.
 
+Build 12 adds agent Live Activities and iOS 26 continued background processing. The 24 focused agent/controller tests, mobile typecheck/lint/export, WSL iOS prebuild, Swift state/storage self-check, and Swift syntax parsing passed locally. EAS rejected the October 27 build attempt before scheduling because the monthly iOS quota was exhausted; Apple-framework compilation and phone verification remain pending. Local checks do not establish that React Native keeps executing on a locked phone. Verify the cases below before relying on background Agent Mode. The activity and the system background-task progress view may appear together.
+
+### Agent Live Activity checks
+
+Keep the app open through recording and transcription. Once Agent Mode starts, it requests iOS 26 continued processing. iOS can decline or end that request. On older iOS, or without a grant, backgrounding stops the run; the activity reports interruption. Dictation and the keyboard session keep their separate lifecycles.
+
+- Run a command with a slow model response, switch to Notes, then lock the phone. Confirm actual completion and the final answer, not just an unchanged activity. Check a run with a tool and a second run in the same process.
+- While backgrounded, trigger a tool approval. The activity should say approval is needed. Tap, unlock, inspect the arguments, and approve in the app. Then background again and confirm the tool result and final answer. Repeat with Deny and with an old activity link after a newer approval appears. A link never approves a tool.
+- An approval wait releases continued processing. Approval expires after 15 minutes; returning then must stop the run without executing the pending tool. Opening the app to approve starts a new continued-processing request for the remaining work.
+- Cancel through the app and through the system background-task view. Check a slow provider and an already-started tool. The run stops locally, but a remote tool may already have completed its action. Swiping away the custom activity only dismisses its display.
+- Force-quit during a model request and an approval wait. Reopening must show interruption and must not replay a tool or a command. Complete another run, terminate, and confirm its saved final answer restores. Clear removes that saved answer and its activity.
+- Check the Lock Screen, compact/expanded Dynamic Island, larger text, Live Activities disabled in iOS Settings, and private-data redaction. The final preview is at most 160 characters with an additional byte bound, and ends after five minutes. Device privacy settings can still make it visible. Prompts, tool arguments, tool results, keys, and endpoint URLs are excluded from activity data.
+- Sideload the app with both the dictation keyboard and agent widget retained. Confirm installed build 12, then check ordinary in-app Dictation and keyboard insertion again.
+
+One agent lifecycle record and the last final answer are stored in app-private, backup-excluded Application Support with iOS data protection. Starting a replacement recording or clearing results removes the previous result. There is no conversation history, persisted prompt, or automatic retry. Failed cleanup is reported. The app keeps the full live answer in memory; saved answers are bounded to 200,000 UTF-16 code units.
+
 For performance changes, measure tap-to-session-ready and Stop-to-insertion separately. Compare a process-cold launch with a second session in the same process, recording permission prompts and model preparation separately. Record the device, iOS version, build number, and timings; one fast retry does not establish cold-start performance.
 
 ### USB logs from Windows
@@ -180,7 +196,7 @@ The build script can also run on a Mac with Xcode, CocoaPods, Bun, and Node 24 i
 bash mobile/scripts/build-ios.sh
 ```
 
-The script runs the native keyboard-session self-check and checks the app bundle identifier, embedded JavaScript, permissions, and embedded keyboard before packaging the IPA. The IPA is unsigned and cannot install until iLoader or Sideloadly signs it.
+The script runs the native keyboard-session and agent-state self-checks and checks the app bundle identifier, embedded JavaScript, permissions, Live Activity configuration, and both extensions before packaging the IPA. The IPA is unsigned and cannot install until iLoader or Sideloadly signs it.
 
 ## Install with Sideloadly
 
@@ -211,8 +227,9 @@ If saved settings or keys cannot be read, the app keeps them intact and blocks r
 - The custom keyboard cannot record or launch Shuddhalekhan. A keyboard session must be started in the app first; the keyboard says so if none is running.
 - In-app recording stops when the app backgrounds or the device locks. Only a keyboard session keeps the microphone open in the background (the `audio` background mode), and only until its timer ends or you stop it.
 - Keyboard commands and results use authenticated loopback TCP because iOS denies background pasteboard reads. Background recording, transcription, and insertion in Notes were confirmed on an iPhone with build 2; session persistence and interruption recovery need separate device checks.
-- Recording is capped at five minutes. iOS records mono 16 kHz PCM WAV for Whisper compatibility. Temporary audio is deleted after completion or cancellation; transcripts and responses stay in memory until cleared or the app exits.
+- Recording is capped at five minutes. iOS records mono 16 kHz PCM WAV for Whisper compatibility. Temporary audio is deleted after completion or cancellation. Transcripts stay in memory; the last agent answer is also saved locally until cleared or replaced.
 - Agent Mode supports Streamable HTTP MCP with bearer authentication. It does not support stdio MCP servers or OAuth.
 - The agent uses non-streaming Chat Completions with live progress messages. It allows eight model steps and sixteen sequential, individually approved tool calls per command. Retrying a command may repeat earlier completed actions.
+- Agent Live Activities show completed-stage progress and a final preview. iOS 26 continued processing is best-effort; it does not survive app-switcher force quit. Approval requires returning to the foreground app. Earlier iOS versions require the app to remain foregrounded while the agent works.
 - HTTP endpoints require the explicit insecure HTTP setting. Prefer HTTPS. For a server on your Wi-Fi network, use an address the iPhone can reach; `localhost` points to the iPhone itself.
 - The app does not import desktop shortcuts, provider settings, tool policies, or local model data.

@@ -2,23 +2,28 @@ import { useContext, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { useMobileApp } from '../useMobileApp';
+import type { ApprovalDecision } from '../controller';
 import { Button, Card, ReducedMotionContext, color, type } from './kit';
 
 type Approval = NonNullable<ReturnType<typeof useMobileApp>['approval']>;
 
 // Any dismissal (swipe down, Deny) denies. Only the explicit button approves, and only this one call.
-export function ApprovalSheet({ approval, onResolve }: { approval: Approval | null; onResolve: (approved: boolean) => void }) {
+export function ApprovalSheet({ approval, onResolve }: { approval: Approval | null; onResolve: (decision: ApprovalDecision) => void }) {
   const reduceMotion = useContext(ReducedMotionContext);
   // Keep the last request on screen while the sheet slides away, so it doesn't blank mid-dismissal.
   const [shown, setShown] = useState(approval);
   if (approval && approval !== shown) setShown(approval);
+  const decide = (approved: boolean) => {
+    if (shown) onResolve({ runId: shown.runId, approvalId: shown.approvalId, approved });
+  };
   return (
     <Modal
+      key={shown?.approvalId ?? 'approval'}
       visible={approval !== null}
       animationType={reduceMotion ? 'none' : 'slide'}
       presentationStyle="pageSheet"
       allowSwipeDismissal
-      onRequestClose={() => onResolve(false)}
+      onRequestClose={() => decide(false)}
     >
       <SafeAreaView style={a.screen} edges={['bottom', 'left', 'right']}>
         <ScrollView contentContainerStyle={a.content}>
@@ -35,8 +40,8 @@ export function ApprovalSheet({ approval, onResolve }: { approval: Approval | nu
           </Card>
         </ScrollView>
         <View style={a.actions}>
-          <Button label="Approve once" kind="agent" disabled={approval === null} onPress={() => onResolve(true)} />
-          <Button label="Deny" kind="secondary" disabled={approval === null} onPress={() => onResolve(false)} />
+          <Button label="Approve once" kind="agent" disabled={approval === null} onPress={() => decide(true)} />
+          <Button label="Deny" kind="secondary" disabled={approval === null} onPress={() => decide(false)} />
         </View>
       </SafeAreaView>
     </Modal>
