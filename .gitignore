@@ -56,7 +56,6 @@ app/fixtures/transcription-quality/*.wav
 CLAUDE.md
 GEMINI.md
 .codex
-.agents/
 TODO.md
 
 
