@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { MobileController, type Recorder } from '../controller';
-import { parseAgentActivityLink, type AgentActivityPort, type AgentActivityUpdate } from '../agent-activity';
+import { parseAgentActivityLink, type AgentActivityPort, type AgentActivityUpdate, type AgentApprovalAction } from '../agent-activity';
 import { defaultSettings, type MobileSettings } from '../settings';
 
 const recorder: Recorder = {
@@ -12,7 +12,8 @@ const recorder: Recorder = {
 function activityPort(overrides: Partial<AgentActivityPort> = {}) {
   const updates: AgentActivityUpdate[] = [];
   const port: AgentActivityPort = {
-    start: async () => ({ runId: 'run-1' }), resume: async () => {}, prepareApproval: async () => {},
+    start: async () => ({ runId: 'run-1' }), resume: async () => {}, prepareApproval: async () => false,
+    takeApprovalAction: async () => null,
     canContinueInBackground: async () => true,
     update: async update => { updates.push(update); }, recover: async () => null, clear: async () => {},
     ...overrides,
@@ -87,12 +88,13 @@ const modelRequest = z.object({ tools: z.array(z.object({ function: z.object({ n
 
 async function withToolRun(run: (input: {
   controller: MobileController; native: AgentActivityPort; updates: AgentActivityUpdate[]; calls: () => number;
-  preparedApproval: () => string | null;
-}) => Promise<void>, options: { rejectResume?: boolean; publication?: Promise<void> } = {}) {
+  preparedApproval: () => string | null; queueAction: (action: AgentApprovalAction) => void;
+}) => Promise<void>, options: { rejectResume?: boolean; publication?: Promise<void>; notifications?: boolean } = {}) {
   let modelCalls = 0;
   let calls = 0;
   let preparedApproval: string | null = null;
   const updates: AgentActivityUpdate[] = [];
+  const actions: AgentApprovalAction[] = [];
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     if (new URL(request.url).pathname === '/chat') {
       const body = modelRequest.parse(await request.json());
@@ -118,7 +120,8 @@ async function withToolRun(run: (input: {
   } });
   const { port } = activityPort({
     resume: async () => { if (options.rejectResume) throw new Error('Expired approval'); },
-    prepareApproval: async update => { preparedApproval = update.approvalId; },
+    prepareApproval: async update => { preparedApproval = update.approvalId; return options.notifications ?? false; },
+    takeApprovalAction: async () => actions.shift() ?? null,
     update: async update => { updates.push(update); if (update.phase === 'running') await options.publication; },
   });
   const base = `http://127.0.0.1:${server.port}`;
@@ -129,7 +132,7 @@ async function withToolRun(run: (input: {
     await controller.startRecording('agent');
     pending = controller.stopRecording();
     await when(controller, () => controller.getSnapshot().phase === 'awaitingApproval');
-    await run({ controller, native: port, updates, calls: () => calls, preparedApproval: () => preparedApproval });
+    await run({ controller, native: port, updates, calls: () => calls, preparedApproval: () => preparedApproval, queueAction: action => { actions.push(action); } });
     await pending;
   } finally { controller.cancel(); await pending; await server.stop(true); }
 }
@@ -139,6 +142,7 @@ test('approval waits survive backgrounding and stale activity actions cannot app
   await withToolRun(async ({ controller, updates, calls, preparedApproval }) => {
     const first = controller.getSnapshot().approval;
     if (!first) throw new Error('Expected first approval');
+    expect(controller.getSnapshot().approvalNotified).toBe(false);
     await controller.enterBackground();
     const phase = controller.getSnapshot().phase;
     publication.resolve();
@@ -177,6 +181,38 @@ test('an expired native approval cannot dispatch the tool even if its UI was sti
     expect(calls()).toBe(0);
     expect(controller.getSnapshot().status).toContain('Interrupted');
   }, { rejectResume: true });
+});
+
+test('notification actions wait for foreground and cannot approve a stale or subsequent tool', async () => {
+  await withToolRun(async ({ controller, calls, queueAction }) => {
+    const first = controller.getSnapshot().approval;
+    if (!first) throw new Error('Expected first approval');
+    expect(controller.getSnapshot().approvalNotified).toBe(true);
+    await controller.enterBackground();
+    queueAction({ runId: first.runId, approvalId: first.approvalId, action: 'approve' });
+    await controller.consumeApprovalAction();
+    expect(calls()).toBe(0);
+    await controller.enterForeground();
+    await when(controller, () => controller.getSnapshot().phase === 'awaitingApproval');
+    const second = controller.getSnapshot().approval;
+    if (!second || second.approvalId === first.approvalId) throw new Error('Expected next approval');
+    expect(calls()).toBe(1);
+    queueAction({ runId: first.runId, approvalId: first.approvalId, action: 'approve' });
+    await controller.consumeApprovalAction();
+    expect(calls()).toBe(1);
+    expect(controller.getSnapshot().approval).toEqual(second);
+    const opened = controller.getSnapshot().activityOpenCount;
+    queueAction({ runId: second.runId, approvalId: second.approvalId, action: 'review' });
+    await controller.consumeApprovalAction();
+    expect(controller.getSnapshot().activityOpenCount).toBe(opened + 1);
+    expect(calls()).toBe(1);
+    queueAction({ runId: second.runId, approvalId: second.approvalId, action: 'deny' });
+    await controller.consumeApprovalAction();
+    await when(controller, () => controller.getSnapshot().phase === 'idle');
+    expect(calls()).toBe(1);
+    expect(controller.getSnapshot().response).toBe('');
+    expect(controller.getSnapshot().error).toContain('Tool denied');
+  }, { notifications: true });
 });
 
 for (const settingsAvailable of [true, false]) test(`restoring a saved answer when settings ${settingsAvailable ? 'load' : 'fail'} makes no network call`, async () => {

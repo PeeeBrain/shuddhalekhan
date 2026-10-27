@@ -6,6 +6,7 @@ import { isParakeetLanguage, languageLabel } from '../languages';
 import { recordingLimitSeconds, transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
 import { Button, Card, Segment, color, styles as kit, type } from './kit';
+import { Markdown } from './Markdown';
 
 type App = ReturnType<typeof useMobileApp>;
 type Intent = App['intent'];
@@ -18,7 +19,7 @@ const busyLabel: Partial<Record<App['phase'], string>> = {
   awaitingApproval: 'Waiting for your approval…',
 };
 
-export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: () => void }) {
+export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App; onOpenSettings: () => void; onReviewApproval: () => void }) {
   const { settings, phase, transcript, response, status, error } = app;
   const [picked, setPicked] = useState<Intent>('dictation');
   const idle = phase === 'idle';
@@ -61,6 +62,15 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
         ) : null}
 
         {app.activityNotice ? <Text style={type.footnote} accessibilityLiveRegion="polite">{app.activityNotice}</Text> : null}
+
+        {app.approval ? (
+          <Card agent>
+            <Text style={type.headline}>Tool approval needed</Text>
+            <Text style={type.body}>{app.approval.toolName}</Text>
+            <Text style={type.footnote}>from {app.approval.serverName}</Text>
+            <Button label="Review tool request" kind="agent" onPress={onReviewApproval} />
+          </Card>
+        ) : null}
 
         {sessionOn ? keyboardCard : null}
 
@@ -121,9 +131,7 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
             <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">
               Agent response
             </Text>
-            <Text style={type.body} selectable>
-              {response}
-            </Text>
+            <Markdown>{response}</Markdown>
             <View style={kit.row}>
               <CopyShare text={response} what="agent response" />
             </View>

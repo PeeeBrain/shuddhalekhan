@@ -29,6 +29,7 @@ export default function App() {
 function Main() {
   const app = useMobileApp();
   const [screen, setScreen] = useState<'home' | 'settings'>('home');
+  const [reviewingApproval, setReviewingApproval] = useState<string | null>(null);
   useEffect(() => { if (app.activityOpenCount) setScreen('home'); }, [app.activityOpenCount]);
 
   return (
@@ -44,9 +45,9 @@ function Main() {
           onClose={() => setScreen('home')}
         />
       ) : (
-        <HomeScreen app={app} onOpenSettings={() => setScreen('settings')} />
+        <HomeScreen app={app} onOpenSettings={() => setScreen('settings')} onReviewApproval={() => setReviewingApproval(app.approval?.approvalId ?? null)} />
       )}
-      <ApprovalSheet approval={app.approval} onResolve={app.resolveApproval} />
+      <ApprovalSheet approval={app.approval && (!app.approvalNotified || reviewingApproval === app.approval.approvalId || app.approvalReviewId === app.approval.approvalId) ? app.approval : null} onResolve={app.resolveApproval} />
     </>
   );
 }

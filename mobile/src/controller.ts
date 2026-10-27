@@ -10,6 +10,8 @@ type State = {
   settings: MobileSettings; phase: Phase; intent: RecordingIntent; transcript: string; response: string;
   status: string; error: string | null; approval: PendingApproval | null; recordingStartedAt: number | null;
   runId: string | null; activityNotice: string | null; activityOpenCount: number;
+  approvalNotified: boolean;
+  approvalReviewId: string | null;
 };
 type PendingApproval = ToolApproval & { runId: string; approvalId: string };
 export type ApprovalDecision = Pick<PendingApproval, 'runId' | 'approvalId'> & { approved: boolean };
@@ -22,7 +24,7 @@ export type Recorder = {
 
 /** Owns single-flight work independently of React renders and native permission dialogs. */
 export class MobileController {
-  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0 };
+  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null };
   private listeners = new Set<() => void>();
   private active: AbortController | null = null;
   private approvalDecision: ((approved: boolean) => void) | null = null;
@@ -149,19 +151,22 @@ export class MobileController {
       approve: async approval => {
         active.signal.throwIfAborted();
         const pending = { ...approval, runId, approvalId: `${runId}-${++this.sequence}` };
-        const activityUpdate = { runId, phase: 'awaitingApproval', status: 'Approval needed. Open Shuddhalekhan to review.', approvalId: pending.approvalId, completedSteps: this.completedSteps } satisfies AgentActivityUpdate;
+        const activityUpdate = { runId, phase: 'awaitingApproval', status: 'Approval needed. Open Shuddhalekhan to review.', approvalId: pending.approvalId,
+          approvalTitle: `${approval.toolName} · ${approval.serverName}`, completedSteps: this.completedSteps } satisfies AgentActivityUpdate;
+        let approvalNotified = false;
         // Commit the native wait before exposing approval, independently of queued display updates.
         if (this.activityStarted) {
-          try { await this.ports.activity?.prepareApproval(activityUpdate); }
+          try { approvalNotified = await this.ports.activity?.prepareApproval(activityUpdate) ?? false; }
           catch { throw new Error('Could not prepare this tool approval. The tool was not started.'); }
         }
         active.signal.throwIfAborted();
         const decision = new Promise<boolean>(resolve => {
           this.approvalDecision = resolve;
-          this.update({ phase: 'awaitingApproval', approval: pending, status: 'Waiting for your tool approval…' });
+          this.update({ phase: 'awaitingApproval', approval: pending, approvalNotified, status: 'Waiting for your tool approval…' });
         });
         await this.publish(activityUpdate);
         active.signal.throwIfAborted();
+        await this.consumeApprovalAction();
         return decision;
       },
     });
@@ -184,7 +189,7 @@ export class MobileController {
     const resolve = this.approvalDecision;
     if (!active || active.signal.aborted || this.backgrounded || !resolve || pending?.runId !== runId || pending.approvalId !== approvalId) return;
     this.approvalDecision = null;
-    this.update({ approval: null, phase: 'running' });
+    this.update({ approval: null, approvalNotified: false, phase: 'running' });
     await this.activityUpdates;
     if (this.active !== active || active.signal.aborted) { resolve(false); return; }
     if (approved && this.activityStarted) {
@@ -233,6 +238,18 @@ export class MobileController {
       const current = await this.ports.activity?.recover();
       if (current?.phase === 'interrupted') this.agentRunStopped(current.runId);
     } catch { /* The live run remains usable; background admission is checked separately. */ }
+    await this.consumeApprovalAction();
+  };
+
+  consumeApprovalAction = async () => {
+    if (this.backgrounded || !this.active || !this.activityStarted) return;
+    let action;
+    try { action = await this.ports.activity?.takeApprovalAction(); }
+    catch { return; }
+    const pending = this.state.approval;
+    if (this.backgrounded || !action || !pending || action.runId !== pending.runId || action.approvalId !== pending.approvalId) return;
+    if (action.action === 'review') this.update({ activityOpenCount: this.state.activityOpenCount + 1, approvalReviewId: action.approvalId });
+    else await this.resolveApproval({ ...action, approved: action.action === 'approve' });
   };
 
   agentRunStopped = (runId: string) => {
@@ -244,7 +261,7 @@ export class MobileController {
   openActivity = (value: string): boolean => {
     const link = parseAgentActivityLink(value);
     if (!link || link.runId !== this.state.runId || (link.approvalId !== null && link.approvalId !== this.state.approval?.approvalId)) return false;
-    this.update({ activityOpenCount: this.state.activityOpenCount + 1 });
+    this.update({ activityOpenCount: this.state.activityOpenCount + 1, approvalReviewId: this.state.approval?.approvalId ?? null });
     return true;
   };
 
@@ -281,7 +298,7 @@ export class MobileController {
     this.active = null;
     this.finishing = false;
     this.approvalDecision = null;
-    this.update({ phase: 'idle', approval: null,
+    this.update({ phase: 'idle', approval: null, approvalNotified: false,
       status: this.interrupted ? 'Interrupted. Tools already started may still finish. Start a new command when ready.' : active.signal.aborted ? 'Cancelled. Tools already started may still finish.' : error ? 'Could not complete the command.' : 'Done.',
       error: active.signal.aborted ? null : error ? settingsError(error) : null,
     });

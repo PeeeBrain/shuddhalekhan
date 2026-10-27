@@ -9,6 +9,6 @@ Pod::Spec.new do |s|
   s.source_files = '**/*.swift'
   s.ios.deployment_target = '17.0'
   s.swift_version = '6.0'
-  s.frameworks = 'ActivityKit', 'BackgroundTasks', 'UIKit'
+  s.frameworks = 'ActivityKit', 'BackgroundTasks', 'UIKit', 'UserNotifications'
   s.dependency 'ExpoModulesCore'
 end

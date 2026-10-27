@@ -6,6 +6,7 @@ private struct ActivityUpdateInput: Record {
   @Field var status: String = ""
   @Field var completedSteps: Int = 0
   @Field var approvalId: String?
+  @Field var approvalTitle: String?
   @Field var response: String?
 
   func checked() throws -> AgentRunUpdate {
@@ -19,20 +20,24 @@ private struct ActivityUpdateInput: Record {
 public final class ShuddhalekhanAgentActivityModule: Module, @unchecked Sendable {
   public func definition() -> ModuleDefinition {
     Name("ShuddhalekhanAgentActivity")
-    Events("onAgentRunStopped")
+    Events("onAgentRunStopped", "onAgentApprovalAction")
 
     OnCreate {
       Task { @MainActor [weak self] in
         AgentActivityManager.shared.onStopped = { [weak self] runId in
           self?.sendEvent("onAgentRunStopped", ["runId": runId])
         }
+        AgentActivityManager.shared.onApprovalAction = { [weak self] in self?.sendEvent("onAgentApprovalAction", [:]) }
       }
     }
     OnAppEntersBackground {
       Task { @MainActor in await AgentActivityManager.shared.enterBackground() }
     }
     OnAppBecomesActive {
-      Task { @MainActor in await AgentActivityManager.shared.checkApprovalExpiry() }
+      Task { @MainActor in
+        await AgentActivityManager.shared.checkApprovalExpiry()
+        AgentActivityManager.shared.onApprovalAction?()
+      }
     }
     OnAppContextDestroys {
       Task { @MainActor in await AgentActivityManager.shared.stopCurrentRun() }
@@ -48,9 +53,14 @@ public final class ShuddhalekhanAgentActivityModule: Module, @unchecked Sendable
     AsyncFunction("canContinueInBackground") { (runId: String) async -> Bool in
       await AgentActivityManager.shared.canContinueInBackground(runId: runId)
     }
-    AsyncFunction("prepareApproval") { (input: ActivityUpdateInput) async throws in
+    AsyncFunction("prepareApproval") { (input: ActivityUpdateInput) async throws -> Bool in
       let update = try input.checked()
-      try await AgentActivityManager.shared.prepareApproval(update)
+      guard let title = input.approvalTitle, title.utf8.count <= 4_000 else { throw AgentRunError.invalidUpdate }
+      return try await AgentActivityManager.shared.prepareApproval(update, title: title)
+    }
+    AsyncFunction("takeApprovalAction") { () async -> [String: String]? in
+      guard let action = await AgentActivityManager.shared.takeApprovalAction() else { return nil }
+      return ["runId": action.runId, "approvalId": action.approvalId, "action": action.action.rawValue]
     }
     AsyncFunction("update") { (input: ActivityUpdateInput) async throws in
       do {

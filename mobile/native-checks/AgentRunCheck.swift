@@ -20,11 +20,16 @@ struct AgentRunCheck {
     let acceptedLateStatus = try run.apply(lateStatus, now: now)
     precondition(!acceptedLateStatus)
     precondition(run.phase == .awaitingApproval && run.approvalId == "approval-1")
+    precondition(run.matchesApproval(runId: id, approvalId: "approval-1", now: now))
+    precondition(!run.matchesApproval(runId: "old-run", approvalId: "approval-1", now: now))
+    precondition(!run.matchesApproval(runId: id, approvalId: "old-approval", now: now))
+    precondition(!run.matchesApproval(runId: id, approvalId: "approval-1", now: now.addingTimeInterval(901)))
     var expired = run
     do { try expired.resume(now: now.addingTimeInterval(901)); preconditionFailure("Expired approval resumed") }
     catch AgentRunError.expiredApproval { }
     try run.resume(now: now.addingTimeInterval(1))
     precondition(run.approvalId == nil && run.phase == .running)
+    precondition(!run.matchesApproval(runId: id, approvalId: "approval-1", now: now.addingTimeInterval(2)))
     let answer = String(repeating: "😀", count: 500)
     let acceptedAnswer = try run.apply(AgentRunUpdate(runId: id, phase: .completed, status: "Answer ready", completedSteps: 2, response: answer))
     precondition(acceptedAnswer)

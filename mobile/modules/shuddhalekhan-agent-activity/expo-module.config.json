@@ -1,4 +1,4 @@
 {
   "platforms": ["ios"],
-  "ios": { "modules": ["ShuddhalekhanAgentActivityModule"] }
+  "ios": { "modules": ["ShuddhalekhanAgentActivityModule"], "appDelegateSubscribers": ["AgentActivityAppDelegate"] }
 }

@@ -9,11 +9,13 @@ export const recoveredAgentRunSchema = z.object({
 export type RecoveredAgentRun = z.infer<typeof recoveredAgentRunSchema>;
 export const startedAgentRunSchema = z.object({ runId: identifier });
 export const stoppedAgentRunSchema = z.object({ runId: identifier });
+export const agentApprovalActionSchema = z.object({ runId: identifier, approvalId: identifier, action: z.enum(['approve', 'deny', 'review']) });
+export type AgentApprovalAction = z.infer<typeof agentApprovalActionSchema>;
 
 type Update = { runId: string; status: string; completedSteps: number };
 export type AgentActivityUpdate = Update & (
   | { phase: 'running' }
-  | { phase: 'awaitingApproval'; approvalId: string }
+  | { phase: 'awaitingApproval'; approvalId: string; approvalTitle: string }
   | { phase: 'completed'; response: string }
   | { phase: 'failed' | 'cancelled' | 'interrupted' }
 );
@@ -22,7 +24,8 @@ export type AgentActivityUpdate = Update & (
 export type AgentActivityPort = {
   start(maximumSteps: number): Promise<{ runId: string }>;
   resume(runId: string): Promise<void>;
-  prepareApproval(update: Extract<AgentActivityUpdate, { phase: 'awaitingApproval' }>): Promise<void>;
+  prepareApproval(update: Extract<AgentActivityUpdate, { phase: 'awaitingApproval' }>): Promise<boolean>;
+  takeApprovalAction(): Promise<AgentApprovalAction | null>;
   canContinueInBackground(runId: string): Promise<boolean>;
   update(update: AgentActivityUpdate): Promise<void>;
   recover(): Promise<RecoveredAgentRun | null>;

@@ -7,7 +7,7 @@ import { MobileController, type Recorder } from './controller';
 import { loadSettings, saveSettings } from './native-settings';
 import { localModelKey, signGoogleJwt, transcribeOnDevice, useKeyboardSession, useOnDeviceModel } from './on-device';
 import { recordingLimitSeconds } from './providers';
-import { agentActivity, onAgentRunStopped } from './native-agent-activity';
+import { agentActivity, onAgentApprovalAction, onAgentRunStopped } from './native-agent-activity';
 
 const recordingOptions: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -91,6 +91,7 @@ export function useMobileApp() {
     controllerRef.current = controller;
     void controller.initialize();
     const stopped = onAgentRunStopped(controller.agentRunStopped);
+    const approvalAction = onAgentApprovalAction(() => { void controller.consumeApprovalAction(); });
     const open = (url: string) => { void controller.initialize().then(() => { controller.openActivity(url); }); };
     const links = Linking.addEventListener('url', event => open(event.url));
     void Linking.getInitialURL().then(url => { if (url) open(url); }).catch(() => {});
@@ -99,7 +100,7 @@ export function useMobileApp() {
       if (next === 'background') void controller.enterBackground();
       if (next === 'active') void controller.enterForeground();
     });
-    return () => { subscription.remove(); links.remove(); stopped?.remove(); controllerRef.current = null; controller.cancel(); };
+    return () => { subscription.remove(); links.remove(); stopped?.remove(); approvalAction?.remove(); controllerRef.current = null; controller.cancel(); };
   }, [controller]);
 
   useEffect(() => {

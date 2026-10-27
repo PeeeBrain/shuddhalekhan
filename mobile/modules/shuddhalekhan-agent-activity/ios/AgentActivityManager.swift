@@ -9,6 +9,7 @@ final class AgentActivityManager {
   static let shared = AgentActivityManager()
 
   var onStopped: ((String) -> Void)?
+  var onApprovalAction: (() -> Void)?
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "AgentActivity")
   private let store = AgentRunStore(directory: URL.applicationSupportDirectory.appendingPathComponent("AgentActivity"))
   private var record: AgentRunRecord?
@@ -17,21 +18,33 @@ final class AgentActivityManager {
   private var processingIdentifier: String?
   private var progressBaseline = 0
   private var expirationFallback: Task<Void, Never>?
+  private var pendingApprovalAction: AgentApprovalAction?
+  private var notifiedApprovalId: String?
+  private var usesSystemActivity: Bool {
+    if #available(iOS 26.0, *) { return true }
+    return false
+  }
 
   func start(maximumSteps: Int) async throws -> String {
     guard UIApplication.shared.applicationState == .active else { throw AgentRunError.requiresForeground }
     guard (1...34).contains(maximumSteps) else { throw AgentRunError.invalidUpdate }
     guard record?.phase.isTerminal != false else { throw AgentRunError.alreadyRunning }
     await dismissActivities()
+    if let record { AgentNotifications.shared.removeAll(runId: record.runId) }
+    pendingApprovalAction = nil
+    notifiedApprovalId = nil
     let next = AgentRunRecord(maximumSteps: maximumSteps)
     try store.save(next)
     record = next
-    if ActivityAuthorizationInfo().areActivitiesEnabled {
+    // Continued processing supplies its own Live Activity on iOS 26; starting ours would duplicate it.
+    if !usesSystemActivity && ActivityAuthorizationInfo().areActivitiesEnabled {
       do {
         activityId = try Activity.request(attributes: AgentActivityAttributes(runId: next.runId), content: content(next), pushType: nil).id
       } catch { log.error("AgentActivity stage=start_activity_failed") }
     }
     submitProcessing(for: next)
+    // Submit while active before the permission alert can temporarily make the app inactive.
+    AgentNotifications.shared.requestAuthorization()
     log.notice("AgentActivity run=\(next.runId, privacy: .public) stage=started")
     return next.runId
   }
@@ -43,6 +56,9 @@ final class AgentActivityManager {
     catch { await interrupt(runId: runId); throw error }
     try store.save(current)
     record = current
+    pendingApprovalAction = nil
+    notifiedApprovalId = nil
+    AgentNotifications.shared.removeApproval(runId: runId)
     submitProcessing(for: current)
     await Self.activity(id: activityId)?.update(content(current))
   }
@@ -52,11 +68,34 @@ final class AgentActivityManager {
     record?.runId == runId && (record?.phase == .awaitingApproval || (record?.phase == .running && processingTask != nil))
   }
 
-  func prepareApproval(_ update: AgentRunUpdate) throws {
+  func prepareApproval(_ update: AgentRunUpdate, title: String) async throws -> Bool {
     guard update.phase == .awaitingApproval, var current = record, current.runId == update.runId,
       try current.apply(update) else { throw AgentRunError.invalidUpdate }
     try store.save(current)
     record = current
+    let notified = await AgentNotifications.shared.approval(run: current, title: title)
+    guard let approvalId = current.approvalId, record?.matchesApproval(runId: current.runId, approvalId: approvalId) == true else {
+      AgentNotifications.shared.removeApproval(runId: current.runId)
+      return false
+    }
+    notifiedApprovalId = notified ? approvalId : nil
+    return notified
+  }
+
+  func receiveApprovalAction(_ action: AgentApprovalAction) {
+    // Only the OS notification delegate can enqueue a decision. Deep links remain navigation-only.
+    guard record?.matchesApproval(runId: action.runId, approvalId: action.approvalId) == true,
+      pendingApprovalAction == nil else { return }
+    pendingApprovalAction = action
+    onApprovalAction?()
+  }
+
+  func takeApprovalAction() -> AgentApprovalAction? {
+    guard UIApplication.shared.applicationState == .active else { return nil }
+    defer { pendingApprovalAction = nil }
+    guard let action = pendingApprovalAction,
+      record?.matchesApproval(runId: action.runId, approvalId: action.approvalId) == true else { return nil }
+    return action
   }
 
   func update(_ update: AgentRunUpdate) async throws {
@@ -78,9 +117,19 @@ final class AgentActivityManager {
         task.updateTitle("Agent needs approval", subtitle: "Open Shuddhalekhan to review a tool request.")
       } else if current.phase.isTerminal {
         task.updateTitle(current.phase == .completed ? "Agent finished" : "Agent stopped", subtitle: "Open Shuddhalekhan for details.")
+      } else {
+        let stage = current.status.hasPrefix("Connecting to ") ? "Connecting to tools…"
+          : current.status.hasPrefix("Running ") ? "Running an approved tool…" : "Waiting for the agent…"
+        task.updateTitle("Agent working", subtitle: stage)
       }
     }
     if current.phase.isTerminal {
+      pendingApprovalAction = nil
+      notifiedApprovalId = nil
+      AgentNotifications.shared.removeApproval(runId: current.runId)
+      if usesSystemActivity && UIApplication.shared.applicationState != .active {
+        await AgentNotifications.shared.result(run: current)
+      }
       if current.phase == .completed && UIApplication.shared.applicationState != .active {
         await Self.activity(id: activityId)?.update(content(current), alertConfiguration: AlertConfiguration(
           title: "Agent finished", body: "Open Shuddhalekhan to read the answer.", sound: .default))
@@ -88,7 +137,7 @@ final class AgentActivityManager {
       await Self.activity(id: activityId)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
       activityId = nil
     } else {
-      let alert: AlertConfiguration? = current.phase == .awaitingApproval && UIApplication.shared.applicationState != .active
+      let alert: AlertConfiguration? = current.phase == .awaitingApproval && notifiedApprovalId != current.approvalId && UIApplication.shared.applicationState != .active
         ? AlertConfiguration(title: "Approval needed", body: "Open Shuddhalekhan to review a tool request.", sound: .default)
         : nil
       await Self.activity(id: activityId)?.update(content(current), alertConfiguration: alert)
@@ -115,6 +164,7 @@ final class AgentActivityManager {
       try store.save(saved)
     }
     record = saved
+    AgentNotifications.shared.removeAll(runId: saved.runId)
     for old in Activity<AgentActivityAttributes>.activities {
       await old.end(old.attributes.runId == saved.runId ? content(saved) : nil, dismissalPolicy: .immediate)
     }
@@ -125,6 +175,9 @@ final class AgentActivityManager {
     guard record?.runId == runId else { return }
     guard record?.phase.isTerminal == true else { throw AgentRunError.alreadyRunning }
     try store.clear()
+    AgentNotifications.shared.removeAll(runId: runId)
+    pendingApprovalAction = nil
+    notifiedApprovalId = nil
     record = nil
     await dismissActivities()
   }
@@ -223,6 +276,9 @@ final class AgentActivityManager {
     guard var current = record, current.runId == runId, !current.phase.isTerminal else { return }
     current.interrupt()
     record = current
+    pendingApprovalAction = nil
+    notifiedApprovalId = nil
+    AgentNotifications.shared.removeApproval(runId: runId)
     do { try store.save(current) }
     catch { log.error("AgentActivity stage=interruption_persistence_failed") }
     onStopped?(runId)

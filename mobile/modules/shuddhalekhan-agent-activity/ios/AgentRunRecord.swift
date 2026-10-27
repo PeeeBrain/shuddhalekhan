@@ -6,6 +6,13 @@ enum AgentRunPhase: String, Codable, Sendable {
   var isTerminal: Bool { self != .running && self != .awaitingApproval }
 }
 
+struct AgentApprovalAction: Sendable {
+  enum Kind: String, Sendable { case approve, deny, review }
+  var runId: String
+  var approvalId: String
+  var action: Kind
+}
+
 struct AgentRunUpdate: Sendable {
   var runId: String
   var phase: AgentRunPhase
@@ -28,6 +35,11 @@ struct AgentRunRecord: Codable, Sendable {
   var answerPreview: String? {
     guard phase == .completed, !response.isEmpty else { return nil }
     return Self.bounded(response, limit: 160)
+  }
+
+  func matchesApproval(runId: String, approvalId: String, now: Date = Date()) -> Bool {
+    self.runId == runId && phase == .awaitingApproval && self.approvalId == approvalId
+      && (approvalExpiresAt.map { $0 > now } ?? false)
   }
 
   mutating func apply(_ update: AgentRunUpdate, now: Date = Date()) throws -> Bool {
