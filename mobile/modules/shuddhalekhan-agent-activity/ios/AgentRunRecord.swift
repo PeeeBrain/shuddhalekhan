@@ -38,8 +38,9 @@ struct AgentRunRecord: Codable, Sendable {
       (update.response?.utf8.count ?? 0) <= 800_000 else { throw AgentRunError.invalidUpdate }
     if update.phase == .awaitingApproval {
       guard let id = update.approvalId, !id.isEmpty, id.count <= 100 else { throw AgentRunError.invalidUpdate }
+      if phase == .awaitingApproval && approvalId != id { throw AgentRunError.invalidUpdate }
       approvalId = id
-      approvalExpiresAt = now.addingTimeInterval(15 * 60)
+      if phase != .awaitingApproval { approvalExpiresAt = now.addingTimeInterval(15 * 60) }
     } else {
       approvalId = nil
       approvalExpiresAt = nil

@@ -13,6 +13,9 @@ struct AgentRunCheck {
     let approval = AgentRunUpdate(runId: id, phase: .awaitingApproval, status: "Review", completedSteps: 1, approvalId: "approval-1")
     let acceptedApproval = try run.apply(approval, now: now)
     precondition(acceptedApproval)
+    let expiry = run.approvalExpiresAt
+    _ = try run.apply(approval, now: now.addingTimeInterval(100))
+    precondition(run.approvalExpiresAt == expiry, "Publishing an approval must not extend its deadline")
     let lateStatus = AgentRunUpdate(runId: id, phase: .running, status: "Old status", completedSteps: 1)
     let acceptedLateStatus = try run.apply(lateStatus, now: now)
     precondition(!acceptedLateStatus)

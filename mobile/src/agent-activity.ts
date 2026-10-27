@@ -22,6 +22,7 @@ export type AgentActivityUpdate = Update & (
 export type AgentActivityPort = {
   start(maximumSteps: number): Promise<{ runId: string }>;
   resume(runId: string): Promise<void>;
+  prepareApproval(update: Extract<AgentActivityUpdate, { phase: 'awaitingApproval' }>): Promise<void>;
   canContinueInBackground(runId: string): Promise<boolean>;
   update(update: AgentActivityUpdate): Promise<void>;
   recover(): Promise<RecoveredAgentRun | null>;

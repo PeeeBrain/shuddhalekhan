@@ -4,6 +4,7 @@ import { recoveredAgentRunSchema, startedAgentRunSchema, stoppedAgentRunSchema, 
 type NativeAgentActivity = {
   start(maximumSteps: number): Promise<unknown>;
   resume(runId: string): Promise<void>;
+  prepareApproval(update: Extract<AgentActivityUpdate, { phase: 'awaitingApproval' }>): Promise<void>;
   canContinueInBackground(runId: string): Promise<boolean>;
   update(update: AgentActivityUpdate): Promise<void>;
   recover(): Promise<unknown>;
@@ -16,6 +17,7 @@ const native = requireOptionalNativeModule<NativeAgentActivity>('ShuddhalekhanAg
 export const agentActivity: AgentActivityPort | undefined = native ? {
   async start(maximumSteps) { return startedAgentRunSchema.parse(await native.start(maximumSteps)); },
   resume: runId => native.resume(runId),
+  prepareApproval: update => native.prepareApproval(update),
   canContinueInBackground: runId => native.canContinueInBackground(runId),
   update: update => native.update(update),
   async recover() {

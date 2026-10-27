@@ -12,7 +12,7 @@ final class AgentActivityManager {
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "AgentActivity")
   private let store = AgentRunStore(directory: URL.applicationSupportDirectory.appendingPathComponent("AgentActivity"))
   private var record: AgentRunRecord?
-  private var activity: Activity<AgentActivityAttributes>?
+  private var activityId: String?
   private var processingTask: BGTask?
   private var processingIdentifier: String?
   private var progressBaseline = 0
@@ -28,7 +28,7 @@ final class AgentActivityManager {
     record = next
     if ActivityAuthorizationInfo().areActivitiesEnabled {
       do {
-        activity = try Activity.request(attributes: AgentActivityAttributes(runId: next.runId), content: content(next), pushType: nil)
+        activityId = try Activity.request(attributes: AgentActivityAttributes(runId: next.runId), content: content(next), pushType: nil).id
       } catch { log.error("AgentActivity stage=start_activity_failed") }
     }
     submitProcessing(for: next)
@@ -44,11 +44,19 @@ final class AgentActivityManager {
     try store.save(current)
     record = current
     submitProcessing(for: current)
-    await activity?.update(content(current))
+    await Self.activity(id: activityId)?.update(content(current))
   }
 
   func canContinueInBackground(runId: String) -> Bool {
-    record?.runId == runId && record?.phase == .running && processingTask != nil
+    // Waiting for a foreground decision needs no running task; the app may safely suspend.
+    record?.runId == runId && (record?.phase == .awaitingApproval || (record?.phase == .running && processingTask != nil))
+  }
+
+  func prepareApproval(_ update: AgentRunUpdate) throws {
+    guard update.phase == .awaitingApproval, var current = record, current.runId == update.runId,
+      try current.apply(update) else { throw AgentRunError.invalidUpdate }
+    try store.save(current)
+    record = current
   }
 
   func update(_ update: AgentRunUpdate) async throws {
@@ -74,16 +82,16 @@ final class AgentActivityManager {
     }
     if current.phase.isTerminal {
       if current.phase == .completed && UIApplication.shared.applicationState != .active {
-        await activity?.update(content(current), alertConfiguration: AlertConfiguration(
+        await Self.activity(id: activityId)?.update(content(current), alertConfiguration: AlertConfiguration(
           title: "Agent finished", body: "Open Shuddhalekhan to read the answer.", sound: .default))
       }
-      await activity?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
-      activity = nil
+      await Self.activity(id: activityId)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
+      activityId = nil
     } else {
       let alert: AlertConfiguration? = current.phase == .awaitingApproval && UIApplication.shared.applicationState != .active
         ? AlertConfiguration(title: "Approval needed", body: "Open Shuddhalekhan to review a tool request.", sound: .default)
         : nil
-      await activity?.update(content(current), alertConfiguration: alert)
+      await Self.activity(id: activityId)?.update(content(current), alertConfiguration: alert)
     }
     // Publish the decision/result before giving iOS permission to suspend the process.
     if (current.phase == .awaitingApproval || current.phase.isTerminal), record?.phase == current.phase {
@@ -150,6 +158,10 @@ final class AgentActivityManager {
     // Dynamic continued-processing registrations are made at the foreground user action, once per identifier.
     guard let patterns = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String],
       let pattern = patterns.first(where: { $0.hasSuffix(".agent.*") }) else { return }
+    guard let bundleId = Bundle.main.bundleIdentifier, pattern.hasPrefix(bundleId + ".") else {
+      log.error("AgentActivity stage=task_identifier_mismatch")
+      return
+    }
     let identifier = String(pattern.dropLast()) + UUID().uuidString
     let runId = current.runId
     let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: .main) { [weak self] task in
@@ -225,8 +237,8 @@ final class AgentActivityManager {
     } else {
       finishProcessing(success: false)
     }
-    await activity?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
-    activity = nil
+    await Self.activity(id: activityId)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
+    activityId = nil
     log.notice("AgentActivity run=\(runId, privacy: .public) stage=interrupted")
   }
 
@@ -237,7 +249,12 @@ final class AgentActivityManager {
   }
 
   private func dismissActivities() async {
-    activity = nil
+    activityId = nil
     for old in Activity<AgentActivityAttributes>.activities { await old.end(nil, dismissalPolicy: .immediate) }
+  }
+
+  // Keep only a Sendable ID on the actor; each async SDK call receives its own disconnected handle.
+  private nonisolated static func activity(id: String?) -> sending Activity<AgentActivityAttributes>? {
+    Activity<AgentActivityAttributes>.activities.first { $0.id == id }
   }
 }

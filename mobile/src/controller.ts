@@ -34,6 +34,7 @@ export class MobileController {
   private sequence = 0;
   private interrupted = false;
   private backgrounded = false;
+  private savedRunId: string | null = null;
 
   constructor(private readonly ports: {
     recorder: Recorder; fetch: Fetch;
@@ -53,17 +54,19 @@ export class MobileController {
     return this.initialization;
   };
   private async load() {
-    try { this.update({ settings: mobileSettingsSchema.parse(await this.ports.loadSettings()) }); }
-    catch { this.update({ error: 'Saved settings could not be loaded. Close and reopen the app, or reset settings to configure it again. Your saved settings have not been replaced.', status: 'Settings unavailable.' }); return; }
+    let settingsLoaded = false;
+    try { this.update({ settings: mobileSettingsSchema.parse(await this.ports.loadSettings()) }); settingsLoaded = true; }
+    catch { this.update({ error: 'Saved settings could not be loaded. Close and reopen the app, or reset settings to configure it again. Your saved settings have not been replaced.', status: 'Settings unavailable.' }); }
     let status = 'Ready to record.';
     try {
       const recovered = await this.ports.activity?.recover();
       if (recovered) {
+        this.savedRunId = recovered.runId;
         status = recovered.phase === 'completed' ? 'Last agent answer restored.' : 'The last agent run stopped. Tools already started may still have finished.';
         this.update({ runId: recovered.runId, response: recovered.response, intent: 'agent' });
       }
     } catch { this.update({ activityNotice: 'Could not restore the last agent result.' }); }
-    this.update({ phase: 'idle', status });
+    if (settingsLoaded) this.update({ phase: 'idle', status });
   }
 
   startRecording = async (intent: RecordingIntent) => {
@@ -71,13 +74,16 @@ export class MobileController {
     if (intent === 'agent' && !this.state.settings.agentEnabled) { this.update({ error: 'Enable Agent Mode in Settings first.' }); return; }
     const active = new AbortController();
     this.active = active;
-    const previousRunId = this.state.runId;
+    const previousRunId = this.savedRunId;
     this.activityStarted = false;
     this.interrupted = false;
     this.update({ phase: 'requestingPermission', intent, status: 'Requesting microphone access…', error: null, transcript: '', response: '', runId: null, activityNotice: null });
     try {
       if (previousRunId) {
-        try { await this.ports.activity?.clear(previousRunId); }
+        try {
+          await this.ports.activity?.clear(previousRunId);
+          if (this.savedRunId === previousRunId) this.savedRunId = null;
+        }
         catch { this.update({ activityNotice: 'Could not clear the previous agent result.' }); }
       }
       active.signal.throwIfAborted();
@@ -127,7 +133,7 @@ export class MobileController {
     let runId = `foreground-${Date.now()}-${++this.sequence}`;
     try {
       const started = await this.ports.activity?.start(24 + this.state.settings.mcpServers.filter(server => server.enabled).length);
-      if (started) { runId = started.runId; this.activityStarted = true; }
+      if (started) { runId = started.runId; this.savedRunId = runId; this.activityStarted = true; }
     } catch { this.update({ activityNotice: 'Live Activity unavailable. Keep Shuddhalekhan open to finish this run.' }); }
     this.update({ runId });
     active.signal.throwIfAborted();
@@ -143,11 +149,18 @@ export class MobileController {
       approve: async approval => {
         active.signal.throwIfAborted();
         const pending = { ...approval, runId, approvalId: `${runId}-${++this.sequence}` };
+        const activityUpdate = { runId, phase: 'awaitingApproval', status: 'Approval needed. Open Shuddhalekhan to review.', approvalId: pending.approvalId, completedSteps: this.completedSteps } satisfies AgentActivityUpdate;
+        // Commit the native wait before exposing approval, independently of queued display updates.
+        if (this.activityStarted) {
+          try { await this.ports.activity?.prepareApproval(activityUpdate); }
+          catch { throw new Error('Could not prepare this tool approval. The tool was not started.'); }
+        }
+        active.signal.throwIfAborted();
         const decision = new Promise<boolean>(resolve => {
           this.approvalDecision = resolve;
           this.update({ phase: 'awaitingApproval', approval: pending, status: 'Waiting for your tool approval…' });
         });
-        await this.publish({ runId, phase: 'awaitingApproval', status: 'Approval needed. Open Shuddhalekhan to review.', approvalId: pending.approvalId, completedSteps: this.completedSteps });
+        await this.publish(activityUpdate);
         active.signal.throwIfAborted();
         return decision;
       },
@@ -289,7 +302,11 @@ export class MobileController {
   };
   clearResults = async () => {
     if (this.state.phase !== 'idle' || this.active) return;
-    try { if (this.state.runId) await this.ports.activity?.clear(this.state.runId); }
+    const savedRunId = this.savedRunId;
+    try {
+      if (savedRunId) await this.ports.activity?.clear(savedRunId);
+      if (this.savedRunId === savedRunId) this.savedRunId = null;
+    }
     catch { this.update({ error: 'Could not clear the saved agent result. Try again.' }); return; }
     if (this.state.phase !== 'idle' || this.active) return;
     this.update({ transcript: '', response: '', runId: null, error: null, activityNotice: null, status: 'Ready to record.' });

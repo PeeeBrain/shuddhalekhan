@@ -48,6 +48,10 @@ public final class ShuddhalekhanAgentActivityModule: Module, @unchecked Sendable
     AsyncFunction("canContinueInBackground") { (runId: String) async -> Bool in
       await AgentActivityManager.shared.canContinueInBackground(runId: runId)
     }
+    AsyncFunction("prepareApproval") { (input: ActivityUpdateInput) async throws in
+      let update = try input.checked()
+      try await AgentActivityManager.shared.prepareApproval(update)
+    }
     AsyncFunction("update") { (input: ActivityUpdateInput) async throws in
       do {
         let update = try input.checked()

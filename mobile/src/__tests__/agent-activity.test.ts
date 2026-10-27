@@ -12,7 +12,7 @@ const recorder: Recorder = {
 function activityPort(overrides: Partial<AgentActivityPort> = {}) {
   const updates: AgentActivityUpdate[] = [];
   const port: AgentActivityPort = {
-    start: async () => ({ runId: 'run-1' }), resume: async () => {},
+    start: async () => ({ runId: 'run-1' }), resume: async () => {}, prepareApproval: async () => {},
     canContinueInBackground: async () => true,
     update: async update => { updates.push(update); }, recover: async () => null, clear: async () => {},
     ...overrides,
@@ -87,9 +87,11 @@ const modelRequest = z.object({ tools: z.array(z.object({ function: z.object({ n
 
 async function withToolRun(run: (input: {
   controller: MobileController; native: AgentActivityPort; updates: AgentActivityUpdate[]; calls: () => number;
+  preparedApproval: () => string | null;
 }) => Promise<void>, options: { rejectResume?: boolean; publication?: Promise<void> } = {}) {
   let modelCalls = 0;
   let calls = 0;
+  let preparedApproval: string | null = null;
   const updates: AgentActivityUpdate[] = [];
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     if (new URL(request.url).pathname === '/chat') {
@@ -116,7 +118,8 @@ async function withToolRun(run: (input: {
   } });
   const { port } = activityPort({
     resume: async () => { if (options.rejectResume) throw new Error('Expired approval'); },
-    update: async update => { updates.push(update); if (update.phase === 'awaitingApproval') await options.publication; },
+    prepareApproval: async update => { preparedApproval = update.approvalId; },
+    update: async update => { updates.push(update); if (update.phase === 'running') await options.publication; },
   });
   const base = `http://127.0.0.1:${server.port}`;
   const controller = controllerFor(`${base}/chat`, port, [{ id: 'tools', name: 'Tools', endpoint: `${base}/mcp`, token: '', enabled: true }]);
@@ -126,19 +129,21 @@ async function withToolRun(run: (input: {
     await controller.startRecording('agent');
     pending = controller.stopRecording();
     await when(controller, () => controller.getSnapshot().phase === 'awaitingApproval');
-    await run({ controller, native: port, updates, calls: () => calls });
+    await run({ controller, native: port, updates, calls: () => calls, preparedApproval: () => preparedApproval });
     await pending;
   } finally { controller.cancel(); await pending; await server.stop(true); }
 }
 
 test('approval waits survive backgrounding and stale activity actions cannot approve the next tool', async () => {
   const publication = Promise.withResolvers<void>();
-  await withToolRun(async ({ controller, updates, calls }) => {
+  await withToolRun(async ({ controller, updates, calls, preparedApproval }) => {
     const first = controller.getSnapshot().approval;
     if (!first) throw new Error('Expected first approval');
     await controller.enterBackground();
-    expect(controller.getSnapshot().phase).toBe('awaitingApproval');
+    const phase = controller.getSnapshot().phase;
     publication.resolve();
+    expect(phase).toBe('awaitingApproval');
+    expect(preparedApproval()).toBe(first.approvalId);
     await controller.enterForeground();
     expect(controller.openActivity(`shuddhalekhan://agent?runId=${first.runId}&approvalId=${first.approvalId}&approved=true`)).toBe(true);
     expect(calls()).toBe(0);
@@ -174,7 +179,7 @@ test('an expired native approval cannot dispatch the tool even if its UI was sti
   }, { rejectResume: true });
 });
 
-test('restoring a single saved answer makes no network call and Clear removes it', async () => {
+for (const settingsAvailable of [true, false]) test(`restoring a saved answer when settings ${settingsAvailable ? 'load' : 'fail'} makes no network call`, async () => {
   let cleared = false;
   let networkCalls = 0;
   const { port } = activityPort({ recover: async () => ({ runId: 'finished-run', phase: 'completed', response: 'Saved final answer.' }),
@@ -182,15 +187,38 @@ test('restoring a single saved answer makes no network call and Clear removes it
   });
   const controller = new MobileController({ recorder, activity: port,
     fetch: Object.assign(async () => { networkCalls++; throw new Error('Recovery must not replay the run'); }, { preconnect: fetch.preconnect }),
-    loadSettings: async () => defaultSettings, saveSettings: async settings => settings,
+    loadSettings: async () => { if (!settingsAvailable) throw new Error('SecureStore unavailable'); return defaultSettings; },
+    saveSettings: async settings => settings,
   });
   await controller.initialize();
   expect(networkCalls).toBe(0);
-  expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', transcript: '', response: 'Saved final answer.', runId: 'finished-run' });
+  expect(controller.getSnapshot()).toMatchObject({ phase: settingsAvailable ? 'idle' : 'loading', transcript: '', response: 'Saved final answer.', runId: 'finished-run' });
   expect(controller.openActivity('shuddhalekhan://agent?runId=finished-run')).toBe(true);
+  if (settingsAvailable) {
+    await controller.clearResults();
+    expect(cleared).toBe(true);
+    expect(controller.getSnapshot()).toMatchObject({ response: '', runId: null });
+  } else {
+    expect(controller.getSnapshot().error).toContain('have not been replaced');
+  }
+});
+
+test('Clear still targets the saved answer after a failed deletion followed by Dictation', async () => {
+  const cleared: string[] = [];
+  const { port } = activityPort({ recover: async () => ({ runId: 'saved-run', phase: 'completed', response: 'An older answer.' }),
+    clear: async runId => {
+      cleared.push(runId);
+      if (cleared.length === 1) throw new Error('Temporary deletion failure');
+    },
+  });
+  const controller = controllerFor('http://127.0.0.1:1', port);
+  await controller.initialize();
+  await controller.startRecording('dictation');
+  await controller.stopRecording();
+  expect(controller.getSnapshot().transcript).toBe('A private spoken command.');
   await controller.clearResults();
-  expect(cleared).toBe(true);
-  expect(controller.getSnapshot()).toMatchObject({ response: '', runId: null });
+  expect(cleared).toEqual(['saved-run', 'saved-run']);
+  expect(controller.getSnapshot()).toMatchObject({ transcript: '', response: '', runId: null });
 });
 
 test('activity links reject ambiguous IDs and unrelated routes', () => {
