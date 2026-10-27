@@ -95,6 +95,8 @@ Build 8 adds the desktop transcription and agent providers and English routing t
 
 Build 10 fixes cancellation and speech-operation admission, listener startup lifetime, and temporary keyboard audio cleanup, and improves the mobile sheets, touch feedback, and warnings. The Release archive and native regression checks passed on EAS build `739b68cd-d91a-49f0-ba7c-caaaf7033657`. This build has not been tested on a phone. Check cancel-then-dictate, stopping and restarting a session, model switching during a keyboard session, reduced motion, and larger text after installing it.
 
+Build 11 retries a failed startup scan before admitting keyboard audio. Its new controlled listener check delivers a stale callback during replacement startup. EAS build `a825ca0f-de7b-4be9-bf12-706cc561454e` passed all six native checks and the Release archive. Both new regressions were verified to fail against the historical broken source and pass after the fixes. Phone validation remains pending.
+
 For performance changes, measure tap-to-session-ready and Stop-to-insertion separately. Compare a process-cold launch with a second session in the same process, recording permission prompts and model preparation separately. Record the device, iOS version, build number, and timings; one fast retry does not establish cold-start performance.
 
 ### USB logs from Windows
