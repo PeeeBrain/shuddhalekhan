@@ -8,23 +8,32 @@ final class KeyboardAudioStore {
     .appendingPathComponent("keyboard-recordings", isDirectory: true)
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
   private var pending = Set<URL>()
+  private var scanComplete = false
 
   init() {
     do {
-      pending = Set(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))
+      try scan()
       for url in pending { remove(url) }
-    } catch CocoaError.fileReadNoSuchFile {
-      // No recordings have been created yet.
     } catch {
       log.error("KeyboardBridge could not inspect temporary audio for cleanup")
     }
   }
 
   func recordingURL() throws -> URL {
+    if !scanComplete { try scan() }
     for url in pending { remove(url) }
     guard pending.isEmpty else { throw CleanupError.pendingAudio }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory.appendingPathComponent("\(UUID().uuidString).caf")
+  }
+
+  private func scan() throws {
+    do {
+      pending.formUnion(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))
+    } catch CocoaError.fileReadNoSuchFile {
+      // No recordings have been created yet.
+    }
+    scanComplete = true
   }
 
   func remove(_ url: URL) {

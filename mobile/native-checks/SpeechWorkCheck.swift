@@ -98,6 +98,19 @@ struct SpeechWorkCheck {
     try Data("stale test audio".utf8).write(to: stale)
     _ = KeyboardAudioStore()
     precondition(!FileManager.default.fileExists(atPath: stale.path), "Previous-process audio was forgotten")
+
+    // A directory can accept new files while its contents cannot be listed. Never admit audio in that state.
+    let unscanned = try recordings.recordingURL()
+    try Data("unscanned test audio".utf8).write(to: unscanned)
+    try FileManager.default.setAttributes([.posixPermissions: 0o300], ofItemAtPath: directory.path)
+    let recovering = KeyboardAudioStore()
+    do {
+      _ = try recovering.recordingURL()
+      preconditionFailure("Failed startup scan admitted new audio")
+    } catch {}
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    _ = try recovering.recordingURL()
+    precondition(!FileManager.default.fileExists(atPath: unscanned.path), "Failed startup scan was not retried")
     print("SpeechWorkCheck passed: cancellation, encoder admission, failed cleanup and restart recovery")
   }
 }

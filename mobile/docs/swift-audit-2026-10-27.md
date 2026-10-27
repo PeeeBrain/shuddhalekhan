@@ -7,9 +7,11 @@ Reviewed on October 27, 2026 against the repository's [write-swift skill](../../
 - The host retains and cancels its transcription task. `SpeechWorkQueue` owns cancellation and serial admission for inference, preparation, and installation. A cancelled operation retains admission until the underlying dependency returns; cancelled queued work never starts and cancelled results never escape.
 - Listener startup now cancels its owned timeout on readiness, failure, or shutdown. Listener callbacks and timeouts verify their listener identity before accessing current state. Starting another listener first stops the previous attempt.
 - Encoder replacement uses the same speech queue as inference. Concurrent requests for an already loaded model reuse the cache after their turn arrives.
-- `KeyboardAudioStore` owns a dedicated temporary directory, logs cleanup failures without private paths, remembers failed removals, and retries before the next recording. Pending cleanup blocks more audio from accumulating. A new host also discovers and removes files left by a previous process.
+- `KeyboardAudioStore` owns a dedicated temporary directory, logs cleanup failures without private paths, remembers failed removals, and retries before the next recording. Pending cleanup blocks more audio from accumulating. A new host also discovers and removes files left by a previous process. A failed startup scan stays incomplete and must succeed before new audio is admitted.
 
 `SpeechWorkCheck.swift` covers cancellation of running and queued work, encoder admission, caller cancellation, failed deletion and retry, and previous-process cleanup. The existing transport check now restarts the same listener owner. Both checks are wired into the Release build script.
+
+The review follow-up adds a failed directory-listing case to SpeechWorkCheck and a separate ListenerStartupCheck. The latter compiles the real server against controlled Network callbacks, then delivers an old failure while its replacement is starting. The real loopback check retains ownership of TCP transport coverage.
 
 Verification completed:
 
@@ -17,6 +19,14 @@ Verification completed:
 - KeyboardSessionCheck, SpeechWorkCheck, KeyboardBridgeCheck, ParakeetConfigurationCheck, and GoogleJwtCheck passed on the cloud Mac.
 - The native iPhone Release archive succeeded with EAS build [739b68cd-d91a-49f0-ba7c-caaaf7033657](https://expo.dev/accounts/parthashirolkar/projects/shuddhalekhan-mobile/builds/739b68cd-d91a-49f0-ba7c-caaaf7033657), iOS build number 10.
 - No phone results have been collected for this build. Background execution, interruptions, repeated utterances, model-switch memory, Dynamic Type, and touch feel remain device checks.
+
+Review follow-up verification completed with EAS build [a825ca0f-de7b-4be9-bf12-706cc561454e](https://expo.dev/accounts/parthashirolkar/projects/shuddhalekhan-mobile/builds/a825ca0f-de7b-4be9-bf12-706cc561454e), iOS build number 11:
+
+- All six native check executables and the iPhone Release archive passed. The eight focused controller tests passed on Windows.
+- The controlled listener test failed against the original server from `aa8378c` with "Old listener failure reached the replacement startup", then passed against the fixed server.
+- The failed-scan test failed against KeyboardAudioStore from `9a612da` with "Failed startup scan admitted new audio", then passed against the fixed store.
+- Historical copies and the one-off failure checks were included only in the cloud verification snapshot, not in the committed source or app targets. The permanent regressions run in the normal native build checks.
+- Phone validation remains pending for build 11.
 
 ## Findings
 

@@ -84,6 +84,17 @@ swiftc -swift-version 6 \
   "$mobile_dir/native-checks/KeyboardBridgeCheck.swift" \
   -o "$build_dir/check-keyboard-bridge"
 "$build_dir/check-keyboard-bridge"
+# Compile the real listener owner against controlled callbacks; keep transport coverage on Network.framework above.
+swiftc -swift-version 6 -emit-library -emit-module -module-name Network \
+  "$mobile_dir/native-checks/listener/Network.swift" \
+  -emit-module-path "$build_dir/Network.swiftmodule" -o "$build_dir/libNetwork.dylib"
+swiftc -swift-version 6 -I "$build_dir" -L "$build_dir" -lNetwork \
+  -Xlinker -rpath -Xlinker "$build_dir" \
+  "$mobile_dir/targets/transcript-keyboard/KeyboardSessionProtocol.swift" \
+  "$mobile_dir/modules/shuddhalekhan-speech/ios/KeyboardSessionServer.swift" \
+  "$mobile_dir/native-checks/listener/ListenerStartupCheck.swift" \
+  -o "$build_dir/check-listener-startup"
+"$build_dir/check-listener-startup"
 swiftc \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/ParakeetConfiguration.swift" \
   "$mobile_dir/native-checks/ParakeetConfigurationCheck.swift" \

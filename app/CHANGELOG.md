@@ -8,7 +8,7 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Mobile
-- Fixed keyboard transcription cancellation and serialized model replacement with inference. Listener startup callbacks and timeouts now stop with their session. Failed temporary audio cleanup is logged and retried before recording again.
+- Fixed keyboard transcription cancellation and serialized model replacement with inference. Listener startup callbacks and timeouts now stop with their session. Failed temporary audio cleanup and startup scans are logged and retried before recording again.
 - Improved iOS sheet safe areas, reduced-motion behavior, option search, field focus, and recording-limit warnings. Settings now confirms discarding unsaved edits, and tool approval content stays visible during dismissal.
 - Added the desktop transcription providers (OpenAI, Sarvam AI, Azure Speech, Google Cloud Speech v2, NVIDIA Speech NIM, whisper.cpp, WhisperLiveKit) and Agent Mode providers (OpenAI and Azure OpenAI with Responses or Chat Completions, OpenRouter) to the iOS app. Existing endpoints move to the custom OpenAI-compatible provider.
 - On-device transcription now uses the English-only Parakeet v2 for any English language choice. Other languages use Parakeet v3 with a language hint and multilingual chunk settings. This targets English coming out in another language or script, but accuracy on Indian-accented English hasn't been measured.
