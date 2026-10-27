@@ -50,6 +50,15 @@ export function SettingsScreen({
     }
   };
 
+  // Cancel never drops typed credentials or endpoints without asking.
+  const cancel = () => {
+    if (JSON.stringify(draft) === JSON.stringify(settings)) return onClose();
+    Alert.alert('Discard changes?', 'Your unsaved settings changes will be lost.', [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: onClose },
+    ]);
+  };
+
   const toggleInsecure = (on: boolean) => {
     if (!on) return set('allowInsecureHTTP', false);
     Alert.alert(
@@ -63,9 +72,9 @@ export function SettingsScreen({
   };
 
   return (
-    <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={s.screen}>
       <View style={s.header}>
-        <Button label="Cancel" kind="ghost" onPress={onClose} disabled={saving} />
+        <Button label="Cancel" kind="ghost" onPress={cancel} disabled={saving} />
         <Text style={type.headline} accessibilityRole="header">
           Settings
         </Text>

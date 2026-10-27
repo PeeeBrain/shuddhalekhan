@@ -72,6 +72,12 @@ swiftc \
   -o "$build_dir/check-keyboard-session"
 "$build_dir/check-keyboard-session"
 swiftc -swift-version 6 \
+  "$mobile_dir/modules/shuddhalekhan-speech/ios/SpeechWorkQueue.swift" \
+  "$mobile_dir/modules/shuddhalekhan-speech/ios/KeyboardAudioStore.swift" \
+  "$mobile_dir/native-checks/SpeechWorkCheck.swift" \
+  -o "$build_dir/check-speech-work"
+"$build_dir/check-speech-work"
+swiftc -swift-version 6 \
   "$mobile_dir/targets/transcript-keyboard/KeyboardSessionProtocol.swift" \
   "$mobile_dir/targets/transcript-keyboard/KeyboardSessionChannel.swift" \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/KeyboardSessionServer.swift" \
