@@ -33,9 +33,10 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
   const sessionOn = app.keyboardSession.active;
   const showRecorder = !(sessionOn && idle);
   const keyboardCard = <KeyboardSessionCard app={app} onOpenSettings={onOpenSettings} />;
+  const setupCard = idle && !configured && !sessionOn;
 
   return (
-    <SafeAreaView style={home.screen} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={home.screen}>
       <View style={home.header}>
         <Text style={[type.largeTitle, { flexShrink: 1 }]} accessibilityRole="header">
           Shuddhalekhan
@@ -61,7 +62,7 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
 
         {sessionOn ? keyboardCard : null}
 
-        {idle && !configured && !sessionOn ? (
+        {setupCard ? (
           <Card>
             <Text style={type.headline}>{onDevice ? 'Set up on-device transcription' : 'Set up transcription'}</Text>
             <Text style={type.footnote}>
@@ -81,9 +82,11 @@ export function HomeScreen({ app, onOpenSettings }: { app: App; onOpenSettings: 
         {showRecorder ? (
           <>
             <RecordControl app={app} intent={intent} configured={configured} setupHint={setupHint} />
-            <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>
-              {idle && !configured ? setupHint : status || busyLabel[phase] || (agent ? 'Speak one command for the agent.' : 'Tap to dictate.')}
-            </Text>
+            {setupCard ? null : (
+              <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>
+                {status || busyLabel[phase] || (agent ? 'Speak one command for the agent.' : 'Tap to dictate.')}
+              </Text>
+            )}
           </>
         ) : null}
 
@@ -139,6 +142,9 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
   if (phase === 'recording') {
     const m = Math.floor(app.elapsedSeconds / 60);
     const s = String(app.elapsedSeconds % 60).padStart(2, '0');
+    // Ochre marks the approaching time limit, as on the desktop pill; recording stops on its own at zero.
+    const left = recordingLimitSeconds(app.settings) - app.elapsedSeconds;
+    const ending = left <= 10;
     return (
       <View style={home.recordWrap}>
         <Pressable
@@ -149,9 +155,14 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
         >
           <View style={home.stopGlyph} />
         </Pressable>
-        <Text style={[type.title, home.timer, { color: tint }]} accessibilityLabel={`Recording, ${m} minutes ${s} seconds`}>
+        <Text style={[type.title, home.timer, { color: ending ? color.ochre : tint }]} accessibilityLabel={`Recording, ${m} minutes ${s} seconds`}>
           {m}:{s}
         </Text>
+        {ending ? (
+          <Text style={[type.footnote, { color: color.ochre }]}>
+            Stops in {Math.max(0, left)} s
+          </Text>
+        ) : null}
         <Button label="Cancel" kind="ghost" onPress={app.cancel} accessibilityHint="Discards this recording" />
       </View>
     );
@@ -207,7 +218,7 @@ function KeyboardSessionCard({ app, onOpenSettings }: { app: App; onOpenSettings
       <Card>
         <View style={home.sessionHeader}>
           <Text style={[type.headline, { flex: 1 }]} accessibilityRole="header">Keyboard session on</Text>
-          <Text style={[type.title, home.timer, { color: color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>
+          <Text style={[type.title, home.timer, { color: session.remainingSeconds <= 60 ? color.ochre : color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>
             {m}:{s}
           </Text>
         </View>
@@ -215,6 +226,9 @@ function KeyboardSessionCard({ app, onOpenSettings }: { app: App; onOpenSettings
           Use the Shuddhalekhan keyboard in any app. The microphone stays open until the timer ends or you stop. Only audio
           between Dictate and Stop is kept, and it is transcribed on this iPhone.
         </Text>
+        {session.remainingSeconds === 0 && session.busy ? (
+          <Text style={[type.footnote, { color: color.ochre }]} accessibilityLiveRegion="polite">Finishing this utterance before the microphone turns off.</Text>
+        ) : null}
         <Button label="Stop session" kind="destructive" onPress={() => { void app.stopKeyboardSession(); }} />
       </Card>
     );

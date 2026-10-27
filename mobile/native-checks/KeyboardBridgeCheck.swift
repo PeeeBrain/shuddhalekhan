@@ -88,7 +88,8 @@ struct KeyboardBridgeCheck {
     precondition(KeyboardSession.insertion(done, pendingId: id, inserted: [id]) == nil, "Duplicate insertion")
 
     // Closing the keyboard cancels the utterance even if it disappears before the start acknowledgement.
-    let second = KeyboardSessionServer()
+    // Reuse the transport owner. ListenerStartupCheck separately forces a stale callback during startup.
+    let second = server
     let bridge2 = try await second.start(expiresAt: bridge.expiresAt)
     let disappearing = Peer(bridge2)
     await withCheckedContinuation { (cancelled: CheckedContinuation<Void, Never>) in

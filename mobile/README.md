@@ -37,10 +37,12 @@ iOS does not let keyboards use the microphone or open their app. So the app reco
 
 What happens to audio and text during a session:
 
-- The microphone stays open for the whole session. Audio is written to a temporary file only between Dictate and Stop. That file is deleted after transcription. One utterance can last up to two minutes.
+- The microphone stays open for the whole session. Audio is written to a temporary file only between Dictate and Stop. That file is deleted after transcription. Failed deletion is logged without private paths and retried before another recording; new audio is blocked until cleanup succeeds. Audio left by an earlier process is cleaned up when the native session host starts. One utterance can last up to two minutes.
 - When the timer runs out, the app finishes any utterance already started, then releases the microphone. The session also ends visibly on a call, Siri, a microphone change, or an iOS audio reset. The keyboard shows the reason.
 - Music pauses while a session runs. Recording in the app itself is disabled until the session stops.
 - Sessions use on-device Parakeet only. Remote transcription and Agent Mode still work from the Home record button.
+
+Cancelling an utterance discards its result and requests native cancellation. If an inference step cannot stop immediately, subsequent transcription and model preparation wait for it to release the engine. Changing languages cannot load a second encoder during inference.
 
 How the app and the keyboard talk: while starting in the foreground, the app publishes a random loopback port and a fresh 256-bit session secret in a team-scoped named pasteboard. The visible keyboard reads this once and authenticates a TCP connection to `127.0.0.1`. All recording commands, acknowledgements, and transcripts travel over that connection. The app never accesses the pasteboard in the background. The listener is inaccessible from the LAN and shuts down with the microphone session. This needs no App Group entitlement. The general clipboard is never read or written. Each utterance has a request ID; results are inserted once, only for the request this keyboard started. Closing the keyboard cancels its request. The cloud build runs both the native protocol check and an actual loopback transport check covering authentication, start/stop, a large final transcript, and disconnect cancellation.
 
@@ -90,6 +92,10 @@ For a small logic change, run the relevant test file from `mobile/`, for example
 On October 26, 2026, the maintainer installed build 2 with iLoader and confirmed background recording, on-device transcription, and insertion in Notes. Repeated utterances, session persistence, expiry, and interruptions still need their own checks. Use the [device checks](#device-checks) for changes affecting those behaviors. Test ordinary in-app Dictation independently; include Agent Mode when changing its code.
 
 Build 8 adds the desktop transcription and agent providers and English routing to Parakeet v2. None of it has been tested on a phone yet. Check v2 and v3 downloads, a language switch between them, the keyboard with each model, and each remote provider you use. Recognition on Google, Azure and Sarvam has only been tested against local stand-in servers.
+
+Build 10 fixes cancellation and speech-operation admission, listener startup lifetime, and temporary keyboard audio cleanup, and improves the mobile sheets, touch feedback, and warnings. The Release archive and native regression checks passed on EAS build `739b68cd-d91a-49f0-ba7c-caaaf7033657`. This build has not been tested on a phone. Check cancel-then-dictate, stopping and restarting a session, model switching during a keyboard session, reduced motion, and larger text after installing it.
+
+Build 11 retries a failed startup scan before admitting keyboard audio. Its new controlled listener check delivers a stale callback during replacement startup. EAS build `a825ca0f-de7b-4be9-bf12-706cc561454e` passed all six native checks and the Release archive. Both new regressions were verified to fail against the historical broken source and pass after the fixes. Phone validation remains pending.
 
 For performance changes, measure tap-to-session-ready and Stop-to-insertion separately. Compare a process-cold launch with a second session in the same process, recording permission prompts and model preparation separately. Record the device, iOS version, build number, and timings; one fast retry does not establish cold-start performance.
 

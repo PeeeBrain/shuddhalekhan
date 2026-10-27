@@ -31,12 +31,14 @@ final class KeyboardSessionHost {
   private let onChange: @MainActor (KeyboardSession.State) -> Void
   private let audio = AVAudioEngine()
   private let sink = UtteranceSink()
+  private let recordings = KeyboardAudioStore()
   private(set) var state = KeyboardSession.State.ended
   private var starting = false
   private var endWhenIdle = false
   private var endTimer: Timer?
   private var utteranceTimer: Timer?
   private var utteranceURL: URL?
+  private var transcription: (id: String, task: Task<Void, Never>)?
   private var observers: [NSObjectProtocol] = []
   private let server = KeyboardSessionServer()
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
@@ -158,10 +160,15 @@ final class KeyboardSessionHost {
   }
 
   private func beginUtterance(_ next: KeyboardSession.State) {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("keyboard-\(UUID().uuidString).caf")
+    let url: URL
+    do { url = try recordings.recordingURL() } catch {
+      settle(next.with(.failed, requestId: next.requestId, error: "Temporary audio could not be cleaned up. Free storage or restart the app, then retry."))
+      return
+    }
     do {
       try sink.begin(url, format: audio.inputNode.outputFormat(forBus: 0))
     } catch {
+      recordings.remove(url)
       settle(next.with(.failed, requestId: next.requestId, error: "Could not start recording."))
       return
     }
@@ -186,12 +193,14 @@ final class KeyboardSessionHost {
     }
     utteranceURL = nil
     publish(next)
-    Task { [speech, configuration] in
+    let task = Task { [speech, configuration] in
       let result: Result<String, Error>
       do { result = .success(try await speech.transcribe(url, configuration: configuration)) } catch { result = .failure(error) }
-      try? FileManager.default.removeItem(at: url)
-      self.complete(id, result)
+      recordings.remove(url)
+      if transcription?.id == id { transcription = nil }
+      if !Task.isCancelled { self.complete(id, result) }
     }
+    transcription = (id, task)
   }
 
   private func complete(_ id: String, _ result: Result<String, Error>) {
@@ -219,10 +228,12 @@ final class KeyboardSessionHost {
   }
 
   private func discardUtterance() {
+    transcription?.task.cancel()
+    transcription = nil
     utteranceTimer?.invalidate()
     utteranceTimer = nil
     _ = sink.end()
-    if let url = utteranceURL { try? FileManager.default.removeItem(at: url) }
+    if let url = utteranceURL { recordings.remove(url) }
     utteranceURL = nil
   }
 
