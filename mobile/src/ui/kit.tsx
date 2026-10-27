@@ -1,6 +1,9 @@
 /* oxlint-disable react/only-export-components -- Native screens share these controls and their style tokens. */
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Switch, Text, TextInput, View, type TextInputProps } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+export const ReducedMotionContext = createContext(true);
 
 // Lampblack & Cinnabar tokens from DESIGN.md. Blue = Dictation/interaction, Vermilion = Agent Mode only.
 export const color = {
@@ -23,7 +26,7 @@ export const color = {
 
 // iOS text styles; system font (SF) and Dynamic Type come from leaving fontFamily unset.
 export const type = StyleSheet.create({
-  largeTitle: { fontSize: 28, fontWeight: '700', color: color.text },
+  largeTitle: { fontSize: 34, lineHeight: 41, fontWeight: '700', color: color.text },
   title: { fontSize: 20, fontWeight: '600', color: color.text },
   headline: { fontSize: 17, fontWeight: '600', color: color.text },
   body: { fontSize: 17, color: color.text, lineHeight: 24 },
@@ -108,6 +111,7 @@ export function Field({
   secret,
   ...input
 }: { label: string; hint?: string; secret?: boolean } & Omit<TextInputProps, 'style'>) {
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.field}>
       <Text style={type.caption}>{label}</Text>
@@ -123,8 +127,10 @@ export function Field({
         keyboardAppearance="dark"
         placeholderTextColor={color.muted}
         selectionColor={color.blue}
-        style={[styles.input, input.multiline && styles.multiline]}
         {...input}
+        onFocus={(e) => { setFocused(true); input.onFocus?.(e); }}
+        onBlur={(e) => { setFocused(false); input.onBlur?.(e); }}
+        style={[styles.input, input.multiline && styles.multiline, focused && styles.inputFocused]}
       />
       {hint ? <Text style={type.footnote}>{hint}</Text> : null}
     </View>
@@ -185,9 +191,9 @@ export function Segment({
       accessibilityRole="radio"
       accessibilityLabel={label}
       accessibilityState={{ selected, disabled: !!disabled }}
-      style={[styles.segment, selected && styles.segmentOn, disabled && { opacity: 0.45 }]}
+      style={({ pressed }) => [styles.segment, selected && styles.segmentOn, pressed && { backgroundColor: color.raised }, disabled && { opacity: 0.45 }]}
     >
-      <Text style={[type.headline, { color: selected ? (agent ? color.vermilion : color.blue) : color.muted }]}>{label}</Text>
+      <Text style={[type.headline, { textAlign: 'center', color: selected ? (agent ? color.vermilion : color.blue) : color.muted }]}>{label}</Text>
     </Pressable>
   );
 }
@@ -211,6 +217,7 @@ export function Choice({
   custom?: (query: string) => Option | null;
 }) {
   const [open, setOpen] = useState(false);
+  const reduceMotion = useContext(ReducedMotionContext);
   const [query, setQuery] = useState('');
   const current = options.find((option) => option.value === value)?.label ?? value;
   const needle = query.trim().toLowerCase();
@@ -232,8 +239,8 @@ export function Choice({
         <Text style={type.body} importantForAccessibility="no">›</Text>
       </Pressable>
       {hint ? <Text style={type.footnote}>{hint}</Text> : null}
-      <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={close}>
-        <View style={styles.sheet}>
+      <Modal visible={open} animationType={reduceMotion ? 'none' : 'slide'} presentationStyle="pageSheet" onRequestClose={close}>
+        <SafeAreaView style={styles.sheet} edges={['bottom', 'left', 'right']}>
           <View style={styles.sheetHeader}>
             <Text style={type.headline} accessibilityRole="header">{label}</Text>
             <Button label="Done" kind="ghost" onPress={close} />
@@ -256,6 +263,8 @@ export function Choice({
             data={shown}
             keyExtractor={(option) => option.value || 'none'}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            automaticallyAdjustKeyboardInsets
             renderItem={({ item }) => {
               const selected = item.value === value;
               return (
@@ -270,8 +279,9 @@ export function Choice({
                 </Pressable>
               );
             }}
+            ListEmptyComponent={<Text style={[type.footnote, styles.empty]}>No matches for “{query.trim()}”.</Text>}
           />
-        </View>
+        </SafeAreaView>
       </Modal>
     </View>
   );
@@ -286,7 +296,7 @@ export const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: color.hairline,
   },
-  segment: { flex: 1, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  segment: { flex: 1, minHeight: 44, paddingHorizontal: 8, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
   segmentOn: { backgroundColor: color.raised },
   button: {
     minHeight: 44,
@@ -321,11 +331,13 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  inputFocused: { borderColor: color.blue },
   multiline: { minHeight: 88, textAlignVertical: 'top' },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 44 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   choice: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sheet: { flex: 1, backgroundColor: color.page, padding: 16, gap: 12 },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  empty: { textAlign: 'center', paddingVertical: 24 },
   option: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.hairline },
 });

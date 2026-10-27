@@ -9,6 +9,7 @@ final class KeyboardSessionServer {
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
   private var listener: NWListener?
   private var ready: CheckedContinuation<KeyboardSession.Bridge, Error>?
+  private var startupTimeout: Task<Void, Never>?
   private var clients: [UUID: KeyboardSessionChannel] = [:]
   private var authenticated = Set<UUID>()
   private var owners: [UUID: String] = [:]
@@ -19,6 +20,8 @@ final class KeyboardSessionServer {
   var onFailure: () -> Void = {}
 
   func start(expiresAt: Int64) async throws -> KeyboardSession.Bridge {
+    stop()
+    state = .ended
     var bytes = [UInt8](repeating: 0, count: 32)
     guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
       throw CocoaError(.coderInvalidValue)
@@ -31,31 +34,38 @@ final class KeyboardSessionServer {
     self.listener = listener
     return try await withCheckedThrowingContinuation { continuation in
       ready = continuation
-      listener.stateUpdateHandler = { [weak self] status in
+      listener.stateUpdateHandler = { [weak self, weak listener] status in
         MainActor.assumeIsolated {
-          guard let self else { return }
+          guard let self, let listener, self.listener === listener else { return }
           switch status {
           case .ready:
             guard let port = self.listener?.port, let pending = self.ready else { return }
             self.ready = nil
+            self.startupTimeout?.cancel()
+            self.startupTimeout = nil
             self.log.notice("KeyboardBridge listener ready")
             pending.resume(returning: .init(port: port.rawValue, token: self.token, expiresAt: self.expiresAt))
           case .failed(let error):
             self.ready?.resume(throwing: error)
             self.ready = nil
+            self.startupTimeout?.cancel()
+            self.startupTimeout = nil
             self.log.error("KeyboardBridge listener failed")
             self.onFailure()
           default: break
           }
         }
       }
-      listener.newConnectionHandler = { [weak self] connection in
-        MainActor.assumeIsolated { self?.accept(connection) }
+      listener.newConnectionHandler = { [weak self, weak listener] connection in
+        MainActor.assumeIsolated {
+          guard let self, let listener, self.listener === listener else { connection.cancel(); return }
+          self.accept(connection)
+        }
       }
       listener.start(queue: .main)
-      Task { @MainActor [weak self] in
-        try? await Task.sleep(for: .seconds(5))
-        guard let self, let pending = self.ready else { return }
+      startupTimeout = Task { @MainActor [weak self, weak listener] in
+        do { try await Task.sleep(for: .seconds(5)) } catch { return }
+        guard let self, let listener, self.listener === listener, let pending = self.ready else { return }
         self.ready = nil
         pending.resume(throwing: CocoaError(.fileReadUnknown))
         self.stop()
@@ -69,8 +79,12 @@ final class KeyboardSessionServer {
   }
 
   func stop(final: KeyboardSession.State? = nil) {
+    startupTimeout?.cancel()
+    startupTimeout = nil
     ready?.resume(throwing: CancellationError())
     ready = nil
+    listener?.stateUpdateHandler = nil
+    listener?.newConnectionHandler = nil
     listener?.cancel()
     listener = nil
     let closing = clients

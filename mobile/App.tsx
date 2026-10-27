@@ -1,16 +1,27 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { AccessibilityInfo } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useMobileApp } from './src/useMobileApp';
 import { ApprovalSheet } from './src/ui/ApprovalSheet';
 import { HomeScreen } from './src/ui/HomeScreen';
 import { SettingsScreen } from './src/ui/SettingsScreen';
+import { ReducedMotionContext } from './src/ui/kit';
 
 export default function App() {
+  const [reduceMotion, setReduceMotion] = useState(true);
+  useEffect(() => {
+    let mounted = true;
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    void AccessibilityInfo.isReduceMotionEnabled().then(value => {
+      if (mounted) setReduceMotion(value);
+    }).catch(() => {});
+    return () => { mounted = false; subscription.remove(); };
+  }, []);
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
-      <Main />
+      <ReducedMotionContext value={reduceMotion}><Main /></ReducedMotionContext>
     </SafeAreaProvider>
   );
 }

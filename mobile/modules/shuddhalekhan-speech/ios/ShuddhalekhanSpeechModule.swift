@@ -6,7 +6,6 @@ import OSLog
 private enum SpeechError: LocalizedError {
   case modelMissing
   case invalidRecording
-  case busy
 
   var errorDescription: String? {
     switch self {
@@ -14,8 +13,6 @@ private enum SpeechError: LocalizedError {
       return "The Parakeet model is not installed. Install it before transcribing."
     case .invalidRecording:
       return "The recording must be an existing local file."
-    case .busy:
-      return "Parakeet is already transcribing a recording."
     }
   }
 }
@@ -24,32 +21,39 @@ actor ParakeetEngine {
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "SpeechPerf")
   private var manager: AsrManager?
   private var managerModel: ParakeetModel?
-  private var managerLoad: (model: ParakeetModel, task: Task<AsrManager, Error>)?
-  private var inferenceInProgress = false
+  private let work = SpeechWorkQueue()
 
   func install(configuration: ParakeetConfiguration, progress: @escaping ProgressHandler) async throws {
-    _ = try await loadManager(configuration: configuration, downloadIfMissing: true, progress: progress)
+    try await work.run {
+      _ = try await self.loadManager(configuration: configuration, downloadIfMissing: true, progress: progress)
+    }
   }
 
   func prepare(configuration: ParakeetConfiguration) async throws {
-    _ = try await loadManager(configuration: configuration, downloadIfMissing: false)
+    try await work.run {
+      _ = try await self.loadManager(configuration: configuration, downloadIfMissing: false)
+    }
   }
 
   func transcribe(_ url: URL, configuration: ParakeetConfiguration) async throws -> String {
-    guard !inferenceInProgress else { throw SpeechError.busy }
-    inferenceInProgress = true
-    defer { inferenceInProgress = false }
+    try await work.run { try await self.transcribeRecording(url, configuration: configuration) }
+  }
+
+  private func transcribeRecording(_ url: URL, configuration: ParakeetConfiguration) async throws -> String {
+    try Task.checkCancellation()
     let operation = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
     let cached = managerModel == configuration.model && manager != nil
     log.notice("SpeechPerf transcription id=\(operation, privacy: .public) stage=requested cached=\(cached, privacy: .public)")
     let manager = try await loadManager(configuration: configuration, downloadIfMissing: false)
+    try Task.checkCancellation()
 
     var state = try TdtDecoderState()
     let text = try await manager.transcribe(
       url, decoderState: &state,
       language: configuration.model == .multilingual ? Language(rawValue: configuration.language) : nil
     ).text
+    try Task.checkCancellation()
     let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
     log.notice("SpeechPerf transcription id=\(operation, privacy: .public) stage=done elapsed_ms=\(elapsed, privacy: .public)")
     return text
@@ -61,57 +65,41 @@ actor ParakeetEngine {
     progress: ProgressHandler? = nil
   ) async throws -> AsrManager {
     if managerModel == configuration.model, let manager { return manager }
-    if let managerLoad {
-      guard managerLoad.model == configuration.model else { throw SpeechError.busy }
-      return try await managerLoad.task.value
-    }
     // Keep only one encoder resident, including when switching languages.
     manager = nil
     managerModel = nil
 
-    let task = Task<AsrManager, Error> {
-      let started = ProcessInfo.processInfo.systemUptime
-      log.notice("SpeechPerf model stage=requested")
-      let version: AsrModelVersion = configuration.model == .english ? .v2 : .v3
-      let directory = AsrModels.defaultCacheDirectory(for: version)
-      let models: AsrModels
-      if downloadIfMissing {
-        models = try await AsrModels.downloadAndLoad(
-          version: version,
-          encoderPrecision: .int8,
-          progressHandler: progress
-        )
-      } else {
-        guard AsrModels.modelsExist(at: directory, version: version, encoderPrecision: .int8) else {
-          throw SpeechError.modelMissing
-        }
-        models = try await AsrModels.load(
-          from: directory,
-          version: version,
-          encoderPrecision: .int8
-        )
+    let started = ProcessInfo.processInfo.systemUptime
+    log.notice("SpeechPerf model stage=requested")
+    let version: AsrModelVersion = configuration.model == .english ? .v2 : .v3
+    let directory = AsrModels.defaultCacheDirectory(for: version)
+    let models: AsrModels
+    if downloadIfMissing {
+      models = try await AsrModels.downloadAndLoad(
+        version: version,
+        encoderPrecision: .int8,
+        progressHandler: progress
+      )
+    } else {
+      guard AsrModels.modelsExist(at: directory, version: version, encoderPrecision: .int8) else {
+        throw SpeechError.modelMissing
       }
-
-      // v3's mel prepend and parallel chunks can switch languages at chunk boundaries; v2 keeps FluidAudio's defaults.
-      let config = configuration.model == .english ? ASRConfig.default : ASRConfig(parallelChunkConcurrency: 1, melChunkContext: false)
-      let manager = AsrManager(config: config)
-      try await manager.loadModels(models)
-      let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
-      log.notice("SpeechPerf model stage=ready elapsed_ms=\(elapsed, privacy: .public)")
-      return manager
+      models = try await AsrModels.load(
+        from: directory,
+        version: version,
+        encoderPrecision: .int8
+      )
     }
-    managerLoad = (configuration.model, task)
 
-    do {
-      let manager = try await task.value
-      self.manager = manager
-      managerModel = configuration.model
-      managerLoad = nil
-      return manager
-    } catch {
-      managerLoad = nil
-      throw error
-    }
+    // v3's mel prepend and parallel chunks can switch languages at chunk boundaries; v2 keeps FluidAudio's defaults.
+    let config = configuration.model == .english ? ASRConfig.default : ASRConfig(parallelChunkConcurrency: 1, melChunkContext: false)
+    let manager = AsrManager(config: config)
+    try await manager.loadModels(models)
+    let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+    log.notice("SpeechPerf model stage=ready elapsed_ms=\(elapsed, privacy: .public)")
+    self.manager = manager
+    managerModel = configuration.model
+    return manager
   }
 
 }
