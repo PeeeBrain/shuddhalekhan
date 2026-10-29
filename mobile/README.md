@@ -1,6 +1,6 @@
 # Shuddhalekhan mobile
 
-`mobile/` is a React Native app using Expo SDK 58 for iOS 17+. It records while open, transcribes with on-device Parakeet or a configured endpoint, and includes a keyboard that dictates into other apps during a keyboard session you start. Agent Mode sends a one-off command and asks before every tool call.
+`mobile/` is a React Native app using Expo SDK 58 for iOS 17+. It records while open, transcribes with on-device Parakeet or a configured endpoint, and includes a keyboard that dictates into other apps during a keyboard session you start. Agent Mode sends a one-off command and asks before tool calls unless you explicitly allow them in Settings.
 
 ## Supported services
 
@@ -97,6 +97,32 @@ Build 10 fixes cancellation and speech-operation admission, listener startup lif
 
 Build 11 retries a failed startup scan before admitting keyboard audio. Its new controlled listener check delivers a stale callback during replacement startup. EAS build `a825ca0f-de7b-4be9-bf12-706cc561454e` passed all six native checks and the Release archive. Both new regressions were verified to fail against the historical broken source and pass after the fixes. Phone validation remains pending.
 
+Build 12 added agent Live Activities and iOS 26 continued background processing; [GitHub's Mac build](https://github.com/PeeeBrain/shuddhalekhan/actions/runs/40545987344) compiled and packaged its Release IPA. Build 13 removes the duplicate custom card on iOS 26, adds actionable approval notifications, and renders final answers as Markdown. The 27 focused agent/controller tests, mobile typecheck/lint/export, Swift state/storage self-check, and Swift syntax parsing pass locally. Build 13's Release archive and device verification are pending. EAS's monthly iOS quota is exhausted; use the GitHub Mac workflow. Local checks do not establish that React Native keeps executing on a locked phone.
+
+### Agent Live Activity checks
+
+Keep the app open through recording and transcription. Once Agent Mode starts, it requests iOS 26 continued processing. iOS can decline or end that request. On older iOS, or without a grant, backgrounding stops the run; the activity reports interruption. Dictation and the keyboard session keep their separate lifecycles.
+
+iOS 26 shows only the system continued-processing activity, with generic model/tool stage updates and its Stop control. At completion its subtitle receives the first 160 characters of the answer, with an additional byte bound. iOS controls the visible length and how long the completed system activity remains. The system activity has no privacy-redaction API, so this preview can appear on the Lock Screen. Approvals and background results use local notifications. Allow notification alerts when the first agent run asks. Expand an approval notification to reveal **Approve once**, **Deny**, and **Review arguments**. Approve and Deny authenticate and open the app, then resolve the exact live, unexpired request without a second confirmation. Review opens the argument sheet without executing anything. If alerts are disabled or delivery fails, the sheet opens in the app instead; its pending request also has a Review button on Home. Focus and notification settings can still suppress alerts.
+
+In Settings, open an MCP server's **Tool approval policies**, then **Discover tools**. Discovery lists tools without executing them. Choose **Ask every time**, **Always allow**, or **Disabled** per tool, then save Settings. Policies belong to that server and exact tool name. New tools and existing settings without policies ask every time. Always allow skips the approval sheet and notification; Disabled tools are withheld from the model and cannot execute. Changing an endpoint or bearer token clears that server's policies. Saved policies remain editable offline, and discovery never grants permission based on server-provided annotations.
+
+An ordinary background task cannot create a replacement custom activity when a tool approval arrives, and the system activity cannot host app-defined approval buttons. This is why build 13 uses notifications rather than attempting to swap between two activities. See Apple's [Live Activity request constraints](https://developer.apple.com/documentation/activitykit/activity/request(attributes:content:pushtype:)) and [notification actions](https://developer.apple.com/documentation/usernotifications/declaring-your-actionable-notification-types).
+
+- Run a command with a slow model response, switch to Notes, then lock the phone. Confirm actual completion and the final answer, not just an unchanged activity. Check a run with a tool and a second run in the same process.
+- While backgrounded, trigger a tool approval. Expand its notification and choose Review arguments; unlock and confirm it executes nothing. Repeat using Approve once directly from the notification, background again, and confirm the tool result and final answer. Repeat with Deny, a duplicate tap, and an old notification after a newer approval appears. Notification actions must authenticate; ordinary activity links never approve a tool.
+- Deny notification permission, then repeat a tool run in the app. Confirm the fallback approval sheet remains usable. With permission granted, confirm a foreground notification and a compact Review card replace the automatically opened full-screen sheet.
+- Discover tools, set one to Always allow and another to Disabled, save, and reopen Settings. Confirm the allowed tool runs without approval and the disabled tool never runs. A tool with the same name on another server must still ask. Change the endpoint or token and confirm its policies reset. Discovering a newly added tool must leave it asking every time.
+- An approval wait releases continued processing. Approval expires after 15 minutes; returning then must stop the run without executing the pending tool. Opening the app to approve starts a new continued-processing request for the remaining work.
+- Cancel through the app and through the system background-task view. Check a slow provider and an already-started tool. The run stops locally, but a remote tool may already have completed its action. Swiping away the custom activity only dismisses its display.
+- Force-quit during a model request and an approval wait. Reopening must show interruption and must not replay a tool or a command. Complete another run, terminate, and confirm its saved final answer restores. Clear removes that saved answer and its activity.
+- Check that iOS 26 has one running activity, its model/tool stage changes, and its completion subtitle contains the answer preview. Check clipping in the expanded Island and Lock Screen, and note when iOS dismisses the completed activity. The result notification also shows a bounded preview; opening the app shows the full answer with Markdown headings, emphasis, lists, code, and tables. Copy and Share retain the original Markdown. Images are not fetched and links permit only web/mail schemes. Test larger text and notification preview privacy settings.
+- On iOS 17–25, check the custom Lock Screen and compact/expanded Dynamic Island activity, Live Activities disabled, and private-data redaction. Its final preview is at most 160 characters with an additional byte bound, and ends after five minutes. Prompts, tool arguments, tool results, keys, and endpoint URLs are excluded from activity and notification data. Tool/server names appear in approval notifications and follow the device's preview settings.
+- Sideload the app with both the dictation keyboard and agent widget retained. Confirm installed build 14, then check ordinary in-app Dictation and keyboard insertion again.
+- Inspect the installed bundle identifier and `BGTaskSchedulerPermittedIdentifiers` after re-signing. The `.agent.*` pattern must start with the installed bundle identifier. If the signer rewrites only the bundle identifier, update its Info.plist rewrite before signing; native logs `AgentActivity stage=task_identifier_mismatch` and keeps execution foreground-only until they match. This check remains pending installation.
+
+One agent lifecycle record and the last final answer are stored in app-private, backup-excluded Application Support with iOS data protection. Starting a replacement recording or clearing results removes the previous result. There is no conversation history, persisted prompt, or automatic retry. Failed cleanup is reported. The app keeps the full live answer in memory; saved answers are bounded to 200,000 UTF-16 code units.
+
 For performance changes, measure tap-to-session-ready and Stop-to-insertion separately. Compare a process-cold launch with a second session in the same process, recording permission prompts and model preparation separately. Record the device, iOS version, build number, and timings; one fast retry does not establish cold-start performance.
 
 ### USB logs from Windows
@@ -180,7 +206,7 @@ The build script can also run on a Mac with Xcode, CocoaPods, Bun, and Node 24 i
 bash mobile/scripts/build-ios.sh
 ```
 
-The script runs the native keyboard-session self-check and checks the app bundle identifier, embedded JavaScript, permissions, and embedded keyboard before packaging the IPA. The IPA is unsigned and cannot install until iLoader or Sideloadly signs it.
+The script runs the native keyboard-session and agent-state self-checks and checks the app bundle identifier, embedded JavaScript, permissions, Live Activity configuration, and both extensions before packaging the IPA. The IPA is unsigned and cannot install until iLoader or Sideloadly signs it.
 
 ## Install with Sideloadly
 
@@ -211,8 +237,9 @@ If saved settings or keys cannot be read, the app keeps them intact and blocks r
 - The custom keyboard cannot record or launch Shuddhalekhan. A keyboard session must be started in the app first; the keyboard says so if none is running.
 - In-app recording stops when the app backgrounds or the device locks. Only a keyboard session keeps the microphone open in the background (the `audio` background mode), and only until its timer ends or you stop it.
 - Keyboard commands and results use authenticated loopback TCP because iOS denies background pasteboard reads. Background recording, transcription, and insertion in Notes were confirmed on an iPhone with build 2; session persistence and interruption recovery need separate device checks.
-- Recording is capped at five minutes. iOS records mono 16 kHz PCM WAV for Whisper compatibility. Temporary audio is deleted after completion or cancellation; transcripts and responses stay in memory until cleared or the app exits.
+- Recording is capped at five minutes. iOS records mono 16 kHz PCM WAV for Whisper compatibility. Temporary audio is deleted after completion or cancellation. Transcripts stay in memory; the last agent answer is also saved locally until cleared or replaced.
 - Agent Mode supports Streamable HTTP MCP with bearer authentication. It does not support stdio MCP servers or OAuth.
-- The agent uses non-streaming Chat Completions with live progress messages. It allows eight model steps and sixteen sequential, individually approved tool calls per command. Retrying a command may repeat earlier completed actions.
+- The agent uses non-streaming Chat Completions with live progress messages. It allows eight model steps and sixteen sequential tool calls per command, gated by each tool's saved approval policy. Retrying a command may repeat earlier completed actions.
+- iOS 26 uses the system activity for agent progress and notifications for approval actions and background results. Notification actions authenticate and foreground the app before approving or denying the exact pending request. Continued processing is best-effort and does not survive force quit. Earlier iOS versions retain the custom activity and require the app to remain foregrounded while working. Final answers render Markdown in the app; Copy and Share preserve the source text.
 - HTTP endpoints require the explicit insecure HTTP setting. Prefer HTTPS. For a server on your Wi-Fi network, use an address the iPhone can reach; `localhost` points to the iPhone itself.
 - The app does not import desktop shortcuts, provider settings, tool policies, or local model data.

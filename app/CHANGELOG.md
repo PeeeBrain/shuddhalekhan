@@ -8,6 +8,8 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Mobile
+- Added per-tool approval policies for each MCP server: Ask every time, Always allow, or Disabled. New tools still ask. The iOS 26 system activity now receives a final-answer preview instead of a generic completion subtitle.
+- Added iOS Agent Mode progress and saved final answers. iOS 26 uses the system background-processing activity without a duplicate custom card. Tool approvals arrive as notifications with authenticated Approve once, Deny, and Review arguments actions; interrupted runs never replay automatically. Final answers render as Markdown in the app. Earlier iOS versions retain the custom Live Activity and require foreground execution.
 - Fixed keyboard transcription cancellation and serialized model replacement with inference. Listener startup callbacks and timeouts now stop with their session. Failed temporary audio cleanup and startup scans are logged and retried before recording again.
 - Improved iOS sheet safe areas, reduced-motion behavior, option search, field focus, and recording-limit warnings. Settings now confirms discarding unsaved edits, and tool approval content stays visible during dismissal.
 - Added the desktop transcription providers (OpenAI, Sarvam AI, Azure Speech, Google Cloud Speech v2, NVIDIA Speech NIM, whisper.cpp, WhisperLiveKit) and Agent Mode providers (OpenAI and Azure OpenAI with Responses or Chat Completions, OpenRouter) to the iOS app. Existing endpoints move to the custom OpenAI-compatible provider.

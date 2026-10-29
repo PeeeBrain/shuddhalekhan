@@ -4,12 +4,15 @@ import { isParakeetLanguage, languageBase, normalizeLanguage } from './languages
 import { transcriptionEndpoint } from './providers';
 
 const credential = z.string().max(1500, 'Credentials must be at most 1500 characters.').regex(/^[\x21-\x7e]*$/, 'Credentials must contain only printable characters without spaces.');
+export const toolApprovalPolicySchema = z.enum(['disabled', 'alwaysAsk', 'alwaysAllow']);
 const serverSchema = z.object({
   id: z.string().min(1).max(100),
   name: z.string().trim().min(1, 'Give each MCP server a name.').max(100),
   endpoint: z.string().trim().max(2048),
   token: credential,
   enabled: z.boolean(),
+  toolPolicies: z.record(z.string().min(1).max(200), toolApprovalPolicySchema)
+    .refine(policies => Object.keys(policies).length <= 256, 'An MCP server can have at most 256 tool policies.').optional(),
 });
 
 // Fields added after the first release default to the old generic behavior, so saved settings load unchanged.
@@ -88,6 +91,11 @@ export const mobileSettingsSchema = z.object({
 
 export type MobileSettings = z.infer<typeof mobileSettingsSchema>;
 export type MCPServerSettings = MobileSettings['mcpServers'][number];
+
+export function toolApprovalPolicy(server: MCPServerSettings, name: string) {
+  const policies = server.toolPolicies;
+  return policies && Object.hasOwn(policies, name) ? policies[name] ?? 'alwaysAsk' : 'alwaysAsk';
+}
 
 export const defaultSettings: MobileSettings = mobileSettingsSchema.parse({
   transcriptionSource: 'endpoint',

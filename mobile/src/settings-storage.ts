@@ -112,6 +112,7 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
           name: server.name,
           endpoint: server.endpoint,
           enabled: server.enabled,
+          ...(server.toolPolicies ? { toolPolicies: server.toolPolicies } : {}),
           token: serverTokens[index] ?? '',
         })),
       });
@@ -156,6 +157,7 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
           name: server.name,
           endpoint: server.endpoint,
           enabled: server.enabled,
+          ...(server.toolPolicies ? { toolPolicies: server.toolPolicies } : {}),
           tokenRef: await storeSecret(`mcp-${index}`, server.token),
         });
       }

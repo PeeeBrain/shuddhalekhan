@@ -7,6 +7,7 @@ import { localModelKey, type LocalModelState } from '../on-device';
 import { agentProviders, selectAgentApiMode, selectAgentProvider, selectTranscriptionProvider, transcriptionProviders } from '../providers';
 import { settingsError, type MCPServerSettings, type MobileSettings } from '../settings';
 import { Button, Card, Choice, Field, Section, Segment, ToggleRow, color, styles as kit, type } from './kit';
+import { MCPToolPolicies } from './MCPToolPolicies';
 
 const LAN_HINT =
   "Enter the full URL including the path. On this phone, localhost is the phone itself: use your computer's LAN IP, e.g. http://192.168.1.20:8080/inference.";
@@ -149,7 +150,7 @@ export function SettingsScreen({
               <Card key={server.id}>
                 <ToggleRow
                   label={server.name || 'Untitled server'}
-                  hint="Tools ask for approval every time."
+                  hint="New tools ask for approval. Choose exceptions in Tool approval policies."
                   value={server.enabled}
                   onValueChange={(enabled) => setServer(server.id, { enabled })}
                 />
@@ -157,7 +158,8 @@ export function SettingsScreen({
                 <Field
                   label="Endpoint"
                   value={server.endpoint}
-                  onChangeText={(endpoint) => setServer(server.id, { endpoint })}
+                  onChangeText={(endpoint) => setServer(server.id, { endpoint, toolPolicies: {} })}
+                  hint="Changing the endpoint resets this server's tool policies."
                   placeholder="http://192.168.1.20:3000/mcp"
                   keyboardType="url"
                 />
@@ -165,9 +167,11 @@ export function SettingsScreen({
                   label="Bearer token"
                   secret
                   value={server.token}
-                  onChangeText={(token) => setServer(server.id, { token })}
+                  onChangeText={(token) => setServer(server.id, { token, toolPolicies: {} })}
+                  hint="Changing the credential resets this server's tool policies."
                   placeholder="Optional"
                 />
+                <MCPToolPolicies server={server} allowHTTP={draft.allowInsecureHTTP} onChange={toolPolicies => setServer(server.id, { toolPolicies })} />
                 <Button
                   label="Remove server"
                   kind="destructive"

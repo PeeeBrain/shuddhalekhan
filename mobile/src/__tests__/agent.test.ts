@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { runAgent } from '../agent';
 import { MCPConnection } from '../mcp';
-import { defaultSettings, type MobileSettings, type MCPServerSettings } from '../settings';
+import { defaultSettings, mobileSettingsSchema, type MobileSettings, type MCPServerSettings } from '../settings';
 
 const rpcRequestSchema = z.object({
   jsonrpc: z.literal('2.0'),
@@ -275,6 +275,66 @@ describe('agent HTTP and MCP flow', () => {
         expect(failure.message).toBe('Tool denied. The agent run stopped. Earlier approved actions may already have completed.');
         expect(mcpState.calls).toHaveLength(0);
         expect(mcpState.closes).toBe(1);
+      });
+    });
+  });
+
+  test('saved auto-approval applies only to that server and leaves another server asking', async () => {
+    const allowed = newMCPFixtureState();
+    const asking = newMCPFixtureState();
+    const approvals: string[] = [];
+    await withServer(agentMCPHandler(allowed), async allowedUrl => {
+      await withServer(agentMCPHandler(asking), async askingUrl => {
+        let step = 0;
+        await withServer(() => {
+          step++;
+          return Response.json({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [{
+            id: `call-${step}`, type: 'function', function: { name: `mcp_${step}_0`, arguments: '{"query":"plan"}' },
+          }] }, finish_reason: 'tool_calls' }] });
+        }, async providerUrl => {
+          const base = agentSettings(providerUrl, allowedUrl);
+          const settings = mobileSettingsSchema.parse({ ...base, mcpServers: [
+            { ...base.mcpServers[0], toolPolicies: { search: 'alwaysAllow' } },
+            { ...base.mcpServers[0], id: 'other', name: 'Other Tools', endpoint: `${askingUrl}/mcp` },
+          ] });
+          const failure = await errorFrom(runAgent({ transcript: 'Find a plan.', settings,
+            signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {},
+            approve: async approval => { approvals.push(approval.serverName); return false; },
+          }));
+          expect(failure.message).toContain('Tool denied');
+          expect(allowed.calls).toEqual([{ name: 'search', arguments: { query: 'plan' } }]);
+          expect(asking.calls).toHaveLength(0);
+          expect(approvals).toEqual(['Other Tools']);
+          expect(allowed.closes).toBe(1);
+          expect(asking.closes).toBe(1);
+        });
+      });
+    });
+  });
+
+  test('disabled tools are not advertised and a guessed call cannot execute them', async () => {
+    const mcp = newMCPFixtureState();
+    let advertised: string[] = [];
+    let approvals = 0;
+    await withServer(agentMCPHandler(mcp), async mcpUrl => {
+      await withServer(async request => {
+        const body = modelRequestSchema.parse(await request.json());
+        advertised = (body.tools ?? []).map(tool => tool.function.name);
+        return toolCallResponse();
+      }, async providerUrl => {
+        const base = agentSettings(providerUrl, mcpUrl);
+        const settings = mobileSettingsSchema.parse({ ...base, mcpServers: base.mcpServers.map(server => ({
+          ...server, toolPolicies: { search: 'disabled' },
+        })) });
+        const failure = await errorFrom(runAgent({ transcript: 'Search.', settings,
+          signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {},
+          approve: async () => { approvals++; return true; },
+        }));
+        expect(failure.message).toContain('unavailable tool');
+        expect(advertised).toEqual([]);
+        expect(approvals).toBe(0);
+        expect(mcp.calls).toHaveLength(0);
+        expect(mcp.closes).toBe(1);
       });
     });
   });

@@ -99,7 +99,7 @@ describe('settings storage', () => {
     expect(metadataItems.get(metadataKey)).toContain('"language":"hi"');
   });
 
-  test('keeps credentials out of metadata and retires old generation secrets after commit', async () => {
+  test('persists tool policies, keeps credentials out of metadata and retires old generation secrets after commit', async () => {
     const { store, metadataItems, secretItems } = createHarness(['generation-1', 'generation-2']);
     const firstServer: MobileSettings['mcpServers'][number] = {
       id: 'server-1',
@@ -107,6 +107,7 @@ describe('settings storage', () => {
       endpoint: 'https://tools.example/mcp',
       token: 'mcp-secret',
       enabled: true,
+      toolPolicies: { search: 'alwaysAllow', delete: 'disabled' },
     };
     const first = configuredSettings({ mcpServers: [firstServer], googleServiceAccount: '{"private_key":"google-secret"}' });
     const second = configuredSettings({
