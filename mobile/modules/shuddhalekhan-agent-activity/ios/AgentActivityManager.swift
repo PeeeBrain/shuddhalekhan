@@ -114,9 +114,12 @@ final class AgentActivityManager {
       task.progress.completedUnitCount = Int64(max(0, current.completedSteps - progressBaseline))
       // The system progress UI has no privacy-redaction hook for server/tool names.
       if current.phase == .awaitingApproval {
-        task.updateTitle("Agent needs approval", subtitle: "Open Shuddhalekhan to review a tool request.")
+        let instruction = notifiedApprovalId == current.approvalId
+          ? "Expand the approval notification to approve or deny." : "Open Shuddhalekhan to review a tool request."
+        task.updateTitle("Agent needs approval", subtitle: instruction)
       } else if current.phase.isTerminal {
-        task.updateTitle(current.phase == .completed ? "Agent finished" : "Agent stopped", subtitle: "Open Shuddhalekhan for details.")
+        // The system owns layout and truncation; give it the answer instead of a generic completion message.
+        task.updateTitle(current.phase == .completed ? "Agent finished" : "Agent stopped", subtitle: current.answerPreview ?? current.status)
       } else {
         let stage = current.status.hasPrefix("Connecting to ") ? "Connecting to tools…"
           : current.status.hasPrefix("Running ") ? "Running an approved tool…" : "Waiting for the agent…"

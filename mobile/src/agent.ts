@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { MCPConnection, jsonObjectSchema, type MCPTool } from './mcp';
 import { bearerHeaders, parseResponse, readJSON, request, type Fetch } from './network';
-import type { MobileSettings } from './settings';
+import { toolApprovalPolicy, type MobileSettings } from './settings';
 
 export type ToolApproval = { serverName: string; toolName: string; arguments: string };
 type ToolCall = { id: string; name: string; arguments: string };
@@ -72,7 +72,9 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
       const connection = new MCPConnection(server, fetch, settings.allowInsecureHTTP);
       connections.push(connection);
       const tools = await stage(`MCP server "${server.name}"`, connection.connect(signal));
-      for (const [index, tool] of tools.entries()) available.set(`mcp_${connections.length}_${index}`, { connection, tool });
+      for (const [index, tool] of tools.entries()) {
+        if (toolApprovalPolicy(server, tool.name) !== 'disabled') available.set(`mcp_${connections.length}_${index}`, { connection, tool });
+      }
       if (available.size > 256) throw new Error('Too many enabled MCP tools (maximum 256).');
     }
     const tools = [...available].map(([name, { tool, connection }]) => ({
@@ -143,10 +145,13 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
         let raw: unknown;
         try { raw = JSON.parse(call.arguments); } catch { throw new Error('The agent returned invalid tool arguments.'); }
         const args = parseResponse(jsonObjectSchema, raw);
-        status('Waiting for your tool approval…');
-        const approved = await approve({ serverName: selected.connection.server.name, toolName: selected.tool.name, arguments: JSON.stringify(args, null, 2) });
+        if (toolApprovalPolicy(selected.connection.server, selected.tool.name) !== 'alwaysAllow') {
+          status('Waiting for your tool approval…');
+          const approved = await approve({ serverName: selected.connection.server.name, toolName: selected.tool.name, arguments: JSON.stringify(args, null, 2) });
+          signal.throwIfAborted();
+          if (!approved) throw new Error('Tool denied. The agent run stopped. Earlier approved actions may already have completed.');
+        }
         signal.throwIfAborted();
-        if (!approved) throw new Error('Tool denied. The agent run stopped. Earlier approved actions may already have completed.');
         status(`Running ${selected.connection.server.name} / ${selected.tool.name}…`);
         const result = await stage(`MCP server "${selected.connection.server.name}"`, selected.connection.call(selected.tool.name, args, signal));
         signal.throwIfAborted();
