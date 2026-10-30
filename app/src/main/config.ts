@@ -8,7 +8,6 @@ import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
 import { getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
 import { preparePersistentStoreDirectory } from './store-path';
-import { isolatePerformanceDriverConfig } from './performance/scenario-driver';
 import { isManagedLocalThreadCount } from './managed-local-threads';
 import { normalizeAgentProvider } from '../shared/agent-provider';
 import { agentProviderSchema, getAgentProviderIssues } from '../shared/agent-provider-validation';
@@ -253,7 +252,7 @@ export function getConfig(): AppConfig {
     },
   };
 
-  return isolatePerformanceDriverConfig({
+  return {
     whisperUrl: localEndpoint,
     transcription,
     managedLocalThreads: isManagedLocalThreadCount(store.get('managedLocalThreads'))
@@ -277,7 +276,7 @@ export function getConfig(): AppConfig {
       disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
       memoryEnabled: agent?.memoryEnabled === true,
     },
-  }, process.env);
+  };
 }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {

@@ -1085,7 +1085,6 @@ describe('main process IPC orchestration', () => {
       await Promise.resolve();
       expect(warmup).not.toHaveBeenCalled();
 
-      Object.assign(electronMock.app, { getAppMetrics: vi.fn(() => []) });
       ipcListeners.get('surface-paint-proxy')?.({}, 'recording');
       await Promise.resolve();
       expect(warmup).toHaveBeenCalledTimes(1);

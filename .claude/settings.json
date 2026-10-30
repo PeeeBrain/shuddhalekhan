@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/app/scripts/eval/score.ts)",
+      "Write(/app/scripts/eval/score.ts)",
+      "Edit(/app/scripts/eval/dev-set.json)",
+      "Write(/app/scripts/eval/dev-set.json)",
+      "Edit(/app/scripts/eval/baseline.json)",
+      "Write(/app/scripts/eval/baseline.json)",
+      "Edit(/app/eval-data/**)",
+      "Write(/app/eval-data/**)"
+    ]
+  }
+}

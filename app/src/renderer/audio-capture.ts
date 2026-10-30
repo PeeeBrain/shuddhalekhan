@@ -1,6 +1,6 @@
 // Web Audio API audio capture for Electron renderer process
 // Runs in a hidden BrowserWindow
-import type { AudioCaptureStartupTiming, AudioDevice } from '../types/ipc';
+import type { AudioDevice } from '../types/ipc';
 
 let audioContext: AudioContext | null = null;
 let mediaStream: MediaStream | null = null;
@@ -245,38 +245,30 @@ export async function recreateStream(deviceId: string | null): Promise<void> {
 export async function startRecording(
   options?: StreamingRecordingOptions,
   onFirstBuffer?: () => void,
-): Promise<AudioCaptureStartupTiming | null> {
-  if (isRecording) return null;
+): Promise<void> {
+  if (isRecording) return;
 
   audioBuffer = [];
   streamingCapture = options ? createStreamingCapture(options) : null;
   streamingCallbacks = options ?? null;
   latestAudioLevel = 0;
   let firstBufferReceived = false;
-  const micRequestedAt = performance.now();
-  let micAcquisitionMs = 0;
   let pendingMic: Promise<MediaStream> | null = null;
   try {
-    pendingMic = navigator.mediaDevices.getUserMedia(buildConstraints()).then((stream) => {
-      micAcquisitionMs = performance.now() - micRequestedAt;
-      return stream;
-    });
-    const contextStartedAt = performance.now();
+    pendingMic = navigator.mediaDevices.getUserMedia(buildConstraints());
     const context = new AudioContext({
       sampleRate: 16000,
     });
     audioContext = context;
-    const contextCreationMs = performance.now() - contextStartedAt;
     mediaStream = await pendingMic;
     // A device change during mic acquisition tears the context down and
     // hands stream ownership to recreateStream(); abandon this start.
     if (audioContext !== context) {
       mediaStream.getTracks().forEach((track) => track.stop());
       mediaStream = null;
-      return null;
+      return;
     }
     hasAudioPermission = true;
-    const graphStartedAt = performance.now();
 
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
     processorNode = audioContext.createScriptProcessor(4096, 1, 1);
@@ -323,7 +315,6 @@ export async function startRecording(
     isStreamPrepared = true;
     startLevelTelemetry();
     console.log(`Recording started at ${inputSampleRate} Hz`);
-    return { micAcquisitionMs, graphSetupMs: contextCreationMs + performance.now() - graphStartedAt };
   } catch (error) {
     if (!mediaStream) {
       // Don't block failure reporting on a pending permission prompt;

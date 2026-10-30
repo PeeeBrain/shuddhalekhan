@@ -19,7 +19,6 @@
     "test": "bun test --parallel=4",
     "test:watch": "bun test --watch",
     "verify:whisper": "bun scripts/verify-whisper-endpoint.ts",
-    "test:transcription-quality": "bun scripts/transcription-quality.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

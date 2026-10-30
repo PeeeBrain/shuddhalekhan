@@ -31,13 +31,8 @@ coverage/
 logs/
 *.log
 report.*.json
-benchmark-output/
-# Per-run benchmark captures are local data; reviewed summaries may be tracked.
-app/docs/performance/evidence/*/*-aa/
-app/docs/performance/evidence/*/idle-five-launches/
 
-# Local audio/transcription utilities
-app/scripts/local-record-wav.ts
+# Existing private recordings remain local after retiring the old tools.
 app/scripts/transcription-quality-cases.json
 app/fixtures/transcription-quality/*.wav
 
@@ -63,3 +58,6 @@ TODO.md
 .tauri/
 *.key
 *.key.pub
+
+# Eval audio and run output (Svarah sample, too big to commit)
+app/eval-data/

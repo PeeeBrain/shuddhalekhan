@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { join } from 'path';
-import { app, BrowserWindow, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
+import { app, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
@@ -42,15 +42,7 @@ import {
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
 import type { AgentApprovalChoice, AppConfig, AudioDevice, InjectResult, McpStatusSnapshot, McpToolPolicyKey, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
-import { emitPerformanceMarker } from './performance/marker-collector';
-import { buildElectronProcessInventory } from './performance/process-inventory';
-import { createRuntimeReadinessBarrier } from './performance/runtime-readiness';
-import {
-  createPerformanceScenarioDriver,
-  isPerformanceScenarioDriverEnabled,
-  parsePerformanceScenarioDriverConfig,
-} from './performance/scenario-driver';
-import { transcribe as transcribeLocalFixture } from './whisper';
+import { createRuntimeReadinessBarrier } from './runtime-readiness';
 import { RuntimeShell } from './runtime-shell';
 import { createRuntimeShellPresenter } from './agent-presentation';
 import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
@@ -73,24 +65,13 @@ import {
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
 let retryPasteInFlight = false;
-let shellPillReadyEmitted = false;
-let startPerformanceScenario = async (): Promise<void> => undefined;
-const performanceDriverEnabled = isPerformanceScenarioDriverEnabled(process.env);
-const performanceDriverConfig = parsePerformanceScenarioDriverConfig(process.env);
 const runtimeShell = new RuntimeShell();
 const agentPresenter = createRuntimeShellPresenter(runtimeShell);
-const agentTerminalWaiters = new Map<string, () => void>();
-const surfacePaintWaiters = new Map<string, Array<() => void>>();
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
-  emitElectronProcessInventory();
-  emitPerformanceMarker('runtime.operational');
   queueMicrotask(() => {
-    if (!performanceDriverEnabled && getConfig().transcription.activeProvider === 'managed-local') {
+    if (getConfig().transcription.activeProvider === 'managed-local') {
       void managedLocalTranscriber.warmup().catch(() => undefined);
     }
-    void startPerformanceScenario().catch((error) => {
-      console.error('Performance scenario driver failed:', error);
-    });
   });
 });
 const mcpStatusStore = new McpStatusStore();
@@ -119,8 +100,6 @@ const sidecarEventRouter = createSidecarEventRouter({
   onMemoryEvent: event => agentContext.handleMemoryEvent(event),
   onAgentTerminal: (agentRunId) => {
     if (activeAgentRunId === agentRunId) activeAgentRunId = null;
-    agentTerminalWaiters.get(agentRunId)?.();
-    agentTerminalWaiters.delete(agentRunId);
   },
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
@@ -129,11 +108,7 @@ const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
   },
   onGenerationExit: () => {
     notifyAgentRuntimeStopped('Agent runtime stopped unexpectedly. Try Agent Mode again.');
-    if (activeAgentRunId) {
-      agentTerminalWaiters.get(activeAgentRunId)?.();
-      agentTerminalWaiters.delete(activeAgentRunId);
-      activeAgentRunId = null;
-    }
+    activeAgentRunId = null;
   },
 });
 const agentContext = registerAgentContextIpcHandlers(getPersistentStoreDirectory(), {
@@ -185,45 +160,6 @@ const recordingSession = new RecordingSession({
   onError: showTranscriptionError,
 });
 runtimeShell.setCrashHandler((reason) => recordingSession.markRuntimeShellCrashed(reason));
-const performanceScenarioDriver = createPerformanceScenarioDriver(
-  performanceDriverConfig,
-  {
-    openSettings: async () => {
-      const painted = waitForSurfacePaint('settings');
-      openSettingsWindow();
-      await painted;
-    },
-    getConfig,
-    async runRecording({ wav, playbackDurationMs, transcriptionEndpoint }) {
-      const config = getConfig();
-      const fixtureConfig: AppConfig = {
-        ...config,
-        whisperUrl: transcriptionEndpoint,
-        transcription: {
-          ...config.transcription,
-          activeProvider: 'local-whisper-cpp',
-          providers: {
-            ...config.transcription.providers,
-            localWhisperCpp: { endpoint: transcriptionEndpoint },
-          },
-        },
-      };
-      await recordingSession.runPerformanceFixture(wav, playbackDurationMs, {
-        id: 'local-whisper-cpp',
-        capabilities: {
-          translation: true,
-          automaticLanguageDetection: true,
-          dictionaryHints: true,
-          authentication: 'none',
-          maxDurationSeconds: null,
-        },
-        transcribe: ({ audio }) => transcribeLocalFixture(audio, fixtureConfig),
-      });
-    },
-    runAgent: ({ transcript, config }) => startAgentRun(transcript, config),
-  },
-);
-startPerformanceScenario = () => performanceScenarioDriver.start();
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
@@ -493,25 +429,20 @@ function invalidateActiveAgentRun(): void {
   const previousRunId = activeAgentRunId;
   activeAgentRunId = null;
   if (!previousRunId) return;
-  agentTerminalWaiters.get(previousRunId)?.();
-  agentTerminalWaiters.delete(previousRunId);
   agentSidecar.cancelRun(previousRunId);
 }
 
-function startAgentRun(text: string, config: AppConfig): Promise<void> {
+function startAgentRun(text: string, config: AppConfig): void {
   if (!config.agent.enabled) {
     console.warn('Ignoring Agent Mode transcript because Agent Mode is disabled');
     showAgentConfigNotice('Agent Mode is disabled. Open Settings to enable it.');
-    return Promise.resolve();
+    return;
   }
 
   // A new run invalidates any prior run before replacement events can arrive.
   invalidateActiveAgentRun();
   const agentRunId = randomUUID();
   activeAgentRunId = agentRunId;
-  const terminal = new Promise<void>((resolve) => {
-    agentTerminalWaiters.set(agentRunId, resolve);
-  });
   agentSidecar.startRun(
     agentRunId,
     text,
@@ -521,15 +452,6 @@ function startAgentRun(text: string, config: AppConfig): Promise<void> {
   );
   console.log(`Started Agent Mode run ${agentRunId}`);
   getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);
-  return terminal;
-}
-
-function waitForSurfacePaint(surface: string): Promise<void> {
-  return new Promise((resolve) => {
-    const waiters = surfacePaintWaiters.get(surface) ?? [];
-    waiters.push(resolve);
-    surfacePaintWaiters.set(surface, waiters);
-  });
 }
 
 function publishUpdateStatus(status: UpdateStatus): void {
@@ -538,22 +460,6 @@ function publishUpdateStatus(status: UpdateStatus): void {
   if (settingsWin && !settingsWin.isDestroyed()) {
     settingsWin.webContents.send('updater:status-changed', status);
   }
-}
-
-function emitElectronProcessInventory(): void {
-  const windows = BrowserWindow.getAllWindows().flatMap((window) => {
-    try {
-      return [{
-        webContentsId: window.webContents.id,
-        pid: window.webContents.getOSProcessId(),
-        url: window.webContents.getURL(),
-      }];
-    } catch {
-      return [];
-    }
-  });
-  const inventory = buildElectronProcessInventory(app.getAppMetrics(), windows);
-  emitPerformanceMarker('process.inventory', inventory);
 }
 
 async function showBundledReleaseNotesAfterInstall(): Promise<void> {
@@ -878,21 +784,8 @@ ipcMain.on('runtime:agent-dismiss', () => {
   runtimeShell?.dismissAgentCard();
 });
 
-ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: string) => {
-  emitPerformanceMarker('surface.paint-proxy', {
-    surface,
-    ...(surface === 'recording' && correlationId ? { recordingSessionId: correlationId } : {}),
-  });
-  if (surface === 'recording') {
-    if (!shellPillReadyEmitted) {
-      shellPillReadyEmitted = true;
-      emitPerformanceMarker('shell.pill.ready');
-    }
-    runtimeReadiness.markShellPaintReady();
-  }
-  emitElectronProcessInventory();
-  for (const resolve of surfacePaintWaiters.get(surface) ?? []) resolve();
-  surfacePaintWaiters.delete(surface);
+ipcMain.on('surface-paint-proxy', (_event, surface: string) => {
+  if (surface === 'recording') runtimeReadiness.markShellPaintReady();
 });
 
 // App lifecycle
@@ -900,14 +793,12 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.whenReady().then(() => {
-    emitPerformanceMarker('app.electron-ready');
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(permission === 'media');
     });
     configureManagedLocal({
       root: join(preparePersistentStoreDirectory(), 'models'),
       onStateChanged: (state) => {
-        emitPerformanceMarker('managed-local.model-state', { modelId: state.modelId, state: state.kind });
         getSettingsWindow()?.webContents.send('managed-local:model-state-changed', state);
       },
     });
@@ -930,9 +821,6 @@ if (!gotSingleInstanceLock) {
       },
     });
 
-    emitPerformanceMarker('tray.ready');
-    emitPerformanceMarker('hotkey-hook.ready');
-
     const startupConfig = getConfig();
     cachedAgentEnabled = startupConfig.agent.enabled;
     if (startupConfig.agent.enabled) {
@@ -944,11 +832,9 @@ if (!gotSingleInstanceLock) {
     }
     if (startupConfig.onboarding.status === 'pending') openSettingsWindow();
 
-    if (!performanceDriverEnabled) {
-      setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
-      publishUpdateStatus(getUpdateStatus());
-      void showBundledReleaseNotesAfterInstall();
-    }
+    setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
+    publishUpdateStatus(getUpdateStatus());
+    void showBundledReleaseNotesAfterInstall();
     runtimeReadiness.markMainReady();
 
     app.on('activate', () => {

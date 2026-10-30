@@ -1,6 +1,6 @@
-import { join } from 'path';
 import { OfflineRecognizer } from 'sherpa-onnx-node';
 import { decodePcm16Wave } from './managed-local-wave';
+import { managedLocalRecognizerConfig } from './managed-local-model';
 import { isManagedLocalThreadCount } from './managed-local-threads';
 
 const port = process.parentPort;
@@ -14,24 +14,9 @@ port.on('message', (event) => {
 
 async function handleMessage(message: unknown): Promise<void> {
   if (isLoadMessage(message)) {
-    const started = performance.now();
     try {
-      recognizer = await OfflineRecognizer.createAsync({
-        featConfig: { sampleRate: 16_000, featureDim: 80 },
-        modelConfig: {
-          transducer: {
-            encoder: join(message.modelPath, 'encoder.int8.onnx'),
-            decoder: join(message.modelPath, 'decoder.int8.onnx'),
-            joiner: join(message.modelPath, 'joiner.int8.onnx'),
-          },
-          tokens: join(message.modelPath, 'tokens.txt'),
-          numThreads: message.numThreads,
-          provider: 'cpu',
-          modelType: 'nemo_transducer',
-          debug: false,
-        },
-      });
-      port.postMessage({ kind: 'ready', loadMilliseconds: performance.now() - started });
+      recognizer = await OfflineRecognizer.createAsync(managedLocalRecognizerConfig(message.modelPath, message.numThreads));
+      port.postMessage({ kind: 'ready' });
     } catch (error) {
       recognizer = null;
       port.postMessage({ kind: 'load-error', message: safeError(error, 'Could not load the local speech model.') });
@@ -44,19 +29,12 @@ async function handleMessage(message: unknown): Promise<void> {
     port.postMessage({ kind: 'error', requestId: message.requestId, message: 'The local speech model is not loaded.' });
     return;
   }
-  const started = performance.now();
   try {
     const wave = decodePcm16Wave(message.audio);
     const stream = recognizer.createStream();
     stream.acceptWaveform(wave);
     const result = await recognizer.decodeAsync(stream);
-    port.postMessage({
-      kind: 'result',
-      requestId: message.requestId,
-      text: result.text,
-      transcriptionMilliseconds: performance.now() - started,
-      audioDurationMilliseconds: wave.samples.length / wave.sampleRate * 1000,
-    });
+    port.postMessage({ kind: 'result', requestId: message.requestId, text: result.text });
   } catch (error) {
     port.postMessage({ kind: 'error', requestId: message.requestId, message: safeError(error, 'Local transcription failed.') });
   }

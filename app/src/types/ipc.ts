@@ -155,14 +155,8 @@ export interface McpServerConfig {
 
 export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
-  'audio-capture-started': (
-    generation: number,
-    recordingSessionId: string,
-    sequence: number,
-    timing: AudioCaptureStartupTiming,
-  ) => void;
   'runtime:audio-first-buffer': (generation: number, recordingSessionId: string, sequence: number) => void;
-  'surface-paint-proxy': (surface: string, correlationId?: string) => void;
+  'surface-paint-proxy': (surface: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
   'runtime:audio-chunk': (
@@ -191,11 +185,6 @@ export interface RendererToMainSendChannels {
   'runtime:recovery-action': (action: DictationRecoveryAction) => void;
   'runtime:agent-card-size': (height: number) => void;
   'runtime:agent-dismiss': () => void;
-}
-
-export interface AudioCaptureStartupTiming {
-  micAcquisitionMs: number;
-  graphSetupMs: number;
 }
 
 export interface DictationTargetSnapshot {
@@ -282,7 +271,6 @@ export interface MainToRendererChannels {
   'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;
   'shortcuts:paused-changed': (paused: boolean) => void;
-  'surface:request-paint-proxy': (surface: string) => void;
   'runtime:audio-start': (command: RuntimeAudioCommand) => void;
   'runtime:audio-stop': (command: RuntimeAudioCommand) => void;
   'runtime:audio-chunk-accepted': (

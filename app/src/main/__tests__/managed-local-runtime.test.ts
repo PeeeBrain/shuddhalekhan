@@ -13,14 +13,13 @@ class FakeUtilityProcess extends EventEmitter {
     this.emit('sent', message);
     if (!message || typeof message !== 'object' || !('kind' in message)) return;
     if (message.kind === 'load' && this.respondToLoad) {
-      queueMicrotask(() => this.emit('message', { kind: 'ready', loadMilliseconds: 12 }));
+      queueMicrotask(() => this.emit('message', { kind: 'ready' }));
     }
     if (message.kind === 'transcribe' && 'requestId' in message && this.respondToTranscription) {
       queueMicrotask(() => this.emit('message', {
         kind: 'result',
         requestId: message.requestId,
         text: 'hello world',
-        transcriptionMilliseconds: 8,
       }));
     }
   }
@@ -55,7 +54,7 @@ describe('managed local runtime supervision', () => {
         audio: new Uint8Array([1]),
         recognition: { language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false },
       });
-      children[0].emit('message', { kind: 'ready', loadMilliseconds: 12 });
+      children[0].emit('message', { kind: 'ready' });
       await warmup;
       expect(await transcription).toBe('hello world');
       expect(children).toHaveLength(2);
@@ -100,7 +99,7 @@ describe('managed local runtime supervision', () => {
         message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe'
       ));
       if (!message || typeof message !== 'object' || !('requestId' in message)) throw new Error('No transcription request');
-      firstChild.emit('message', { kind: 'result', requestId: message.requestId, text: 'original run', transcriptionMilliseconds: 8 });
+      firstChild.emit('message', { kind: 'result', requestId: message.requestId, text: 'original run' });
       expect(await active).toBe('original run');
       expect(await next).toBe('hello world');
       expect(children).toHaveLength(2);
