@@ -1,0 +1,669 @@
+{
+ "set": "dev",
+ "layer": "e2e",
+ "fingerprint": "359b1c096014f5380d54059dfea95543d930c9f722f41411e634ba8628aea206",
+ "clips": [
+  {
+   "id": "957",
+   "words": 1,
+   "errors": 1,
+   "deletions": 1,
+   "insertions": 0,
+   "firstThreeWrong": true,
+   "rawWords": 1,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [],
+   "hypothesis": "",
+   "clipboardRestored": true
+  },
+  {
+   "id": "905",
+   "words": 1,
+   "errors": 1,
+   "deletions": 1,
+   "insertions": 0,
+   "firstThreeWrong": true,
+   "rawWords": 1,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [],
+   "hypothesis": "",
+   "clipboardRestored": true
+  },
+  {
+   "id": "1076",
+   "words": 1,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": true,
+   "rawWords": 1,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    194.0567
+   ],
+   "hypothesis": "Live",
+   "clipboardRestored": true
+  },
+  {
+   "id": "1440",
+   "words": 1,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 1,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    167.399
+   ],
+   "hypothesis": "Corporate.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "790",
+   "words": 1,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": true,
+   "rawWords": 1,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    199.3344
+   ],
+   "hypothesis": "Landon.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "2994",
+   "words": 1,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 1,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    168.48
+   ],
+   "hypothesis": "Agree.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "1976",
+   "words": 1,
+   "errors": 2,
+   "deletions": 0,
+   "insertions": 1,
+   "firstThreeWrong": true,
+   "rawWords": 1,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    201.9629
+   ],
+   "hypothesis": "Oh yeah.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "6345",
+   "words": 4,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 4,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    204.8159
+   ],
+   "hypothesis": "Can you speak five?",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4651",
+   "words": 1,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 1,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    214.9973
+   ],
+   "hypothesis": "Constitutional",
+   "clipboardRestored": true
+  },
+  {
+   "id": "1272",
+   "words": 6,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 6,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    214.6167
+   ],
+   "hypothesis": "Can I donate to Mother Helpage?",
+   "clipboardRestored": true
+  },
+  {
+   "id": "3997",
+   "words": 4,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 4,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    251.0758
+   ],
+   "hypothesis": "And I revise it.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "1227",
+   "words": 5,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 5,
+   "rawErrors": 0,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    289.438
+   ],
+   "hypothesis": "many companies in the world",
+   "clipboardRestored": true
+  },
+  {
+   "id": "2040",
+   "words": 6,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 7,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    253.2591
+   ],
+   "hypothesis": "Can you show recommendation on seafoods?",
+   "clipboardRestored": true
+  },
+  {
+   "id": "6577",
+   "words": 7,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 7,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    231.2307
+   ],
+   "hypothesis": "Do you store personal information about me?",
+   "clipboardRestored": true
+  },
+  {
+   "id": "48",
+   "words": 5,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 5,
+   "rawErrors": 3,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    280.728
+   ],
+   "hypothesis": "the Colleges of Art, Literature,",
+   "clipboardRestored": true
+  },
+  {
+   "id": "6585",
+   "words": 9,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 8,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    261.1684
+   ],
+   "hypothesis": "What's an easy recipe to cook for food?",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4018",
+   "words": 7,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 6,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    292.1553
+   ],
+   "hypothesis": "Please show my yesterday's missed notifications.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "6256",
+   "words": 7,
+   "errors": 2,
+   "deletions": 1,
+   "insertions": 0,
+   "firstThreeWrong": true,
+   "rawWords": 6,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    292.1829
+   ],
+   "hypothesis": "about educational institutions by the students.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "2970",
+   "words": 9,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 9,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    288.4637
+   ],
+   "hypothesis": "Which is characterized by Christians as the Old Testament.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "5960",
+   "words": 10,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 1,
+   "firstThreeWrong": true,
+   "rawWords": 10,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    327.7573
+   ],
+   "hypothesis": "They diff differ in terms of their curriculum and teaching methods.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "6433",
+   "words": 8,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 7,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    354.0129
+   ],
+   "hypothesis": "What's the processing fee for prefer loan?",
+   "clipboardRestored": true
+  },
+  {
+   "id": "6192",
+   "words": 7,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 1,
+   "firstThreeWrong": true,
+   "rawWords": 7,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    361.5578
+   ],
+   "hypothesis": "Such as Hinduism, Christianity, Islam, Judaism, Buddhism, Jainism.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "351",
+   "words": 11,
+   "errors": 3,
+   "deletions": 1,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 11,
+   "rawErrors": 7,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    352.987
+   ],
+   "hypothesis": "In March two thousand nine, he joined Prajarajam party founded by Chianjee.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "5590",
+   "words": 11,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 11,
+   "rawErrors": 3,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    384.1688
+   ],
+   "hypothesis": "Delete the reminder for personal loan from Tata Capital Financial Services.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "1823",
+   "words": 12,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 12,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    378.2397
+   ],
+   "hypothesis": "the spirit of Ahmadabad, which was lying dormant in the preceding century,",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4273",
+   "words": 7,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 7,
+   "rawErrors": 0,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    428.8284
+   ],
+   "hypothesis": "In our region, mostly people are Hindu.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4855",
+   "words": 17,
+   "errors": 2,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": true,
+   "rawWords": 17,
+   "rawErrors": 4,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    416.6105
+   ],
+   "hypothesis": "And dead too if it happens for his multiple living ones in a short span of time.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "518",
+   "words": 9,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 9,
+   "rawErrors": 6,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    386.1719
+   ],
+   "hypothesis": "Test drive excursions, Enhanced Museum Experience and Gamified Tours.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "5223",
+   "words": 11,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 11,
+   "rawErrors": 1,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    417.5339
+   ],
+   "hypothesis": "So to while cooking fish we use lot of mustard paste.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "5393",
+   "words": 16,
+   "errors": 1,
+   "deletions": 1,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 16,
+   "rawErrors": 5,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    454.4254
+   ],
+   "hypothesis": "It was an amazing experience. Though I felt a little bit of headache. Maybe because",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4614",
+   "words": 16,
+   "errors": 3,
+   "deletions": 0,
+   "insertions": 3,
+   "firstThreeWrong": false,
+   "rawWords": 16,
+   "rawErrors": 4,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    454.4838
+   ],
+   "hypothesis": "And these group of teenagers or the outcasts they are sent back due to some reason back to the",
+   "clipboardRestored": true
+  },
+  {
+   "id": "1814",
+   "words": 17,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 1,
+   "firstThreeWrong": true,
+   "rawWords": 16,
+   "rawErrors": 3,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    534.4044
+   ],
+   "hypothesis": "Or the p people who haven't had much exposure to the outside world or the countries outside.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4503",
+   "words": 27,
+   "errors": 2,
+   "deletions": 1,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 27,
+   "rawErrors": 3,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    540.9584
+   ],
+   "hypothesis": "An elite scholar who had reached the limits of human knowledge invited his doom in the process of drenching himself with the desire for awesome knowledge.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "2344",
+   "words": 12,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 12,
+   "rawErrors": 2,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    510.2731
+   ],
+   "hypothesis": "Yeah. many many words from Indian languages have crept in in English.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4380",
+   "words": 25,
+   "errors": 2,
+   "deletions": 1,
+   "insertions": 1,
+   "firstThreeWrong": true,
+   "rawWords": 25,
+   "rawErrors": 4,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    525.9974
+   ],
+   "hypothesis": "They a are optimistic. They have so many things within them they want to be fulfilled. And that is how I love life to be.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4667",
+   "words": 18,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 18,
+   "rawErrors": 0,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    579.9199
+   ],
+   "hypothesis": "So if we were to prevent or to put a stop to that opportunity, to that gateway, then",
+   "clipboardRestored": true
+  },
+  {
+   "id": "3221",
+   "words": 20,
+   "errors": 1,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 20,
+   "rawErrors": 3,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    622.2934
+   ],
+   "hypothesis": "and she could get her PhD. The entire no training of the story what she has written in this book.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "2303",
+   "words": 15,
+   "errors": 0,
+   "deletions": 0,
+   "insertions": 0,
+   "firstThreeWrong": false,
+   "rawWords": 15,
+   "rawErrors": 0,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    684.8081
+   ],
+   "hypothesis": "There is tragedy in one hand and there is comedy or pleasure in another hand.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "4392",
+   "words": 32,
+   "errors": 3,
+   "deletions": 0,
+   "insertions": 1,
+   "firstThreeWrong": true,
+   "rawWords": 31,
+   "rawErrors": 7,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    843.0501
+   ],
+   "hypothesis": "If Kala's cultural heritage is centuries old, the culture of Kela is an amalgam of native art forms, language, literature, architectural style, music, festivals, cuisine, archaeological monuments, heritage centres and so on.",
+   "clipboardRestored": true
+  },
+  {
+   "id": "3581",
+   "words": 52,
+   "errors": 4,
+   "deletions": 2,
+   "insertions": 0,
+   "firstThreeWrong": true,
+   "rawWords": 52,
+   "rawErrors": 22,
+   "wrongLanguage": false,
+   "latenciesMs": [
+    1211.4395
+   ],
+   "hypothesis": "Insecure intellectual property rights with the help of some acts like Trademark Act nineteen ninety-nine and copyright act nineteen fifty seven. Provide for certain seizure powers to the police under section one one five and section sixty-four. There is also a patent Indian Patent Bill two thousand five introduces product patent regime for food, chemical and paraseuticals.",
+   "clipboardRestored": true
+  }
+ ],
+ "run": {
+  "coldStartMs": 0,
+  "peakRssMb": 1771.33203125,
+  "cpuMsPerClip": 5745.3125
+ },
+ "machine": {
+  "threads": 4,
+  "runtime": "bun 1.4.3",
+  "cpu": "AMD Ryzen 7 7840HS w/ Radeon 780M Graphics     ",
+  "platform": "win32 x64"
+ },
+ "totals": {
+  "clips": 40,
+  "wer": 0.07906976744186046,
+  "firstThreeErrorRate": 0.325,
+  "latencyP50Ms": 353.49995,
+  "latencyP95Ms": 708.5443999999998,
+  "deletionRate": 0.020930232558139535,
+  "insertionRate": 0.020930232558139535,
+  "punctuationCaseWer": 0.25176470588235295,
+  "wrongLanguageRate": 0,
+  "coldStartMs": 0,
+  "peakRssMb": 1771.33203125,
+  "cpuMsPerClip": 5745.3125
+ },
+ "verdict": null
+}
