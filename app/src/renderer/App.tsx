@@ -67,15 +67,6 @@ export function AudioWindow() {
           command.sequence,
         );
       })
-        .then((timing) => {
-          if (timing) window.electronAPI?.send(
-            'audio-capture-started',
-            command.generation,
-            command.recordingSessionId,
-            command.sequence,
-            timing,
-          );
-        })
         .catch((err) => {
           commandRef.current = null;
           console.error('Failed to start runtime recording:', err);
@@ -148,29 +139,18 @@ export function AudioWindow() {
   return null;
 }
 
+// Main gates Managed Local warmup on the first painted recording surface.
 function useSurfacePaintProxy(surface: string): void {
   useEffect(() => {
-    const reportPaintProxy = () => {
-      let firstFrame = 0;
-      let secondFrame = 0;
-      firstFrame = requestAnimationFrame(() => {
-        secondFrame = requestAnimationFrame(() => {
-          window.electronAPI?.send('surface-paint-proxy', surface);
-        });
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        window.electronAPI?.send('surface-paint-proxy', surface);
       });
-      return () => {
-        cancelAnimationFrame(firstFrame);
-        if (secondFrame) cancelAnimationFrame(secondFrame);
-      };
-    };
-
-    const cancelInitial = reportPaintProxy();
-    const unsubscribe = window.electronAPI?.subscribe('surface:request-paint-proxy', (requestedSurface) => {
-      if (requestedSurface === surface) reportPaintProxy();
     });
     return () => {
-      cancelInitial();
-      unsubscribe?.();
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
     };
   }, [surface]);
 }

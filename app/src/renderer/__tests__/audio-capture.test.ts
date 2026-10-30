@@ -297,11 +297,7 @@ describe('warm audio stream', () => {
     expect(stopTrack).toHaveBeenCalledTimes(1);
 
     const onFirstBuffer = vi.fn();
-    const timing = await mod.startRecording(undefined, onFirstBuffer);
-    expect(timing).toEqual({
-      micAcquisitionMs: expect.any(Number),
-      graphSetupMs: expect.any(Number),
-    });
+    await mod.startRecording(undefined, onFirstBuffer);
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(audioProcess).toBeTypeOf('function');
 

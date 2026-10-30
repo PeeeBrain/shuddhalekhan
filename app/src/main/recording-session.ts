@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type {
   DictationMode,
-  AudioCaptureStartupTiming,
   DictationTargetSnapshot,
   RecordingActivationMode,
   RecordingIntent,
@@ -27,7 +26,6 @@ import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from 
 import { LiveDictationController } from './live-dictation-controller';
 import { sendUnicodeText } from './native/unicode-input';
 import { LIVE_KEYBOARD_RELEASE_GRACE_MS } from '../shared/live-dictation';
-import { emitPerformanceMarker } from './performance/marker-collector';
 import { RuntimeShell } from './runtime-shell';
 
 export interface RecordingResult {
@@ -214,20 +212,10 @@ export class RecordingSession {
 
   begin(intent: RecordingIntent = 'dictation', recordingSessionId: string = randomUUID()): boolean {
     if (this.activeRun !== null) {
-      emitPerformanceMarker('recording.begin.rejected', {
-        recordingSessionId,
-        surface: intent,
-        reason: 'busy',
-      });
       return false;
     }
     const readinessError = this.getReadinessError(intent);
     if (readinessError) {
-      emitPerformanceMarker('recording.begin.rejected', {
-        recordingSessionId,
-        surface: intent,
-        reason: 'not-ready',
-      });
       this.onErrorCallback?.(readinessError);
       return false;
     }
@@ -237,31 +225,16 @@ export class RecordingSession {
     if (liveDictationRequested) {
       if (this.getRecordingActivationMode('dictation') !== 'toggle') {
         const error = new Error('Live Dictation requires Toggle activation.');
-        emitPerformanceMarker('recording.begin.rejected', {
-          recordingSessionId,
-          surface: intent,
-          reason: 'live-activation',
-        });
         this.onErrorCallback?.(error);
         return false;
       }
       if (!targetSnapshot) {
         const error = new Error('Live Dictation requires a focused target application.');
-        emitPerformanceMarker('recording.begin.rejected', {
-          recordingSessionId,
-          surface: intent,
-          reason: 'no-target',
-        });
         this.onErrorCallback?.(error);
         return false;
       }
       if (!this.canStartLiveStreaming(transcriber)) {
         const error = new Error('Live Dictation requires a streaming-capable provider.');
-        emitPerformanceMarker('recording.begin.rejected', {
-          recordingSessionId,
-          surface: intent,
-          reason: 'live-streaming-unavailable',
-        });
         this.onErrorCallback?.(error);
         return false;
       }
@@ -282,19 +255,10 @@ export class RecordingSession {
     if (liveDictationRequested && !streamingStarted) {
       this.activeRun = null;
       const error = new Error('Live Dictation streaming could not start.');
-      emitPerformanceMarker('recording.begin.rejected', {
-        recordingSessionId,
-        surface: intent,
-        reason: 'live-streaming-startup',
-      });
       this.onErrorCallback?.(error);
       return false;
     }
 
-    emitPerformanceMarker('recording.begin.accepted', {
-      recordingSessionId: run.id,
-      surface: intent,
-    });
     this.onBeginCallback?.(intent);
 
     const deviceId = this.getSelectedDeviceId?.();
@@ -316,9 +280,6 @@ export class RecordingSession {
     const run = this.activeRun;
     if (!run || run.state !== 'recording') return null;
 
-    emitPerformanceMarker('recording.stop.requested', {
-      recordingSessionId: run.id,
-    });
     this.clearDurationTimers();
     run.state = 'stopping';
     if (this.showProcessingFn) {
@@ -350,60 +311,6 @@ export class RecordingSession {
     }
   }
 
-  /** Runs the pinned benchmark audio through the normal batch transcription path without using the live microphone. */
-  async runPerformanceFixture(
-    audioData: Uint8Array<ArrayBuffer>,
-    playbackDurationMs: number,
-    transcriber: Transcriber,
-  ): Promise<RecordingResult | null> {
-    const recordingSessionId = randomUUID();
-    emitPerformanceMarker('hotkey.detected', { recordingSessionId, surface: 'dictation' });
-    if (this.activeRun !== null) {
-      emitPerformanceMarker('recording.begin.rejected', {
-        recordingSessionId,
-        surface: 'dictation',
-        reason: 'busy',
-      });
-      return null;
-    }
-
-    const run: RecordingRunContext = {
-      id: recordingSessionId,
-      intent: 'dictation',
-      transcriber,
-      targetSnapshot: null,
-      sequence: 0,
-      revision: 0,
-      state: 'recording',
-      pendingEnd: null,
-      streaming: null,
-    };
-    this.activeRun = run;
-
-    emitPerformanceMarker('recording.begin.accepted', {
-      recordingSessionId,
-      surface: 'dictation',
-    });
-    this.audioCapture.prepare();
-    this.showRecordingPillFn(
-      'dictation',
-      recordingSessionId,
-      this.createPresentationEnvelope(run, transcriber),
-    );
-    emitPerformanceMarker('audio.capture.started', {
-      recordingSessionId,
-      surface: 'dictation',
-      source: 'fixture',
-    });
-
-    if (playbackDurationMs > 0) {
-      await new Promise<void>((resolve) => this.setTimeoutFn(resolve, playbackDurationMs));
-    }
-    emitPerformanceMarker('recording.stop.requested', { recordingSessionId });
-    this.hideRecordingPillFn();
-    return this.complete(audioData, transcriber, false);
-  }
-
   isActive(): boolean {
     return this.activeRun !== null && this.activeRun.state === 'recording';
   }
@@ -425,11 +332,7 @@ export class RecordingSession {
     this.onErrorCallback?.(error);
   }
 
-  async complete(
-    audioData: Uint8Array<ArrayBuffer>,
-    transcriberOverride?: Transcriber,
-    notifyResult = true,
-  ): Promise<RecordingResult | null> {
+  async complete(audioData: Uint8Array<ArrayBuffer>): Promise<RecordingResult | null> {
     const run = this.activeRun;
     if (!run) {
       audioData.fill(0);
@@ -437,7 +340,6 @@ export class RecordingSession {
     }
     run.state = 'transcribing';
     const pendingEnd = run.pendingEnd;
-    const intent = run.intent;
 
     if (audioData.byteLength <= 44) {
       console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
@@ -455,7 +357,7 @@ export class RecordingSession {
       return null;
     }
 
-    const transcriber = transcriberOverride ?? run.transcriber;
+    const transcriber = run.transcriber;
     try {
       const text = await this.transcribeCompletedAudio(run, transcriber, audioData);
       if (text === null || this.activeRun !== run) return null;
@@ -464,22 +366,14 @@ export class RecordingSession {
         : null;
       this.keyboardHook.setKeyboardStateListener?.(null);
       this.finishPresentationFn?.();
-      emitPerformanceMarker('recording.session.completed', {
-        recordingSessionId: run.id,
-        surface: intent,
-      });
       pendingEnd?.resolve(result);
-      if (notifyResult && this.onResultCallback) {
+      if (this.onResultCallback) {
         void this.onResultCallback(result);
       }
       return result;
     } catch (error) {
       if (this.activeRun !== run) return null;
       const err = error instanceof Error ? error : new Error(String(error));
-      emitPerformanceMarker('transcription.batch.failed', {
-        recordingSessionId: run.id,
-        surface: intent,
-      });
       const recognizedSoFar = run.streaming?.liveInsertion?.getState().rawCommitted;
       if (recognizedSoFar) {
         const result = this.createRecordingResult(
@@ -491,7 +385,7 @@ export class RecordingSession {
         this.keyboardHook.setKeyboardStateListener?.(null);
         this.finishPresentationFn?.();
         pendingEnd?.resolve(result);
-        if (notifyResult && this.onResultCallback) {
+        if (this.onResultCallback) {
           void this.onResultCallback(result);
         }
         return result;
@@ -514,9 +408,7 @@ export class RecordingSession {
   startKeyboardHook(onResult?: (result: RecordingResult | null) => void | Promise<void>): void {
     this.keyboardHook.start({
       onStart: (intent) => {
-        const recordingSessionId = randomUUID();
-        emitPerformanceMarker('hotkey.detected', { recordingSessionId, surface: intent });
-        return this.begin(intent, recordingSessionId);
+        return this.begin(intent);
       },
       onStop: () => {
         void this.end().then((result) => {
@@ -541,7 +433,6 @@ export class RecordingSession {
     this.preparePresentationFn();
 
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
-    ipcMain.on('audio-capture-started', this.handleAudioCaptureStarted);
     ipcMain.on('runtime:audio-first-buffer', this.handleAudioFirstBuffer);
     ipcMain.on('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.on('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
@@ -555,7 +446,6 @@ export class RecordingSession {
   stop(): void {
     this.clearDurationTimers();
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
-    ipcMain.off('audio-capture-started', this.handleAudioCaptureStarted);
     ipcMain.off('runtime:audio-first-buffer', this.handleAudioFirstBuffer);
     ipcMain.off('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.off('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
@@ -693,10 +583,6 @@ export class RecordingSession {
               if (this.activeRun !== run) return null;
             }
           }
-          emitPerformanceMarker('transcription.streaming.completed', {
-            recordingSessionId: run.id,
-            surface: run.intent,
-          });
           return acceptedFinal;
         } catch {
           if (this.activeRun !== run) return null;
@@ -706,19 +592,11 @@ export class RecordingSession {
     }
 
     if (this.activeRun !== run) return null;
-    emitPerformanceMarker('transcription.batch.requested', {
-      recordingSessionId: run.id,
-      surface: run.intent,
-    });
     const text = await transcriber.transcribe({
       audio: audioData,
       recognition: this.getRecognitionSettings(),
     });
     if (this.activeRun !== run) return null;
-    emitPerformanceMarker('transcription.batch.completed', {
-      recordingSessionId: run.id,
-      surface: run.intent,
-    });
     return text;
   }
 
@@ -805,26 +683,7 @@ export class RecordingSession {
   }
 
   private handleAudioStreamReady = (): void => {
-    emitPerformanceMarker('audio-stream.ready', {
-      recordingSessionId: this.activeRun?.id,
-    });
     this.audioCapture.markReady?.();
-  };
-
-  private handleAudioCaptureStarted = (
-    _event: unknown,
-    generation: number,
-    recordingSessionId: string,
-    sequence: number,
-    timing: AudioCaptureStartupTiming,
-  ): void => {
-    if (!this.acceptsAudioMarker(generation, recordingSessionId, sequence)) return;
-    emitPerformanceMarker('audio.capture.started', {
-      recordingSessionId,
-      surface: this.activeRun?.intent,
-      ...(Number.isFinite(timing?.micAcquisitionMs) ? { micAcquisitionMs: timing.micAcquisitionMs } : {}),
-      ...(Number.isFinite(timing?.graphSetupMs) ? { graphSetupMs: timing.graphSetupMs } : {}),
-    });
   };
 
   private handleAudioFirstBuffer = (
@@ -834,10 +693,6 @@ export class RecordingSession {
     sequence: number,
   ): void => {
     if (!this.acceptsAudioMarker(generation, recordingSessionId, sequence)) return;
-    emitPerformanceMarker('audio.first-buffer.received', {
-      recordingSessionId,
-      surface: this.activeRun?.intent,
-    });
     if (this.activeRun) this.onFirstAudioBufferCallback?.(this.activeRun.transcriber);
   };
 

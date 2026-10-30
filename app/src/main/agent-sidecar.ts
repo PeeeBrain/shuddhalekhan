@@ -6,7 +6,6 @@ import { failedProviderTest } from '../shared/agent-provider';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
 import { getPersistentStoreDirectory } from './store-path';
-import { emitPerformanceMarker } from './performance/marker-collector';
 import { KoffiJobObjectPort, type JobObjectPort } from './native/job-object';
 import type { AgentMemoryCommitResult, AgentRunContext } from '../shared/agent-context';
 
@@ -84,7 +83,6 @@ export class AgentSidecarManager {
 
   startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string, context?: AgentRunContext): void {
     this.cancelProviderTest();
-    emitPerformanceMarker('agent.run.requested', { agentRunId });
     this.start(config, agentApiKey);
     this.sendOrQueue({
       type: 'agent:start',
@@ -257,13 +255,11 @@ export class AgentSidecarManager {
           }
         }
         if (!assigned) {
-          emitPerformanceMarker('sidecar.job.assign-failed');
           this.onLifecycleError?.({ reason: 'job-assignment-failed', pid: pid ?? -1 });
           process.stop();
           this.teardownGeneration(generation);
           return;
         }
-        emitPerformanceMarker('sidecar.spawned', { childPid: pid });
       },
       onMessage: (event) => this.handleEvent(generation, event),
       onMalformedMessage: (_line, err) => {
@@ -340,9 +336,6 @@ export class AgentSidecarManager {
 
   private write(message: ElectronToSidecarMessage): void {
     this.process?.send(message);
-    if (message.type === 'config:update') {
-      emitPerformanceMarker('sidecar.config.sent');
-    }
   }
 
   private getSidecarLaunch(): JsonlProcessLaunch {

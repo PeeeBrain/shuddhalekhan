@@ -1,7 +1,6 @@
 import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { cleanFillerWords, TranscriptionFailure, type Transcriber } from './transcription';
-import { emitPerformanceMarker } from './performance/marker-collector';
 import { resolveManagedLocalThreads } from './managed-local-threads';
 
 type RuntimeProcess = {
@@ -68,7 +67,6 @@ export function createManagedLocalTranscriber({
     if (message.kind === 'ready') {
       if (loadTimeout) clearTimeout(loadTimeout);
       loadTimeout = null;
-      emitPerformanceMarker('managed-local.model.loaded', { loadMilliseconds: message.loadMilliseconds });
       resolveReady?.();
       resolveReady = null;
       rejectReady = null;
@@ -87,10 +85,6 @@ export function createManagedLocalTranscriber({
     clearTimeout(request.timeout);
     pending.delete(message.requestId);
     if (message.kind === 'result') {
-      emitPerformanceMarker('managed-local.transcription.completed', {
-        transcriptionMilliseconds: message.transcriptionMilliseconds,
-        audioDurationMilliseconds: message.audioDurationMilliseconds,
-      });
       request.resolve(message.text);
     }
     else request.reject(new TranscriptionFailure(
@@ -126,7 +120,6 @@ export function createManagedLocalTranscriber({
         process.on('message', onMessage);
         process.on('exit', (code) => {
           if (child !== process) return;
-          emitPerformanceMarker('managed-local.runtime.exited', { code });
           reset(process, new TranscriptionFailure(
             'model',
             code === 0
@@ -209,21 +202,19 @@ async function defaultStartProcess(): Promise<RuntimeProcess> {
 }
 
 type RuntimeResponse =
-  | { kind: 'ready'; loadMilliseconds: number }
+  | { kind: 'ready' }
   | { kind: 'load-error'; message: string }
-  | { kind: 'result'; requestId: string; text: string; transcriptionMilliseconds: number; audioDurationMilliseconds?: number }
+  | { kind: 'result'; requestId: string; text: string }
   | { kind: 'error'; requestId: string; message: string };
 
 function isRuntimeResponse(message: unknown): message is RuntimeResponse {
   if (!message || typeof message !== 'object' || !('kind' in message)) return false;
   const kind = message.kind;
-  if (kind === 'ready') return 'loadMilliseconds' in message && typeof message.loadMilliseconds === 'number';
+  if (kind === 'ready') return true;
   if (kind === 'load-error') return 'message' in message && typeof message.message === 'string';
   if (kind === 'result') {
     return 'requestId' in message && typeof message.requestId === 'string'
-      && 'text' in message && typeof message.text === 'string'
-      && 'transcriptionMilliseconds' in message && typeof message.transcriptionMilliseconds === 'number'
-      && (!('audioDurationMilliseconds' in message) || typeof message.audioDurationMilliseconds === 'number');
+      && 'text' in message && typeof message.text === 'string';
   }
   if (kind === 'error') {
     return 'requestId' in message && typeof message.requestId === 'string'

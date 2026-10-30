@@ -63,16 +63,11 @@ export function RecordingPopup({
   }, []);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.subscribe('recording:pill-show', (recordingSessionId) => {
+    const unsubscribe = window.electronAPI.subscribe('recording:pill-show', () => {
       recordingStartRef.current = Date.now();
       setElapsed(0);
       setRemainingSeconds(null);
       setPillState(reducedMotion ? 'visible' : 'entering');
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          window.electronAPI?.send('surface-paint-proxy', 'recording', recordingSessionId);
-        });
-      });
     });
     return unsubscribe;
   }, [reducedMotion]);
@@ -80,11 +75,6 @@ export function RecordingPopup({
   useEffect(() => {
     if (!recordingSessionId) return;
     recordingStartRef.current = Date.now();
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        window.electronAPI?.send('surface-paint-proxy', 'recording', recordingSessionId);
-      });
-    });
   }, [recordingSessionId]);
 
   useEffect(() => {

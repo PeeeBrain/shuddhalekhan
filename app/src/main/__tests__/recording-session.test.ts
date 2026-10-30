@@ -3,11 +3,6 @@ import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
 import type { StreamingTranscriptionRequest, Transcriber } from '../transcription';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
 import type { RecordingSession } from '../recording-session';
-import {
-  createMarkerCollector,
-  resetPerformanceMarkerCollectorForTests,
-  setPerformanceMarkerCollector,
-} from '../performance/marker-collector';
 
 const vi = { fn: mock };
 let RecordingSessionCtor: typeof RecordingSession;
@@ -486,7 +481,6 @@ describe('RecordingSession', () => {
 
     const registeredChannels = (electronMock.ipcMain.on as any).mock.calls.map((call: any) => call[0]);
     expect(registeredChannels).toContain('audio-stream-ready');
-    expect(registeredChannels).toContain('audio-capture-started');
     expect(registeredChannels).toContain('runtime:audio-first-buffer');
     expect(registeredChannels).toContain('audio-level-changed');
     expect(registeredChannels).not.toContain('audio-window-ready');
@@ -497,7 +491,6 @@ describe('RecordingSession', () => {
 
     const unregisteredChannels = (electronMock.ipcMain.off as any).mock.calls.map((call: any) => call[0]);
     expect(unregisteredChannels).toContain('audio-stream-ready');
-    expect(unregisteredChannels).toContain('audio-capture-started');
     expect(unregisteredChannels).toContain('runtime:audio-first-buffer');
     expect(unregisteredChannels).toContain('audio-level-changed');
     expect(unregisteredChannels).not.toContain('audio-window-ready');
@@ -722,119 +715,6 @@ describe('RecordingSession', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(onResult).toHaveBeenCalledTimes(1);
-  });
-
-  it('measures keyboard activation through the renderer-confirmed capture start', async () => {
-    const lines: string[] = [];
-    const onFirstAudioBuffer = vi.fn();
-    const transcriber = createTranscriber(({ audio }) => transcribe(audio));
-    resetPerformanceMarkerCollectorForTests();
-    setPerformanceMarkerCollector(createMarkerCollector(
-      {
-        enabled: true,
-        runId: 'run-test',
-        scenarioId: 'recording',
-        eventsPath: 'events.jsonl',
-      },
-      { pid: 99, now: () => 10, writeLine: (line) => lines.push(line) },
-    ));
-
-    session = new RecordingSessionCtor({
-      runtimeShell: audioStream,
-      transcriber,
-      keyboardHook: { start: keyboardStart, stop: keyboardStop },
-      captureTarget,
-      isAgentModeEnabled,
-      onFirstAudioBuffer,
-    });
-
-    session.start();
-    const onStart = (keyboardStart.mock.calls[0][0] as {
-      onStart: (intent: RecordingIntent) => void;
-    }).onStart;
-    onStart('dictation');
-
-    let events = lines.map((line) => JSON.parse(line).event);
-    expect(events).toEqual(['hotkey.detected', 'recording.begin.accepted']);
-    expect(onFirstAudioBuffer).not.toHaveBeenCalled();
-
-    const captureStartedCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'audio-capture-started'
-    );
-    expect(captureStartedCall).toBeDefined();
-    const firstBufferCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-first-buffer'
-    );
-    const command = audioStream.beginCapture.mock.calls[0]?.[0] as {
-      recordingSessionId: string;
-      sequence: number;
-    };
-    captureStartedCall[1]({}, 1, 'stale-session', command.sequence);
-    captureStartedCall[1]({}, 1, command.recordingSessionId, command.sequence, {
-      micAcquisitionMs: 180,
-      graphSetupMs: 12,
-    });
-    firstBufferCall[1]({}, 1, 'stale-session', command.sequence);
-    firstBufferCall[1]({}, 1, command.recordingSessionId, command.sequence);
-    expect(onFirstAudioBuffer).toHaveBeenCalledTimes(1);
-    expect(onFirstAudioBuffer).toHaveBeenCalledWith(transcriber);
-
-    const endPromise = session.end();
-    const fakeAudioData = new Uint8Array(64);
-    await session.complete(fakeAudioData);
-    await endPromise;
-
-    events = lines.map((line) => JSON.parse(line).event);
-    expect(events).toEqual([
-      'hotkey.detected',
-      'recording.begin.accepted',
-      'audio.capture.started',
-      'audio.first-buffer.received',
-      'recording.stop.requested',
-      'transcription.batch.requested',
-      'transcription.batch.completed',
-      'recording.session.completed',
-    ]);
-    const captureMarker = lines.map((line) => JSON.parse(line)).find((line) => line.event === 'audio.capture.started');
-    expect(captureMarker).toMatchObject({ micAcquisitionMs: 180, graphSetupMs: 12 });
-    resetPerformanceMarkerCollectorForTests();
-  });
-
-  it('runs a paced benchmark WAV without opening the live microphone', async () => {
-    const lines: string[] = [];
-    setPerformanceMarkerCollector(createMarkerCollector(
-      {
-        enabled: true,
-        runId: 'fixture-run',
-        scenarioId: 'dictation-recording',
-        eventsPath: 'events.jsonl',
-      },
-      { pid: 99, now: () => 10, writeLine: (line) => lines.push(line) },
-    ));
-    const fixtureTranscribe = vi.fn(async () => 'fixture transcript');
-
-    const result = await session.runPerformanceFixture(
-      new Uint8Array(64),
-      0,
-      createTranscriber(({ audio }) => fixtureTranscribe(audio)),
-    );
-
-    expect(result?.text).toBe('fixture transcript');
-    expect(audioStream.prepare).toHaveBeenCalledTimes(1);
-    expect(audioStream.beginCapture).not.toHaveBeenCalled();
-    expect(audioStream.endCapture).not.toHaveBeenCalled();
-    expect(showRecordingPill).toHaveBeenCalledTimes(1);
-    expect(hideRecordingPill).toHaveBeenCalledTimes(1);
-    expect(lines.map((line) => JSON.parse(line).event)).toEqual([
-      'hotkey.detected',
-      'recording.begin.accepted',
-      'audio.capture.started',
-      'recording.stop.requested',
-      'transcription.batch.requested',
-      'transcription.batch.completed',
-      'recording.session.completed',
-    ]);
-    resetPerformanceMarkerCollectorForTests();
   });
 
   it('streams correlated PCM, publishes preview, and returns one finalized transcript', async () => {

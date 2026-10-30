@@ -4,11 +4,6 @@ import { electronMock, installElectronMock, resetElectronMock } from '../../test
 import type { AppConfig } from '../../types/ipc';
 import type { SidecarEvent } from '../../agent/protocol';
 import { failedProviderTest } from '../../shared/agent-provider';
-import {
-  createMarkerCollector,
-  resetPerformanceMarkerCollectorForTests,
-  setPerformanceMarkerCollector,
-} from '../performance/marker-collector';
 
 const vi = { fn: mock, mock: mock.module };
 
@@ -269,23 +264,6 @@ describe('AgentSidecarManager', () => {
       config,
       agentApiKey: 'stored-agent-secret',
     });
-  });
-
-  it('marks configuration only after the config update has been sent to the sidecar', async () => {
-    const lines: string[] = [];
-    setPerformanceMarkerCollector(createMarkerCollector(
-      { enabled: true, runId: 'run-1', scenarioId: 'agent-no-mcp', eventsPath: 'events.jsonl' },
-      { pid: 7, now: () => 10, writeLine: (line) => lines.push(line) },
-    ));
-    const { AgentSidecarManager } = await importManager('config-marker');
-    const manager = new AgentSidecarManager(() => undefined, { jobPort: new FakeJobPort() });
-
-    manager.start(config);
-    stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));
-
-    expect(lines.map((line) => JSON.parse(line).event)).toContain('sidecar.config.sent');
-    expect(stdinWrite).toHaveBeenCalled();
-    resetPerformanceMarkerCollectorForTests();
   });
 
   it('runs the packaged sidecar under Electron node mode instead of launching another app instance', async () => {
