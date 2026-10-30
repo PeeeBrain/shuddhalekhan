@@ -32,6 +32,10 @@ logs/
 *.log
 report.*.json
 
+# Existing private recordings remain local after retiring the old tools.
+app/scripts/transcription-quality-cases.json
+app/fixtures/transcription-quality/*.wav
+
 # dotenv files
 .env
 .env.development.local

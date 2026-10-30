@@ -23,8 +23,8 @@ const FILLERS = new Set(['uh', 'uhh', 'um', 'umm', 'hmm', 'mm', 'ah', 'er', 'erm
 const UNITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
   'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
 const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
-const SCALES: Record<string, number> = { thousand: 1e3, lakh: 1e5, million: 1e6, crore: 1e7, billion: 1e9 };
-const REPEATS: Record<string, number> = { double: 2, triple: 3 };
+const SCALES = new Map(Object.entries({ thousand: 1e3, lakh: 1e5, million: 1e6, crore: 1e7, billion: 1e9 }));
+const REPEATS = new Map(Object.entries({ double: 2, triple: 3 }));
 const DIGITS = /^\d+$/;
 
 // ponytail: explicit British→American pairs; extend the list when a real transcript trips on a missing one.
@@ -62,11 +62,11 @@ function digitize(words: string[]): string[] {
     const unit = UNITS.indexOf(word);
     const tens = TENS.indexOf(word);
     const next = words[i + 1];
-    if (REPEATS[word] && UNITS.indexOf(next) >= 0 && UNITS.indexOf(next) < 10) {
+    if (REPEATS.has(word) && UNITS.indexOf(next) >= 0 && UNITS.indexOf(next) < 10) {
       flush();
-      out.push(String(UNITS.indexOf(next)).repeat(REPEATS[word]));
+      out.push(String(UNITS.indexOf(next)).repeat(REPEATS.get(word)!));
       i++;
-    } else if (DIGITS.test(word) && (continues() || SCALES[next] || next === 'hundred')) {
+    } else if (DIGITS.test(word) && (continues() || SCALES.has(next) || next === 'hundred')) {
       if (!continues()) flush();
       current += Number(word);
       last = 'unit';
@@ -82,8 +82,8 @@ function digitize(words: string[]): string[] {
     } else if (word === 'hundred') {
       current = (last === 'none' || last === 'scale' ? Math.max(current, 1) : current) * 100;
       last = 'hundred';
-    } else if (SCALES[word] && last !== 'none') {
-      total += Math.max(current, 1) * SCALES[word];
+    } else if (SCALES.has(word) && last !== 'none') {
+      total += Math.max(current, 1) * SCALES.get(word)!;
       current = 0;
       last = 'scale';
     } else if (word === 'and' && continues() && UNITS.concat(TENS).includes(next)) {

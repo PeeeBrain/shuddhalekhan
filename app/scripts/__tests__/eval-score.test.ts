@@ -13,6 +13,11 @@ const result = (timings: (i: number) => number[], hypothesis: string, stats = ru
 const steady = (ms: number) => (i: number) => Array.from({ length: 20 }, () => ms + (i % 5));
 
 describe('eval scorer', () => {
+  test('ordinary words that name inherited properties are not numbers', () => {
+    expect(normalize('one constructor')).toEqual(['1', 'constructor']);
+    expect(normalize('constructor one')).toEqual(['constructor', '1']);
+  });
+
   test('splits deletions from insertions and scores punctuation/case separately', () => {
     expect(scoreClip('a', REF, 'please send report to ravi today'))
       .toMatchObject({ words: 6, errors: 2, deletions: 1, insertions: 1, firstThreeWrong: true });
