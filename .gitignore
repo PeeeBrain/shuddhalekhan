@@ -54,3 +54,6 @@ TODO.md
 .tauri/
 *.key
 *.key.pub
+
+# Eval audio and run output (Svarah sample, too big to commit)
+app/eval-data/

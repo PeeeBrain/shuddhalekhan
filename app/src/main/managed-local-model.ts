@@ -11,6 +11,7 @@ import {
   stat,
 } from 'fs/promises';
 import { isAbsolute, join, normalize, relative, sep } from 'path';
+import type { OfflineRecognizerConfig } from 'sherpa-onnx-node';
 import type { ManagedLocalModelState } from '../types/ipc';
 
 export interface ManagedLocalModelManifest {
@@ -43,6 +44,25 @@ export const MANAGED_LOCAL_MODEL = {
   archiveRoot: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
   requiredFiles: ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'],
 } satisfies ManagedLocalModelManifest;
+
+/** Recognizer settings shared by the local STT worker and the eval harness, so evals measure what users run. */
+export function managedLocalRecognizerConfig(modelPath: string, numThreads: number): OfflineRecognizerConfig {
+  return {
+    featConfig: { sampleRate: 16_000, featureDim: 80 },
+    modelConfig: {
+      transducer: {
+        encoder: join(modelPath, 'encoder.int8.onnx'),
+        decoder: join(modelPath, 'decoder.int8.onnx'),
+        joiner: join(modelPath, 'joiner.int8.onnx'),
+      },
+      tokens: join(modelPath, 'tokens.txt'),
+      numThreads,
+      provider: 'cpu',
+      modelType: 'nemo_transducer',
+      debug: false,
+    },
+  };
+}
 
 type FetchArtifact = (url: string, init: RequestInit) => Promise<Response>;
 type ExtractArchive = (archivePath: string, stagingPath: string) => Promise<void>;
