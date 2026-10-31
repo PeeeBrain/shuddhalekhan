@@ -218,7 +218,8 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
     }
   };
 
-  // Fill the recommended URL only over a blank or another preset URL; never clobber custom URL, model, or key.
+  // Fill the recommended URL only over a blank or another preset URL; never clobber custom URL or key.
+  // The model is kept, except on switching to the ChatGPT plan, whose models come only from the account.
   // Newly choosing OpenAI or Azure recommends Responses; saved profiles keep their API until the user changes it.
   // Cache breakpoints are a per-provider, per-model opt-in, so a kind change turns them off.
   const changeKind = (kind: AgentProviderKind) => {
@@ -229,6 +230,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
     commitProvider({
       kind,
       baseUrl,
+      ...(kind === 'chatgpt' && provider.kind !== 'chatgpt' ? { model: '' } : {}),
       apiMode: kind === 'chatgpt'
         ? 'responses'
         : kind !== 'openai' && kind !== 'azure-openai'

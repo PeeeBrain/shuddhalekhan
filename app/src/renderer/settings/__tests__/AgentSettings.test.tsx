@@ -337,13 +337,13 @@ describe('AgentSettings provider checks', () => {
 });
 
 describe('AgentSettings ChatGPT plan', () => {
-  it('switches to the ChatGPT plan without endpoint or API key fields', async () => {
-    const { lastProvider } = await renderAgent();
+  it('switches to the ChatGPT plan without endpoint, API key, or the previous provider’s model', async () => {
+    const { lastProvider } = await renderAgent({ provider: { model: 'openai/gpt-4.1-mini' } });
 
     await chooseOption('Provider', 'ChatGPT plan');
 
     expect(lastProvider()).toMatchObject({
-      kind: 'chatgpt', baseUrl: 'https://api.openai.com/v1', apiMode: 'responses', auth: 'bearer',
+      kind: 'chatgpt', baseUrl: 'https://api.openai.com/v1', apiMode: 'responses', auth: 'bearer', model: '',
     });
     expect(screen.queryByRole('textbox', { name: 'Base URL' })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Authentication' })).not.toBeInTheDocument();
