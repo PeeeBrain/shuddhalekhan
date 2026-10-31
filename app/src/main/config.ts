@@ -14,6 +14,7 @@ import { agentProviderSchema, getAgentProviderIssues } from '../shared/agent-pro
 import { z } from 'zod';
 
 type StoreConfig = Omit<AppConfig, 'dictation'> & {
+  chatGptHostId?: string;
   dictation?: unknown;
   migrated?: boolean;
   transcriptionMigrated?: boolean;
@@ -278,6 +279,9 @@ export function getConfig(): AppConfig {
     },
   };
 }
+
+export function getChatGptHostId(): string | undefined { return store.get('chatGptHostId'); }
+export function setChatGptHostId(id: string): void { store.set('chatGptHostId', id); }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
   if (key === 'agent') {

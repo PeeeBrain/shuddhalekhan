@@ -26,6 +26,7 @@ tags and commit history, not from this file. Keep new entries under
 - Removed the deprecated `recordingActivationMode` config alias from the public config surface; existing installs still seed per-intent activation modes from it once during migration.
 
 ### Agent Mode
+- Agent Mode can use your ChatGPT Plus or Pro plan. Choose "ChatGPT plan" as the provider, continue with ChatGPT in your browser, and pick a model. No API key is needed, and your plan's usage limits apply.
 - Added Skills settings to create, import, edit, enable, and remove local `skills/<name>/SKILL.md` workflows. Agent runs load relevant instructions and text references on demand while preserving MCP tool approvals.
 - Added optional automatic memory for useful user preferences and facts, stored locally as `agent-memory.md`. Memory settings supports editing, deleting, and clearing saved facts. Learning uses one extra bounded request to the configured model after a successful Agent run; Dictation does not read or write memory.
 - Agent runs now preserve stable prompt prefixes and tool ordering for provider caching, send OpenRouter cache markers and session routing, and record reported cache usage. OpenAI/Azure Settings offers a tested opt-in for supported cache breakpoints.

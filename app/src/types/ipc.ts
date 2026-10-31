@@ -60,7 +60,13 @@ export type CredentialStatus =
 
 export type AgentApiKeySource = 'environment' | 'stored';
 export type AgentReasoningEffort = 'low' | 'medium' | 'high';
-export type AgentProviderKind = 'openai' | 'azure-openai' | 'openrouter' | 'openai-compatible';
+export type AgentProviderKind = 'openai' | 'azure-openai' | 'openrouter' | 'openai-compatible' | 'chatgpt';
+
+export type ChatGptAccountStatus =
+  | { state: 'signed-out' }
+  | { state: 'signed-in'; email: string; planUsage: boolean };
+
+export interface ChatGptModel { slug: string; displayName: string }
 export type AgentApiMode = 'chat-completions' | 'responses';
 export type AgentReasoning = 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -208,6 +214,10 @@ export type InjectResult =
   | { kind: 'error'; message: string };
 
 export interface RendererToMainInvokeChannels {
+  'chatgpt:get-status': () => Promise<ChatGptAccountStatus>;
+  'chatgpt:sign-in': () => Promise<ChatGptAccountStatus>;
+  'chatgpt:sign-out': () => Promise<ChatGptAccountStatus>;
+  'chatgpt:list-models': () => Promise<ChatGptModel[]>;
   'skills:list': () => Promise<AgentSkillSummary[]>;
   'skills:read': (name: string) => Promise<AgentSkillDocument>;
   'skills:save': (document: AgentSkillDocument & { create: boolean }) => Promise<AgentSkillSummary[]>;
@@ -257,6 +267,7 @@ export interface RendererToMainInvokeChannels {
 }
 
 export interface MainToRendererChannels {
+  'chatgpt:changed': (status: ChatGptAccountStatus) => void;
   'memory:changed': (snapshot: AgentMemorySnapshot) => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;

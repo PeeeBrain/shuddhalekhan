@@ -91,7 +91,7 @@ const agentSendApprovalDecision = vi.fn();
 const agentTestMcpServer = vi.fn();
 const agentTestProvider = vi.fn();
 const agentCancelProviderTest = vi.fn();
-const credentialVault = { read: vi.fn(() => null) };
+const credentialVault = { read: vi.fn(() => null), save: vi.fn(), remove: vi.fn() };
 const registerCredentialIpcHandlers = vi.fn();
 let agentEventHandler: ((event: any) => void) | null = null;
 let agentManagerDeps: {
@@ -156,6 +156,8 @@ mock.module('../tray', () => ({
 }));
 mock.module('../config', () => ({
   getConfig,
+  getChatGptHostId: () => 'urn:uuid:installation',
+  setChatGptHostId: vi.fn(),
   setConfig,
   mergeDiscoveredTools,
   getLastSeenReleaseNotesVersion,
@@ -396,6 +398,48 @@ describe('main process IPC orchestration', () => {
     changed('agent-api-key');
     expect(agentCancelProviderTest).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith('agent:provider-invalidated');
+  });
+
+  it('uses the plan grant for runs and probes while exposing only account status to Settings', async () => {
+    const provider = { ...baseConfig.agent.provider, kind: 'chatgpt', model: 'gpt-plan', apiKeySource: 'stored' };
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true, provider } };
+    getConfig.mockReturnValue(config);
+    credentialVault.read.mockImplementation((id: string) => id === 'chatgpt-account' ? JSON.stringify({
+      clientId: 'issued-client', issuer: 'https://auth.openai.com', subject: 'account', email: 'user@example.com',
+      tokens: { accessToken: 'private-plan-token', refreshToken: 'private-refresh', idToken: 'private-identity',
+        expiresAt: Date.now() + 3600_000, scopes: ['chatgpt.tokens.use.direct'] },
+    }) : 'paid-api-key');
+    await import(`../index?test=${Date.now()}-chatgpt-grant`);
+    agentTestProvider.mockResolvedValue({ streaming: { status: 'passed' } });
+    expect(await ipcHandlers.get('chatgpt:get-status')?.({})).toEqual({ state: 'signed-in', email: 'user@example.com', planUsage: true });
+    expect(await ipcHandlers.get('agent:validate-provider')?.({}, provider)).toEqual({ credentials: 'available', issues: [] });
+    const result = await ipcHandlers.get('agent:test-provider')?.({}, provider);
+    expect(agentTestProvider).toHaveBeenCalledWith(expect.objectContaining({ kind: 'chatgpt' }), 'private-plan-token');
+    expect(JSON.stringify(result)).not.toContain('private-');
+    await sessionOptions.onResult({ text: 'Do the task.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
+    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'Do the task.', config, 'private-plan-token', expect.any(Object));
+    expect(JSON.stringify(send.mock.calls)).not.toContain('private-');
+    expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('does not start a cancelled provider probe after a pending token refresh finishes', async () => {
+    const provider = { ...baseConfig.agent.provider, kind: 'chatgpt', model: 'gpt-plan' };
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...baseConfig.agent, enabled: true, provider } });
+    credentialVault.read.mockReturnValue(JSON.stringify({
+      clientId: 'issued-client', issuer: 'https://auth.openai.com', subject: 'account', email: 'user@example.com',
+      tokens: { accessToken: 'old-token', refreshToken: 'old-refresh', idToken: 'identity', expiresAt: 0, scopes: ['chatgpt.tokens.use.direct'] },
+    }));
+    await import(`../index?test=${Date.now()}-chatgpt-probe-cancel`);
+    let finishRefresh!: (response: Response) => void;
+    let refreshed!: () => void;
+    const started = new Promise<void>(resolve => { refreshed = resolve; });
+    globalThis.fetch = vi.fn(() => new Promise<Response>(resolve => { finishRefresh = resolve; refreshed(); }));
+    const pending = ipcHandlers.get('agent:test-provider')?.({}, provider);
+    await started;
+    await ipcHandlers.get('agent:cancel-provider-test')?.({});
+    finishRefresh(Response.json({ access_token: 'new-token', refresh_token: 'new-refresh', expires_in: 3600, scope: 'chatgpt.tokens.use.direct' }));
+    expect(await pending).toMatchObject({ diagnostic: { kind: 'cancelled' } });
+    expect(agentTestProvider).not.toHaveBeenCalled();
   });
 
   it('pauses shortcuts through IPC and restores capture suspension explicitly', async () => {

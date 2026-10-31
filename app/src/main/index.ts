@@ -6,6 +6,8 @@ import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler }
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
 import {
   getConfig,
+  getChatGptHostId,
+  setChatGptHostId,
   getLastSeenReleaseNotesVersion,
   mergeDiscoveredTools,
   setConfig,
@@ -14,6 +16,8 @@ import {
 import { credentialVault } from './credential-vault';
 import { registerCredentialIpcHandlers } from './credential-ipc';
 import { getAgentSidecarApiKey } from './agent-credential';
+import { ChatGptAuth } from './chatgpt-auth';
+import { loadAppIcon } from './app-icon';
 import { failedProviderTest, normalizeAgentProvider } from '../shared/agent-provider';
 import { agentProviderSchema, resolveAgentProviderKey } from '../shared/agent-provider-validation';
 import type { AgentProviderConfig } from '../types/ipc';
@@ -64,6 +68,7 @@ import {
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
+let providerTestRevision = 0;
 let retryPasteInFlight = false;
 const runtimeShell = new RuntimeShell();
 const agentPresenter = createRuntimeShellPresenter(runtimeShell);
@@ -117,6 +122,19 @@ const agentContext = registerAgentContextIpcHandlers(getPersistentStoreDirectory
   getActiveAgentRunId: () => activeAgentRunId,
   reply: (agentRunId, requestId, result) => agentSidecar.sendMemoryResult(agentRunId, requestId, result),
   publish: snapshot => getSettingsWindow()?.webContents.send('memory:changed', snapshot),
+});
+const chatGptAuth = new ChatGptAuth({
+  vault: credentialVault, fetch: (url, init) => fetch(url, init), now: Date.now,
+  openBrowser: url => shell.openExternal(url), getHostId: getChatGptHostId, setHostId: setChatGptHostId,
+  appIconDataUrl: () => loadAppIcon().toDataURL(),
+  onChanged: status => {
+    getSettingsWindow()?.webContents.send('chatgpt:changed', status);
+    agentSidecar.cancelProviderTest();
+    getSettingsWindow()?.webContents.send('agent:provider-invalidated');
+    if (status.state === 'signed-out' && getConfig().agent.provider.kind === 'chatgpt') {
+      if (getConfig().agent.enabled) agentSidecar.start(getConfig());
+    }
+  },
 });
 const recordingSession = new RecordingSession({
   runtimeShell,
@@ -432,7 +450,7 @@ function invalidateActiveAgentRun(): void {
   agentSidecar.cancelRun(previousRunId);
 }
 
-function startAgentRun(text: string, config: AppConfig): void {
+async function startAgentRun(text: string, config: AppConfig): Promise<void> {
   if (!config.agent.enabled) {
     console.warn('Ignoring Agent Mode transcript because Agent Mode is disabled');
     showAgentConfigNotice('Agent Mode is disabled. Open Settings to enable it.');
@@ -443,11 +461,23 @@ function startAgentRun(text: string, config: AppConfig): void {
   invalidateActiveAgentRun();
   const agentRunId = randomUUID();
   activeAgentRunId = agentRunId;
+  let apiKey: string | undefined;
+  try {
+    apiKey = config.agent.provider.kind === 'chatgpt'
+      ? await chatGptAuth.getAccessToken() : getAgentSidecarApiKey(config, credentialVault);
+  } catch (error) {
+    if (activeAgentRunId !== agentRunId) return;
+    activeAgentRunId = null;
+    runtimeShell.showFailure(null, error instanceof Error ? error.message : 'Sign in with ChatGPT again in Settings.');
+    return;
+  }
+  if (activeAgentRunId !== agentRunId) return;
+  if (!getConfig().agent.enabled) { activeAgentRunId = null; return; }
   agentSidecar.startRun(
     agentRunId,
     text,
     config,
-    getAgentSidecarApiKey(config, credentialVault),
+    apiKey,
     agentContext.createRunContext(),
   );
   console.log(`Started Agent Mode run ${agentRunId}`);
@@ -492,12 +522,18 @@ async function showBundledReleaseNotesAfterInstall(): Promise<void> {
 
 // IPC handlers
 function invalidateProviderTest(): void {
+  providerTestRevision++;
   agentSidecar.cancelProviderTest();
   getSettingsWindow()?.webContents.send('agent:provider-invalidated');
 }
 
 function validateAgentProvider(provider: AgentProviderConfig) {
   const normalized = normalizeAgentProvider(provider);
+  if (normalized.kind === 'chatgpt') {
+    const status = chatGptAuth.getStatus();
+    // Validation reads account state without minting or exposing a credential.
+    return resolveAgentProviderKey(provider, status.state === 'signed-in' && status.planUsage ? 'available' : undefined, {}).validation;
+  }
   const apiKey = normalized.auth !== 'none' && normalized.apiKeySource === 'stored'
     ? credentialVault.read('agent-api-key') ?? undefined : undefined;
   return resolveAgentProviderKey(provider, apiKey, process.env).validation;
@@ -507,6 +543,15 @@ registerCredentialIpcHandlers(ipcMain, credentialVault, credential => {
   getSettingsWindow()?.webContents.send('credential:changed', credential);
   if (credential === 'agent-api-key') invalidateProviderTest();
 });
+
+ipcMain.handle('chatgpt:get-status', () => chatGptAuth.getStatus());
+ipcMain.handle('chatgpt:sign-in', () => chatGptAuth.signIn());
+ipcMain.handle('chatgpt:sign-out', () => {
+  providerTestRevision++;
+  if (getConfig().agent.provider.kind === 'chatgpt') invalidateActiveAgentRun();
+  return chatGptAuth.signOut();
+});
+ipcMain.handle('chatgpt:list-models', () => chatGptAuth.listModels());
 
 ipcMain.handle('agent:validate-provider', (_event, value: unknown) => {
   const parsed = agentProviderSchema.safeParse(value);
@@ -522,12 +567,21 @@ ipcMain.handle('agent:test-provider', async (_event, value: unknown) => {
   if (validation.issues.length) return failedProviderTest({ kind: 'configuration', message: validation.issues[0].message, action: 'Correct the Agent settings before testing.' }, validation);
   if (!getConfig().agent.enabled) return failedProviderTest({ kind: 'configuration', message: 'Agent Mode is disabled.', action: 'Enable Agent Mode to test the model. Local validation works while disabled.' }, validation);
   if (activeAgentRunId) return failedProviderTest({ kind: 'busy', message: 'An agent run is active.', action: 'Wait for the run to finish before testing the model.' }, validation);
-  const apiKey = provider.apiKeySource === 'stored' && provider.auth !== 'none'
-    ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+  const revision = ++providerTestRevision;
+  let apiKey: string | undefined;
+  try {
+    apiKey = provider.kind === 'chatgpt' ? await chatGptAuth.getAccessToken()
+      : provider.apiKeySource === 'stored' && provider.auth !== 'none' ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+  } catch (error) {
+    return failedProviderTest({ kind: 'authentication', message: error instanceof Error ? error.message : 'Sign in with ChatGPT again.', action: 'Open ChatGPT account settings and sign in again.' }, validateAgentProvider(provider));
+  }
+  if (revision !== providerTestRevision || activeAgentRunId || !getConfig().agent.enabled) {
+    return failedProviderTest({ kind: 'cancelled', message: 'The provider test was cancelled.', action: 'Test the current provider again when ready.' }, validation);
+  }
   return agentSidecar.testProvider(provider, apiKey);
 });
 
-ipcMain.handle('agent:cancel-provider-test', () => { agentSidecar.cancelProviderTest(); });
+ipcMain.handle('agent:cancel-provider-test', () => { providerTestRevision++; agentSidecar.cancelProviderTest(); });
 
 ipcMain.handle('audio:get-devices', async () => {
   const webContents = recordingSession.getAudioWebContents();

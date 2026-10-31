@@ -5,6 +5,16 @@ import { getAgentProviderIssues, resolveAgentProviderKey } from '../agent-provid
 const local = { baseUrl: 'http://[::1]:11434/v1/', model: ' local ', apiKeyEnvVar: '' };
 
 describe('Agent provider configuration', () => {
+  it('pins ChatGPT to plan billing and never resolves an environment credential', () => {
+    const provider = { ...local, kind: 'chatgpt' as const, apiKeyEnvVar: 'PAID_API_KEY', auth: 'none' as const };
+    expect(normalizeAgentProvider(provider)).toMatchObject({
+      baseUrl: 'https://api.openai.com/v1', apiMode: 'responses', auth: 'bearer', apiKeyEnvVar: '', allowInsecureHttp: false,
+    });
+    const missing = resolveAgentProviderKey(provider, undefined, { PAID_API_KEY: 'paid-key' });
+    expect(missing.apiKey).toBeUndefined();
+    expect(missing.validation.credentials).toBe('missing');
+    expect(resolveAgentProviderKey(provider, 'plan-token', {}).validation).toEqual({ credentials: 'available', issues: [] });
+  });
   it('migrates provider identities and reasoning without switching API mode or endpoints', () => {
     const azure = normalizeAgentProvider({ ...local, baseUrl: 'https://resource.openai.azure.com/openai/v1', model: 'production', thinkingEnabled: true, reasoningEffort: 'high', apiKeyEnvVar: 'AZURE_KEY' });
     expect(azure).toMatchObject({ kind: 'azure-openai', apiMode: 'chat-completions', auth: 'api-key', reasoning: 'high', model: 'production', cacheBreakpoints: false });
