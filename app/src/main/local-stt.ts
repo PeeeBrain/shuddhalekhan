@@ -56,6 +56,7 @@ let incremental: { id: string; decoder: ReturnType<typeof createIncrementalDecod
 
 function handleIncremental(message: IncrementalMessage): void {
   if (message.kind === 'incremental-start') {
+    incremental?.decoder.cancel();
     const model = recognizer;
     incremental = model ? {
       id: message.requestId,
@@ -69,7 +70,10 @@ function handleIncremental(message: IncrementalMessage): void {
     return;
   }
   if (message.kind === 'incremental-cancel') {
-    if (session) incremental = null;
+    if (session) {
+      session.decoder.cancel();
+      incremental = null;
+    }
     return;
   }
   if (!session) {
