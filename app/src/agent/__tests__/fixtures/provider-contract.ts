@@ -5,12 +5,13 @@ import { createAgentProvider } from '../../provider';
 import { testAgentProvider } from '../../provider-test';
 import { providerDiagnostic } from '../../provider-diagnostic';
 import { runAgent } from '../../runtime';
+import { learnAgentMemory } from '../../memory';
 import type { AgentProviderConfig } from '../../../types/ipc';
 
 const apiKey = 'fake-azure-key-without-sk-prefix';
 process.env.PROVIDER_CONTRACT_KEY = apiKey;
 let captures: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = [];
-let mode: 'text' | 'tools' | 'cache-loop' | 'no-cache-metrics' | 'no-tool' | 'auth-error' | 'stall' | 'length' | 'tool-preamble-only' = 'text';
+let mode: 'text' | 'tools' | 'cache-loop' | 'no-cache-metrics' | 'no-tool' | 'auth-error' | 'stall' | 'length' | 'tool-preamble-only' | 'plan-limit' | 'reject-include' = 'text';
 const reasoningDetails = [{ type: 'reasoning.encrypted', data: 'opaque-test-data', id: 'reason-1', format: 'anthropic-claude-v1', index: 0 }];
 const messagesSchema = z.object({ messages: z.array(z.object({ role: z.string(), reasoning_details: z.unknown().optional() })).optional() });
 const cacheCount = (body: Record<string, unknown>) => (JSON.stringify(body).match(/"(?:cache_control|prompt_cache_breakpoint)"/g) ?? []).length;
@@ -20,6 +21,9 @@ globalThis.fetch = async (input, init) => {
   const url = String(input);
   captures.push({ url, headers: new Headers(init?.headers), body });
   assert.equal(init?.redirect, 'error');
+  if (mode === 'reject-include' && body.include) {
+    return Response.json({ error: { code: 'subscription_sharing_unsupported_capability', param: 'include', message: 'Unsupported include' } }, { status: 400 });
+  }
   if (body.model === 'old-cache-model' && cacheCount(body)) {
     return Response.json({ error: { message: 'prompt_cache_breakpoint is not supported' } }, { status: 400 });
   }
@@ -38,6 +42,12 @@ globalThis.fetch = async (input, init) => {
     const toolCall = body.tools && (mode === 'cache-loop' ? outputCount < 3 : mode === 'tools' && outputCount === 0);
     const event = (value: { type: string; [key: string]: unknown }) => `event: ${value.type}\ndata: ${JSON.stringify(value)}\n\n`;
     let events = event({ type: 'response.created', response: { id: 'resp-1', created_at: 1, model: body.model } });
+    if (mode === 'plan-limit') {
+      events += event({ type: 'response.failed', sequence_number: 1, response: { error: {
+        code: 'subscription_sharing_usage_limit_exceeded', message: 'Plan limit reached',
+      } } });
+      return new Response(events, { headers: { 'content-type': 'text/event-stream' } });
+    }
     if (toolCall) {
       const reasoning = { type: 'reasoning', id: 'reason-1', encrypted_content: 'opaque-response-reasoning' };
       const call = { type: 'function_call', id: 'function-1', call_id: 'call-1', name: 'provider_check_echo', arguments: '{"value":"shuddhalekhan-provider-check"}', status: 'completed' };
@@ -77,9 +87,9 @@ const profile: AgentProviderConfig = {
   model: 'gpt-5-mini', auth: 'bearer', apiKeySource: 'environment', apiKeyEnvVar: 'PROVIDER_CONTRACT_KEY', reasoning: 'high',
 };
 
-async function capture(provider: AgentProviderConfig) {
+async function capture(provider: AgentProviderConfig, token?: string) {
   captures = [];
-  const client = createAgentProvider(provider, undefined, 'contract-session');
+  const client = createAgentProvider(provider, token, 'contract-session');
   const result = streamText({ model: client.model, providerOptions: client.providerOptions,
     instructions: { role: 'system', content: 'Stable test instructions.', providerOptions: client.cacheMessageOptions },
     prepareStep: client.prepareStep, prompt: 'Reply OK', maxRetries: 0, onError: () => undefined });
@@ -98,6 +108,44 @@ assert.equal(openai.body.reasoning, undefined);
 assert.equal(openai.headers.get('authorization'), `Bearer ${apiKey}`);
 assert.equal(cacheCount(openai.body), 0);
 assert.equal(openai.body.prompt_cache_key, undefined);
+const chatgptProfile = { ...profile, kind: 'chatgpt' as const, baseUrl: 'https://wrong.example', auth: 'none' as const };
+const chatgpt = await capture(chatgptProfile, 'plan-token');
+assert.equal(chatgpt.url, 'https://api.openai.com/v1/responses');
+assert.equal(chatgpt.headers.get('authorization'), 'Bearer plan-token');
+assert.equal(chatgpt.body.store, false);
+assert.equal(chatgpt.body.stream, true);
+const chatgptInput = z.array(z.object({ role: z.string().optional() })).parse(chatgpt.body.input);
+assert.ok(chatgptInput.some(item => item.role === 'developer'));
+assert.ok(chatgptInput.every(item => item.role !== 'system'));
+assert.throws(() => createAgentProvider(chatgptProfile), /Sign in with ChatGPT/);
+const chatgptCheck = await testAgentProvider(chatgptProfile, new AbortController().signal, 'plan-token');
+assert.equal(chatgptCheck.streaming.status, 'passed');
+for (const request of captures) {
+  assert.equal(request.body.max_output_tokens, undefined);
+  assert.equal(request.body.store, false);
+  assert.equal(request.body.stream, true);
+}
+captures = [];
+let memoryCommits = 0;
+await learnAgentMemory({ agentRunId: 'chatgpt-memory', transcript: 'I prefer Marathi.',
+  config: { agent: { enabled: true, provider: chatgptProfile, mcpServers: [] } },
+  memory: { revision: 'initial', markdown: '' }, storedApiKey: 'plan-token', signal: new AbortController().signal,
+  callbacks: { onStatus() {}, onResponseDelta() {}, onCompleted() {}, onFailed() {}, onCancelled() {},
+    requestToolApproval: async () => ({ approved: true }), commitMemory: async () => { memoryCommits++; return { saved: true }; } },
+});
+assert.equal(captures.length, 0, 'ChatGPT memory learning must never issue a non-streaming request');
+assert.equal(memoryCommits, 0);
+mode = 'plan-limit';
+const planLimit = await testAgentProvider(chatgptProfile, new AbortController().signal, 'plan-token');
+assert.equal(planLimit.diagnostic?.kind, 'quota');
+assert.ok(planLimit.diagnostic?.action.includes('https://chatgpt.com/settings/usage'));
+mode = 'reject-include';
+captures = [];
+const includeFallback = await testAgentProvider(chatgptProfile, new AbortController().signal, 'plan-token');
+assert.equal(includeFallback.streaming.status, 'passed');
+assert.ok(captures.some(request => request.body.include !== undefined));
+assert.ok(captures.some(request => request.body.include === undefined));
+mode = 'text';
 const azureProfile: AgentProviderConfig = { ...profile, kind: 'azure-openai', baseUrl: 'https://resource.openai.azure.com/openai/v1/', model: 'production', auth: 'api-key' };
 const azure = await capture(azureProfile);
 assert.equal(azure.body.model, 'production');

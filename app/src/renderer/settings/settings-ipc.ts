@@ -15,6 +15,8 @@ import type {
   AgentProviderConfig,
   AgentProviderValidation,
   AgentProviderTestResult,
+  ChatGptAccountStatus,
+  ChatGptModel,
 } from '../../types/ipc';
 import type {
   AgentMemorySnapshot,
@@ -61,6 +63,11 @@ export interface SettingsIpc {
   testAgentProvider: (provider: AgentProviderConfig) => Promise<AgentProviderTestResult>;
   cancelAgentProviderTest: () => Promise<void>;
   onAgentProviderInvalidated: (callback: () => void) => Unsubscribe | undefined;
+  getChatGptStatus: () => Promise<ChatGptAccountStatus>;
+  signInChatGpt: () => Promise<ChatGptAccountStatus>;
+  signOutChatGpt: () => Promise<ChatGptAccountStatus>;
+  listChatGptModels: () => Promise<ChatGptModel[]>;
+  onChatGptChanged: (callback: (status: ChatGptAccountStatus) => void) => Unsubscribe | undefined;
   listSkills: () => Promise<AgentSkillSummary[]>;
   readSkill: (name: string) => Promise<AgentSkillDocument>;
   saveSkill: (document: AgentSkillDocument & { create: boolean }) => Promise<AgentSkillSummary[]>;
@@ -122,6 +129,11 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await electronAPI?.invoke('agent:cancel-provider-test');
     },
     onAgentProviderInvalidated: (callback) => electronAPI?.subscribe('agent:provider-invalidated', callback),
+    getChatGptStatus: () => requireElectronApi(electronAPI).invoke('chatgpt:get-status'),
+    signInChatGpt: () => requireElectronApi(electronAPI).invoke('chatgpt:sign-in'),
+    signOutChatGpt: () => requireElectronApi(electronAPI).invoke('chatgpt:sign-out'),
+    listChatGptModels: () => requireElectronApi(electronAPI).invoke('chatgpt:list-models'),
+    onChatGptChanged: (callback) => electronAPI?.subscribe('chatgpt:changed', callback),
     listSkills: () => requireElectronApi(electronAPI).invoke('skills:list'),
     readSkill: (name) => requireElectronApi(electronAPI).invoke('skills:read', name),
     saveSkill: (document) => requireElectronApi(electronAPI).invoke('skills:save', document),
