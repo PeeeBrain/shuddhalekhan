@@ -2,6 +2,7 @@ import { expect, it } from 'bun:test';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { get } from 'node:http';
 import { ChatGptAuth } from '../chatgpt-auth';
+import type { ChatGptAccountStatus } from '../../types/ipc';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const now = 1_800_000_000_000;
@@ -16,6 +17,8 @@ function fixture(options: { scope?: string; claims?: Record<string, unknown>; ca
   let clock = now;
   const authorizations: URL[] = [];
   const modelHeaders: Headers[] = [];
+  const pages: Promise<string>[] = [];
+  const changes: ChatGptAccountStatus[] = [];
   let refreshResponse = () => Promise.resolve(Response.json({ access_token: 'access-2', refresh_token: 'refresh-2', expires_in: 3600, scope }));
   const vault = {
     read: () => saved,
@@ -31,10 +34,16 @@ function fixture(options: { scope?: string; claims?: Record<string, unknown>; ca
       nonce = authorize.searchParams.get('nonce') ?? '';
       const callback = new URL(authorize.searchParams.get('redirect_uri')!);
       callback.search = new URLSearchParams({ code: 'code', client_id: 'issued-client', state: authorize.searchParams.get('state')!, ...options.callback }).toString();
-      await new Promise<void>((resolve, reject) => {
-        get(callback, response => { response.resume(); response.on('end', resolve); }).on('error', reject);
-      });
+      // Like a real browser tab: the page arrives whenever the app finishes, not before openBrowser returns.
+      // A cancelled attempt has already closed the listener; that tab simply gets no page.
+      pages.push(new Promise<string>(resolve => {
+        get(callback, response => {
+          let body = '';
+          response.setEncoding('utf8').on('data', (chunk: string) => { body += chunk; }).on('end', () => resolve(body));
+        }).on('error', () => resolve(''));
+      }));
     },
+    onChanged: status => changes.push(status),
     fetch: async (input, init) => {
       if (input.endsWith('/.well-known/openid-configuration')) return Response.json({ issuer: 'https://auth.openai.com', jwks_uri: 'https://auth.openai.com/jwks' });
       if (input.endsWith('/jwks')) return Response.json({ keys: [{ ...publicKey.export({ format: 'jwk' }), kid: 'test', alg: 'RS256', use: 'sig' }] });
@@ -60,7 +69,7 @@ function fixture(options: { scope?: string; claims?: Record<string, unknown>; ca
       throw new Error('Unexpected request');
     },
   });
-  return { auth, writes, requests, authorizations, modelHeaders, advance: () => { clock += 3400_000; }, setRefresh: (response: typeof refreshResponse) => { refreshResponse = response; } };
+  return { auth, writes, requests, authorizations, modelHeaders, pages, changes, advance: () => { clock += 3400_000; }, setRefresh: (response: typeof refreshResponse) => { refreshResponse = response; } };
 }
 
 it('keeps identity sign-in without plan consent but never hands out an inference token', async () => {
@@ -78,6 +87,30 @@ it('shares refresh across callers and persists the rotating grant in one write',
   expect(requests[1].get('client_id')).toBe('issued-client');
   expect(writes).toHaveLength(3);
   expect(JSON.parse(writes[2]).tokens).toMatchObject({ accessToken: 'access-2', refreshToken: 'refresh-2', expiresAt: now + 7000_000, scopes: scope.split(' ') });
+});
+
+it('does not report a routine token refresh as an account change', async () => {
+  const { auth, advance, changes } = fixture();
+  await auth.signIn();
+  advance();
+  await auth.getAccessToken();
+  expect(changes).toEqual([{ state: 'signed-in', email: 'user@example.com', planUsage: true }]);
+});
+
+it('tells the browser the outcome only after the code exchange and identity checks', async () => {
+  const signedIn = fixture();
+  await signedIn.auth.signIn();
+  expect(await signedIn.pages[0]).toContain('You’re signed in');
+
+  const noPlan = fixture({ scope: 'openid email' });
+  await noPlan.auth.signIn();
+  expect(await noPlan.pages[0]).toContain('Plan usage not allowed');
+
+  const failed = fixture({ exchangeError: 'invalid_grant' });
+  await expect(failed.auth.signIn()).rejects.toThrow('ChatGPT');
+  const page = await failed.pages[0];
+  expect(page).toContain('Sign-in could not be completed');
+  expect(page).not.toContain('signed in');
 });
 
 for (const code of ['invalid_grant', 'invalid_refresh_token', 'token_expired', 'refresh_token_expired', 'refresh_token_invalidated', 'refresh_token_reused']) {

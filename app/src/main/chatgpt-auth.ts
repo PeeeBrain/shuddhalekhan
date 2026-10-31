@@ -152,6 +152,9 @@ export class ChatGptAuth {
     const verifier = randomBytes(32).toString('base64url');
     const previous = this.account;
     const server = createServer();
+    // The browser tab waits on the valid callback until the code exchange and identity checks finish.
+    let finishPage: ((status: ChatGptAccountStatus | undefined) => void) | undefined;
+    let result: ChatGptAccountStatus | undefined;
     try {
       let hostId = this.deps.getHostId();
       if (!hostId) {
@@ -179,7 +182,7 @@ export class ChatGptAuth {
           controller.signal.removeEventListener('abort', abort);
           const query = url.searchParams;
           const page = (status: number, title: string, body: string) => response.writeHead(status, {
-            'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+            'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'close',
             'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'",
           }).end(callbackPage(title, body, this.deps.appIconDataUrl?.()));
           if (['state', 'code', 'client_id', 'error'].some(key => query.getAll(key).length > 1) || query.get('state') !== state) {
@@ -189,7 +192,11 @@ export class ChatGptAuth {
             page(400, 'Sign-in was not completed', 'Return to Shuddhalekhan and try again when you are ready.');
             reject(new AuthError(query.get('error') === 'access_denied' ? 'ChatGPT sign-in was denied. Please try again when ready.' : 'ChatGPT sign-in failed. Please try again.'));
           } else {
-            page(200, 'You’re signed in', 'Shuddhalekhan is connected to your ChatGPT plan. You can close this tab and return to the app.');
+            finishPage = (status) => {
+              if (status?.state !== 'signed-in') return page(400, 'Sign-in could not be completed', 'Return to Shuddhalekhan and try again.');
+              if (!status.planUsage) return page(200, 'Plan usage not allowed', 'You signed in, but Shuddhalekhan cannot use your ChatGPT plan. Return to the app and continue with ChatGPT again to allow it.');
+              return page(200, 'You’re signed in', 'Shuddhalekhan is connected to your ChatGPT plan. You can close this tab and return to the app.');
+            };
             resolve(query);
           }
         });
@@ -232,7 +239,8 @@ export class ChatGptAuth {
       this.save({ clientId, issuer: identity.iss, subject: identity.sub, email: identity.email,
         tokens: { accessToken: data.access_token, refreshToken: data.refresh_token, idToken: data.id_token,
           expiresAt: this.deps.now() + data.expires_in * 1000, scopes: data.scope.split(/\s+/).filter(Boolean) } });
-      return this.getStatus();
+      result = this.getStatus();
+      return result;
     } catch (error) {
       // Never expose token responses, browser URLs, codes, or crypto parser errors.
       if (error instanceof AuthError) throw error;
@@ -241,18 +249,24 @@ export class ChatGptAuth {
     } finally {
       clearTimeout(timer);
       controller.abort();
+      // The final page sends `Connection: close`, so its socket ends itself once flushed.
+      // Destroying it here would truncate the page.
+      finishPage?.(result);
       server.close();
-      server.closeAllConnections();
+      if (!finishPage) server.closeAllConnections();
       if (this.pending === controller) this.pending = null;
     }
   }
 
   private save(account: Account): void {
+    const before = JSON.stringify(this.getStatus());
     this.deps.vault.save(VAULT_ID, JSON.stringify(account));
     this.account = account;
     this.clientId = account.clientId;
     this.revision++;
-    this.deps.onChanged?.(this.getStatus());
+    // Routine token rotation keeps the same status; only account changes invalidate tests and runs.
+    const status = this.getStatus();
+    if (JSON.stringify(status) !== before) this.deps.onChanged?.(status);
   }
 
   private async requestJson(url: string, init?: RequestInit): Promise<unknown> {
