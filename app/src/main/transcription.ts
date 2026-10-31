@@ -48,6 +48,8 @@ export interface Transcriber {
   readonly transportCapabilities?: import('../types/ipc').TranscriptionTransportCapabilities;
   transcribe(request: TranscriptionRequest): Promise<string>;
   startStreaming?(request: StreamingTranscriptionRequest): StreamingTranscriptionSession;
+  /** Receives audio while recording, without previews; finish() returns the final transcript. */
+  startIncremental?(request: { recognition: RecognitionSettings }): StreamingTranscriptionSession;
 }
 
 export type TranscriptionFailureCategory =

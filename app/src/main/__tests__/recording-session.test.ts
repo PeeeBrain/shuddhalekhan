@@ -857,6 +857,33 @@ describe('RecordingSession', () => {
     expect(cancelStream).toHaveBeenCalledTimes(1);
   });
 
+  it('streams batch Dictation to an incremental transcriber and uses its transcript without a second decode', async () => {
+    const batchTranscribe = vi.fn(async () => 'batch transcript');
+    const send = vi.fn(async () => undefined);
+    const runtimeShell = createRuntimeShellMock();
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      transcriber: {
+        ...createTranscriber(batchTranscribe),
+        id: 'managed-local',
+        startIncremental: () => ({ send, finish: async () => 'incremental transcript', cancel: vi.fn() }),
+      },
+      getDictationMode: () => 'batch',
+      getRecordingActivationMode,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation', 'incremental-session');
+    expect(runtimeShell.beginCapture.mock.calls[0][0]).toMatchObject({ streamingActive: true });
+    const ending = session.end();
+    await session.complete(new Uint8Array(128).fill(4));
+
+    await expect(ending).resolves.toMatchObject({ text: 'incremental transcript' });
+    expect(batchTranscribe).not.toHaveBeenCalled();
+  });
+
   it('does not fall back or deliver a transcript when cancelled during stream finalization', async () => {
     let rejectFinalization!: (error: Error) => void;
     let markFinalizationStarted!: () => void;

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { spawn } from 'child_process';
-import { createReadStream } from 'fs';
+import { createReadStream, writeFileSync } from 'fs';
 import {
   lstat,
   mkdir,
@@ -45,8 +45,19 @@ export const MANAGED_LOCAL_MODEL = {
   requiredFiles: ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'],
 } satisfies ManagedLocalModelManifest;
 
+// ONNX Runtime's memory arena keeps each decode's ~250 MB of scratch resident, and its spinning
+// worker threads burn several times the decode's CPU while waiting for work.
+const ORT_SESSION_OPTIONS = [
+  'EnableCpuMemArena=0',
+  'SessionConfig.session.intra_op.allow_spinning=0',
+  'SessionConfig.session.inter_op.allow_spinning=0',
+].join('\n');
+
 /** Recognizer settings shared by the local STT worker and the eval harness, so evals measure what users run. */
 export function managedLocalRecognizerConfig(modelPath: string, numThreads: number): OfflineRecognizerConfig {
+  // sherpa-onnx reads session options only from a file named by the provider string.
+  const sessionOptions = join(modelPath, 'ort-session.cfg');
+  writeFileSync(sessionOptions, ORT_SESSION_OPTIONS);
   return {
     featConfig: { sampleRate: 16_000, featureDim: 80 },
     modelConfig: {
@@ -57,7 +68,7 @@ export function managedLocalRecognizerConfig(modelPath: string, numThreads: numb
       },
       tokens: join(modelPath, 'tokens.txt'),
       numThreads,
-      provider: 'cpu',
+      provider: `cpu:${sessionOptions}`,
       modelType: 'nemo_transducer',
       debug: false,
     },
