@@ -41,7 +41,7 @@
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "sherpa-onnx-node": "1.13.8",
+    "sherpa-onnx-node": "2.0.1",
     "tailwind-merge": "^3.5.0",
     "ws": "^8.21.0",
     "zod": "4.4.3"
