@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { join } from 'path';
-import { cleanFillerWords, TranscriptionFailure, type Transcriber } from './transcription';
+import { cleanFillerWords, TranscriptionFailure, type RecognitionSettings, type Transcriber } from './transcription';
 import { resolveManagedLocalThreads } from './managed-local-threads';
 
 type RuntimeProcess = {
@@ -147,6 +147,30 @@ export function createManagedLocalTranscriber({
     return startup.then(ensureReady);
   };
 
+  const awaitResult = (requestId: string): Promise<string> => {
+    let finishRequest!: () => void;
+    const finished = new Promise<void>(resolve => { finishRequest = resolve; });
+    return new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const process = child;
+        const error = new TranscriptionFailure('model', 'Local transcription timed out. Retry Dictation.');
+        if (process) reset(process, error, true);
+        else reject(error);
+      }, transcriptionTimeoutMs);
+      pending.set(requestId, {
+        resolve: text => { finishRequest(); resolve(text); },
+        reject: error => { finishRequest(); reject(error); },
+        finished,
+        timeout,
+      });
+    });
+  };
+
+  const clean = (text: string, recognition: RecognitionSettings): string => {
+    const trimmed = text.trim();
+    return recognition.removeFillerWords ? cleanFillerWords(trimmed) : trimmed;
+  };
+
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void> } = {
     id: 'managed-local',
     capabilities: {
@@ -164,25 +188,40 @@ export function createManagedLocalTranscriber({
       await ensureReady();
       if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
       const requestId = randomUUID();
-      let finishRequest!: () => void;
-      const finished = new Promise<void>(resolve => { finishRequest = resolve; });
-      const result = new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          const process = child;
-          const error = new TranscriptionFailure('model', 'Local transcription timed out. Retry Dictation.');
-          if (process) reset(process, error, true);
-          else reject(error);
-        }, transcriptionTimeoutMs);
-        pending.set(requestId, {
-          resolve: text => { finishRequest(); resolve(text); },
-          reject: error => { finishRequest(); reject(error); },
-          finished,
-          timeout,
-        });
-      });
+      const result = awaitResult(requestId);
       child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer });
-      const text = (await result).trim();
-      return recognition.removeFillerWords ? cleanFillerWords(text) : text;
+      return clean(await result, recognition);
+    },
+    // Streams the recording to the worker, which decodes at speech pauses so stopping waits for little or nothing.
+    startIncremental({ recognition }) {
+      const requestId = randomUUID();
+      let process: RuntimeProcess | null = null;
+      const started = ensureReady().then(() => {
+        if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
+        process = child;
+        process.postMessage({ kind: 'incremental-start', requestId });
+        return process;
+      });
+      started.catch(() => {});
+      const current = async () => {
+        const startedProcess = await started;
+        if (child !== startedProcess) throw new TranscriptionFailure('model', 'Local speech recognition restarted.');
+        return startedProcess;
+      };
+      return {
+        async send(pcm) {
+          (await current()).postMessage({ kind: 'incremental-push', requestId, audio: pcm.slice().buffer });
+        },
+        async finish() {
+          const startedProcess = await current();
+          const result = awaitResult(requestId);
+          startedProcess.postMessage({ kind: 'incremental-finish', requestId });
+          return clean(await result, recognition);
+        },
+        cancel() {
+          if (process && child === process) process.postMessage({ kind: 'incremental-cancel', requestId });
+        },
+      };
     },
     warmup: ensureReady,
     async shutdown() {

@@ -130,7 +130,8 @@ interface RecordingRunContext {
   } | null;
   streaming: {
     session: StreamingTranscriptionSession;
-    ledger: StreamingTranscriptLedger;
+    /** Null for incremental sessions, whose finish() is the transcript without live snapshots. */
+    ledger: StreamingTranscriptLedger | null;
     queue: Promise<void>;
     expectedChunkSequence: number;
     failed: boolean;
@@ -469,8 +470,29 @@ export class RecordingSession {
     return typeof transcriber.startStreaming === 'function';
   }
 
+  private startIncrementalIfSupported(run: RecordingRunContext): void {
+    const startIncremental = run.transcriber.startIncremental;
+    if (!startIncremental) return;
+    try {
+      run.streaming = {
+        session: startIncremental({ recognition: this.getRecognitionSettings() }),
+        ledger: null,
+        queue: Promise.resolve(),
+        expectedChunkSequence: 0,
+        failed: false,
+        liveInsertion: null,
+      };
+    } catch {
+      // The completed recording is still transcribed in one pass.
+      run.streaming = null;
+    }
+  }
+
   private startStreamingIfEligible(run: RecordingRunContext): boolean {
-    if (!this.canStartLiveStreaming(run.transcriber)) return false;
+    if (!this.canStartLiveStreaming(run.transcriber)) {
+      this.startIncrementalIfSupported(run);
+      return false;
+    }
     if (run.intent === 'dictation' && (
       this.getDictationMode() !== 'live'
       || this.getRecordingActivationMode('dictation') !== 'toggle'
@@ -566,6 +588,7 @@ export class RecordingSession {
         try {
           const providerFinal = await streaming.session.finish();
           if (this.activeRun !== run) return null;
+          if (!streaming.ledger) return providerFinal;
           const acceptedFinal = streaming.ledger.finalize();
           if (providerFinal !== acceptedFinal) {
             throw new TranscriptionFailure(

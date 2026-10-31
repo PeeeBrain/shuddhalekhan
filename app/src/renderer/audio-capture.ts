@@ -32,7 +32,7 @@ interface StreamingCapture {
   readonly realtimeEnabled: boolean;
   push(channels: Float32Array[], sampleRate: number): StreamingPcmChunk[];
   acknowledge(sequence: number): void;
-  finish(): Uint8Array<ArrayBuffer>;
+  finish(onPcmChunk?: (chunk: StreamingPcmChunk) => void): Uint8Array<ArrayBuffer>;
 }
 
 function createStreamingCapture(options: {
@@ -99,7 +99,10 @@ function createStreamingCapture(options: {
     acknowledge(acknowledgedSequence) {
       inFlight.delete(acknowledgedSequence);
     },
-    finish() {
+    finish(onPcmChunk) {
+      if (realtimeEnabled && pendingSamples.length > 0) {
+        onPcmChunk?.({ recordingSessionId: options.recordingSessionId, sequence: sequence++, pcm: pcm16Bytes(pendingSamples) });
+      }
       const wav = encodePcm16Wav(retainedSamples, STREAM_SAMPLE_RATE);
       pendingSamples = [];
       retainedSamples = [];
@@ -337,7 +340,7 @@ export function stopRecording(): Uint8Array<ArrayBuffer> {
   teardownCapture();
 
   const wavData = streamingCapture
-    ? streamingCapture.finish()
+    ? streamingCapture.finish(streamingCallbacks?.onPcmChunk)
     : encodeWAV(audioBuffer, inputSampleRate, inputChannels);
   console.log(`Recording stopped with ${audioBuffer.length} audio chunks and ${wavData.byteLength} WAV bytes`);
   audioBuffer = [];

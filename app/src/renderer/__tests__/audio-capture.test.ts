@@ -25,6 +25,16 @@ afterEach(() => {
 });
 
 describe('audio capture helpers', () => {
+  it('flushes the last partial PCM chunk before returning the WAV', () => {
+    const capture = __audioCaptureTestUtils.createStreamingCapture({ recordingSessionId: 'tail', maxInFlightChunks: 50 });
+    const source = new Float32Array(4096).fill(0.2);
+    const chunks = capture.push([source], 16_000);
+    const wav = capture.finish(chunk => chunks.push(chunk));
+    expect(chunks.at(-1)?.pcm.byteLength).toBe(512);
+    expect(chunks.reduce((sum, chunk) => sum + chunk.pcm.byteLength, 0)).toBe(wav.byteLength - 44);
+    expect(chunks.at(-1)?.sequence).toBe(12);
+  });
+
   it('emits ordered 20 ms PCM16 frames and builds the final WAV from the same samples', () => {
     const source = Float32Array.from({ length: 640 }, (_, index) => (index - 320) / 320);
     const capture = __audioCaptureTestUtils.createStreamingCapture({

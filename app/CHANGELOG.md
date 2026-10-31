@@ -8,6 +8,8 @@ tags and commit history, not from this file. Keep new entries under
 ## Unreleased
 
 ### Transcription
+- Managed Local decodes while you speak: each pause starts a decode, and stopping after a pause pastes that result without decoding again.
+- On the dev set, Managed Local used about 36% less CPU per transcription with incremental decoding; the lean ONNX Runtime configuration alone used about 70% less. Peak memory was about 120 MB lower. ONNX Runtime no longer spin-waits its worker threads or keeps decode scratch memory resident, and the local recognition runtime is updated to sherpa-onnx 2.0.1.
 - Provider setup status refreshes automatically when credentials are saved or removed.
 - Added Sarvam AI with Saaras v4/v3, English translation, verbatim, romanized and code-mixed output, supported language selection, and v4 dictionary hints. Recordings stop at the 30-second REST limit.
 
