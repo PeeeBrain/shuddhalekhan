@@ -29,7 +29,7 @@ const request = { audio: new Uint8Array([1, 2]), recognition: {
 } };
 
 function rig({ failLoad = false, crashDecode = false, startup }: { failLoad?: boolean; crashDecode?: boolean; startup?: Promise<void> } = {}) {
-  const settings = { selection: resolveManagedLocalSelection(undefined), numThreads: 1, revision: 0 };
+  const settings = { selection: resolveManagedLocalSelection(undefined), numThreads: 1, revision: 0, contextual: false };
   const processes: Process[] = [];
   const engine = createManagedLocalEngine({
     getSettings: () => settings,
@@ -142,9 +142,26 @@ describe('local model and device lifecycle', () => {
       expect(await engine.transcribe({ ...request, recognition: { ...request.recognition, dictionary: ['Shuddhalekhan'] } })).toBe('parakeet:cpu');
       expect(processes.map(p => p.runtime.backend)).toEqual(['cuda', 'cpu']);
       for (const process of processes) {
+        expect(process.runtime.contextual).toBe(true);
         expect(process.received).toContainEqual(expect.objectContaining({ kind: 'transcribe', dictionary: ['Shuddhalekhan'] }));
       }
     } finally { await engine.shutdown(); }
+  });
+
+  it('chooses contextual decoding from the incremental recording snapshot before async startup', async () => {
+    let allowStartup!: () => void;
+    const startup = new Promise<void>(resolve => { allowStartup = resolve; });
+    const { engine, processes } = rig({ startup });
+    const dictionary = ['Shuddhalekhan'];
+    const recording = engine.startIncremental!({ recognition: { ...request.recognition, dictionary } });
+    dictionary.length = 0;
+    allowStartup();
+    try {
+      await recording.send(new Uint8Array([1, 2]));
+      expect(processes[0].runtime.contextual).toBe(true);
+      expect(processes[0].received).toContainEqual(expect.objectContaining({ kind: 'incremental-start', dictionary: ['Shuddhalekhan'] }));
+      await recording.finish();
+    } finally { recording.cancel(); await engine.shutdown(); }
   });
 
   it('keeps the recording on its original model while a new selection waits for finish', async () => {

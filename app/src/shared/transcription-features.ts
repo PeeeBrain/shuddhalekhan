@@ -76,10 +76,12 @@ export function resolveTranscriptionFeatures(config: FeatureConfig, localLanguag
 /** Only active recognition options cross the provider boundary; saved vocabulary remains intact. */
 export function resolveRecognitionSettings(config: AppConfig, localLanguages?: readonly string[]) {
   const features = resolveTranscriptionFeatures(config, localLanguages);
+  const incompatibleLocalVocabulary = config.transcription.activeProvider === 'managed-local'
+    && getTranscriptionDictionaryError(config) !== null;
   return {
     language: features.language.kind === 'fixed' ? features.language.value : config.language,
     task: config.task,
-    dictionary: features.dictionaryHints ? [...new Set(config.dictionary)] : [],
+    dictionary: features.dictionaryHints && !incompatibleLocalVocabulary ? [...new Set(config.dictionary)] : [],
     removeFillerWords: features.cleanup && config.removeFillerWords,
   };
 }

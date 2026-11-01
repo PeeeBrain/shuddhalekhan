@@ -222,7 +222,7 @@ export function validateProviderReadiness(
     errors.push('Choose an explicit spoken language for this provider.');
   }
   const dictionaryError = getTranscriptionDictionaryError(config);
-  if (dictionaryError) errors.push(dictionaryError);
+  if (dictionaryError && providerId !== 'managed-local') errors.push(dictionaryError);
 
   if (providerId === 'local-whisper-cpp') {
     const { endpoint } = config.transcription.providers.localWhisperCpp;

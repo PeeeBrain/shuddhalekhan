@@ -9,6 +9,7 @@ import {
 } from '../transcription';
 import type { AppConfig } from '../../types/ipc';
 import { installElectronMock, resetElectronMock } from '../../test/electron-mock';
+import { getTranscriptionDictionaryError, resolveRecognitionSettings } from '../../shared/transcription-features';
 
 const vi = { fn: mock };
 
@@ -57,6 +58,18 @@ const BASE_CONFIG: AppConfig = {
     mcpServers: [],
   },
 };
+
+describe('existing local vocabulary', () => {
+  it('keeps an incompatible saved list without blocking local recording or sending invalid hotwords', () => {
+    const dictionary = ['Node.js/TypeScript', 'C:', 'x'.repeat(129), ...Array.from({ length: 70 }, (_, i) => `term${i}`)];
+    const config: AppConfig = { ...BASE_CONFIG,
+      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'managed-local' }, dictionary };
+    expect(getTranscriptionDictionaryError(config)).toBeTruthy();
+    expect(validateProviderReadiness('managed-local', config, createVault())).toEqual([]);
+    expect(resolveRecognitionSettings(config).dictionary).toEqual([]);
+    expect(config.dictionary).toEqual(dictionary);
+  });
+});
 
 describe('OpenAI model validation', () => {
   it('accepts standard model names', () => {

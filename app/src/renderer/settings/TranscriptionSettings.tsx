@@ -703,7 +703,9 @@ export function TranscriptionSettings({
             description={features.dictionaryMaxTerms !== null
               ? `Sent to ${engineLabel} as hints: up to ${features.dictionaryMaxTerms} names, brands, or technical terms. Press Enter to add.`
               : undefined}
-            error={fieldErrors[FIELD_ID_DICTIONARY] ?? dictionaryError}
+            error={fieldErrors[FIELD_ID_DICTIONARY] ?? (dictionaryError && provider === 'managed-local'
+              ? `${dictionaryError} Local vocabulary is not applied until this list is compatible. Your saved words are unchanged.`
+              : dictionaryError)}
             validateAddition={(next) => getTranscriptionDictionaryError({ ...config, dictionary: next })}
             onChange={(next) => void transition({ dictionary: next }, FIELD_ID_DICTIONARY)}
           />

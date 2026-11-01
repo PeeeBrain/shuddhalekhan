@@ -173,13 +173,19 @@ async function recognize(
     };
   }
 
+  const send = () => fetch(buildGoogleRecognizeEndpoint(config), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: requestConfig, content: Buffer.from(audio).toString('base64') }),
+  });
   let response: Response;
   try {
-    response = await fetch(buildGoogleRecognizeEndpoint(config), {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: requestConfig, content: Buffer.from(audio).toString('base64') }),
-    });
+    response = await send();
+    // Punctuation support varies by model and language. Preserve previously valid requests.
+    if (response.status === 400) {
+      delete requestConfig.features;
+      response = await send();
+    }
   } catch {
     throw new TranscriptionFailure('network', 'Could not reach Google Cloud Speech-to-Text. Check the network connection.');
   }

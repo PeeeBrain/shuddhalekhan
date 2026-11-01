@@ -77,6 +77,36 @@ describe('Google Cloud Speech-to-Text v2', () => {
     expect(Buffer.from(body.content, 'base64').subarray(0, 4).toString()).toBe('RIFF');
   });
 
+  it('retries an unsupported punctuation request once without changing recognition inputs', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof mock>;
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token' })))
+      .mockResolvedValueOnce(new Response('', { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{ alternatives: [{ transcript: 'transcript' }] }] })));
+    await expect(createGoogleCloudSpeechTranscriber(CONFIG, CREDENTIAL).transcribe({
+      audio: new Uint8Array([1, 2, 3]),
+      recognition: { language: 'bn-BD', task: 'transcribe', dictionary: ['Shuddhalekhan'], removeFillerWords: false },
+    })).resolves.toBe('transcript');
+    const original = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    const retry = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(original.config.features).toEqual({ enableAutomaticPunctuation: true });
+    delete original.config.features;
+    expect(retry).toEqual(original);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops after a second invalid recognition response', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof mock>;
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token' })))
+      .mockResolvedValue(new Response('', { status: 400 }));
+    await expect(createGoogleCloudSpeechTranscriber(CONFIG, CREDENTIAL).transcribe({
+      audio: new Uint8Array([1, 2, 3]),
+      recognition: { language: 'en', task: 'transcribe', dictionary: [], removeFillerWords: false },
+    })).rejects.toMatchObject({ status: 400 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it('rejects auto-detection and translation locally without authorization or recognition requests', async () => {
     const transcriber = createGoogleCloudSpeechTranscriber(CONFIG, CREDENTIAL);
     await expect(transcriber.transcribe({
