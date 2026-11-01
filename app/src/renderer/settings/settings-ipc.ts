@@ -13,6 +13,7 @@ import type {
   ManagedLocalModelSnapshot,
   ManagedLocalModelState,
   ManagedLocalTarget,
+  ManagedLocalDeleteTarget,
   AgentProviderConfig,
   AgentProviderValidation,
   AgentProviderTestResult,
@@ -43,7 +44,7 @@ export interface SettingsIpc {
   getManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
   /** Omit `target` for the selected model's primary install (Auto means CPU). */
   installManagedLocalModel: (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
-  deleteManagedLocalModel: (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
+  deleteManagedLocalModel: (target?: ManagedLocalDeleteTarget) => Promise<ManagedLocalModelSnapshot>;
   onManagedLocalModelStateChanged: (callback: (state: ManagedLocalModelState) => void) => Unsubscribe | undefined;
   onOnboardingCompleted: (callback: () => void) => Unsubscribe | undefined;
   getShortcutsPaused: () => Promise<boolean>;

@@ -35,6 +35,8 @@ export interface StreamingTranscriptionSession {
   send(pcm: Uint8Array): Promise<void>;
   finish(): Promise<string>;
   cancel(): void;
+  /** Retry the completed WAV with this recording's original model and recognition settings. */
+  retryCompletedAudio?(audio: Uint8Array<ArrayBuffer>): Promise<string>;
 }
 
 export interface StreamingTranscriptionRequest {

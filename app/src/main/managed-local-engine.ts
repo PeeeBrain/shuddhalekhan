@@ -1,5 +1,5 @@
 import type { ManagedLocalModelSnapshot, ManagedLocalSelection } from '../types/ipc';
-import { TranscriptionFailure, type Transcriber } from './transcription';
+import { TranscriptionFailure, type Transcriber, type TranscriptionRequest } from './transcription';
 import { createManagedLocalTranscriber } from './managed-local-runtime';
 
 export interface LocalRuntime {
@@ -12,6 +12,7 @@ export interface LocalRuntime {
 type Worker = ReturnType<typeof createManagedLocalTranscriber>;
 type RuntimeStatus = ManagedLocalModelSnapshot['runtime'];
 type EngineSettings = { selection: ManagedLocalSelection; numThreads: number; revision: number };
+type RuntimePlan = { settings: EngineSettings; candidates: LocalRuntime[] | null };
 
 /** Holds a worker for the whole recording, including pause decoding and cancellation. */
 export function createManagedLocalEngine({
@@ -25,13 +26,20 @@ export function createManagedLocalEngine({
   createWorker: (runtime: LocalRuntime, numThreads: number) => Worker;
   onStatus: (status: RuntimeStatus, settings: EngineSettings) => void;
 }) {
-  let current: { key: string; worker: Worker; runtime: LocalRuntime; settings: EngineSettings } | null = null;
+  let current: { key: string; worker: Worker; runtime: LocalRuntime; settings: EngineSettings; candidates: LocalRuntime[] } | null = null;
   let selecting: Promise<void> | null = null;
   let leases = 0;
   const drained: (() => void)[] = [];
   let generation = 0;
   let failedGpuKey: string | null = null;
   let loadingWorker: Worker | null = null;
+  const recordings = new Set<object>();
+
+  const reserve = () => {
+    const token = {};
+    recordings.add(token);
+    return () => { recordings.delete(token); };
+  };
 
   const key = () => JSON.stringify(getSettings());
   const release = () => {
@@ -40,14 +48,15 @@ export function createManagedLocalEngine({
       drained.splice(0).forEach(resolve => resolve());
     }
   };
-  const ensure = async (): Promise<NonNullable<typeof current>> => {
+  const ensure = async (pinned?: RuntimePlan): Promise<NonNullable<typeof current>> => {
     if (selecting) await selecting;
-    const settings = structuredClone(getSettings());
+    const settings = structuredClone(pinned?.settings ?? getSettings());
     const desiredKey = JSON.stringify(settings);
-    if (current?.key === desiredKey) return current;
+    if (current?.key === desiredKey && (!pinned?.candidates || pinned.candidates.some(candidate =>
+      candidate.backend === current?.runtime.backend && candidate.modelPath === current.runtime.modelPath))) return current;
     if (leases) {
       await new Promise<void>(resolve => drained.push(resolve));
-      return ensure();
+      return ensure(pinned);
     }
     const token = generation;
     selecting = (async () => {
@@ -56,7 +65,7 @@ export function createManagedLocalEngine({
       onStatus({ status: 'loading', backend: null, message: 'Starting local speech recognition…' }, settings);
       let failure = '';
       try {
-        const candidates = await getCandidates(settings.selection);
+        const candidates = pinned?.candidates ?? await getCandidates(settings.selection);
         for (const runtime of candidates) {
           if (token !== generation) throw new Error('Local speech recognition stopped.');
           if (runtime.backend === 'cuda' && failedGpuKey === desiredKey
@@ -66,7 +75,7 @@ export function createManagedLocalEngine({
           try {
             await worker.warmup();
             if (token !== generation) throw new Error('Local speech recognition stopped.');
-            current = { key: desiredKey, worker, runtime, settings };
+            current = { key: desiredKey, worker, runtime, settings, candidates };
             onStatus({ status: 'ready', backend: runtime.backend,
               message: runtime.backend === 'cuda' ? 'Using dedicated NVIDIA GPU.'
                 : failure || failedGpuKey === desiredKey
@@ -92,12 +101,12 @@ export function createManagedLocalEngine({
     })();
     try { await selecting; } finally { selecting = null; }
     if (!current) throw new Error('Local speech recognition is unavailable.');
-    if (key() !== desiredKey) return ensure();
+    if (!pinned && key() !== desiredKey) return ensure();
     return current;
   };
 
-  const acquire = async () => {
-    const selected = await ensure();
+  const acquire = async (pinned: RuntimePlan) => {
+    const selected = await ensure(pinned);
     leases++;
     let released = false;
     return { ...selected, release() { if (!released) { released = true; release(); } } };
@@ -112,37 +121,71 @@ export function createManagedLocalEngine({
         : 'Local CPU inference failed. Retry Dictation to restart it.' }, selected.settings);
   };
 
+  const transcribePinned = async (request: TranscriptionRequest, pinned: RuntimePlan) => {
+    const releaseRecording = reserve();
+    const operationGeneration = generation;
+    try {
+      const selected = await acquire(pinned);
+      try {
+        if (operationGeneration !== generation) throw new Error('Local speech recognition stopped.');
+        return await selected.worker.transcribe(request);
+      }
+      catch (error) {
+        if (operationGeneration !== generation) throw error;
+        await failed(selected);
+        selected.release();
+        if (selected.runtime.backend !== 'cuda'
+          || selected.settings.selection.devices[selected.runtime.model] !== 'auto') throw error;
+        const fallback = await acquire({ settings: selected.settings,
+          candidates: selected.candidates.filter(candidate => candidate.backend === 'cpu') });
+        try {
+          if (operationGeneration !== generation) throw error;
+          return await fallback.worker.transcribe(request);
+        } finally { fallback.release(); }
+      } finally { selected.release(); }
+    } finally { releaseRecording(); }
+  };
+
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void>; isBusy(): boolean } = {
     id: 'managed-local',
-    isBusy: () => leases > 0,
+    isBusy: () => recordings.size > 0 || leases > 0,
     capabilities: { translation: false, automaticLanguageDetection: true, dictionaryHints: false,
       authentication: 'none', maxDurationSeconds: null },
     async warmup() {
       // Settings can be edited during recording; never wait on or replace its worker here.
-      if (leases) return;
+      if (recordings.size || leases) return;
       await ensure();
     },
-    async transcribe(request) {
-      const selected = await acquire();
-      try { return await selected.worker.transcribe(request); }
-      catch (error) {
-        await failed(selected);
-        selected.release();
-        if (selected.runtime.backend !== 'cuda'
-          || getSettings().selection.devices[selected.runtime.model] !== 'auto') throw error;
-        const fallback = await acquire();
-        try { return await fallback.worker.transcribe(request); } finally { fallback.release(); }
-      } finally { selected.release(); }
-    },
+    transcribe: request => transcribePinned(request, { settings: structuredClone(getSettings()), candidates: null }),
     startIncremental(request) {
+      const releaseRecording = reserve();
+      const pinned: RuntimePlan = { settings: structuredClone(getSettings()), candidates: null };
+      const recognition = structuredClone(request.recognition);
+      const recordingGeneration = generation;
       let cancelled = false;
-      const started = acquire().then(selected => {
+      const started = acquire(pinned).then(selected => {
         if (cancelled) { selected.release(); throw new Error('Recording cancelled.'); }
-        const session = selected.worker.startIncremental(request);
+        const session = selected.worker.startIncremental({ recognition });
         return { selected, session };
       });
       started.catch(() => {});
       return {
+        async retryCompletedAudio(audio) {
+          try {
+            const original = await started.catch(() => null);
+            if (cancelled || generation !== recordingGeneration) throw new Error('Recording cancelled.');
+            if (original) {
+              original.session.cancel();
+              original.selected.release();
+              if (current?.worker === original.selected.worker) {
+                current = null;
+                await original.selected.worker.shutdown();
+              }
+            }
+            if (cancelled || generation !== recordingGeneration) throw new Error('Recording cancelled.');
+            return await transcribePinned({ audio, recognition }, original?.selected ?? pinned);
+          } finally { releaseRecording(); }
+        },
         async send(audio) {
           const { selected, session } = await started;
           try { await session.send(audio); }
@@ -150,18 +193,24 @@ export function createManagedLocalEngine({
         },
         async finish() {
           const { selected, session } = await started;
-          try { return await session.finish(); }
+          try {
+            const text = await session.finish();
+            releaseRecording();
+            return text;
+          }
           catch (error) { await failed(selected); throw error; }
           finally { selected.release(); }
         },
         cancel() {
           cancelled = true;
+          releaseRecording();
           void started.then(({ selected, session }) => { session.cancel(); selected.release(); }).catch(() => {});
         },
       };
     },
     async shutdown() {
       generation++;
+      recordings.clear();
       await loadingWorker?.shutdown();
       await current?.worker.shutdown();
       current = null;

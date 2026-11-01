@@ -288,6 +288,43 @@ describe('Settings navigation', () => {
     }));
   });
 
+  it.each(['settings', 'onboarding'] as const)('keeps previous Parakeet files usable in %s until an explicit update', async (screenMode: 'settings' | 'onboarding') => {
+    const { settingsIpc } = renderSettings({
+      config: baseConfig({ transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+        onboarding: { status: screenMode === 'onboarding' ? 'pending' : 'complete' } }),
+      managedLocalSnapshot: () => ({
+        inference: { maxThreads: 16, defaultThreads: 4 },
+        model: { id: 'old', name: 'Old Parakeet', downloadBytes: 1, installedBytes: 1, languages: ['English'] },
+        state: { kind: 'ready', modelId: 'old', path: 'C:\\old' },
+        catalog: [
+          { key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+            cpu: { downloadBytes: 500_000_000, installedBytes: 600_000_000, state: { kind: 'missing', modelId: 'parakeet' },
+              legacy: { name: 'Old Parakeet', installedBytes: 640_000_000, inUse: true } },
+            cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'parakeet-cuda' } } },
+          { key: 'granite', name: 'Granite', description: 'Compact.', languages: ['English'],
+            cpu: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'granite' } },
+            cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'granite-cuda' } } },
+        ],
+        runtime: { status: 'idle', backend: null, message: '' },
+        gpu: { name: null, message: '' },
+      }),
+    });
+    if (screenMode === 'onboarding') {
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Start microphone check' }).hasAttribute('disabled')).toBe(false));
+      expect(screen.getByText('Old Parakeet')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Download model' })).toBeNull();
+      return;
+    }
+    await waitForLoaded();
+
+    expect(await screen.findByText('In use')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Install update' }));
+    await waitFor(() => expect(settingsIpc.installManagedLocalModel).toHaveBeenCalledWith({ model: 'parakeet', backend: 'cpu' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete previous files' }));
+    await waitFor(() => expect(settingsIpc.deleteManagedLocalModel)
+      .toHaveBeenCalledWith({ model: 'parakeet', backend: 'cpu', legacy: true }));
+  });
+
   it('guides fresh installs through local model setup before normal settings', async () => {
     renderSettings({ config: baseConfig({
       onboarding: { status: 'pending' },

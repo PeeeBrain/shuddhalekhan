@@ -28,6 +28,7 @@ export function Onboarding({
   // Onboarding always sets up the CPU files: they work offline and are Auto's fallback.
   // GPU setup stays an explicit choice in Settings.
   const entry = snapshot?.catalog?.find((item) => item.key === modelId);
+  const legacy = entry?.cpu.legacy?.inUse ? entry.cpu.legacy : null;
   const model = snapshot
     ? entry
       ? { name: entry.name, languages: entry.languages, ...entry.cpu }
@@ -82,7 +83,7 @@ export function Onboarding({
     setMicLevel(0);
   };
 
-  const modelReady = model?.state.kind === 'ready';
+  const modelReady = !!legacy || model?.state.kind === 'ready';
   const shortcut = formatBinding(config.shortcuts.dictation.binding);
 
   return (
@@ -98,11 +99,13 @@ export function Onboarding({
           <Step icon={Download} number="1" title="Install local speech recognition" done={modelReady}>
             {model ? (
               <>
-                <p className="font-medium">{model.name}</p>
+                <p className="font-medium">{legacy?.name ?? model.name}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {formatBytes(model.downloadBytes)} download · {formatBytes(model.installedBytes)} installed · {model.languages.join(', ')}
+                  {legacy ? `${formatBytes(legacy.installedBytes)} installed`
+                    : `${formatBytes(model.downloadBytes)} download · ${formatBytes(model.installedBytes)} installed · ${model.languages.join(', ')}`}
                 </p>
-                <ModelState state={model.state} />
+                {legacy ? <p className="mt-3 text-sm text-success">Previous version installed and ready offline. You can update it later in Settings.</p>
+                  : <ModelState state={model.state} />}
                 {!modelReady && model.state.kind !== 'downloading' && model.state.kind !== 'installing' ? (
                   <Button className="mt-4" onClick={() => void install()}>
                     {model.state.kind === 'error' ? actionLabel(model.state.action) : 'Download model'}

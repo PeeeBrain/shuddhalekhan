@@ -2,7 +2,7 @@
 import { app } from 'electron';
 import { parseArgs } from 'util';
 import { readFile, writeFile, copyFile, mkdir } from 'fs/promises';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { createManagedLocalModelManager } from '../src/main/managed-local-model';
 import { LOCAL_MODELS } from '../src/main/managed-local-catalog';
 import { createManagedLocalTranscriber } from '../src/main/managed-local-runtime';
@@ -28,25 +28,29 @@ const workers: ReturnType<typeof createManagedLocalTranscriber>[] = [];
 void app.whenReady().then(async () => {
   const results = [];
   try {
+    await mkdir(dirname(root), { recursive: true });
+    try { await mkdir(root); }
+    catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
+        throw new Error('Use a new --root directory for each release check so the supplied bundles are installed and verified.', { cause: error });
+      }
+      throw error;
+    }
     const bytes = await readFile(audioPath);
     const audio = new Uint8Array(bytes);
     const wave = decodePcm16Wave(audio.buffer);
     const pcm = new Uint8Array(wave.samples.length * 2);
     const pcmView = new DataView(pcm.buffer);
     for (let i = 0; i < wave.samples.length; i++) pcmView.setInt16(i * 2, Math.max(-32768, Math.min(32767, Math.round(wave.samples[i] * 32768))), true);
-    await mkdir(root, { recursive: true });
     for (const model of LOCAL_MODELS) {
       for (const backend of ['cpu', 'cuda'] as const) {
         let modelPath = cpuPath;
         if (model.key !== 'parakeet' || backend !== 'cpu') {
           const manifest = model[backend];
           const manager = createManagedLocalModelManager({ root, manifest });
-          const installed = await manager.getState();
-          if (installed.kind !== 'ready') {
-            const source = backend === 'cpu' ? gguf : join(bundles, `${manifest.id}-${manifest.version}.tar.bz2`);
-            await copyFile(source, join(root, `${manifest.id}-${manifest.version}.partial`));
-            await manager.install();
-          }
+          const source = backend === 'cpu' ? gguf : join(bundles, `${manifest.id}-${manifest.version}.tar.bz2`);
+          await copyFile(source, join(root, `${manifest.id}-${manifest.version}.partial`));
+          await manager.install();
           const state = await manager.getState();
           if (state.kind !== 'ready') throw new Error('Verified installation did not become ready.');
           modelPath = state.path;

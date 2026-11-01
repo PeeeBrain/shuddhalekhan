@@ -6,7 +6,7 @@ import { createManagedLocalModelManager } from './managed-local-model';
 import { createManagedLocalTranscriber } from './managed-local-runtime';
 import { createManagedLocalEngine, type LocalRuntime } from './managed-local-engine';
 import { startLocalRuntimeProcess } from './managed-local-process';
-import { LOCAL_MODELS, localModelManifest } from './managed-local-catalog';
+import { LOCAL_MODELS, legacyLocalModel, localModelManifest } from './managed-local-catalog';
 import type { ManagedLocalModelSnapshot, ManagedLocalModelState, ManagedLocalTarget } from '../types/ipc';
 import { resolveManagedLocalSelection } from '../shared/managed-local-selection';
 import { getConfig } from './config';
@@ -63,7 +63,7 @@ export function configureManagedLocal({
     for (const backend of ['cpu', 'cuda'] as const) {
       const target = { model: model.key, backend };
       managers.set(`${model.key}:${backend}`, createManagedLocalModelManager({ root,
-        manifest: localModelManifest(target), onStateChanged }));
+        manifest: localModelManifest(target), legacy: legacyLocalModel(target), onStateChanged }));
     }
   }
 }
@@ -86,15 +86,21 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
   const catalog = await Promise.all(LOCAL_MODELS.map(async model => {
     const variant = async (backend: 'cpu' | 'cuda') => {
       const manager = getManagedLocalModelManager({ model: model.key, backend });
-      return { downloadBytes: manager.manifest.downloadBytes, installedBytes: manager.manifest.installedBytes, state: await manager.getState() };
+      const [state, legacy] = await Promise.all([manager.getInstallState(), manager.getLegacy()]);
+      return { downloadBytes: manager.manifest.downloadBytes, installedBytes: manager.manifest.installedBytes, state,
+        legacy: legacy && { name: legacy.name, installedBytes: legacy.installedBytes, inUse: state.kind !== 'ready' } };
     };
     return { key: model.key, name: model.name, description: model.description, languages: [...model.languages],
       cpu: await variant('cpu'), cuda: await variant('cuda') };
   }));
+  // Primary state is what the next recording can use, so upgraded installs stay ready on their previous files.
+  const state = await selected.getState();
+  const legacy = state.kind === 'ready' && state.modelId !== selected.manifest.id ? await selected.getLegacy() : null;
+  const model = legacy ?? selected.manifest;
   return {
-    model: { id: selected.manifest.id, name: selected.manifest.name, languages: [...selected.manifest.languages],
-      downloadBytes: selected.manifest.downloadBytes, installedBytes: selected.manifest.installedBytes },
-    state: await selected.getState(), inference: getManagedLocalThreadLimits(), catalog,
+    model: { id: model.id, name: model.name, languages: [...model.languages],
+      downloadBytes: model.downloadBytes, installedBytes: model.installedBytes },
+    state, inference: getManagedLocalThreadLimits(), catalog,
     runtime: runtimeSettings === selectionKey() ? runtimeStatus
       : { status: 'idle', backend: null, message: 'Changes apply to the next recording.' },
     gpu: await gpuInfo(),
@@ -118,8 +124,10 @@ export async function installManagedLocalModel(value?: unknown): Promise<Managed
 export async function deleteManagedLocalModel(value?: unknown): Promise<ManagedLocalModelSnapshot> {
   if (managedLocalTranscriber.isBusy()) throw new Error('Finish the current recording before deleting local model files.');
   const target = managedLocalTarget(value);
+  const legacy = z.object({ legacy: z.literal(true).optional() }).parse(value ?? {}).legacy;
   await managedLocalTranscriber.shutdown();
-  await getManagedLocalModelManager(target).delete();
+  const manager = getManagedLocalModelManager(target);
+  await (legacy ? manager.deleteLegacy() : manager.delete());
   revision++;
   return managedLocalSnapshot();
 }

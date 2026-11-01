@@ -1,5 +1,5 @@
 import type { ManagedLocalTarget } from '../types/ipc';
-import { MANAGED_LOCAL_MODEL, type ManagedLocalModelManifest } from './managed-local-model';
+import { MANAGED_LOCAL_MODEL, type ManagedLocalLegacyModel, type ManagedLocalModelManifest } from './managed-local-model';
 
 const RELEASE = 'https://github.com/PeeeBrain/shuddhalekhan/releases/download/local-models-v1';
 
@@ -9,9 +9,9 @@ export const LOCAL_MODELS = [
     cpu: { ...MANAGED_LOCAL_MODEL, name: 'Parakeet unified English' },
     cuda: {
       id: 'parakeet-unified-en-cuda-w4g32', version: '1', name: 'Parakeet GPU acceleration',
-      languages: ['English'], downloadBytes: 2_020_235_551, installedBytes: 2_988_411_410,
+      languages: ['English'], downloadBytes: 2_020_235_613, installedBytes: 2_988_411_410,
       artifactUrl: `${RELEASE}/parakeet-unified-en-cuda-w4g32-1.tar.bz2`,
-      sha256: '8cc03cbee8bc1a66091392b4678f6fd5e5f69b02efc05ac62b25020afbf327d1',
+      sha256: 'f3f9a1dc521d7263db34bbab29edfdbe82b55019126ed168006c466a4081b488',
       archiveRoot: 'parakeet-unified-en-cuda-w4g32-1',
       requiredFiles: ['encoder.onnx', 'decoder.onnx', 'joiner.onnx', 'tokens.txt',
         'runtime/sherpa-onnx-node/non-streaming-asr.js', 'runtime/sherpa-onnx-win-x64/sherpa-onnx.node',
@@ -29,15 +29,32 @@ export const LOCAL_MODELS = [
     },
     cuda: {
       id: 'granite-470m-q4-cuda', version: '1', name: 'Granite GPU acceleration',
-      languages: ['English'], downloadBytes: 1_018_511_269, installedBytes: 1_317_371_240,
+      languages: ['English'], downloadBytes: 1_018_511_434, installedBytes: 1_317_371_240,
       artifactUrl: `${RELEASE}/granite-470m-q4-cuda-1.tar.bz2`,
-      sha256: 'b1e1b46d6f234c8e3a93f799717a36228ceb9579e5ea9da13220fadb0768a566',
+      sha256: '9ff45a2ffbc1774c194f384325f1347bf2bdf1fc764db477c655bb0e3e3aed26',
       archiveRoot: 'granite-470m-q4-cuda-1', requiredFiles: ['model.gguf', 'runtime/transcribe/transcribe.dll',
         'runtime/transcribe/ggml-cuda.dll', 'runtime/bin/cudart64_12.dll', 'runtime/bin/cublas64_12.dll', 'runtime/bin/cublasLt64_12.dll'],
     },
   },
 ] satisfies Array<{ key: ManagedLocalTarget['model']; name: string; languages: string[]; description: string;
   cpu: ManagedLocalModelManifest; cuda: ManagedLocalModelManifest }>;
+
+/** Parakeet CPU files shipped before the unified English model; same file names, runtime, and transducer config. */
+const LEGACY_PARAKEET_CPU: ManagedLocalLegacyModel = {
+  id: 'parakeet-tdt-0.6b-v3-int8', version: '1', name: 'Parakeet TDT v3 multilingual (previous version)',
+  downloadBytes: 487_170_055, installedBytes: 640_000_000,
+  languages: [
+    'English', 'French', 'German', 'Spanish', 'Italian', 'Portuguese', 'Dutch',
+    'Polish', 'Czech', 'Slovak', 'Romanian', 'Hungarian', 'Bulgarian', 'Croatian',
+    'Slovenian', 'Lithuanian', 'Latvian', 'Estonian', 'Finnish', 'Maltese',
+    'Swedish', 'Danish', 'Greek', 'Russian', 'Ukrainian',
+  ],
+  requiredFiles: MANAGED_LOCAL_MODEL.requiredFiles,
+};
+
+export function legacyLocalModel(target: ManagedLocalTarget): ManagedLocalLegacyModel | undefined {
+  return target.model === 'parakeet' && target.backend === 'cpu' ? LEGACY_PARAKEET_CPU : undefined;
+}
 
 export function localModelManifest(target: ManagedLocalTarget): ManagedLocalModelManifest {
   const model = LOCAL_MODELS.find(item => item.key === target.model);

@@ -263,7 +263,7 @@ export interface RendererToMainInvokeChannels {
   'transcription:check-readiness': () => Promise<TranscriptionReadiness>;
   'managed-local:get-model': () => Promise<ManagedLocalModelSnapshot>;
   'managed-local:install-model': (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
-  'managed-local:delete-model': (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
+  'managed-local:delete-model': (target?: ManagedLocalDeleteTarget) => Promise<ManagedLocalModelSnapshot>;
 }
 
 export interface MainToRendererChannels {
@@ -485,10 +485,15 @@ export interface ManagedLocalTarget {
   model: ManagedLocalModelId;
   backend: 'cpu' | 'cuda';
 }
+/** `legacy: true` deletes a previous release's files for this target instead of the current ones. */
+export type ManagedLocalDeleteTarget = ManagedLocalTarget & { legacy?: true };
 interface ManagedLocalVariant {
   downloadBytes: number;
   installedBytes: number;
+  /** This variant's current files; a legacy install never makes it `ready`. */
   state: ManagedLocalModelState;
+  /** Previous release's files, kept until explicitly deleted. `inUse` while the current files are not ready. */
+  legacy?: { name: string; installedBytes: number; inUse: boolean } | null;
 }
 
 export type DictationMode = 'batch' | 'live' | 'corrected';

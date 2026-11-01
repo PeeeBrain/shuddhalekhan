@@ -28,6 +28,10 @@ export interface ManagedLocalModelManifest {
   format?: 'archive' | 'file';
 }
 
+/** Files a previous release installed for this slot. Used in place until the replacement installs; removed only on request. */
+export type ManagedLocalLegacyModel = Pick<ManagedLocalModelManifest,
+  'id' | 'version' | 'name' | 'downloadBytes' | 'installedBytes' | 'languages' | 'requiredFiles'>;
+
 export const MANAGED_LOCAL_MODEL = {
   id: 'parakeet-unified-en-0.6b-int8',
   version: '1',
@@ -78,12 +82,14 @@ type ExtractArchive = (archivePath: string, stagingPath: string) => Promise<void
 export function createManagedLocalModelManager({
   root,
   manifest = MANAGED_LOCAL_MODEL,
+  legacy,
   fetchArtifact = fetch,
   extractArchive = extractTarBz2,
   onStateChanged = () => {},
 }: {
   root: string;
   manifest?: ManagedLocalModelManifest;
+  legacy?: ManagedLocalLegacyModel;
   fetchArtifact?: FetchArtifact;
   extractArchive?: ExtractArchive;
   onStateChanged?: (state: ManagedLocalModelState) => void;
@@ -104,13 +110,27 @@ export function createManagedLocalModelManager({
     onStateChanged(state);
   };
 
-  const getState = async (): Promise<ManagedLocalModelState> => {
+  const legacyPath = legacy && join(root, `${legacy.id}-${legacy.version}`);
+
+  /** Lifecycle of this manifest's own files: what install/delete act on. */
+  const getInstallState = async (): Promise<ManagedLocalModelState> => {
     if (current.kind === 'downloading' || current.kind === 'installing') return current;
     if (current.kind === 'error') return current;
     if (await isValidInstall(installPath, manifest.requiredFiles)) {
       return { kind: 'ready', modelId: manifest.id, path: installPath };
     }
     return { kind: 'missing', modelId: manifest.id };
+  };
+
+  const getLegacy = async () => legacy && legacyPath && await isValidInstall(legacyPath, legacy.requiredFiles)
+    ? { ...legacy, path: legacyPath } : null;
+
+  /** Usable files: the replacement once installed, else installed legacy files (even while the replacement downloads or after it failed). */
+  const getState = async (): Promise<ManagedLocalModelState> => {
+    const state = await getInstallState();
+    if (state.kind === 'ready') return state;
+    const old = await getLegacy();
+    return old ? { kind: 'ready', modelId: old.id, path: old.path } : state;
   };
 
   const runInstall = async (): Promise<void> => {
@@ -204,6 +224,13 @@ export function createManagedLocalModelManager({
   return {
     manifest,
     getState,
+    getInstallState,
+    getLegacy,
+    async deleteLegacy(): Promise<void> {
+      if (!legacyPath) return;
+      await rm(legacyPath, { recursive: true, force: true });
+      publish(await getInstallState());
+    },
     install(): Promise<void> {
       if (!activeInstall) {
         activeInstall = runInstall().finally(() => {

@@ -884,15 +884,17 @@ describe('RecordingSession', () => {
     expect(batchTranscribe).not.toHaveBeenCalled();
   });
 
-  it('falls back to batch Dictation when incremental finalization fails', async () => {
+  it.each([false, true])('falls back after incremental failure, using the saved recording context when available: %s', async (savedContext: boolean) => {
     const batchTranscribe = vi.fn(async () => 'batch transcript');
+    const retryCompletedAudio = vi.fn(async () => 'original model transcript');
     const cancel = vi.fn();
     session = new RecordingSessionCtor({
       runtimeShell: createRuntimeShellMock(),
       transcriber: {
         ...createTranscriber(batchTranscribe),
         id: 'managed-local',
-        startIncremental: () => ({ send: async () => undefined, finish: async () => { throw new Error('decode failed'); }, cancel }),
+        startIncremental: () => ({ send: async () => undefined, finish: async () => { throw new Error('decode failed'); }, cancel,
+          ...(savedContext ? { retryCompletedAudio } : {}) }),
       },
       getDictationMode: () => 'batch',
       getRecordingActivationMode,
@@ -903,8 +905,8 @@ describe('RecordingSession', () => {
     session.begin('dictation', 'incremental-failure');
     const ending = session.end();
     await session.complete(new Uint8Array(128).fill(4));
-    await expect(ending).resolves.toMatchObject({ text: 'batch transcript' });
-    expect(batchTranscribe).toHaveBeenCalledTimes(1);
+    await expect(ending).resolves.toMatchObject({ text: savedContext ? 'original model transcript' : 'batch transcript' });
+    expect(batchTranscribe).toHaveBeenCalledTimes(savedContext ? 0 : 1);
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 

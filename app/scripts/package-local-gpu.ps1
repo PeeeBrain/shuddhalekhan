@@ -53,6 +53,7 @@ function New-Bundle($Name, $IncludeSherpa) {
     Get-ChildItem -LiteralPath $stage -Recurse | ForEach-Object {
         $_.LastWriteTimeUtc = [DateTime]'2026-11-01T00:00:00Z'
     }
+    (Get-Item -LiteralPath $stage).LastWriteTimeUtc = [DateTime]'2026-11-01T00:00:00Z'
     $archive = Join-Path $output "$Name.tar.bz2"
     & tar.exe -cjf $archive -C $output $Name
     if ($LASTEXITCODE -ne 0) { throw "Archive creation failed: $Name" }

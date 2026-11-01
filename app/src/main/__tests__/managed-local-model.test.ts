@@ -186,4 +186,53 @@ describe('managed local model lifecycle', () => {
     await manager.delete();
     expect(await manager.getState()).toEqual({ kind: 'missing', modelId: 'test-model' });
   });
+
+  it('keeps previous-release files usable until an explicit replacement succeeds, then deletes them only on request', async () => {
+    const root = await tempRoot();
+    const archive = new TextEncoder().encode('archive');
+    const manifest = manifestFor(archive);
+    const legacyPath = join(root, 'old-model-1');
+    await mkdir(legacyPath);
+    await writeFile(join(legacyPath, 'tokens.txt'), 'old');
+    let extraction = 0;
+    let finishExtraction = () => {};
+    let extracting = () => {};
+    const extractionStarted = new Promise<void>((resolve) => { extracting = resolve; });
+    const manager = createManagedLocalModelManager({
+      root, manifest,
+      legacy: { id: 'old-model', version: '1', name: 'Old model', downloadBytes: 1, installedBytes: 1,
+        languages: ['English'], requiredFiles: ['tokens.txt'] },
+      fetchArtifact: async () => new Response(archive),
+      extractArchive: async (_archivePath, stagingPath) => {
+        if (++extraction === 1) throw new Error('Extraction failed.');
+        extracting();
+        await new Promise<void>((resolve) => { finishExtraction = resolve; });
+        await mkdir(join(stagingPath, manifest.archiveRoot), { recursive: true });
+        await writeFile(join(stagingPath, manifest.archiveRoot, 'tokens.txt'), 'new');
+      },
+    });
+    const usable = { kind: 'ready', modelId: 'old-model', path: legacyPath };
+
+    expect(await manager.getState()).toEqual(usable);
+    expect((await manager.getInstallState()).kind).toBe('missing');
+
+    await expect(manager.install()).rejects.toThrow('Extraction failed');
+    expect(await manager.getState()).toEqual(usable);
+    expect((await manager.getInstallState()).kind).toBe('error');
+
+    const install = manager.install();
+    await extractionStarted;
+    expect((await manager.getInstallState()).kind).toBe('installing');
+    expect(await manager.getState()).toEqual(usable);
+    finishExtraction();
+    await install;
+
+    expect(await manager.getState()).toEqual({ kind: 'ready', modelId: 'test-model', path: join(root, 'test-model-1') });
+    expect(await manager.getLegacy()).toMatchObject({ name: 'Old model', path: legacyPath });
+
+    await manager.deleteLegacy();
+    expect(await manager.getLegacy()).toBeNull();
+    await expect(access(legacyPath)).rejects.toThrow();
+    expect((await manager.getState()).modelId).toBe('test-model');
+  });
 });

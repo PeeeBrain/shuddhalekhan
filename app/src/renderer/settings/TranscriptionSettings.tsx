@@ -753,14 +753,14 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
   }, FIELD_ID_LOCAL_DEVICE);
 
   // ponytail: one artifact action at a time; allow parallel CPU/GPU downloads if main supports it.
-  const runAction = async (backend: ManagedLocalTarget['backend'], action: 'install' | 'delete') => {
+  const runAction = async (backend: ManagedLocalTarget['backend'], action: 'install' | 'delete' | 'delete-legacy') => {
     const target = entry ? { model: selection.model, backend } : undefined;
     setError('');
     setBusy(true);
     try {
       accept(await (action === 'install'
         ? settingsIpc.installManagedLocalModel(target)
-        : settingsIpc.deleteManagedLocalModel(target)));
+        : settingsIpc.deleteManagedLocalModel(target && action === 'delete-legacy' ? { ...target, legacy: true } : target)));
     } catch (actionError) {
       setError(ipcErrorMessage(actionError, action === 'install'
         ? 'Installation failed. Retry.'
@@ -801,7 +801,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
                   </span>
                   <span className="block text-xs leading-5 text-muted-foreground">{item.description}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {item.languages.join(', ')} · CPU {artifactStateWord(item.cpu.state)} · GPU {artifactStateWord(item.cuda.state)}
+                    {item.languages.join(', ')} · CPU {item.cpu.legacy?.inUse && item.cpu.state.kind === 'missing' ? 'previous version installed' : artifactStateWord(item.cpu.state)} · GPU {artifactStateWord(item.cuda.state)}
                   </span>
                 </span>
               </label>
@@ -854,12 +854,29 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
             title={entry ? 'CPU files' : 'Model files'}
             artifact={cpu}
             hint={device === 'auto' ? 'Required so Auto can fall back to the CPU.' : undefined}
-            installLabel="Install"
+            installLabel={cpu.legacy?.inUse ? 'Install update' : 'Install'}
             deleteLabel={entry ? 'Delete CPU files' : 'Delete model'}
             busy={busy}
             onInstall={() => void runAction('cpu', 'install')}
             onDelete={() => void runAction('cpu', 'delete')}
           />
+          {cpu.legacy ? (
+            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-3">
+              <div className="min-w-0 space-y-0.5">
+                <p className="flex items-center gap-2 text-sm">
+                  {cpu.legacy.name}
+                  {cpu.legacy.inUse ? <Tag tone="info">In use</Tag> : null}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatMegabytes(cpu.legacy.installedBytes)} on disk · {cpu.legacy.inUse
+                    ? 'Used until the CPU files above are installed. Nothing is replaced automatically.'
+                    : 'No longer used. Delete these files to free space.'}
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={busy}
+                onClick={() => void runAction('cpu', 'delete-legacy')}>Delete previous files</Button>
+            </div>
+          ) : null}
           {gpu && showGpuFiles ? (
             <ArtifactRow
               title="GPU acceleration files"
