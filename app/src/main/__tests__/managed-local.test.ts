@@ -26,6 +26,9 @@ describe('Managed Local GPU setup', () => {
     const cpu = getManagedLocalModelManager({ model: 'parakeet', backend: 'cpu' });
     expect((await cpu.getState()).kind).toBe('ready');
     expect((await cpu.getInstallState()).kind).toBe('missing');
+    const gpu = getManagedLocalModelManager({ model: 'parakeet', backend: 'cuda' });
+    expect((await gpu.getState()).kind).toBe('ready');
+    expect((await gpu.getInstallState()).kind).toBe('missing');
     await mkdir(directory(LOCAL_FORMATTING_MODEL), { recursive: true });
     for (const file of LOCAL_FORMATTING_MODEL.requiredFiles) await writeFile(join(directory(LOCAL_FORMATTING_MODEL), file), '');
     const state = async (model: 'parakeet' | 'granite') => (await getManagedLocalModelManager({ model, backend: 'cuda' }).getState()).kind;

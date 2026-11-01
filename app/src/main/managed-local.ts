@@ -121,7 +121,13 @@ function modelTarget(id: string, name: string, languages: string[], parts: Model
       installedBytes: sum(parts.filter(part => !preserveCpuParts || !cpuParts.has(part)).map(part => part.manifest.installedBytes)) },
     parts,
     getInstallState,
-    getState: getInstallState,
+    async getState() {
+      const speech = parts.filter(part => part.manifest.id !== LOCAL_FORMATTING_MODEL.id);
+      const states = await Promise.all(speech.map(part => part.getInstallState()));
+      return states.every(state => state.kind === 'ready') && states[0]?.kind === 'ready'
+        ? { kind: 'ready', modelId: id, path: states[0].path }
+        : getInstallState();
+    },
     getLegacy: async () => null,
     deleteLegacy: async () => {},
     install() {

@@ -29,7 +29,6 @@ import type {
   TranscriptionReadiness,
   ManagedLocalDevice,
   ManagedLocalModelSnapshot,
-  ManagedLocalSelection,
   ManagedLocalTarget,
   TranscriptionSettingsPatch,
 } from '../../types/ipc';
@@ -393,7 +392,7 @@ export function TranscriptionSettings({
   const localSnapshot = provider === 'managed-local' ? local.snapshot : null;
   const features = resolveTranscriptionFeatures(config, localSnapshot?.model.languages);
   const credentialReady = useCredentialReady(providerCredentialKind(config, provider), settingsIpc);
-  const status = providerStatus(config, credentialReady, localModelInstalled(localSnapshot, localSelection));
+  const status = providerStatus(config, credentialReady, localSnapshot ? localSnapshot.state.kind === 'ready' : null);
   const engineLabel = provider === 'managed-local'
     ? localSnapshot?.catalog?.find((item) => item.key === localSelection.model)?.name ?? localSnapshot?.model.name ?? 'Managed Local'
     : provider === 'sarvam'
@@ -510,7 +509,8 @@ export function TranscriptionSettings({
     const next = { ...formatter, ...patch };
     setFormatterDraft(next);
     if (dictation.mode !== 'corrected' && !(next.baseUrl.trim() && next.model.trim())) return;
-    if (await transition({ dictation: { ...dictation, formatter: next } }, fieldId)) setFormatterDraft(null);
+    const saved = await transition({ dictation: { ...dictation, formatter: next } }, fieldId);
+    if (saved || dictation.mode === 'corrected') setFormatterDraft(null);
   };
 
   return (
@@ -778,17 +778,6 @@ function useCredentialReady(kind: CredentialKind | null, settingsIpc: SettingsSe
     return () => { current = false; off?.(); };
   }, [kind, settingsIpc]);
   return kind === null ? true : result?.kind === kind ? result.ready : null;
-}
-
-/** Files for the selected device: Auto works with either backend; a legacy install still in use counts. */
-function localModelInstalled(snapshot: ManagedLocalModelSnapshot | null, selection: ManagedLocalSelection): boolean | null {
-  if (!snapshot) return null;
-  const entry = snapshot.catalog?.find((item) => item.key === selection.model);
-  if (!entry) return snapshot.state.kind === 'ready';
-  const cpu = entry.cpu.state.kind === 'ready' || Boolean(entry.cpu.legacy?.inUse);
-  const cuda = entry.cuda.state.kind === 'ready';
-  const device = selection.devices[selection.model];
-  return device === 'cuda' ? cuda : cpu;
 }
 
 type ProviderStatus = { label: string; tone: 'success' | 'warning' | 'neutral' };

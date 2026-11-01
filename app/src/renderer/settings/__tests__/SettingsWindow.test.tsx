@@ -335,6 +335,30 @@ describe('Settings navigation', () => {
       .toHaveBeenCalledWith({ model: 'parakeet', backend: 'cpu', legacy: true }));
   });
 
+  it('counts usable speech files as installed while optional formatting files are missing', async () => {
+    const config = baseConfig({ setupChecklistDismissed: false });
+    renderSettings({
+      config: { ...config, transcription: { ...config.transcription, activeProvider: 'managed-local' } },
+      managedLocalSnapshot: () => ({
+        model: { id: 'parakeet', name: 'Parakeet', downloadBytes: 1, installedBytes: 1, languages: ['English'] },
+        state: { kind: 'ready', modelId: 'parakeet', path: 'C:\\parakeet' },
+        inference: { maxThreads: 16, defaultThreads: 4 },
+        catalog: [{
+          key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+          cpu: { downloadBytes: 30_667_839, installedBytes: 1, state: { kind: 'missing', modelId: 'parakeet' } },
+          cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'parakeet-cuda' } },
+        }],
+        runtime: { status: 'idle', backend: null, message: '' },
+        gpu: { name: null, message: '' },
+      }),
+    });
+    await waitForLoaded();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Install the local speech model Done' })).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Use a different provider'));
+    expect(await screen.findByText('Installed')).toBeInTheDocument();
+    expect(screen.getByText('31 MB download')).toBeInTheDocument();
+  });
+
   it('guides fresh installs through local model setup before normal settings', async () => {
     renderSettings({ config: baseConfig({
       onboarding: { status: 'pending' },
@@ -562,6 +586,22 @@ describe('Settings section reachability', () => {
     } }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent('Corrected Dictation'));
     expect(screen.queryByRole('button', { name: 'Turn on Corrected Dictation' })).toBeNull();
+  });
+
+  it('restores the active formatter endpoint when main rejects an edit', async () => {
+    renderSettings({
+      failPatch: 'Formatter changes could not be saved.',
+      config: baseConfig({ dictation: { mode: 'corrected', formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter', apiKeyEnvVar: '',
+        apiKeySource: 'environment', processingConsent: true,
+      } } }),
+    });
+    await waitForLoaded();
+    const url = screen.getByRole('textbox', { name: 'Formatter base URL' });
+    fireEvent.change(url, { target: { value: 'http://127.0.0.1:1234/v1' } });
+    fireEvent.blur(url);
+    expect(await screen.findByText('Formatter changes could not be saved.')).toBeInTheDocument();
+    await waitFor(() => expect(url).toHaveValue('http://127.0.0.1:11434/v1'));
   });
 
   it('turns on Live with Toggle in one save and hides Push to Talk while Live is on', async () => {
