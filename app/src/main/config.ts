@@ -9,6 +9,7 @@ import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/sh
 import { getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
 import { preparePersistentStoreDirectory } from './store-path';
 import { isManagedLocalThreadCount } from './managed-local-threads';
+import { DEFAULT_MANAGED_LOCAL, managedLocalSelectionSchema, resolveManagedLocalSelection } from '../shared/managed-local-selection';
 import { normalizeAgentProvider } from '../shared/agent-provider';
 import { agentProviderSchema, getAgentProviderIssues } from '../shared/agent-provider-validation';
 import { z } from 'zod';
@@ -65,6 +66,7 @@ const store = new Store<StoreConfig>({
     whisperUrl: DEFAULT_LOCAL_ENDPOINT,
     transcription: DEFAULT_TRANSCRIPTION,
     managedLocalThreads: null,
+    managedLocal: DEFAULT_MANAGED_LOCAL,
     selectedDeviceId: null,
     removeFillerWords: true,
     language: 'auto',
@@ -258,6 +260,7 @@ export function getConfig(): AppConfig {
     transcription,
     managedLocalThreads: isManagedLocalThreadCount(store.get('managedLocalThreads'))
       ? store.get('managedLocalThreads') : null,
+    managedLocal: resolveManagedLocalSelection(store.get('managedLocal')),
     selectedDeviceId: store.get('selectedDeviceId'),
     removeFillerWords: store.get('removeFillerWords'),
     language: store.get('language') ?? 'auto',
@@ -284,6 +287,12 @@ export function getChatGptHostId(): string | undefined { return store.get('chatG
 export function setChatGptHostId(id: string): void { store.set('chatGptHostId', id); }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
+  if (key === 'managedLocal') {
+    const parsed = managedLocalSelectionSchema.safeParse(value);
+    if (!parsed.success) throw new Error('Choose a supported local model and inference device.');
+    store.set('managedLocal', parsed.data);
+    return;
+  }
   if (key === 'agent') {
     const parsed = z.object({ enabled: z.boolean(), provider: agentProviderSchema,
       disabledSkills: z.array(z.string().max(64)).max(256).optional(), memoryEnabled: z.boolean().optional(),

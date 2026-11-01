@@ -19,6 +19,8 @@ import type {
   CredentialStatus,
   CredentialKind,
   TranscriptionReadiness,
+  ManagedLocalModelSnapshot,
+  ManagedLocalModelState,
 } from '../../../types/ipc';
 import { SettingsWindow } from '../../SettingsWindow';
 
@@ -95,6 +97,8 @@ interface MockSettingsIpcOptions {
   mcpStatusSnapshot?: import('../../../types/ipc').McpStatusSnapshot;
   transcriptionReadiness?: TranscriptionReadiness;
   managedLocalModelReady?: boolean;
+  managedLocalSnapshot?: () => ManagedLocalModelSnapshot;
+  registerManagedLocalStateChanged?: (callback: () => void) => void;
   registerOnboardingCompleted?: (callback: () => void) => void;
 }
 
@@ -135,14 +139,14 @@ function createMockSettingsIpc(
     onNavigateRequested: mock(() => undefined),
     onMcpStatusSnapshot: mock(() => undefined),
     onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
-    getManagedLocalModel: mock(() => Promise.resolve({
+    getManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? {
       inference: { maxThreads: 16, defaultThreads: 4 },
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: options.managedLocalModelReady
         ? { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' }
         : { kind: 'missing' as const, modelId: 'test' },
     })),
-    installManagedLocalModel: mock(() => Promise.resolve({
+    installManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? {
       inference: { maxThreads: 16, defaultThreads: 4 },
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' },
@@ -152,7 +156,10 @@ function createMockSettingsIpc(
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: { kind: 'missing' as const, modelId: 'test' },
     })),
-    onManagedLocalModelStateChanged: mock(() => undefined),
+    onManagedLocalModelStateChanged: mock((callback: () => void) => {
+      options.registerManagedLocalStateChanged?.(callback);
+      return undefined;
+    }),
     onOnboardingCompleted: mock((callback: () => void) => {
       options.registerOnboardingCompleted?.(callback);
       return undefined;
@@ -233,6 +240,91 @@ describe('Settings navigation', () => {
     expect(screen.getByRole('button', { name: 'Use default' }).hasAttribute('disabled')).toBe(true);
     expect(slider).toHaveValue('4');
   });
+  it('refreshes every local model artifact on state events and sets up GPU files only on request', async () => {
+    let gpuState: ManagedLocalModelState = { kind: 'missing', modelId: 'parakeet-cuda' };
+    let notify!: () => void;
+    const catalogSnapshot = (): ManagedLocalModelSnapshot => ({
+      inference: { maxThreads: 16, defaultThreads: 4 },
+      model: { id: 'parakeet', name: 'Parakeet', downloadBytes: 600_000_000, installedBytes: 700_000_000, languages: ['English'] },
+      state: { kind: 'ready', modelId: 'parakeet', path: 'C:\\parakeet' },
+      catalog: [
+        {
+          key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+          cpu: { downloadBytes: 600_000_000, installedBytes: 700_000_000, state: { kind: 'ready', modelId: 'parakeet', path: 'C:\\parakeet' } },
+          cuda: { downloadBytes: 900_000_000, installedBytes: 1_000_000_000, state: gpuState },
+        },
+        {
+          key: 'granite', name: 'Granite', description: 'Compact.', languages: ['English'],
+          cpu: { downloadBytes: 300_000_000, installedBytes: 300_000_000, state: { kind: 'missing', modelId: 'granite' } },
+          cuda: { downloadBytes: 500_000_000, installedBytes: 500_000_000, state: { kind: 'missing', modelId: 'granite-cuda' } },
+        },
+      ],
+      runtime: { status: 'ready', backend: 'cpu', message: 'GPU files are not installed.' },
+      gpu: { name: 'NVIDIA RTX', message: '' },
+    });
+    const { settingsIpc } = renderSettings({
+      config: baseConfig({ transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' } }),
+      managedLocalSnapshot: catalogSnapshot,
+      registerManagedLocalStateChanged: (callback) => { notify = callback; },
+    });
+    await waitForLoaded();
+
+    const setupGpu = await screen.findByRole('button', { name: 'Install' });
+    expect(settingsIpc.installManagedLocalModel).not.toHaveBeenCalled();
+    expect(screen.getByText('Running on CPU')).toBeInTheDocument();
+    fireEvent.click(setupGpu);
+    expect(settingsIpc.installManagedLocalModel).toHaveBeenCalledWith({ model: 'parakeet', backend: 'cuda' });
+
+    // A GPU progress event must not be mistaken for the selected CPU install's state.
+    gpuState = { kind: 'downloading', modelId: 'parakeet-cuda', downloadedBytes: 450_000_000, totalBytes: 900_000_000 };
+    act(() => notify());
+    expect(await screen.findByText(/Downloading… 50%/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete CPU files' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Granite/ }));
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('managedLocal', {
+      model: 'granite',
+      devices: { parakeet: 'auto', granite: 'auto' },
+    }));
+  });
+
+  it.each(['settings', 'onboarding'] as const)('keeps previous Parakeet files usable in %s until an explicit update', async (screenMode: 'settings' | 'onboarding') => {
+    const { settingsIpc } = renderSettings({
+      config: baseConfig({ transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+        onboarding: { status: screenMode === 'onboarding' ? 'pending' : 'complete' } }),
+      managedLocalSnapshot: () => ({
+        inference: { maxThreads: 16, defaultThreads: 4 },
+        model: { id: 'old', name: 'Old Parakeet', downloadBytes: 1, installedBytes: 1, languages: ['English'] },
+        state: { kind: 'ready', modelId: 'old', path: 'C:\\old' },
+        catalog: [
+          { key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+            cpu: { downloadBytes: 500_000_000, installedBytes: 600_000_000, state: { kind: 'missing', modelId: 'parakeet' },
+              legacy: { name: 'Old Parakeet', installedBytes: 640_000_000, inUse: true } },
+            cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'parakeet-cuda' } } },
+          { key: 'granite', name: 'Granite', description: 'Compact.', languages: ['English'],
+            cpu: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'granite' } },
+            cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'granite-cuda' } } },
+        ],
+        runtime: { status: 'idle', backend: null, message: '' },
+        gpu: { name: null, message: '' },
+      }),
+    });
+    if (screenMode === 'onboarding') {
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Start microphone check' }).hasAttribute('disabled')).toBe(false));
+      expect(screen.getByText('Old Parakeet')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Download model' })).toBeNull();
+      return;
+    }
+    await waitForLoaded();
+
+    expect(await screen.findByText('In use')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Install update' }));
+    await waitFor(() => expect(settingsIpc.installManagedLocalModel).toHaveBeenCalledWith({ model: 'parakeet', backend: 'cpu' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete previous files' }));
+    await waitFor(() => expect(settingsIpc.deleteManagedLocalModel)
+      .toHaveBeenCalledWith({ model: 'parakeet', backend: 'cpu', legacy: true }));
+  });
+
   it('guides fresh installs through local model setup before normal settings', async () => {
     renderSettings({ config: baseConfig({
       onboarding: { status: 'pending' },

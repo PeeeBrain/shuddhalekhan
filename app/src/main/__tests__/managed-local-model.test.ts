@@ -7,7 +7,6 @@ import {
   createManagedLocalModelManager,
   replaceDirectory,
   validateArchiveEntries,
-  type ManagedLocalModelManifest,
 } from '../managed-local-model';
 
 const roots: string[] = [];
@@ -22,7 +21,7 @@ async function tempRoot(): Promise<string> {
   return root;
 }
 
-function manifestFor(bytes: Uint8Array): ManagedLocalModelManifest {
+function manifestFor(bytes: Uint8Array) {
   return {
     id: 'test-model',
     version: '1',
@@ -38,6 +37,32 @@ function manifestFor(bytes: Uint8Array): ManagedLocalModelManifest {
 }
 
 describe('managed local model lifecycle', () => {
+  it('installs verified plain files side by side, resuming only the unfinished one', async () => {
+    const root = await tempRoot();
+    const onnx = new TextEncoder().encode('encoder graph');
+    const weights = new TextEncoder().encode('external encoder weights');
+    const file = (name: string, bytes: Uint8Array) => ({ name, url: `https://models.example/${name}`, bytes: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex') });
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'test-model-1.partial-encoder.onnx'), onnx);
+    await writeFile(join(root, 'test-model-1.partial-encoder.weights'), weights.slice(0, 8));
+    const requests: string[] = [];
+    const manager = createManagedLocalModelManager({ root,
+      manifest: { id: 'test-model', version: '1', name: 'Test model', languages: [], installedBytes: 0,
+        downloadBytes: onnx.byteLength + weights.byteLength, requiredFiles: ['encoder.onnx', 'encoder.weights'],
+        files: [file('encoder.onnx', onnx), file('encoder.weights', weights)] },
+      fetchArtifact: async (url, init) => {
+        requests.push(`${url} ${new Headers(init.headers).get('Range')}`);
+        return new Response(weights.slice(8), { status: 206, headers: { 'Content-Range': `bytes 8-${weights.byteLength - 1}/${weights.byteLength}` } });
+      },
+      extractArchive: async () => { throw new Error('Plain files are not an archive'); },
+    });
+    await manager.install();
+    expect(requests).toEqual(['https://models.example/encoder.weights bytes=8-']);
+    expect(await manager.getState()).toMatchObject({ kind: 'ready' });
+    expect(await readFile(join(root, 'test-model-1/encoder.onnx'))).toEqual(onnx);
+    expect(await readFile(join(root, 'test-model-1/encoder.weights'))).toEqual(weights);
+  });
   it('verifies and atomically promotes a complete download', async () => {
     const root = await tempRoot();
     const archive = new TextEncoder().encode('archive');
@@ -171,5 +196,54 @@ describe('managed local model lifecycle', () => {
 
     await manager.delete();
     expect(await manager.getState()).toEqual({ kind: 'missing', modelId: 'test-model' });
+  });
+
+  it('keeps previous-release files usable until an explicit replacement succeeds, then deletes them only on request', async () => {
+    const root = await tempRoot();
+    const archive = new TextEncoder().encode('archive');
+    const manifest = manifestFor(archive);
+    const legacyPath = join(root, 'old-model-1');
+    await mkdir(legacyPath);
+    await writeFile(join(legacyPath, 'tokens.txt'), 'old');
+    let extraction = 0;
+    let finishExtraction = () => {};
+    let extracting = () => {};
+    const extractionStarted = new Promise<void>((resolve) => { extracting = resolve; });
+    const manager = createManagedLocalModelManager({
+      root, manifest,
+      legacy: { id: 'old-model', version: '1', name: 'Old model', downloadBytes: 1, installedBytes: 1,
+        languages: ['English'], requiredFiles: ['tokens.txt'] },
+      fetchArtifact: async () => new Response(archive),
+      extractArchive: async (_archivePath, stagingPath) => {
+        if (++extraction === 1) throw new Error('Extraction failed.');
+        extracting();
+        await new Promise<void>((resolve) => { finishExtraction = resolve; });
+        await mkdir(join(stagingPath, manifest.archiveRoot), { recursive: true });
+        await writeFile(join(stagingPath, manifest.archiveRoot, 'tokens.txt'), 'new');
+      },
+    });
+    const usable = { kind: 'ready', modelId: 'old-model', path: legacyPath };
+
+    expect(await manager.getState()).toEqual(usable);
+    expect((await manager.getInstallState()).kind).toBe('missing');
+
+    await expect(manager.install()).rejects.toThrow('Extraction failed');
+    expect(await manager.getState()).toEqual(usable);
+    expect((await manager.getInstallState()).kind).toBe('error');
+
+    const install = manager.install();
+    await extractionStarted;
+    expect((await manager.getInstallState()).kind).toBe('installing');
+    expect(await manager.getState()).toEqual(usable);
+    finishExtraction();
+    await install;
+
+    expect(await manager.getState()).toEqual({ kind: 'ready', modelId: 'test-model', path: join(root, 'test-model-1') });
+    expect(await manager.getLegacy()).toMatchObject({ name: 'Old model', path: legacyPath });
+
+    await manager.deleteLegacy();
+    expect(await manager.getLegacy()).toBeNull();
+    await expect(access(legacyPath)).rejects.toThrow();
+    expect((await manager.getState()).modelId).toBe('test-model');
   });
 });

@@ -262,8 +262,8 @@ export interface RendererToMainInvokeChannels {
   'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
   'transcription:check-readiness': () => Promise<TranscriptionReadiness>;
   'managed-local:get-model': () => Promise<ManagedLocalModelSnapshot>;
-  'managed-local:install-model': () => Promise<ManagedLocalModelSnapshot>;
-  'managed-local:delete-model': () => Promise<ManagedLocalModelSnapshot>;
+  'managed-local:install-model': (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
+  'managed-local:delete-model': (target?: ManagedLocalDeleteTarget) => Promise<ManagedLocalModelSnapshot>;
 }
 
 export interface MainToRendererChannels {
@@ -459,6 +459,41 @@ export interface ManagedLocalModelSnapshot {
   model: ManagedLocalModelMetadata;
   state: ManagedLocalModelState;
   inference: { maxThreads: number; defaultThreads: number };
+  catalog: Array<{
+    key: ManagedLocalModelId;
+    name: string;
+    description: string;
+    languages: string[];
+    cpu: ManagedLocalVariant;
+    cuda: ManagedLocalVariant;
+  }>;
+  runtime: {
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    backend: 'cpu' | 'cuda' | null;
+    message: string;
+  };
+  gpu: { name: string | null; message: string };
+}
+
+export type ManagedLocalModelId = 'parakeet' | 'granite';
+export type ManagedLocalDevice = 'auto' | 'cpu' | 'cuda';
+export interface ManagedLocalSelection {
+  model: ManagedLocalModelId;
+  devices: Record<ManagedLocalModelId, ManagedLocalDevice>;
+}
+export interface ManagedLocalTarget {
+  model: ManagedLocalModelId;
+  backend: 'cpu' | 'cuda';
+}
+/** `legacy: true` deletes a previous release's files for this target instead of the current ones. */
+export type ManagedLocalDeleteTarget = ManagedLocalTarget & { legacy?: true };
+interface ManagedLocalVariant {
+  downloadBytes: number;
+  installedBytes: number;
+  /** This variant's current files; a legacy install never makes it `ready`. */
+  state: ManagedLocalModelState;
+  /** Previous release's files, kept until explicitly deleted. `inUse` while the current files are not ready. */
+  legacy?: { name: string; installedBytes: number; inUse: boolean } | null;
 }
 
 export type DictationMode = 'batch' | 'live' | 'corrected';
@@ -502,6 +537,7 @@ export interface AppConfig {
   transcription: TranscriptionConfig;
   /** Missing/null keeps the automatic Managed Local CPU thread default. */
   managedLocalThreads?: number | null;
+  managedLocal?: ManagedLocalSelection;
   selectedDeviceId: string | null;
   removeFillerWords: boolean;
   language: string;

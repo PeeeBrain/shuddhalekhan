@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { cleanFillerWords, TranscriptionFailure, type RecognitionSettings, type Transcriber } from './transcription';
 import { resolveManagedLocalThreads } from './managed-local-threads';
+import type { LocalRuntime } from './managed-local-engine';
 
 type RuntimeProcess = {
   postMessage(message: unknown): void;
@@ -23,12 +24,14 @@ export function createManagedLocalTranscriber({
   startProcess = defaultStartProcess,
   loadTimeoutMs = 120_000,
   transcriptionTimeoutMs = 120_000,
+  runtime,
 }: {
   getModelPath: () => Promise<string>;
   getNumThreads?: () => number;
   startProcess?: () => RuntimeProcess | Promise<RuntimeProcess>;
   loadTimeoutMs?: number;
   transcriptionTimeoutMs?: number;
+  runtime?: LocalRuntime;
 }) {
   let child: RuntimeProcess | null = null;
   let ready: Promise<void> | null = null;
@@ -75,7 +78,9 @@ export function createManagedLocalTranscriber({
     if (message.kind === 'load-error') {
       const error = new TranscriptionFailure(
         'model',
-        'Local speech recognition could not load. Delete and reinstall the model in Settings.',
+        runtime?.backend === 'cuda'
+          ? 'GPU speech recognition could not start. Check the NVIDIA driver and GPU setup, or choose CPU in Settings.'
+          : 'Local speech recognition could not load. Delete and reinstall the model in Settings.',
       );
       if (child) reset(child, error, true);
       return;
@@ -111,7 +116,12 @@ export function createManagedLocalTranscriber({
     const startup = (async () => {
       try {
         const modelPath = await getModelPath();
+        if (activeStartup !== startupToken) throw new TranscriptionFailure('model', 'Local speech recognition stopped.');
         const process = await startProcess();
+        if (activeStartup !== startupToken) {
+          process.kill();
+          throw new TranscriptionFailure('model', 'Local speech recognition stopped.');
+        }
         child = process;
         const loaded = new Promise<void>((resolve, reject) => {
           resolveReady = resolve;
@@ -133,7 +143,7 @@ export function createManagedLocalTranscriber({
             'Local speech recognition timed out while loading. Retry Dictation.',
           ), true);
         }, loadTimeoutMs);
-        process.postMessage({ kind: 'load', modelPath, numThreads });
+        process.postMessage({ kind: 'load', modelPath, numThreads, ...(runtime ? { runtime } : {}) });
         await loaded;
       } catch (error) {
         if (activeStartup === startupToken) {
@@ -171,7 +181,8 @@ export function createManagedLocalTranscriber({
     return recognition.removeFillerWords ? cleanFillerWords(trimmed) : trimmed;
   };
 
-  const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void> } = {
+  const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void>;
+    startIncremental: NonNullable<Transcriber['startIncremental']> } = {
     id: 'managed-local',
     capabilities: {
       translation: false,
@@ -227,6 +238,7 @@ export function createManagedLocalTranscriber({
     async shutdown() {
       const process = child;
       if (process) reset(process, new TranscriptionFailure('model', 'Local speech recognition stopped.'), true);
+      else { activeStartup = null; ready = null; }
     },
   };
 

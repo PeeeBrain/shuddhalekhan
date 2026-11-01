@@ -14,34 +14,34 @@ import { isAbsolute, join, normalize, relative, sep } from 'path';
 import type { OfflineRecognizerConfig } from 'sherpa-onnx-node';
 import type { ManagedLocalModelState } from '../types/ipc';
 
-export interface ManagedLocalModelManifest {
+/** One upstream artifact: an archive (optionally only `include` members) or a set of plain files. */
+export type ManagedLocalModelManifest = {
   id: string;
   version: string;
   name: string;
   downloadBytes: number;
   installedBytes: number;
   languages: string[];
-  artifactUrl: string;
-  sha256: string;
-  archiveRoot: string;
   requiredFiles: string[];
-}
+} & (
+  | { artifactUrl: string; sha256: string; archiveRoot: string; include?: string[] }
+  | { files: Array<{ name: string; url: string; sha256: string; bytes: number }> }
+);
+
+/** Files a previous release installed for this slot. Used in place until the replacement installs; removed only on request. */
+export type ManagedLocalLegacyModel = Pick<ManagedLocalModelManifest,
+  'id' | 'version' | 'name' | 'downloadBytes' | 'installedBytes' | 'languages' | 'requiredFiles'>;
 
 export const MANAGED_LOCAL_MODEL = {
-  id: 'parakeet-tdt-0.6b-v3-int8',
+  id: 'parakeet-unified-en-0.6b-int8',
   version: '1',
   name: 'Recommended local speech model',
-  downloadBytes: 487_170_055,
-  installedBytes: 640_000_000,
-  languages: [
-    'English', 'French', 'German', 'Spanish', 'Italian', 'Portuguese', 'Dutch',
-    'Polish', 'Czech', 'Slovak', 'Romanian', 'Hungarian', 'Bulgarian', 'Croatian',
-    'Slovenian', 'Lithuanian', 'Latvian', 'Estonian', 'Finnish', 'Maltese',
-    'Swedish', 'Danish', 'Greek', 'Russian', 'Ukrainian',
-  ],
-  artifactUrl: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2',
-  sha256: '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf',
-  archiveRoot: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
+  downloadBytes: 501_350_460,
+  installedBytes: 664_000_000,
+  languages: ['English'],
+  artifactUrl: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming.tar.bz2',
+  sha256: '99f63605b3a85a54c250c0869670a687b7d6598a47bf2421515e1f839a76e150',
+  archiveRoot: 'sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming',
   requiredFiles: ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'],
 } satisfies ManagedLocalModelManifest;
 
@@ -54,21 +54,22 @@ const ORT_SESSION_OPTIONS = [
 ].join('\n');
 
 /** Recognizer settings shared by the local STT worker and the eval harness, so evals measure what users run. */
-export function managedLocalRecognizerConfig(modelPath: string, numThreads: number): OfflineRecognizerConfig {
+export function managedLocalRecognizerConfig(modelPath: string, numThreads: number, backend: 'cpu' | 'cuda' = 'cpu'): OfflineRecognizerConfig {
   // sherpa-onnx reads session options only from a file named by the provider string.
   const sessionOptions = join(modelPath, 'ort-session.cfg');
-  writeFileSync(sessionOptions, ORT_SESSION_OPTIONS);
+  writeFileSync(sessionOptions, backend === 'cpu' ? ORT_SESSION_OPTIONS : `${ORT_SESSION_OPTIONS}\nLogSeverityLevel=0\narena_extend_strategy=kSameAsRequested\ncudnn_conv_use_max_workspace=0\ncudnn_conv_algo_search=HEURISTIC`);
+  const suffix = backend === 'cpu' ? '.int8.onnx' : '.onnx';
   return {
     featConfig: { sampleRate: 16_000, featureDim: 80 },
     modelConfig: {
       transducer: {
-        encoder: join(modelPath, 'encoder.int8.onnx'),
-        decoder: join(modelPath, 'decoder.int8.onnx'),
-        joiner: join(modelPath, 'joiner.int8.onnx'),
+        encoder: join(modelPath, `encoder${suffix}`),
+        decoder: join(modelPath, `decoder${suffix}`),
+        joiner: join(modelPath, `joiner${suffix}`),
       },
       tokens: join(modelPath, 'tokens.txt'),
       numThreads,
-      provider: `cpu:${sessionOptions}`,
+      provider: `${backend}:${sessionOptions}`,
       modelType: 'nemo_transducer',
       debug: false,
     },
@@ -76,17 +77,19 @@ export function managedLocalRecognizerConfig(modelPath: string, numThreads: numb
 }
 
 type FetchArtifact = (url: string, init: RequestInit) => Promise<Response>;
-type ExtractArchive = (archivePath: string, stagingPath: string) => Promise<void>;
+type ExtractArchive = (archivePath: string, stagingPath: string, include?: string[]) => Promise<void>;
 
 export function createManagedLocalModelManager({
   root,
   manifest = MANAGED_LOCAL_MODEL,
+  legacy,
   fetchArtifact = fetch,
-  extractArchive = extractTarBz2,
+  extractArchive = extractTar,
   onStateChanged = () => {},
 }: {
   root: string;
   manifest?: ManagedLocalModelManifest;
+  legacy?: ManagedLocalLegacyModel;
   fetchArtifact?: FetchArtifact;
   extractArchive?: ExtractArchive;
   onStateChanged?: (state: ManagedLocalModelState) => void;
@@ -96,13 +99,21 @@ export function createManagedLocalModelManager({
   const stagingPath = join(root, `${manifest.id}-${manifest.version}.staging`);
   let current: ManagedLocalModelState = { kind: 'missing', modelId: manifest.id };
   let activeInstall: Promise<void> | null = null;
+  let notifiedAt = 0;
 
   const publish = (state: ManagedLocalModelState): void => {
+    const previous = current;
     current = state;
+    if (state.kind === 'downloading' && previous.kind === 'downloading'
+      && state.downloadedBytes !== state.totalBytes && Date.now() - notifiedAt < 100) return;
+    notifiedAt = Date.now();
     onStateChanged(state);
   };
 
-  const getState = async (): Promise<ManagedLocalModelState> => {
+  const legacyPath = legacy && join(root, `${legacy.id}-${legacy.version}`);
+
+  /** Lifecycle of this manifest's own files: what install/delete act on. */
+  const getInstallState = async (): Promise<ManagedLocalModelState> => {
     if (current.kind === 'downloading' || current.kind === 'installing') return current;
     if (current.kind === 'error') return current;
     if (await isValidInstall(installPath, manifest.requiredFiles)) {
@@ -111,84 +122,106 @@ export function createManagedLocalModelManager({
     return { kind: 'missing', modelId: manifest.id };
   };
 
-  const runInstall = async (): Promise<void> => {
-    await mkdir(root, { recursive: true });
-    let resumeAt = await fileSize(partialPath);
-    if (resumeAt > manifest.downloadBytes) {
-      await rm(partialPath, { force: true });
+  const getLegacy = async () => legacy && legacyPath && await isValidInstall(legacyPath, legacy.requiredFiles)
+    ? { ...legacy, path: legacyPath } : null;
+
+  /** Usable files: the replacement once installed, else installed legacy files (even while the replacement downloads or after it failed). */
+  const getState = async (): Promise<ManagedLocalModelState> => {
+    const state = await getInstallState();
+    if (state.kind === 'ready') return state;
+    const old = await getLegacy();
+    return old ? { kind: 'ready', modelId: old.id, path: old.path } : state;
+  };
+
+  const downloads = 'files' in manifest
+    ? manifest.files.map(file => ({ ...file, path: `${partialPath}-${file.name}` }))
+    : [{ url: manifest.artifactUrl, sha256: manifest.sha256, bytes: manifest.downloadBytes, path: partialPath }];
+
+  /** Resumable download of one file into its partial path, verified against its pinned hash. */
+  const download = async ({ url, sha256: expected, bytes, path }: typeof downloads[number], progress: (bytes: number) => void) => {
+    let resumeAt = await fileSize(path);
+    if (resumeAt > bytes) {
+      await rm(path, { force: true });
       resumeAt = 0;
     }
-    publish({
-      kind: 'downloading',
-      modelId: manifest.id,
-      downloadedBytes: resumeAt,
-      totalBytes: manifest.downloadBytes,
-    });
-
-    try {
-      if (resumeAt !== manifest.downloadBytes) {
-        const response = await fetchArtifact(manifest.artifactUrl, {
-          headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : {},
-          signal: AbortSignal.timeout(30 * 60_000),
-        });
-        if (!response.ok || !response.body) {
-          throw new Error(`Model download failed with HTTP ${response.status}.`);
-        }
-        const append = resumeAt > 0 && response.status === 206;
-        if (append && !response.headers.get('Content-Range')?.startsWith(`bytes ${resumeAt}-`)) {
-          throw new Error('The model server returned an invalid download range. Retry the download.');
-        }
-        const file = await open(partialPath, append ? 'a' : 'w');
-        let downloadedBytes = append ? resumeAt : 0;
-        try {
-          const reader = response.body.getReader();
-          while (true) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            downloadedBytes += chunk.value.byteLength;
-            if (downloadedBytes > manifest.downloadBytes) {
-              await reader.cancel();
-              throw new Error('The model download was larger than expected. Retry the download.');
-            }
-            await file.write(chunk.value);
-            publish({
-              kind: 'downloading',
-              modelId: manifest.id,
-              downloadedBytes,
-              totalBytes: manifest.downloadBytes,
-            });
-          }
-        } finally {
-          await file.close();
-        }
+    progress(resumeAt);
+    if (resumeAt !== bytes) {
+      const response = await fetchArtifact(url, {
+        headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : {},
+        signal: AbortSignal.timeout(30 * 60_000),
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Model download failed with HTTP ${response.status}.`);
       }
+      const append = resumeAt > 0 && response.status === 206;
+      if (append && !response.headers.get('Content-Range')?.startsWith(`bytes ${resumeAt}-`)) {
+        throw new Error('The model server returned an invalid download range. Retry the download.');
+      }
+      const file = await open(path, append ? 'a' : 'w');
+      let downloadedBytes = append ? resumeAt : 0;
+      let oversized = false;
+      try {
+        const reader = response.body.getReader();
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          downloadedBytes += chunk.value.byteLength;
+          if (downloadedBytes > bytes) {
+            oversized = true;
+            await reader.cancel();
+            break;
+          }
+          await file.write(chunk.value);
+          progress(downloadedBytes);
+        }
+      } finally {
+        await file.close();
+      }
+      if (oversized) {
+        await rm(path, { force: true });
+        throw new Error('The model download was larger than expected. Retry the download.');
+      }
+    }
+    if (await sha256(path) !== expected) {
+      await rm(path, { force: true });
+      throw new Error('The downloaded model failed its integrity check. Retry the download.');
+    }
+  };
 
-      if (await sha256(partialPath) !== manifest.sha256) {
-        await rm(partialPath, { force: true });
-        throw new Error('The downloaded model failed its integrity check. Retry the download.');
+  const runInstall = async (): Promise<void> => {
+    await mkdir(root, { recursive: true });
+    try {
+      let done = 0;
+      for (const file of downloads) {
+        await download(file, bytes => publish({
+          kind: 'downloading', modelId: manifest.id, downloadedBytes: done + bytes, totalBytes: manifest.downloadBytes,
+        }));
+        done += file.bytes;
       }
 
       publish({ kind: 'installing', modelId: manifest.id });
       await rm(stagingPath, { recursive: true, force: true });
       await mkdir(stagingPath, { recursive: true });
-      await extractArchive(partialPath, stagingPath);
-      const extractedPath = join(stagingPath, manifest.archiveRoot);
+      let extractedPath = stagingPath;
+      if ('files' in manifest) {
+        for (const file of manifest.files) await rename(`${partialPath}-${file.name}`, join(stagingPath, file.name));
+      } else {
+        extractedPath = join(stagingPath, manifest.archiveRoot);
+        await extractArchive(partialPath, stagingPath, manifest.include);
+      }
       if (!await isValidInstall(extractedPath, manifest.requiredFiles)) {
         throw new Error('The model archive is missing required files. Repair the installation.');
       }
       await rejectLinks(extractedPath);
       await replaceDirectory(extractedPath, installPath);
       await rm(stagingPath, { recursive: true, force: true });
-      await rm(partialPath, { force: true });
+      await Promise.all(downloads.map(file => rm(file.path, { force: true })));
       publish({ kind: 'ready', modelId: manifest.id, path: installPath });
     } catch (error) {
-      if (error instanceof Error && error.message.includes('larger than expected')) {
-        await rm(partialPath, { force: true });
-      }
       await rm(stagingPath, { recursive: true, force: true });
       const message = error instanceof Error ? error.message : 'Model installation failed.';
-      const action = await fileSize(partialPath) > 0 ? 'resume' : 'retry';
-      publish({ kind: 'error', modelId: manifest.id, message, action });
+      const partial = (await Promise.all(downloads.map(file => fileSize(file.path)))).some(size => size > 0);
+      publish({ kind: 'error', modelId: manifest.id, message, action: partial ? 'resume' : 'retry' });
       throw error;
     }
   };
@@ -196,6 +229,13 @@ export function createManagedLocalModelManager({
   return {
     manifest,
     getState,
+    getInstallState,
+    getLegacy,
+    async deleteLegacy(): Promise<void> {
+      if (!legacyPath) return;
+      await rm(legacyPath, { recursive: true, force: true });
+      publish(await getInstallState());
+    },
     install(): Promise<void> {
       if (!activeInstall) {
         activeInstall = runInstall().finally(() => {
@@ -205,6 +245,7 @@ export function createManagedLocalModelManager({
       return activeInstall;
     },
     async delete(): Promise<void> {
+      if (activeInstall) throw new Error('Wait for the model installation to finish before deleting it.');
       await rm(installPath, { recursive: true, force: true });
       await rm(partialPath, { force: true });
       await rm(stagingPath, { recursive: true, force: true });
@@ -245,19 +286,21 @@ export function validateArchiveEntries(entries: string[]): void {
   }
 }
 
-async function extractTarBz2(archivePath: string, stagingPath: string): Promise<void> {
-  const entries = (await runTar(['-tjf', archivePath])).split(/\r?\n/).filter(Boolean);
+/** Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. */
+async function extractTar(archivePath: string, stagingPath: string, include: string[] = []): Promise<void> {
+  const entries = (await runTar(['-tf', archivePath, ...include])).split(/\r?\n/).filter(Boolean);
   validateArchiveEntries(entries);
-  const verbose = (await runTar(['-tvjf', archivePath])).split(/\r?\n/).filter(Boolean);
+  const verbose = (await runTar(['-tvf', archivePath, ...include])).split(/\r?\n/).filter(Boolean);
   if (verbose.some((line) => line[0] !== '-' && line[0] !== 'd')) {
     throw new Error('The model archive contains unsupported links or device entries.');
   }
-  await runTar(['-xjf', archivePath, '-C', stagingPath]);
+  await runTar(['-xf', archivePath, '-C', stagingPath, ...include]);
 }
 
 function runTar(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('tar.exe', args, { windowsHide: true });
+    // Windows' own bsdtar; a GNU tar earlier on PATH (Git for Windows) cannot read zip or drive-letter paths.
+    const child = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'), args, { windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');

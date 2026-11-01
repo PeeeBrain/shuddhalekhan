@@ -291,6 +291,7 @@ export class RecordingSession {
     return new Promise((resolve, reject) => {
       run.pendingEnd = { resolve, reject };
       if (this.audioCapture.endCapture() === false) {
+        this.teardownLiveDictation(run);
         run.pendingEnd = null;
         this.finishPresentationFn?.();
         if (this.activeRun === run) this.activeRun = null;
@@ -400,6 +401,7 @@ export class RecordingSession {
       return null;
     } finally {
       audioData.fill(0);
+      if (run.streaming?.session.retryCompletedAudio) run.streaming.session.cancel();
       if (this.activeRun === run) {
         this.activeRun = null;
       }
@@ -572,7 +574,8 @@ export class RecordingSession {
     if (liveInsertion && !liveInsertion.getState().halted) {
       liveInsertion.haltForReason('session-invalidated');
     }
-    this.teardownLiveDictation(run);
+    // Managed Local owns the recording's settings and files until its completed-WAV retry or cancellation.
+    if (!run.streaming.session.retryCompletedAudio) this.teardownLiveDictation(run);
   }
 
   private async transcribeCompletedAudio(
@@ -615,10 +618,9 @@ export class RecordingSession {
     }
 
     if (this.activeRun !== run) return null;
-    const text = await transcriber.transcribe({
-      audio: audioData,
-      recognition: this.getRecognitionSettings(),
-    });
+    const text = streaming?.session.retryCompletedAudio
+      ? await streaming.session.retryCompletedAudio(audioData)
+      : await transcriber.transcribe({ audio: audioData, recognition: this.getRecognitionSettings() });
     if (this.activeRun !== run) return null;
     return text;
   }

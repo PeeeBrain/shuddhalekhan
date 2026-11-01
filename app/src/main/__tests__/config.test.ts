@@ -216,6 +216,18 @@ describe('config store', () => {
     expect(getConfig().managedLocalThreads).toBeNull();
   });
 
+  it('keeps processor preferences for both local models and rejects invalid IPC selections without replacing them', async () => {
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-local-devices`);
+    expect(getConfig().managedLocal).toEqual({ model: 'parakeet', devices: { parakeet: 'auto', granite: 'auto' } });
+    const selected = { model: 'granite', devices: { parakeet: 'cpu', granite: 'cuda' } } as const;
+    setConfig('managedLocal', selected);
+    expect(getConfig().managedLocal).toEqual(selected);
+    for (const value of [{ ...selected, model: '../outside' }, { ...selected, devices: { granite: 'cuda' } }, null]) {
+      expect(() => Reflect.apply(setConfig, null, ['managedLocal', value])).toThrow('supported local model');
+      expect(getConfig().managedLocal).toEqual(selected);
+    }
+  });
+
   it('migrates an existing whisperUrl into the active local provider without setup', async () => {
     givenExistingStoreFile();
     storeData.set('whisperUrl', 'http://existing.test/inference');
