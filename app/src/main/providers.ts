@@ -15,6 +15,7 @@ import { createGoogleCloudSpeechTranscriber } from './google-cloud-speech';
 import { createWhisperLiveKitTranscriber } from './whisper-live-kit';
 import { managedLocalTranscriber } from './managed-local';
 import type { AppConfig } from '../types/ipc';
+import { resolveTranscriptionFeatures } from '../shared/transcription-features';
 
 type CredentialReader = { read: (id: string) => string | null };
 
@@ -90,10 +91,14 @@ function createOpenAiTranscriber(
   config: AppConfig,
   vault: CredentialReader,
 ): Transcriber {
+  const features = resolveTranscriptionFeatures(config);
   return {
     id: 'openai',
-    capabilities: OPENAI_CAPABILITIES,
+    capabilities: { ...OPENAI_CAPABILITIES, translation: features.translation, dictionaryHints: features.dictionaryHints },
     async transcribe({ audio, recognition }) {
+      if (recognition.task === 'translate' && !features.translation) {
+        throw new TranscriptionFailure('model', 'The selected OpenAI model does not support file translation.');
+      }
       const openAiConfig = config.transcription.providers.openai;
       const apiKey = vault.read('openai-api-key');
       if (!apiKey) {
@@ -104,7 +109,7 @@ function createOpenAiTranscriber(
       }
       return transcribeOpenAiLike(
         audio,
-        recognition,
+        { ...recognition, dictionary: features.dictionaryHints ? recognition.dictionary : [] },
         buildOpenAiEndpoint(openAiConfig.baseUrl, recognition.task),
         openAiConfig.model,
         'bearer',
@@ -162,10 +167,16 @@ function createCustomOpenAiTranscriber(
   config: AppConfig,
   vault: CredentialReader,
 ): Transcriber {
+  const features = resolveTranscriptionFeatures(config);
   return {
     id: 'custom-open-ai-compatible',
-    capabilities: CUSTOM_OPENAI_CAPABILITIES,
+    capabilities: { ...CUSTOM_OPENAI_CAPABILITIES, translation: features.translation,
+      automaticLanguageDetection: features.automaticLanguageDetection, dictionaryHints: features.dictionaryHints },
     async transcribe({ audio, recognition }) {
+      if (recognition.task === 'translate' && !features.translation) {
+        throw new TranscriptionFailure('model', 'Translation is not enabled for this custom endpoint.');
+      }
+      recognition = { ...recognition, dictionary: features.dictionaryHints ? recognition.dictionary : [] };
       const customConfig = config.transcription.providers.customOpenAiCompatible;
       const endpoint = customConfig.endpoint;
       if (!endpoint) {

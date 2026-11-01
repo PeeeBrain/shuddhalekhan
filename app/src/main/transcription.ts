@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { TranscriptionProviderId } from '../types/ipc';
+import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '../shared/transcription-features';
 export type { TranscriptionProviderId } from '../types/ipc';
 
 export interface TranscriptionCapabilities {
@@ -215,6 +216,13 @@ export function validateProviderReadiness(
   vault: { read: (id: string) => string | null },
 ): string[] {
   const errors: string[] = [];
+  const features = resolveTranscriptionFeatures(config);
+  if (config.task === 'translate' && !features.translation) errors.push('Translation is not supported by the selected provider and model.');
+  if (features.language.kind === 'select' && config.language === 'auto' && !features.automaticLanguageDetection) {
+    errors.push('Choose an explicit spoken language for this provider.');
+  }
+  const dictionaryError = getTranscriptionDictionaryError(config);
+  if (dictionaryError) errors.push(dictionaryError);
 
   if (providerId === 'local-whisper-cpp') {
     const { endpoint } = config.transcription.providers.localWhisperCpp;
@@ -273,7 +281,6 @@ export function validateProviderReadiness(
     if (nim.auth === 'header' && !isValidHttpFieldName(nim.headerName.trim())) errors.push('NVIDIA Speech NIM header name is invalid.');
     if (config.language === 'auto' && !nim.supportsAutomaticLanguageDetection) errors.push('Automatic language detection is not enabled for this NIM model.');
     if (config.task === 'translate' && !nim.supportsTranslation) errors.push('Translation is not enabled for this NIM model.');
-    if (config.dictionary.length && !nim.supportsDictionaryHints) errors.push('Dictionary hints are not enabled for this NIM model.');
   }
 
   if (providerId === 'custom-open-ai-compatible') {

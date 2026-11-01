@@ -28,7 +28,13 @@ Bumping `sherpa-onnx-node` or `transcribe-cpp` means bumping the matching CUDA r
 
 Existing multilingual Parakeet v3 CPU installs remain usable during an update, including after a failed download or extraction. Their original name and languages remain visible until the unified English replacement is ready. Previous files are retained until explicitly deleted in Settings.
 
-The UI describes Granite's weaker punctuation and capitalization. Parakeet remains recommended. CPU and CUDA variants have separate install/delete state. Download hashes, byte limits, archive path/link checks, staging, and atomic replacement apply to both. Progress notifications are rate limited; full state remains queryable.
+Local setup includes the English Edge-Punct-Casing INT8 model through Sherpa's punctuation API. Its archive is pinned by SHA-256 and only the 7.5 MB model and BPE vocabulary are installed. Both acoustic backends run this small final-text step on one CPU thread, without spinning ONNX Runtime threads. Existing sentence punctuation is preserved, word-changing output is discarded, and recognized dictionary spellings retain their casing. Non-ASCII transcripts bypass the English formatter. The model is shared across installs and downloads only through an explicit setup action; older speech installations continue working before that action.
+
+Parakeet remains recommended. A nonempty personal dictionary enables modified beam decoding with per-stream hotwords. The worker derives a SentencePiece BPE vocabulary from NeMo's verified token ranks, pins terms at recording start, and supplies them again for quiet-audio and CPU retries. Empty dictionaries retain greedy decoding. Terms are limited to 64 entries of at most 128 characters, with control characters, slashes, and colons rejected because the native hotword protocol reserves those characters. Granite TurboCTC's pinned native implementation does not support vocabulary hints; its editor remains hidden rather than accepting ignored hints.
+
+CPU and CUDA variants have separate install/delete state. Download hashes, byte limits, archive path/link checks, staging, and atomic replacement apply to both. Progress notifications are rate limited; full state remains queryable.
+
+Formatting checks on 2026-11-01 exercised the real Granite CPU and CUDA backends against the same public Sherpa sample. Both returned unformatted English, and the shared formatter restored sentence case and punctuation. A direct punctuation check produced `How are you? I am fine. Thank you.` in approximately 6 ms. Parakeet CPU hotword decoding ran against the same sample; its already punctuated output was preserved. These are narrow native smoke checks, not a corpus accuracy/latency qualification or an Electron UI pass. Updated Parakeet CUDA hotwords have not been verified on hardware. Granite vocabulary still requires native contextual-decoder support outside the current prebuilt dependency.
 
 ## Native verification
 

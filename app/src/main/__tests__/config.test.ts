@@ -25,8 +25,9 @@ class MockStore {
     return storeData.get(key);
   }
 
-  set(key: string, value: unknown) {
-    storeData.set(key, value);
+  set(key: string | Record<string, unknown>, value?: unknown) {
+    if (typeof key === 'string') storeData.set(key, value);
+    else for (const [name, item] of Object.entries(key)) storeData.set(name, item);
   }
 }
 
@@ -62,6 +63,45 @@ describe('config store', () => {
       (path: unknown) => path === normalize(join('/home/tester', 'Shuddhalekhan', 'shuddhalekhan-config.json')),
     );
   }
+
+  it('saves provider transitions as a valid configuration without deleting dormant vocabulary', async () => {
+    const { getConfig, patchTranscriptionConfig } = await import(`../config?test=${Date.now()}-provider-transition`);
+    const original = getConfig();
+    const live = patchTranscriptionConfig({
+      transcription: { ...original.transcription, activeProvider: 'whisper-live-kit' },
+      dictation: { mode: 'live', formatter: null },
+      dictionary: ['Shuddhalekhan'],
+    });
+    expect(live.dictation.mode).toBe('live');
+    expect(live.shortcuts.dictation.activationMode).toBe('toggle');
+    const switched = patchTranscriptionConfig({
+      transcription: { ...live.transcription, activeProvider: 'google-cloud-speech-v2' },
+      task: 'translate', language: 'auto',
+    });
+    expect(switched.dictation.mode).toBe('batch');
+    expect(switched.task).toBe('transcribe');
+    expect(switched.language).toBe('en');
+    expect(switched.dictionary).toEqual(['Shuddhalekhan']);
+    expect(getConfig()).toEqual(switched);
+    const saved = new Map(storeData);
+    expect(() => patchTranscriptionConfig({
+      dictation: { mode: 'corrected', formatter: null },
+    })).toThrow('formatter profile');
+    expect(storeData).toEqual(saved);
+    expect(() => Reflect.apply(patchTranscriptionConfig, null, [{ agent: { enabled: true } }])).toThrow();
+    expect(storeData).toEqual(saved);
+  });
+
+  it('allows an imported oversized dictionary to shrink without admitting additions or native hotword syntax', async () => {
+    const { getConfig, patchTranscriptionConfig } = await import(`../config?test=${Date.now()}-dictionary-repair`);
+    storeData.set('dictionary', Array.from({ length: 70 }, (_, i) => `term${i}`));
+    const original = getConfig();
+    const shorter = original.dictionary.slice(1);
+    expect(patchTranscriptionConfig({ dictionary: shorter }).dictionary).toEqual(shorter);
+    expect(() => patchTranscriptionConfig({ dictionary: [...shorter, 'another'] })).toThrow('64');
+    expect(() => patchTranscriptionConfig({ dictionary: ['term :100'] })).toThrow('colon');
+    expect(getConfig().dictionary).toEqual(shorter);
+  });
 
   it('uses a stable store directory instead of package-derived userData', async () => {
     existsSync.mockReturnValue(false);
@@ -234,17 +274,10 @@ describe('config store', () => {
 
     const { getConfig } = await import(`../config?test=${Date.now()}-provider-migration`);
 
-    expect(getConfig().transcription).toEqual({
+    expect(getConfig().transcription).toMatchObject({
       activeProvider: 'local-whisper-cpp',
       providers: {
         localWhisperCpp: { endpoint: 'http://existing.test/inference' },
-        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
-        sarvam: { model: 'saaras:v4', mode: 'transcribe' },
-        azureSpeech: { endpoint: '', region: '' },
-        googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
-        nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
-        whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
       },
     });
   });

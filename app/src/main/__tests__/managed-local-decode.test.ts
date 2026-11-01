@@ -1,26 +1,31 @@
 import { describe, expect, it } from 'bun:test';
-import { decodeManagedLocal } from '../managed-local-decode';
-import type { OfflineRecognizer, OfflineStream } from 'sherpa-onnx-node';
+import { decodeManagedLocal, type LocalRecognizer } from '../managed-local-decode';
+import type { OfflineStream } from 'sherpa-onnx-node';
 
 // Model inference stays in the opt-in eval. This fake records the actual native waveform boundary.
 function recognizerBoundary(texts: string[]) {
   const waves: Parameters<OfflineStream['acceptWaveform']>[0][] = [];
+  const dictionaries: Array<readonly string[] | undefined> = [];
   let decodes = 0;
   const recognizer = {
-    createStream: () => ({ acceptWaveform: wave => { waves.push(wave); } }),
+    createStream: dictionary => {
+      dictionaries.push(dictionary);
+      return { acceptWaveform: wave => { waves.push(wave); } };
+    },
     decodeAsync: async () => ({ text: texts[decodes++] ?? '', tokens: [], timestamps: [], durations: [], ys_log_probs: [] }),
-  } satisfies Pick<OfflineRecognizer, 'createStream' | 'decodeAsync'>;
-  return { recognizer, waves };
+  } satisfies LocalRecognizer;
+  return { recognizer, waves, dictionaries };
 }
 
 describe('local recognition recovery', () => {
   it('retries a blank voiced decode once with bounded gain and acoustic context, preserving the recording', async () => {
-    const { recognizer, waves } = recognizerBoundary(['', 'Recovered speech']);
+    const { recognizer, waves, dictionaries } = recognizerBoundary(['', 'Recovered speech']);
     const samples = Float32Array.from({ length: 1600 }, (_, i) => Math.sin(i * 0.1) * 0.25);
     const before = samples.slice();
-    await decodeManagedLocal(recognizer, { samples, sampleRate: 16_000 });
+    await decodeManagedLocal(recognizer, { samples, sampleRate: 16_000 }, ['Shuddhalekhan']);
 
     expect(waves).toHaveLength(2);
+    expect(dictionaries).toEqual([['Shuddhalekhan'], ['Shuddhalekhan']]);
     expect(samples).toEqual(before);
     const retry = waves[1];
     expect(retry.sampleRate).toBe(16_000);

@@ -6,8 +6,10 @@ import { resolveManagedLocalSelection } from '../../shared/managed-local-selecti
 
 class Process extends EventEmitter {
   killed = false;
+  readonly received: unknown[] = [];
   constructor(readonly runtime: LocalRuntime, readonly failLoad = false, readonly crashDecode = false) { super(); }
   postMessage(message: unknown) {
+    this.received.push(structuredClone(message));
     if (!message || typeof message !== 'object' || !('kind' in message)) return;
     if (message.kind === 'load') queueMicrotask(() => this.emit('message', this.failLoad
       ? { kind: 'load-error', message: 'CUDA initialization failed' } : { kind: 'ready' }));
@@ -137,8 +139,11 @@ describe('local model and device lifecycle', () => {
   it('retries completed audio on CPU after a GPU worker crash in Auto', async () => {
     const { engine, processes } = rig({ crashDecode: true });
     try {
-      expect(await engine.transcribe(request)).toBe('parakeet:cpu');
+      expect(await engine.transcribe({ ...request, recognition: { ...request.recognition, dictionary: ['Shuddhalekhan'] } })).toBe('parakeet:cpu');
       expect(processes.map(p => p.runtime.backend)).toEqual(['cuda', 'cpu']);
+      for (const process of processes) {
+        expect(process.received).toContainEqual(expect.objectContaining({ kind: 'transcribe', dictionary: ['Shuddhalekhan'] }));
+      }
     } finally { await engine.shutdown(); }
   });
 

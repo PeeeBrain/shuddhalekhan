@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { spawn } from 'child_process';
-import { createReadStream, writeFileSync } from 'fs';
+import { createReadStream, readFileSync, writeFileSync } from 'fs';
 import {
   lstat,
   mkdir,
@@ -13,6 +13,7 @@ import {
 import { isAbsolute, join, normalize, relative, sep } from 'path';
 import type { OfflineRecognizerConfig } from 'sherpa-onnx-node';
 import type { ManagedLocalModelState } from '../types/ipc';
+import { localBpeVocabulary } from './managed-local-vocabulary';
 
 /** One upstream artifact: an archive (optionally only `include` members) or a set of plain files. */
 export type ManagedLocalModelManifest = {
@@ -54,12 +55,17 @@ const ORT_SESSION_OPTIONS = [
 ].join('\n');
 
 /** Recognizer settings shared by the local STT worker and the eval harness, so evals measure what users run. */
-export function managedLocalRecognizerConfig(modelPath: string, numThreads: number, backend: 'cpu' | 'cuda' = 'cpu'): OfflineRecognizerConfig {
+export function managedLocalRecognizerConfig(modelPath: string, numThreads: number, backend: 'cpu' | 'cuda' = 'cpu', contextual = false): OfflineRecognizerConfig {
   // sherpa-onnx reads session options only from a file named by the provider string.
   const sessionOptions = join(modelPath, 'ort-session.cfg');
   writeFileSync(sessionOptions, backend === 'cpu' ? ORT_SESSION_OPTIONS : `${ORT_SESSION_OPTIONS}\nLogSeverityLevel=0\narena_extend_strategy=kSameAsRequested\ncudnn_conv_use_max_workspace=0\ncudnn_conv_algo_search=HEURISTIC`);
   const suffix = backend === 'cpu' ? '.int8.onnx' : '.onnx';
+  const bpeVocab = join(modelPath, 'hotwords.vocab');
+  if (contextual) writeFileSync(bpeVocab, localBpeVocabulary(readFileSync(join(modelPath, 'tokens.txt'), 'utf8')));
   return {
+    decodingMethod: contextual ? 'modified_beam_search' : 'greedy_search',
+    maxActivePaths: 4,
+    hotwordsScore: 0.75,
     featConfig: { sampleRate: 16_000, featureDim: 80 },
     modelConfig: {
       transducer: {
@@ -72,6 +78,7 @@ export function managedLocalRecognizerConfig(modelPath: string, numThreads: numb
       provider: `${backend}:${sessionOptions}`,
       modelType: 'nemo_transducer',
       debug: false,
+      ...(contextual ? { modelingUnit: 'bpe' as const, bpeVocab } : {}),
     },
   };
 }

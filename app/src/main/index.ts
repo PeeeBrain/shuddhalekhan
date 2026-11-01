@@ -11,6 +11,7 @@ import {
   getLastSeenReleaseNotesVersion,
   mergeDiscoveredTools,
   setConfig,
+  patchTranscriptionConfig,
   setLastSeenReleaseNotesVersion,
 } from './config';
 import { credentialVault } from './credential-vault';
@@ -33,6 +34,7 @@ import {
   validateProviderReadiness,
 } from './transcription';
 import { getTranscriber } from './providers';
+import { resolveRecognitionSettings } from '../shared/transcription-features';
 import { checkWhisperLiveKitReadiness } from './whisper-live-kit';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { McpStatusStore } from './mcp-status-store';
@@ -153,14 +155,10 @@ const recordingSession = new RecordingSession({
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
   getDictationMode: () => getConfig().dictation.mode,
-  getRecognitionSettings: () => {
+  getRecognitionSettings: (intent) => {
     const config = getConfig();
-    return {
-      language: config.language,
-      task: config.task,
-      dictionary: config.dictionary,
-      removeFillerWords: config.removeFillerWords,
-    };
+    return resolveRecognitionSettings(intent === 'agent'
+      ? { ...config, dictation: { ...config.dictation, mode: 'batch' } } : config);
   },
   getTranscriber: () => getTranscriber(getConfig(), credentialVault),
   getReadinessError: (intent) => {
@@ -676,10 +674,11 @@ ipcMain.handle('transcription:check-readiness', async () => {
     };
   }
   if (provider !== 'whisper-live-kit') {
+    const error = validateProviderReadiness(provider, config, credentialVault)[0];
     return {
       providerId: provider,
-      state: 'ready' as const,
-      message: 'The selected batch provider is ready for recording.',
+      state: error ? 'unavailable' as const : 'ready' as const,
+      message: error ?? 'Settings are complete. Provider connectivity has not been checked.',
       checkedAt: new Date().toISOString(),
     };
   }
@@ -704,6 +703,15 @@ ipcMain.handle('transcription:check-readiness', async () => {
 ipcMain.handle('managed-local:get-model', managedLocalSnapshot);
 ipcMain.handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
 ipcMain.handle('managed-local:delete-model', (_event, target: unknown) => deleteManagedLocalModel(target));
+
+ipcMain.handle('config:patch-transcription', async (_event, patch: unknown) => {
+  const previous = getConfig();
+  const config = patchTranscriptionConfig(patch);
+  if (previous.transcription.activeProvider === 'managed-local' && config.transcription.activeProvider !== 'managed-local') {
+    await managedLocalTranscriber.shutdown().catch(() => undefined);
+  }
+  return config;
+});
 
 ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   const previousConfig = getConfig();

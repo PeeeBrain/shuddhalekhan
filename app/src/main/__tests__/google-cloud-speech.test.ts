@@ -71,6 +71,7 @@ describe('Google Cloud Speech-to-Text v2', () => {
       autoDecodingConfig: {},
       languageCodes: ['hi-IN'],
       model: 'short',
+      features: { enableAutomaticPunctuation: true },
       adaptation: { phraseSets: [{ inlinePhraseSet: { phrases: [{ value: 'Shuddhalekhan' }] } }] },
     });
     expect(Buffer.from(body.content, 'base64').subarray(0, 4).toString()).toBe('RIFF');

@@ -6,13 +6,15 @@ export interface LocalRuntime {
   model: 'parakeet' | 'granite';
   backend: 'cpu' | 'cuda';
   modelPath: string;
+  contextual?: boolean;
+  formattingPath?: string;
   /** GPU only: the native library directory first, then the CUDA library directories. */
   libraryPaths?: string[];
 }
 
 type Worker = ReturnType<typeof createManagedLocalTranscriber>;
 type RuntimeStatus = ManagedLocalModelSnapshot['runtime'];
-type EngineSettings = { selection: ManagedLocalSelection; numThreads: number; revision: number };
+type EngineSettings = { selection: ManagedLocalSelection; numThreads: number; revision: number; contextual?: boolean };
 type RuntimePlan = { settings: EngineSettings; candidates: LocalRuntime[] | null };
 
 /** Holds a worker for the whole recording, including pause decoding and cancellation. */
@@ -71,7 +73,7 @@ export function createManagedLocalEngine({
           if (token !== generation) throw new Error('Local speech recognition stopped.');
           if (runtime.backend === 'cuda' && failedGpuKey === desiredKey
             && settings.selection.devices[settings.selection.model] === 'auto') continue;
-          const worker = createWorker(runtime, settings.numThreads);
+          const worker = createWorker(settings.contextual ? { ...runtime, contextual: true } : runtime, settings.numThreads);
           loadingWorker = worker;
           try {
             await worker.warmup();
@@ -148,8 +150,8 @@ export function createManagedLocalEngine({
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void>; isBusy(): boolean } = {
     id: 'managed-local',
     isBusy: () => recordings.size > 0 || leases > 0,
-    capabilities: { translation: false, automaticLanguageDetection: true, dictionaryHints: false,
-      authentication: 'none', maxDurationSeconds: null },
+    get capabilities() { return { translation: false, automaticLanguageDetection: false,
+      dictionaryHints: getSettings().selection.model === 'parakeet', authentication: 'none' as const, maxDurationSeconds: null }; },
     async warmup() {
       // Settings can be edited during recording; never wait on or replace its worker here.
       if (recordings.size || leases) return;

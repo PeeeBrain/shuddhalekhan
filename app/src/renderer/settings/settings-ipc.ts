@@ -19,6 +19,7 @@ import type {
   AgentProviderTestResult,
   ChatGptAccountStatus,
   ChatGptModel,
+  TranscriptionSettingsPatch,
 } from '../../types/ipc';
 import type {
   AgentMemorySnapshot,
@@ -32,6 +33,8 @@ type Unsubscribe = () => void;
 export interface SettingsIpc {
   getConfig: () => Promise<AppConfig>;
   setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => Promise<void>;
+  /** All-or-nothing transcription transition; main normalizes and returns the saved config. */
+  patchTranscriptionConfig: (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;
   getAppInfo: () => Promise<AppInfo>;
   getReleaseNotes: () => Promise<VersionReleaseNotes | null>;
   getUpdateStatus: () => Promise<UpdateStatus>;
@@ -91,6 +94,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     setConfig: async (key, value) => {
       await electronAPI?.invoke('config:set', key, value);
     },
+    patchTranscriptionConfig: (patch) => requireElectronApi(electronAPI).invoke('config:patch-transcription', patch),
     getAppInfo: () => requireElectronApi(electronAPI).invoke('app:get-info'),
     getReleaseNotes: () => requireElectronApi(electronAPI).invoke('app:get-release-notes'),
     getUpdateStatus: () => requireElectronApi(electronAPI).invoke('updater:get-status'),

@@ -222,6 +222,23 @@ describe('OpenAI transcriber provider', () => {
     expect(body.get('model')).toBe('whisper-1');
   });
 
+  it('omits unsupported model prompts and rejects file translation before sending audio', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ text: 'hello' }) } as Response);
+    const { getTranscriber } = await import('../providers');
+    const config: AppConfig = { ...BASE_CONFIG, transcription: { ...BASE_CONFIG.transcription,
+      providers: { ...BASE_CONFIG.transcription.providers, openai: { ...BASE_CONFIG.transcription.providers.openai,
+        model: 'gpt-4o-transcribe-diarize' } } } };
+    const transcriber = getTranscriber(config, createVault({ 'openai-api-key': 'test' }));
+    const recognition = { language: 'en', task: 'transcribe' as const, dictionary: ['Shuddhalekhan'], removeFillerWords: false };
+    await transcriber.transcribe({ audio: new Uint8Array([1]), recognition });
+    const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(body.get('prompt')).toBeNull();
+    await expect(transcriber.transcribe({ audio: new Uint8Array([1]), recognition: { ...recognition, task: 'translate' } }))
+      .rejects.toThrow('translation');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('applies language and uses /audio/translations for translation task', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValue({

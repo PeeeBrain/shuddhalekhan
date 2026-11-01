@@ -165,6 +165,7 @@ async function recognize(
     autoDecodingConfig: {},
     languageCodes: [LANGUAGE_CODES[recognition.language] ?? recognition.language],
     model: config.model.trim(),
+    features: { enableAutomaticPunctuation: true },
   };
   if (recognition.dictionary.length) {
     requestConfig.adaptation = {

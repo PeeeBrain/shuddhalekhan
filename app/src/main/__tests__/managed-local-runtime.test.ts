@@ -203,6 +203,25 @@ describe('managed local runtime supervision', () => {
     await transcriber.shutdown();
   });
 
+  it('pins vocabulary before async startup and transports it to the native worker', async () => {
+    const child = new FakeUtilityProcess();
+    const transcriber = createManagedLocalTranscriber({ getModelPath: async () => 'model', startProcess: () => child });
+    const recognition = { language: 'en', task: 'transcribe' as const, dictionary: ['Shuddhalekhan'], removeFillerWords: false };
+    try {
+      const result = transcriber.transcribe({ audio: new Uint8Array([1]), recognition });
+      recognition.dictionary[0] = 'Changed after recording';
+      await result;
+      expect(child.sent.find(message => message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe'))
+        .toMatchObject({ dictionary: ['Shuddhalekhan'] });
+      const incremental = transcriber.startIncremental({ recognition });
+      recognition.dictionary[0] = 'Changed again';
+      await incremental.send(new Uint8Array([0, 0]));
+      expect(child.sent.find(message => message && typeof message === 'object' && 'kind' in message && message.kind === 'incremental-start'))
+        .toMatchObject({ dictionary: ['Changed after recording'] });
+      incremental.cancel();
+    } finally { await transcriber.shutdown(); }
+  });
+
   it('rejects work on a crash and starts a fresh process for the next request', async () => {
     const children: FakeUtilityProcess[] = [];
     const transcriber = createManagedLocalTranscriber({

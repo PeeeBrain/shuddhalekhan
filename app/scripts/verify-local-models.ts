@@ -4,7 +4,7 @@ import { parseArgs } from 'util';
 import { readFile, writeFile } from 'fs/promises';
 import { resolve } from 'path';
 import { createManagedLocalModelManager } from '../src/main/managed-local-model';
-import { LOCAL_MODELS } from '../src/main/managed-local-catalog';
+import { LOCAL_MODELS, LOCAL_FORMATTING_MODEL } from '../src/main/managed-local-catalog';
 import { createManagedLocalTranscriber } from '../src/main/managed-local-runtime';
 import { startLocalRuntimeProcess } from '../src/main/managed-local-process';
 import { decodePcm16Wave } from '../src/main/managed-local-wave';
@@ -32,15 +32,17 @@ void app.whenReady().then(async () => {
     for (const model of LOCAL_MODELS) {
       for (const backend of ['cpu', 'cuda'] as const) {
         const paths: string[] = [];
-        for (const manifest of backend === 'cpu' ? [model.cpu] : model.cuda) {
+        for (const manifest of [...(backend === 'cpu' ? [model.cpu] : model.cuda), LOCAL_FORMATTING_MODEL]) {
           const manager = createManagedLocalModelManager({ root, manifest });
           if ((await manager.getState()).kind !== 'ready') await manager.install();
           const state = await manager.getState();
           if (state.kind !== 'ready') throw new Error(`${manifest.id} did not become ready.`);
           paths.push(state.path);
         }
+        const formattingPath = paths.pop();
         const [modelPath, ...libraryPaths] = paths;
-        const runtime: LocalRuntime = { model: model.key, backend, modelPath, ...(backend === 'cuda' ? { libraryPaths } : {}) };
+        const runtime: LocalRuntime = { model: model.key, backend, modelPath, formattingPath,
+          ...(backend === 'cuda' ? { libraryPaths } : {}) };
         const worker = createManagedLocalTranscriber({ getModelPath: async () => modelPath, runtime,
           getNumThreads: () => 10, startProcess: () => startLocalRuntimeProcess(runtime) });
         workers.push(worker);
