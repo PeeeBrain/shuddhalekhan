@@ -269,7 +269,7 @@ describe('Settings navigation', () => {
     });
     await waitForLoaded();
 
-    const setupGpu = await screen.findByRole('button', { name: 'Set up GPU · 900 MB' });
+    const setupGpu = await screen.findByRole('button', { name: 'Install' });
     expect(settingsIpc.installManagedLocalModel).not.toHaveBeenCalled();
     expect(screen.getByText('Running on CPU')).toBeInTheDocument();
     fireEvent.click(setupGpu);

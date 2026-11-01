@@ -29,7 +29,6 @@ import type {
   TranscriptionReadiness,
   ManagedLocalDevice,
   ManagedLocalModelSnapshot,
-  ManagedLocalModelState,
   ManagedLocalSelection,
   ManagedLocalTarget,
 } from '../../types/ipc';
@@ -698,16 +697,11 @@ export function TranscriptionSettings({
   );
 }
 
-const DEVICE_OPTIONS: Array<{ value: ManagedLocalDevice; label: string }> = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'cpu', label: 'CPU' },
-  { value: 'cuda', label: 'Dedicated GPU (NVIDIA)' },
-];
-
+// Only the non-obvious behavior gets words: Auto's fallback and the GPU option's lack of one.
 const DEVICE_DESCRIPTIONS: Record<ManagedLocalDevice, string> = {
-  auto: 'Uses the NVIDIA GPU when its files are installed and it starts; otherwise the CPU. GPU files are never downloaded automatically.',
-  cpu: 'Runs offline on the processor. No GPU setup needed.',
-  cuda: 'NVIDIA CUDA only. If the GPU cannot start, recording fails instead of falling back to the CPU.',
+  auto: 'Uses the GPU once its files are installed, otherwise the CPU.',
+  cpu: '',
+  cuda: 'No CPU fallback. Recording fails if the GPU cannot start.',
 };
 
 type ManagedLocalArtifact = ManagedLocalModelSnapshot['catalog'][number]['cpu'];
@@ -801,7 +795,11 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
                   </span>
                   <span className="block text-xs leading-5 text-muted-foreground">{item.description}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {item.languages.join(', ')} · CPU {item.cpu.legacy?.inUse && item.cpu.state.kind === 'missing' ? 'previous version installed' : artifactStateWord(item.cpu.state)} · GPU {artifactStateWord(item.cuda.state)}
+                    {[
+                      item.languages.join(', '),
+                      item.cpu.state.kind === 'ready' || item.cpu.legacy?.inUse ? 'Installed' : null,
+                      item.cuda.state.kind === 'ready' ? 'GPU ready' : null,
+                    ].filter(Boolean).join(' · ')}
                   </span>
                 </span>
               </label>
@@ -810,7 +808,6 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           {persistence.fieldErrors[FIELD_ID_LOCAL_MODEL] ? (
             <p role="alert" className="text-xs text-destructive">{persistence.fieldErrors[FIELD_ID_LOCAL_MODEL]}</p>
           ) : null}
-          <p className="text-xs text-muted-foreground">Model and processor changes apply to the next recording.</p>
         </fieldset>
       ) : (
         <p className="text-sm font-medium">
@@ -827,8 +824,12 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           <SelectRow
             label="Processor"
             value={device}
-            options={DEVICE_OPTIONS}
-            description={`${DEVICE_DESCRIPTIONS[device]}${snapshot?.gpu ? ` ${snapshot.gpu.name ? `Detected: ${snapshot.gpu.name}.` : snapshot.gpu.message}` : ''}`}
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'cpu', label: 'CPU' },
+              { value: 'cuda', label: snapshot?.gpu?.name ?? 'NVIDIA GPU' },
+            ]}
+            description={[DEVICE_DESCRIPTIONS[device], device !== 'cpu' ? snapshot?.gpu?.message : ''].filter(Boolean).join(' ')}
             errorId={deviceErrorId}
             error={persistence.fieldErrors[FIELD_ID_LOCAL_DEVICE]}
             onChange={(value) => saveDevice(value as ManagedLocalDevice)}
@@ -837,9 +838,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           {offerAlternatives ? (
             <div className="flex flex-wrap items-center gap-2 pb-3 text-xs text-muted-foreground">
               <span>
-                {gpu?.state.kind !== 'ready'
-                  ? 'Dedicated GPU needs GPU files for this model. Set them up below, or use another processor.'
-                  : 'The GPU could not start. Use another processor to keep dictating.'}
+                {gpu?.state.kind !== 'ready' ? 'Install GPU files below, or switch processor.' : 'The GPU could not start.'}
               </span>
               <Button variant="secondary" size="xs" onClick={() => saveDevice('auto')}>Use Auto</Button>
               <Button variant="ghost" size="xs" onClick={() => saveDevice('cpu')}>Use CPU</Button>
@@ -853,7 +852,6 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           <ArtifactRow
             title={entry ? 'CPU files' : 'Model files'}
             artifact={cpu}
-            hint={device === 'auto' ? 'Required so Auto can fall back to the CPU.' : undefined}
             installLabel={cpu.legacy?.inUse ? 'Install update' : 'Install'}
             deleteLabel={entry ? 'Delete CPU files' : 'Delete model'}
             busy={busy}
@@ -868,9 +866,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
                   {cpu.legacy.inUse ? <Tag tone="info">In use</Tag> : null}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {formatMegabytes(cpu.legacy.installedBytes)} on disk · {cpu.legacy.inUse
-                    ? 'Used until the CPU files above are installed. Nothing is replaced automatically.'
-                    : 'No longer used. Delete these files to free space.'}
+                  {formatMegabytes(cpu.legacy.installedBytes)} · {cpu.legacy.inUse ? 'In use until the update is installed' : 'No longer used'}
                 </p>
               </div>
               <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={busy}
@@ -879,24 +875,22 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           ) : null}
           {gpu && showGpuFiles ? (
             <ArtifactRow
-              title="GPU acceleration files"
+              title="GPU files"
               artifact={gpu}
-              hint="NVIDIA CUDA runtime and model files. CPU files stay installed."
               optional
-              installLabel={`Set up GPU · ${formatMegabytes(gpu.downloadBytes)}`}
+              installLabel="Install"
               deleteLabel="Delete GPU files"
               busy={busy}
               onInstall={() => void runAction('cuda', 'install')}
               onDelete={() => void runAction('cuda', 'delete')}
             />
           ) : null}
-          {entry ? (
-            <p className="pt-2 text-xs text-muted-foreground">Deleting removes only this model&apos;s files. Other models stay installed.</p>
-          ) : null}
         </div>
       ) : null}
-      {error ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
-      {snapshot ? (
+      {/* A failed artifact already shows its error in its own row. */}
+      {error && cpu?.state.kind !== 'error' && gpu?.state.kind !== 'error'
+        ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
+      {snapshot && device !== 'cuda' ? (
         <div className="mt-4 space-y-2 border-t border-border/50 pt-3.5">
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor={threadsId}>CPU threads</Label>
@@ -921,8 +915,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           />
           <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
             <p id={threadsDescriptionId} className="max-w-md text-xs leading-5 text-muted-foreground">
-              Used when running on the CPU. More threads can finish sooner but use more CPU and battery. Quality is unchanged.
-              Default is {snapshot.inference.defaultThreads}; changes apply to the next transcription.
+              More threads finish sooner but use more battery.
             </p>
             <Button
               variant="ghost"
@@ -960,10 +953,9 @@ function RuntimeStatus({ runtime }: { runtime: ManagedLocalModelSnapshot['runtim
   );
 }
 
-function ArtifactRow({ title, artifact, hint, optional = false, installLabel, deleteLabel, busy, onInstall, onDelete }: {
+function ArtifactRow({ title, artifact, optional = false, installLabel, deleteLabel, busy, onInstall, onDelete }: {
   title: string;
   artifact: ManagedLocalArtifact;
-  hint?: string;
   optional?: boolean;
   installLabel: string;
   deleteLabel: string;
@@ -979,10 +971,11 @@ function ArtifactRow({ title, artifact, hint, optional = false, installLabel, de
           {title}
           {state.kind === 'ready' ? <Tag tone="success">Installed</Tag> : null}
         </p>
-        <p className="text-xs text-muted-foreground">
-          {formatMegabytes(artifact.downloadBytes)} download · {formatMegabytes(artifact.installedBytes)} on disk
-          {hint ? ` · ${hint}` : ''}
-        </p>
+        {state.kind === 'ready' || state.kind === 'missing' ? (
+          <p className="text-xs text-muted-foreground">
+            {state.kind === 'ready' ? formatMegabytes(artifact.installedBytes) : `${formatMegabytes(artifact.downloadBytes)} download`}
+          </p>
+        ) : null}
         {state.kind === 'downloading' ? (
           <p className="text-xs" role="status">
             Downloading… {state.totalBytes > 0 ? Math.round(state.downloadedBytes / state.totalBytes * 100) : 0}%
@@ -1003,14 +996,6 @@ function ArtifactRow({ title, artifact, hint, optional = false, installLabel, de
       )}
     </div>
   );
-}
-
-function artifactStateWord(state: ManagedLocalModelState): string {
-  if (state.kind === 'ready') return 'installed';
-  if (state.kind === 'downloading') return 'downloading';
-  if (state.kind === 'installing') return 'installing';
-  if (state.kind === 'error') return 'needs attention';
-  return 'not installed';
 }
 
 function formatMegabytes(bytes: number): string {

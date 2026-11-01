@@ -658,7 +658,8 @@ ipcMain.handle('transcription:check-readiness', async () => {
         await managedLocalTranscriber.warmup();
         const snapshot = await managedLocalSnapshot();
         return { providerId: provider, state: 'ready' as const,
-          message: snapshot.runtime.status === 'ready' ? snapshot.runtime.message : 'Model files are installed. Changes apply to the next recording.',
+          message: snapshot.runtime.status === 'ready'
+            ? snapshot.runtime.message || `Running on ${snapshot.runtime.backend === 'cuda' ? 'NVIDIA GPU' : 'CPU'}.` :'Model files are installed. Changes apply to the next recording.',
           checkedAt: new Date().toISOString() };
       } catch (error) {
         return { providerId: provider, state: 'unavailable' as const,

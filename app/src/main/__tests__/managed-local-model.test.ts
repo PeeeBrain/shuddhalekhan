@@ -7,7 +7,6 @@ import {
   createManagedLocalModelManager,
   replaceDirectory,
   validateArchiveEntries,
-  type ManagedLocalModelManifest,
 } from '../managed-local-model';
 
 const roots: string[] = [];
@@ -22,7 +21,7 @@ async function tempRoot(): Promise<string> {
   return root;
 }
 
-function manifestFor(bytes: Uint8Array): ManagedLocalModelManifest {
+function manifestFor(bytes: Uint8Array) {
   return {
     id: 'test-model',
     version: '1',
@@ -38,19 +37,31 @@ function manifestFor(bytes: Uint8Array): ManagedLocalModelManifest {
 }
 
 describe('managed local model lifecycle', () => {
-  it('installs a verified standalone GGUF without archive extraction', async () => {
+  it('installs verified plain files side by side, resuming only the unfinished one', async () => {
     const root = await tempRoot();
-    const bytes = new TextEncoder().encode('GGUF model fixture');
+    const onnx = new TextEncoder().encode('encoder graph');
+    const weights = new TextEncoder().encode('external encoder weights');
+    const file = (name: string, bytes: Uint8Array) => ({ name, url: `https://models.example/${name}`, bytes: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex') });
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'test-model-1.partial-encoder.onnx'), onnx);
+    await writeFile(join(root, 'test-model-1.partial-encoder.weights'), weights.slice(0, 8));
+    const requests: string[] = [];
     const manager = createManagedLocalModelManager({ root,
-      manifest: { ...manifestFor(bytes), format: 'file', requiredFiles: ['model.gguf'] },
-      fetchArtifact: async () => new Response(bytes),
-      extractArchive: async () => { throw new Error('A GGUF is not an archive'); },
+      manifest: { id: 'test-model', version: '1', name: 'Test model', languages: [], installedBytes: 0,
+        downloadBytes: onnx.byteLength + weights.byteLength, requiredFiles: ['encoder.onnx', 'encoder.weights'],
+        files: [file('encoder.onnx', onnx), file('encoder.weights', weights)] },
+      fetchArtifact: async (url, init) => {
+        requests.push(`${url} ${new Headers(init.headers).get('Range')}`);
+        return new Response(weights.slice(8), { status: 206, headers: { 'Content-Range': `bytes 8-${weights.byteLength - 1}/${weights.byteLength}` } });
+      },
+      extractArchive: async () => { throw new Error('Plain files are not an archive'); },
     });
     await manager.install();
+    expect(requests).toEqual(['https://models.example/encoder.weights bytes=8-']);
     expect(await manager.getState()).toMatchObject({ kind: 'ready' });
-    expect(await readFile(join(root, 'test-model-1/model.gguf'))).toEqual(bytes);
-    await manager.delete();
-    expect((await manager.getState()).kind).toBe('missing');
+    expect(await readFile(join(root, 'test-model-1/encoder.onnx'))).toEqual(onnx);
+    expect(await readFile(join(root, 'test-model-1/encoder.weights'))).toEqual(weights);
   });
   it('verifies and atomically promotes a complete download', async () => {
     const root = await tempRoot();

@@ -6,7 +6,8 @@ export interface LocalRuntime {
   model: 'parakeet' | 'granite';
   backend: 'cpu' | 'cuda';
   modelPath: string;
-  runtimePath?: string;
+  /** GPU only: the native library directory first, then the CUDA library directories. */
+  libraryPaths?: string[];
 }
 
 type Worker = ReturnType<typeof createManagedLocalTranscriber>;
@@ -77,11 +78,9 @@ export function createManagedLocalEngine({
             if (token !== generation) throw new Error('Local speech recognition stopped.');
             current = { key: desiredKey, worker, runtime, settings, candidates };
             onStatus({ status: 'ready', backend: runtime.backend,
-              message: runtime.backend === 'cuda' ? 'Using dedicated NVIDIA GPU.'
-                : failure || failedGpuKey === desiredKey
-                  ? 'Using CPU after GPU startup or inference failed. Select Dedicated GPU to retry.'
-                  : settings.selection.devices[settings.selection.model] === 'cpu' ? 'Using CPU.'
-                    : 'Using CPU. Auto uses GPU only after GPU setup is installed and verified.' }, settings);
+              // Only the GPU fallback needs words; the status tag already names the processor.
+              message: runtime.backend === 'cpu' && (failure || failedGpuKey === desiredKey)
+                ? 'The GPU could not start. Select NVIDIA GPU to retry.' : '' }, settings);
             return;
           } catch (error) {
             await worker.shutdown();

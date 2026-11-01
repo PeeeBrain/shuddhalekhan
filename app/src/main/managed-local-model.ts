@@ -14,19 +14,19 @@ import { isAbsolute, join, normalize, relative, sep } from 'path';
 import type { OfflineRecognizerConfig } from 'sherpa-onnx-node';
 import type { ManagedLocalModelState } from '../types/ipc';
 
-export interface ManagedLocalModelManifest {
+/** One upstream artifact: an archive (optionally only `include` members) or a set of plain files. */
+export type ManagedLocalModelManifest = {
   id: string;
   version: string;
   name: string;
   downloadBytes: number;
   installedBytes: number;
   languages: string[];
-  artifactUrl: string;
-  sha256: string;
-  archiveRoot: string;
   requiredFiles: string[];
-  format?: 'archive' | 'file';
-}
+} & (
+  | { artifactUrl: string; sha256: string; archiveRoot: string; include?: string[] }
+  | { files: Array<{ name: string; url: string; sha256: string; bytes: number }> }
+);
 
 /** Files a previous release installed for this slot. Used in place until the replacement installs; removed only on request. */
 export type ManagedLocalLegacyModel = Pick<ManagedLocalModelManifest,
@@ -77,14 +77,14 @@ export function managedLocalRecognizerConfig(modelPath: string, numThreads: numb
 }
 
 type FetchArtifact = (url: string, init: RequestInit) => Promise<Response>;
-type ExtractArchive = (archivePath: string, stagingPath: string) => Promise<void>;
+type ExtractArchive = (archivePath: string, stagingPath: string, include?: string[]) => Promise<void>;
 
 export function createManagedLocalModelManager({
   root,
   manifest = MANAGED_LOCAL_MODEL,
   legacy,
   fetchArtifact = fetch,
-  extractArchive = extractTarBz2,
+  extractArchive = extractTar,
   onStateChanged = () => {},
 }: {
   root: string;
@@ -133,73 +133,81 @@ export function createManagedLocalModelManager({
     return old ? { kind: 'ready', modelId: old.id, path: old.path } : state;
   };
 
-  const runInstall = async (): Promise<void> => {
-    await mkdir(root, { recursive: true });
-    let resumeAt = await fileSize(partialPath);
-    if (resumeAt > manifest.downloadBytes) {
-      await rm(partialPath, { force: true });
+  const downloads = 'files' in manifest
+    ? manifest.files.map(file => ({ ...file, path: `${partialPath}-${file.name}` }))
+    : [{ url: manifest.artifactUrl, sha256: manifest.sha256, bytes: manifest.downloadBytes, path: partialPath }];
+
+  /** Resumable download of one file into its partial path, verified against its pinned hash. */
+  const download = async ({ url, sha256: expected, bytes, path }: typeof downloads[number], progress: (bytes: number) => void) => {
+    let resumeAt = await fileSize(path);
+    if (resumeAt > bytes) {
+      await rm(path, { force: true });
       resumeAt = 0;
     }
-    publish({
-      kind: 'downloading',
-      modelId: manifest.id,
-      downloadedBytes: resumeAt,
-      totalBytes: manifest.downloadBytes,
-    });
-
-    try {
-      if (resumeAt !== manifest.downloadBytes) {
-        const response = await fetchArtifact(manifest.artifactUrl, {
-          headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : {},
-          signal: AbortSignal.timeout(30 * 60_000),
-        });
-        if (!response.ok || !response.body) {
-          throw new Error(`Model download failed with HTTP ${response.status}.`);
-        }
-        const append = resumeAt > 0 && response.status === 206;
-        if (append && !response.headers.get('Content-Range')?.startsWith(`bytes ${resumeAt}-`)) {
-          throw new Error('The model server returned an invalid download range. Retry the download.');
-        }
-        const file = await open(partialPath, append ? 'a' : 'w');
-        let downloadedBytes = append ? resumeAt : 0;
-        try {
-          const reader = response.body.getReader();
-          while (true) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            downloadedBytes += chunk.value.byteLength;
-            if (downloadedBytes > manifest.downloadBytes) {
-              await reader.cancel();
-              throw new Error('The model download was larger than expected. Retry the download.');
-            }
-            await file.write(chunk.value);
-            publish({
-              kind: 'downloading',
-              modelId: manifest.id,
-              downloadedBytes,
-              totalBytes: manifest.downloadBytes,
-            });
-          }
-        } finally {
-          await file.close();
-        }
+    progress(resumeAt);
+    if (resumeAt !== bytes) {
+      const response = await fetchArtifact(url, {
+        headers: resumeAt > 0 ? { Range: `bytes=${resumeAt}-` } : {},
+        signal: AbortSignal.timeout(30 * 60_000),
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Model download failed with HTTP ${response.status}.`);
       }
+      const append = resumeAt > 0 && response.status === 206;
+      if (append && !response.headers.get('Content-Range')?.startsWith(`bytes ${resumeAt}-`)) {
+        throw new Error('The model server returned an invalid download range. Retry the download.');
+      }
+      const file = await open(path, append ? 'a' : 'w');
+      let downloadedBytes = append ? resumeAt : 0;
+      let oversized = false;
+      try {
+        const reader = response.body.getReader();
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          downloadedBytes += chunk.value.byteLength;
+          if (downloadedBytes > bytes) {
+            oversized = true;
+            await reader.cancel();
+            break;
+          }
+          await file.write(chunk.value);
+          progress(downloadedBytes);
+        }
+      } finally {
+        await file.close();
+      }
+      if (oversized) {
+        await rm(path, { force: true });
+        throw new Error('The model download was larger than expected. Retry the download.');
+      }
+    }
+    if (await sha256(path) !== expected) {
+      await rm(path, { force: true });
+      throw new Error('The downloaded model failed its integrity check. Retry the download.');
+    }
+  };
 
-      if (await sha256(partialPath) !== manifest.sha256) {
-        await rm(partialPath, { force: true });
-        throw new Error('The downloaded model failed its integrity check. Retry the download.');
+  const runInstall = async (): Promise<void> => {
+    await mkdir(root, { recursive: true });
+    try {
+      let done = 0;
+      for (const file of downloads) {
+        await download(file, bytes => publish({
+          kind: 'downloading', modelId: manifest.id, downloadedBytes: done + bytes, totalBytes: manifest.downloadBytes,
+        }));
+        done += file.bytes;
       }
 
       publish({ kind: 'installing', modelId: manifest.id });
       await rm(stagingPath, { recursive: true, force: true });
       await mkdir(stagingPath, { recursive: true });
-      const extractedPath = join(stagingPath, manifest.archiveRoot);
-      if (manifest.format === 'file') {
-        await mkdir(extractedPath, { recursive: true });
-        const { copyFile } = await import('fs/promises');
-        await copyFile(partialPath, join(extractedPath, manifest.requiredFiles[0]));
+      let extractedPath = stagingPath;
+      if ('files' in manifest) {
+        for (const file of manifest.files) await rename(`${partialPath}-${file.name}`, join(stagingPath, file.name));
       } else {
-        await extractArchive(partialPath, stagingPath);
+        extractedPath = join(stagingPath, manifest.archiveRoot);
+        await extractArchive(partialPath, stagingPath, manifest.include);
       }
       if (!await isValidInstall(extractedPath, manifest.requiredFiles)) {
         throw new Error('The model archive is missing required files. Repair the installation.');
@@ -207,16 +215,13 @@ export function createManagedLocalModelManager({
       await rejectLinks(extractedPath);
       await replaceDirectory(extractedPath, installPath);
       await rm(stagingPath, { recursive: true, force: true });
-      await rm(partialPath, { force: true });
+      await Promise.all(downloads.map(file => rm(file.path, { force: true })));
       publish({ kind: 'ready', modelId: manifest.id, path: installPath });
     } catch (error) {
-      if (error instanceof Error && error.message.includes('larger than expected')) {
-        await rm(partialPath, { force: true });
-      }
       await rm(stagingPath, { recursive: true, force: true });
       const message = error instanceof Error ? error.message : 'Model installation failed.';
-      const action = await fileSize(partialPath) > 0 ? 'resume' : 'retry';
-      publish({ kind: 'error', modelId: manifest.id, message, action });
+      const partial = (await Promise.all(downloads.map(file => fileSize(file.path)))).some(size => size > 0);
+      publish({ kind: 'error', modelId: manifest.id, message, action: partial ? 'resume' : 'retry' });
       throw error;
     }
   };
@@ -281,19 +286,21 @@ export function validateArchiveEntries(entries: string[]): void {
   }
 }
 
-async function extractTarBz2(archivePath: string, stagingPath: string): Promise<void> {
-  const entries = (await runTar(['-tjf', archivePath])).split(/\r?\n/).filter(Boolean);
+/** Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. */
+async function extractTar(archivePath: string, stagingPath: string, include: string[] = []): Promise<void> {
+  const entries = (await runTar(['-tf', archivePath, ...include])).split(/\r?\n/).filter(Boolean);
   validateArchiveEntries(entries);
-  const verbose = (await runTar(['-tvjf', archivePath])).split(/\r?\n/).filter(Boolean);
+  const verbose = (await runTar(['-tvf', archivePath, ...include])).split(/\r?\n/).filter(Boolean);
   if (verbose.some((line) => line[0] !== '-' && line[0] !== 'd')) {
     throw new Error('The model archive contains unsupported links or device entries.');
   }
-  await runTar(['-xjf', archivePath, '-C', stagingPath]);
+  await runTar(['-xf', archivePath, '-C', stagingPath, ...include]);
 }
 
 function runTar(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn('tar.exe', args, { windowsHide: true });
+    // Windows' own bsdtar; a GNU tar earlier on PATH (Git for Windows) cannot read zip or drive-letter paths.
+    const child = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'), args, { windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');

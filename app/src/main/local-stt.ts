@@ -107,7 +107,7 @@ function isIncrementalMessage(message: unknown): message is IncrementalMessage {
 }
 
 const runtimeSchema = z.object({
-  model: z.enum(['parakeet', 'granite']), backend: z.enum(['cpu', 'cuda']), modelPath: z.string(), runtimePath: z.string().optional(),
+  model: z.enum(['parakeet', 'granite']), backend: z.enum(['cpu', 'cuda']), modelPath: z.string(), libraryPaths: z.array(z.string()).optional(),
 });
 
 function isLoadMessage(message: unknown): message is {

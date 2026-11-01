@@ -1,8 +1,8 @@
 // Explicit native integration check; not part of default bun test. Run the bundled script with Electron.
 import { app } from 'electron';
 import { parseArgs } from 'util';
-import { readFile, writeFile, copyFile, mkdir } from 'fs/promises';
-import { dirname, join, resolve } from 'path';
+import { readFile, writeFile } from 'fs/promises';
+import { resolve } from 'path';
 import { createManagedLocalModelManager } from '../src/main/managed-local-model';
 import { LOCAL_MODELS } from '../src/main/managed-local-catalog';
 import { createManagedLocalTranscriber } from '../src/main/managed-local-runtime';
@@ -10,17 +10,12 @@ import { startLocalRuntimeProcess } from '../src/main/managed-local-process';
 import { decodePcm16Wave } from '../src/main/managed-local-wave';
 import type { LocalRuntime } from '../src/main/managed-local-engine';
 
+// Downloads every pinned upstream part into --root (reused across runs), then transcribes on each model/backend.
 const { values } = parseArgs({ args: process.argv.slice(2), options: {
-  bundles: { type: 'string' }, root: { type: 'string' }, 'parakeet-cpu': { type: 'string' },
-  'granite-gguf': { type: 'string' }, audio: { type: 'string' }, out: { type: 'string' },
+  root: { type: 'string' }, audio: { type: 'string' }, out: { type: 'string' },
 } });
-if (!values.root || !values.bundles || !values['parakeet-cpu'] || !values['granite-gguf'] || !values.audio || !values.out) {
-  throw new Error('Provide --root --bundles --parakeet-cpu --granite-gguf --audio --out.');
-}
+if (!values.root || !values.audio || !values.out) throw new Error('Provide --root --audio --out.');
 const root = resolve(values.root);
-const bundles = resolve(values.bundles);
-const gguf = resolve(values['granite-gguf']);
-const cpuPath = resolve(values['parakeet-cpu']);
 const audioPath = resolve(values.audio);
 const outputPath = resolve(values.out);
 const workers: ReturnType<typeof createManagedLocalTranscriber>[] = [];
@@ -28,14 +23,6 @@ const workers: ReturnType<typeof createManagedLocalTranscriber>[] = [];
 void app.whenReady().then(async () => {
   const results = [];
   try {
-    await mkdir(dirname(root), { recursive: true });
-    try { await mkdir(root); }
-    catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
-        throw new Error('Use a new --root directory for each release check so the supplied bundles are installed and verified.', { cause: error });
-      }
-      throw error;
-    }
     const bytes = await readFile(audioPath);
     const audio = new Uint8Array(bytes);
     const wave = decodePcm16Wave(audio.buffer);
@@ -44,19 +31,16 @@ void app.whenReady().then(async () => {
     for (let i = 0; i < wave.samples.length; i++) pcmView.setInt16(i * 2, Math.max(-32768, Math.min(32767, Math.round(wave.samples[i] * 32768))), true);
     for (const model of LOCAL_MODELS) {
       for (const backend of ['cpu', 'cuda'] as const) {
-        let modelPath = cpuPath;
-        if (model.key !== 'parakeet' || backend !== 'cpu') {
-          const manifest = model[backend];
+        const paths: string[] = [];
+        for (const manifest of backend === 'cpu' ? [model.cpu] : model.cuda) {
           const manager = createManagedLocalModelManager({ root, manifest });
-          const source = backend === 'cpu' ? gguf : join(bundles, `${manifest.id}-${manifest.version}.tar.bz2`);
-          await copyFile(source, join(root, `${manifest.id}-${manifest.version}.partial`));
-          await manager.install();
+          if ((await manager.getState()).kind !== 'ready') await manager.install();
           const state = await manager.getState();
-          if (state.kind !== 'ready') throw new Error('Verified installation did not become ready.');
-          modelPath = state.path;
+          if (state.kind !== 'ready') throw new Error(`${manifest.id} did not become ready.`);
+          paths.push(state.path);
         }
-        const runtime: LocalRuntime = { model: model.key, backend, modelPath,
-          ...(backend === 'cuda' ? { runtimePath: join(modelPath, 'runtime') } : {}) };
+        const [modelPath, ...libraryPaths] = paths;
+        const runtime: LocalRuntime = { model: model.key, backend, modelPath, ...(backend === 'cuda' ? { libraryPaths } : {}) };
         const worker = createManagedLocalTranscriber({ getModelPath: async () => modelPath, runtime,
           getNumThreads: () => 10, startProcess: () => startLocalRuntimeProcess(runtime) });
         workers.push(worker);

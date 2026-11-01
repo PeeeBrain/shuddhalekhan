@@ -8,12 +8,19 @@ export async function createLocalRecognizer(runtime: LocalRuntime, numThreads: n
   if (runtime.model === 'parakeet') {
     // Import only after the worker's DLL search path has been set, never in Electron main.
     const require = createRequire(join(__dirname, 'local-stt.cjs'));
-    const sherpa: typeof import('sherpa-onnx-node') = require(runtime.backend === 'cpu'
-      ? 'sherpa-onnx-node' : join(requireRuntime(runtime), 'sherpa-onnx-node/non-streaming-asr.js'));
+    if (runtime.backend === 'cuda') {
+      // Windows binds a DLL import to an already loaded module of the same name, so loading sherpa-onnx's
+      // CUDA build first makes the app's own addon use it instead of the CPU build bundled beside it.
+      const koffi: typeof import('koffi') = require('koffi');
+      const directory = libraryDirectory(runtime);
+      koffi.load(join(directory, 'onnxruntime.dll'));
+      koffi.load(join(directory, 'sherpa-onnx-c-api.dll'));
+    }
+    const sherpa: typeof import('sherpa-onnx-node') = require('sherpa-onnx-node');
     return sherpa.OfflineRecognizer.createAsync(managedLocalRecognizerConfig(runtime.modelPath, numThreads, runtime.backend));
   }
   if (runtime.backend === 'cuda') {
-    process.env.TRANSCRIBE_LIBRARY = join(requireRuntime(runtime), 'transcribe/transcribe.dll');
+    process.env.TRANSCRIBE_LIBRARY = join(libraryDirectory(runtime), 'transcribe.dll');
   } else {
     // Ignore inherited developer overrides; CPU preference must not load a CUDA provider.
     delete process.env.TRANSCRIBE_LIBRARY;
@@ -51,7 +58,8 @@ export async function createLocalRecognizer(runtime: LocalRuntime, numThreads: n
   };
 }
 
-function requireRuntime(runtime: LocalRuntime): string {
-  if (!runtime.runtimePath) throw new Error('Install GPU acceleration files in Settings.');
-  return runtime.runtimePath;
+function libraryDirectory(runtime: LocalRuntime): string {
+  const [directory] = runtime.libraryPaths ?? [];
+  if (!directory) throw new Error('Install GPU acceleration files in Settings.');
+  return directory;
 }

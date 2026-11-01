@@ -11,26 +11,24 @@ The engine reserves a recording before worker startup, so deleting model files i
 ## Models and artifacts
 
 - Parakeet CPU: upstream unified English INT8 archive, preserving the existing install ID.
-- Parakeet CUDA: the tested unified English W4/g32 export with FP16 activations and FP32 public interfaces. This is the same checkpoint as CPU, not multilingual v3. It includes matching Sherpa CUDA/ORT libraries and CUDA dependencies.
+- Parakeet CUDA: the same checkpoint in full precision, published by the sherpa-onnx author on Hugging Face (about 2.5 GB, and roughly that much VRAM).
 - Granite CPU: pinned English Q4_K_M GGUF. Its CPU native library ships through the npm dependency.
-- Granite CUDA: the same Q4_K_M GGUF, matching CUDA native library, and CUDA dependencies.
+- Granite CUDA: the same Q4_K_M GGUF plus transcribe.cpp's CUDA build.
+
+## GPU files come from upstream
+
+We host no model or runtime files. A GPU setup is a list of parts, each one pinned upstream artifact with a version and SHA-256 in `src/main/managed-local-catalog.ts`:
+
+- Parakeet: FP32 model files, the sherpa-onnx v2.0.1 CUDA release (its `lib/*.dll` only), and NVIDIA's cuDNN, cuBLAS, CUDA runtime, and NVRTC wheels from PyPI (their `bin/*.dll` only).
+- Granite: the CPU GGUF, the transcribe.cpp v0.4.1 CUDA release, and NVIDIA's cuBLAS and CUDA runtime wheels.
+
+Parts are installed in place by ID, so cuBLAS and the CUDA runtime download once for both models, and Granite GPU reuses the CPU GGUF. Deleting GPU files keeps CPU model files and anything another installed GPU setup still uses. Every part after the model goes on the worker's PATH. For Parakeet, the worker loads sherpa-onnx's CUDA `onnxruntime.dll` and `sherpa-onnx-c-api.dll` before requiring the app's own `sherpa-onnx-node`. Windows binds the addon's imports to those already-loaded modules, and the CUDA node-placement check fails loudly if that ever stops being true.
+
+Bumping `sherpa-onnx-node` or `transcribe-cpp` means bumping the matching CUDA release in the catalog, which needs a new version, size and SHA-256. Nothing is uploaded on our side.
 
 Existing multilingual Parakeet v3 CPU installs remain usable during an update, including after a failed download or extraction. Their original name and languages remain visible until the unified English replacement is ready. Previous files are retained until explicitly deleted in Settings.
 
 The UI describes Granite's weaker punctuation and capitalization. Parakeet remains recommended. CPU and CUDA variants have separate install/delete state. Download hashes, byte limits, archive path/link checks, staging, and atomic replacement apply to both. Progress notifications are rate limited; full state remains queryable.
-
-## Release bundles
-
-GPU bundles are generated outside Git under `app/eval-data/local-gpu-release-normalized/`. They are not published by this change. The catalog reserves these URLs under the separate GitHub asset tag `local-models-v1`:
-
-| Asset | Bytes | SHA-256 |
-| --- | ---: | --- |
-| `parakeet-unified-en-cuda-w4g32-1.tar.bz2` | 2,020,235,613 | `f3f9a1dc521d7263db34bbab29edfdbe82b55019126ed168006c466a4081b488` |
-| `granite-470m-q4-cuda-1.tar.bz2` | 1,018,511,434 | `9ff45a2ffbc1774c194f384325f1347bf2bdf1fc764db477c655bb0e3e3aed26` |
-
-Upload the exact generated files before releasing this feature. Keep this model-asset release separate from the application's latest update release. A new bundle must receive a new version/URL and matching catalog checksum. The public GPU setup buttons cannot download successfully until these assets are hosted. CPU downloads use existing upstream URLs.
-
-`scripts/package-local-gpu.ps1 -ArtifactRoot <prepared-artifact-directory> -OutputDirectory <fresh-output-directory>` packages the already-tested converted weights and native files. The input layout is recorded in the script; model conversion and acquisition happen before packaging. It verifies model checksums and includes conversion metadata and upstream license notices. It deliberately refuses to overwrite a staging directory. It does not convert models or upload anything. Conversion/benchmark code and datasets stay in the original research worktree; they are not part of this feature.
 
 ## Native verification
 
@@ -39,14 +37,11 @@ Upload the exact generated files before releasing this feature. Keep this model-
 Run the bundled verifier with Electron and these arguments:
 
 ```
---root <new-nonexistent-install-directory>
---bundles <directory-containing-the-two-release-archives>
---parakeet-cpu <existing-unified-English-INT8-install>
---granite-gguf <pinned-Granite-Q4-file>
+--root <install-directory>
 --audio <16-kHz-PCM16-WAV>
 --out <result-json-path>
 ```
 
-The verifier requires a fresh install directory and rejects existing directories, so a cached installation cannot bypass verification of the supplied bundles. It seeds resumable download files from local artifacts, then runs the actual integrity-checking installer and extraction. It checks both complete-WAV and incremental transcription through real Electron utility workers for every model/backend. It uses no personal app configuration and sends no keystrokes or clipboard input. CUDA verification requires compatible NVIDIA hardware and drivers. UI component tests cover explicit GPU setup and independent progress; lifecycle tests cover startup fallback, worker crashes, model switching, and persistence validation.
+The verifier downloads every pinned upstream part into `--root` through the real integrity-checking installer and reuses parts already there. Use a fresh directory to re-verify downloads. It checks both complete-WAV and incremental transcription through real Electron utility workers for every model/backend. It uses no personal app configuration and sends no keystrokes or clipboard input. CUDA verification requires compatible NVIDIA hardware and drivers. UI component tests cover explicit GPU setup and independent progress; lifecycle tests cover startup fallback, worker crashes, model switching, and persistence validation.
 
 Verified on Windows with the RTX 4060 Laptop on 2026-11-01: 219 focused tests passed, app/tooling type checks and targeted lint passed, and both models completed batch and incremental decoding on CPU and CUDA. Native checks covered a short utterance and a longer recording. The longer check also passed through electron-vite output and an ASAR archive with unpacked native dependencies. The ASAR check found and verified the physical FFI library path requirement and Koffi platform-module packaging. Settings was inspected in Electron using isolated app data, with before/after images in `docs/images/local-inference-*.png`. These are integration checks, not new accuracy or latency benchmarks. A full installer build and another VB-Cable/paste run were not performed for this feature.

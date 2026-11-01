@@ -5,10 +5,9 @@ import type { LocalRuntime } from './managed-local-engine';
 export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   const { utilityProcess } = await import('electron');
   const env = { ...process.env };
-  if (runtime.runtimePath) {
+  if (runtime.libraryPaths) {
     for (const name of Object.keys(env)) if (name.toUpperCase() === 'PATH') delete env[name];
-    env.PATH = [join(runtime.runtimePath, 'bin'), join(runtime.runtimePath, 'sherpa-onnx-win-x64'),
-      join(runtime.runtimePath, 'transcribe'), process.env.PATH ?? ''].join(delimiter);
+    env.PATH = [...runtime.libraryPaths, process.env.PATH ?? ''].join(delimiter);
   }
   const child = utilityProcess.fork(join(__dirname, 'local-stt.cjs'), [], {
     serviceName: 'Shuddhalekhan local speech recognition', env, stdio: 'pipe',
