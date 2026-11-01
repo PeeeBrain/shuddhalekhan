@@ -8,9 +8,10 @@ const REFRESH_COALESCE_MS = 200;
  * Managed Local snapshot for Settings and Onboarding. State events can concern any
  * model/backend artifact, so they trigger a coalesced full refetch instead of being
  * merged into the selected model's state. Pass a `refreshKey` that changes with the
- * user's model/device selection to refetch when it changes.
+ * user's model/device selection to refetch when it changes; `null` pauses fetching
+ * and subscriptions while Managed Local is not the active provider.
  */
-export function useManagedLocalSnapshot(settingsIpc: SettingsIpc, refreshKey: string) {
+export function useManagedLocalSnapshot(settingsIpc: SettingsIpc, refreshKey: string | null) {
   const [snapshot, setSnapshot] = useState<ManagedLocalModelSnapshot | null>(null);
   const [loadError, setLoadError] = useState(false);
   const revision = useRef(0);
@@ -34,6 +35,7 @@ export function useManagedLocalSnapshot(settingsIpc: SettingsIpc, refreshKey: st
   }, []);
 
   useEffect(() => {
+    if (refreshKey === null) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     void refresh();
     const off = settingsIpc.onManagedLocalModelStateChanged(() => {

@@ -233,6 +233,7 @@ export interface RendererToMainInvokeChannels {
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
   'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
+  'config:patch-transcription': (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;
   'transcription:check-server': () => Promise<boolean>;
   'settings:open': () => void;
   'clipboard:inject-text': (text: string) => Promise<InjectResult>;
@@ -386,6 +387,10 @@ export interface CustomOpenAiProviderConfig {
   model: string;
   auth: 'none' | 'bearer' | 'header';
   headerName: string;
+  /** Missing declarations preserve existing custom endpoint behavior. */
+  supportsAutomaticLanguageDetection?: boolean;
+  supportsTranslation?: boolean;
+  supportsDictionaryHints?: boolean;
 }
 
 export interface AzureSpeechProviderConfig {
@@ -530,6 +535,10 @@ export interface RecordingPresentationEnvelope {
   streamingActive?: boolean;
   outcome?: RecordingTerminalOutcome;
 }
+
+export type TranscriptionSettingsPatch = Partial<Pick<AppConfig,
+  'transcription' | 'managedLocal' | 'language' | 'task' | 'dictionary' |
+  'removeFillerWords' | 'dictation' | 'shortcuts'>>;
 
 export interface AppConfig {
   /** @deprecated Read the local provider endpoint from transcription instead. */

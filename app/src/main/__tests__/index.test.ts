@@ -159,6 +159,7 @@ mock.module('../config', () => ({
   getChatGptHostId: () => 'urn:uuid:installation',
   setChatGptHostId: vi.fn(),
   setConfig,
+  patchTranscriptionConfig: vi.fn(),
   mergeDiscoveredTools,
   getLastSeenReleaseNotesVersion,
   setLastSeenReleaseNotesVersion,

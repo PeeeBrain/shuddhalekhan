@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfig,
   AppInfo,
@@ -140,11 +140,11 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     };
   }, [settingsIpc]);
 
-  const applyOptimistic = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
-    setConfigState((current) => (current ? { ...current, [key]: value } : current));
-  };
+  const applyConfig = useCallback((patch: Partial<AppConfig>) => {
+    setConfigState((current) => (current ? { ...current, ...patch } : current));
+  }, []);
 
-  const persistence = useSettingsPersistence(settingsIpc, applyOptimistic);
+  const persistence = useSettingsPersistence(settingsIpc, applyConfig);
 
   if (!config) {
     return (

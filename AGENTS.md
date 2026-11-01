@@ -92,6 +92,7 @@ Bug fixes get one regression test that fails on the old code.
 - Body: the problem in a sentence or two, then how you fixed it. Call out config, storage, IPC, MCP, OAuth, or native Windows behavior changes when relevant. End with the model and harness that did the work.
 - **Rebase onto latest main before opening.** Stale branches conflict and burn a review round.
 - UI changes need before/after images. Motion or timing needs a short video.
+- Attach evidence to the PR body with `gh pr edit <number> --attach <file>` or `gh pr create --attach <file>`, repeating `--attach` for multiple files. Keep evidence images and videos out of commits. To place uploads inline, reference their local paths in `--body-file` and attach the same files. See [GitHub CLI attachments](https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli).
 - One concern per PR. If the description says "also", split it.
 - Add user-visible changes under `## Unreleased` in `app/CHANGELOG.md` when appropriate. Changelog is project history, not the release-notes authority — GitHub release notes come from git history between tags.
 - Do not bump the committed `package.json` version for ordinary PRs. Release versions come only from human-approved `vX.Y.Z` tags.

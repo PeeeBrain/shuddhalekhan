@@ -5,7 +5,6 @@ import type {
   ShortcutBinding,
   ShortcutsConfig,
 } from '../../types/ipc';
-import { getAppConfigDictationError } from '../../shared/dictation-runtime';
 import { assessBinding, formatBinding } from '../../shared/shortcut-bindings';
 import { Button } from '@/components/ui/button';
 import {
@@ -237,19 +236,13 @@ function ShortcutRow({
       ...config.shortcuts,
       [intent]: { ...shortcut, activationMode },
     };
-    if (intent === 'dictation' && config.dictation) {
-      const error = getAppConfigDictationError({
-        ...config,
-        shortcuts: next,
-      });
-      if (error) {
-        setMessage({ text: error, tone: 'error' });
-        return;
-      }
-    }
     setMessage(null);
-    void persistence.commit('shortcuts', next, `${fieldId}-mode`);
+    // Dictation activation is validated against the dictation mode by main in one step.
+    if (intent === 'dictation') void persistence.commitTranscription({ shortcuts: next }, `${fieldId}-mode`);
+    else void persistence.commit('shortcuts', next, `${fieldId}-mode`);
   };
+  const liveDictation = intent === 'dictation' && config.dictation.mode === 'live';
+  const statusError = persistence.fieldErrors[fieldId] ?? persistence.fieldErrors[`${fieldId}-mode`];
 
   const previewBinding: ShortcutBinding | null = captureState.started
     ? { keyCode: captureState.keyCode, modifiers: captureState.modifiers }
@@ -263,6 +256,8 @@ function ShortcutRow({
           <p className="text-xs leading-5 text-muted-foreground">
             {intent === 'agent' && !config.agent.enabled
               ? 'Saved but dormant while Agent Mode is disabled.'
+              : liveDictation
+                ? 'Live Dictation uses Toggle: press once to start and again to stop.'
               : shortcut.activationMode === 'toggle'
                 ? 'Press once to start and again to stop.'
                 : 'Hold the shortcut to record; release it to stop.'}
@@ -281,7 +276,7 @@ function ShortcutRow({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="push-to-talk">Push to Talk</SelectItem>
+              {liveDictation ? null : <SelectItem value="push-to-talk">Push to Talk</SelectItem>}
               <SelectItem value="toggle">Toggle</SelectItem>
             </SelectContent>
           </Select>
@@ -347,9 +342,9 @@ function ShortcutRow({
         id={`${fieldId}-status`}
         role="status"
         aria-live="polite"
-        className={`text-xs empty:hidden [&:not(:empty)]:mt-3 ${message?.tone === 'error' || persistence.fieldErrors[fieldId] ? 'text-destructive' : 'text-muted-foreground'}`}
+        className={`text-xs empty:hidden [&:not(:empty)]:mt-3 ${message?.tone === 'error' || (!message && statusError) ? 'text-destructive' : 'text-muted-foreground'}`}
       >
-        {message?.text ?? persistence.fieldErrors[fieldId] ?? ''}
+        {message?.text ?? statusError ?? ''}
       </p>
     </div>
   );

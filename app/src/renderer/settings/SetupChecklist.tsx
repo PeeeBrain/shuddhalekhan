@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
 import { Tag } from './ui/rows';
-import type { AppConfig, TranscriptionReadiness } from '../../types/ipc';
+import type { AppConfig } from '../../types/ipc';
 import type { SettingsSectionId } from './settings-nav';
 import type { SettingsPersistence } from './use-settings-persistence';
 import { formatBinding } from '../../shared/shortcut-bindings';
@@ -10,23 +10,16 @@ interface SetupChecklistProps {
   config: AppConfig;
   onNavigate: (section: SettingsSectionId) => void;
   persistence: SettingsPersistence;
-  whisperLiveKitReadiness?: TranscriptionReadiness | null;
+  /** The active provider's setup step; Transcription settings owns what "done" means per provider. */
+  transcriptionStep: { label: string; done: boolean };
 }
 
 export function SetupChecklist({
   config,
   onNavigate,
   persistence,
-  whisperLiveKitReadiness = null,
+  transcriptionStep,
 }: SetupChecklistProps) {
-  // Fresh installs default to Live Dictation against WhisperLiveKit, so the
-  // first-run endpoint item tracks the streaming provider instead of the
-  // legacy local whisper.cpp endpoint.
-  const usesStreamingProvider = config.transcription.activeProvider === 'whisper-live-kit';
-  const whisperComplete = usesStreamingProvider
-    ? whisperLiveKitReadiness?.state === 'ready'
-    : config.whisperUrl !== '' &&
-      config.whisperUrl !== 'http://localhost:8080/inference';
   const micComplete = config.selectedDeviceId !== null && config.selectedDeviceId !== '';
 
   const items: Array<{
@@ -34,11 +27,7 @@ export function SetupChecklist({
     done: boolean;
     action?: () => void;
   }> = [
-    {
-      label: usesStreamingProvider ? 'Start WhisperLiveKit and check readiness' : 'Set Whisper endpoint',
-      done: whisperComplete,
-      action: () => onNavigate('transcription'),
-    },
+    { ...transcriptionStep, action: () => onNavigate('transcription') },
     {
       label: 'Select microphone',
       done: micComplete,

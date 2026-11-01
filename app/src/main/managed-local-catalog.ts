@@ -63,6 +63,16 @@ const GRANITE_Q4: ManagedLocalModelManifest = {
   requiredFiles: ['model.gguf'],
 };
 
+export const LOCAL_FORMATTING_MODEL: ManagedLocalModelManifest = {
+  id: 'english-punctuation-casing', version: '2024-08-06', name: 'English punctuation and capitalization',
+  languages: ['English'], downloadBytes: 30_667_839, installedBytes: 7_639_930,
+  artifactUrl: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/punctuation-models/sherpa-onnx-online-punct-en-2024-08-06.tar.bz2',
+  sha256: '9f5e5a72c7d2829635bd074fce92b6bbd5b78da8a52e7ad8ed1be933f366b99d',
+  archiveRoot: 'sherpa-onnx-online-punct-en-2024-08-06',
+  include: ['sherpa-onnx-online-punct-en-2024-08-06/model.int8.onnx', 'sherpa-onnx-online-punct-en-2024-08-06/bpe.vocab'],
+  requiredFiles: ['model.int8.onnx', 'bpe.vocab'],
+};
+
 export const LOCAL_MODELS = [
   { key: 'parakeet', name: 'Parakeet', languages: ['English'],
     description: 'Best accuracy and formatting.',
@@ -70,7 +80,7 @@ export const LOCAL_MODELS = [
     cuda: [PARAKEET_FP32, SHERPA_CUDA, CUDNN, CUBLAS, CUDART, NVRTC],
   },
   { key: 'granite', name: 'Granite', languages: ['English'],
-    description: 'Smaller and faster, with weaker punctuation.',
+    description: 'Smaller and faster, with local punctuation and capitalization.',
     cpu: GRANITE_Q4,
     cuda: [GRANITE_Q4, TRANSCRIBE_CUDA, CUBLAS, CUDART],
   },

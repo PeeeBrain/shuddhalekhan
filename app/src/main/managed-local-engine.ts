@@ -6,13 +6,15 @@ export interface LocalRuntime {
   model: 'parakeet' | 'granite';
   backend: 'cpu' | 'cuda';
   modelPath: string;
+  contextual?: boolean;
+  formattingPath?: string;
   /** GPU only: the native library directory first, then the CUDA library directories. */
   libraryPaths?: string[];
 }
 
 type Worker = ReturnType<typeof createManagedLocalTranscriber>;
 type RuntimeStatus = ManagedLocalModelSnapshot['runtime'];
-type EngineSettings = { selection: ManagedLocalSelection; numThreads: number; revision: number };
+type EngineSettings = { selection: ManagedLocalSelection; numThreads: number; revision: number; contextual: boolean };
 type RuntimePlan = { settings: EngineSettings; candidates: LocalRuntime[] | null };
 
 /** Holds a worker for the whole recording, including pause decoding and cancellation. */
@@ -40,6 +42,12 @@ export function createManagedLocalEngine({
     const token = {};
     recordings.add(token);
     return () => { recordings.delete(token); };
+  };
+
+  const recordingPlan = (recognition: TranscriptionRequest['recognition']): RuntimePlan => {
+    const settings = structuredClone(getSettings());
+    settings.contextual = settings.selection.model === 'parakeet' && recognition.dictionary.length > 0;
+    return { settings, candidates: null };
   };
 
   const key = () => JSON.stringify(getSettings());
@@ -71,7 +79,7 @@ export function createManagedLocalEngine({
           if (token !== generation) throw new Error('Local speech recognition stopped.');
           if (runtime.backend === 'cuda' && failedGpuKey === desiredKey
             && settings.selection.devices[settings.selection.model] === 'auto') continue;
-          const worker = createWorker(runtime, settings.numThreads);
+          const worker = createWorker(settings.contextual ? { ...runtime, contextual: true } : runtime, settings.numThreads);
           loadingWorker = worker;
           try {
             await worker.warmup();
@@ -148,18 +156,21 @@ export function createManagedLocalEngine({
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void>; isBusy(): boolean } = {
     id: 'managed-local',
     isBusy: () => recordings.size > 0 || leases > 0,
-    capabilities: { translation: false, automaticLanguageDetection: true, dictionaryHints: false,
-      authentication: 'none', maxDurationSeconds: null },
+    get capabilities() { return { translation: false, automaticLanguageDetection: false,
+      dictionaryHints: getSettings().selection.model === 'parakeet', authentication: 'none' as const, maxDurationSeconds: null }; },
     async warmup() {
       // Settings can be edited during recording; never wait on or replace its worker here.
       if (recordings.size || leases) return;
       await ensure();
     },
-    transcribe: request => transcribePinned(request, { settings: structuredClone(getSettings()), candidates: null }),
+    transcribe(request) {
+      const pinned = { ...request, recognition: structuredClone(request.recognition) };
+      return transcribePinned(pinned, recordingPlan(pinned.recognition));
+    },
     startIncremental(request) {
       const releaseRecording = reserve();
-      const pinned: RuntimePlan = { settings: structuredClone(getSettings()), candidates: null };
       const recognition = structuredClone(request.recognition);
+      const pinned = recordingPlan(recognition);
       const recordingGeneration = generation;
       let cancelled = false;
       const started = acquire(pinned).then(selected => {

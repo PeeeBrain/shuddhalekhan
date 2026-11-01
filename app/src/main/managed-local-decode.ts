@@ -1,12 +1,18 @@
 import type { OfflineRecognizer, OfflineStream } from 'sherpa-onnx-node';
 
+export type LocalRecognizer = Pick<OfflineRecognizer, 'decodeAsync'> & {
+  createStream(dictionary?: readonly string[]): OfflineStream;
+  format?(text: string, dictionary: readonly string[]): string;
+};
+
 /** Shared by the utility process and eval so both exercise the same recovery path. */
 export async function decodeManagedLocal(
-  recognizer: Pick<OfflineRecognizer, 'createStream' | 'decodeAsync'>,
+  recognizer: LocalRecognizer,
   wave: Parameters<OfflineStream['acceptWaveform']>[0],
+  dictionary: readonly string[] = [],
 ): Promise<string> {
   const decode = async (input: typeof wave) => {
-    const stream = recognizer.createStream();
+    const stream = dictionary.length ? recognizer.createStream(dictionary) : recognizer.createStream();
     stream.acceptWaveform(input);
     return (await recognizer.decodeAsync(stream)).text;
   };

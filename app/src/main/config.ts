@@ -13,6 +13,8 @@ import { DEFAULT_MANAGED_LOCAL, managedLocalSelectionSchema, resolveManagedLocal
 import { normalizeAgentProvider } from '../shared/agent-provider';
 import { agentProviderSchema, getAgentProviderIssues } from '../shared/agent-provider-validation';
 import { z } from 'zod';
+import { normalizeTranscriptionTransition, getTranscriptionDictionaryError } from '../shared/transcription-features';
+import { transcriptionSettingsPatchSchema } from './transcription-settings';
 
 type StoreConfig = Omit<AppConfig, 'dictation'> & {
   chatGptHostId?: string;
@@ -54,7 +56,8 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
     azureSpeech: { endpoint: '', region: '' },
     googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
     nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-    customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '',
+      supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
     whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
   },
 };
@@ -285,6 +288,32 @@ export function getConfig(): AppConfig {
 
 export function getChatGptHostId(): string | undefined { return store.get('chatGptHostId'); }
 export function setChatGptHostId(id: string): void { store.set('chatGptHostId', id); }
+
+export function patchTranscriptionConfig(value: unknown): AppConfig {
+  const patch = transcriptionSettingsPatchSchema.parse(value);
+  const previous = getConfig();
+  const next = normalizeTranscriptionTransition(previous, patch);
+  if (patch.dictionary) {
+    const error = getTranscriptionDictionaryError(next);
+    const removingOnly = next.dictionary.length < previous.dictionary.length
+      && next.dictionary.every(term => previous.dictionary.includes(term));
+    if (error && !removingOnly) throw new Error(error);
+  }
+  for (const intent of ['dictation', 'agent'] as const) {
+    const other = intent === 'dictation' ? 'agent' : 'dictation';
+    const verdict = assessBinding(next.shortcuts[intent].binding, next.shortcuts[other].binding);
+    if (verdict.status === 'error') throw new Error(verdict.message);
+  }
+  assertDictationCombination(next);
+  // electron-store's object overload commits the validated transition in one write.
+  store.set({
+    transcription: next.transcription, managedLocal: next.managedLocal,
+    language: next.language, task: next.task, dictionary: next.dictionary,
+    removeFillerWords: next.removeFillerWords, dictation: next.dictation, shortcuts: next.shortcuts,
+    whisperUrl: next.transcription.providers.localWhisperCpp.endpoint,
+  });
+  return getConfig();
+}
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
   if (key === 'managedLocal') {

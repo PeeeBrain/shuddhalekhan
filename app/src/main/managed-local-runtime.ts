@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { join } from 'path';
-import { cleanFillerWords, TranscriptionFailure, type RecognitionSettings, type Transcriber } from './transcription';
+import { TranscriptionFailure, type Transcriber } from './transcription';
 import { resolveManagedLocalThreads } from './managed-local-threads';
 import type { LocalRuntime } from './managed-local-engine';
 
@@ -176,22 +176,18 @@ export function createManagedLocalTranscriber({
     });
   };
 
-  const clean = (text: string, recognition: RecognitionSettings): string => {
-    const trimmed = text.trim();
-    return recognition.removeFillerWords ? cleanFillerWords(trimmed) : trimmed;
-  };
-
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void>;
     startIncremental: NonNullable<Transcriber['startIncremental']> } = {
     id: 'managed-local',
     capabilities: {
       translation: false,
-      automaticLanguageDetection: true,
-      dictionaryHints: false,
+      automaticLanguageDetection: false,
+      dictionaryHints: runtime?.model !== 'granite',
       authentication: 'none',
       maxDurationSeconds: null,
     },
     async transcribe({ audio, recognition }) {
+      recognition = structuredClone(recognition);
       // A cancelled recording can leave its decode running. Drain it before changing threads.
       if (pending.size > 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads())) {
         await Promise.all([...pending.values()].map(request => request.finished));
@@ -200,17 +196,20 @@ export function createManagedLocalTranscriber({
       if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
       const requestId = randomUUID();
       const result = awaitResult(requestId);
-      child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer });
-      return clean(await result, recognition);
+      child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer, dictionary: recognition.dictionary,
+        removeFillerWords: recognition.removeFillerWords });
+      return (await result).trim();
     },
     // Streams the recording to the worker, which decodes at speech pauses so stopping waits for little or nothing.
     startIncremental({ recognition }) {
+      recognition = structuredClone(recognition);
       const requestId = randomUUID();
       let process: RuntimeProcess | null = null;
       const started = ensureReady().then(() => {
         if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
         process = child;
-        process.postMessage({ kind: 'incremental-start', requestId });
+        process.postMessage({ kind: 'incremental-start', requestId, dictionary: recognition.dictionary,
+          removeFillerWords: recognition.removeFillerWords });
         return process;
       });
       started.catch(() => {});
@@ -227,7 +226,7 @@ export function createManagedLocalTranscriber({
           const startedProcess = await current();
           const result = awaitResult(requestId);
           startedProcess.postMessage({ kind: 'incremental-finish', requestId });
-          return clean(await result, recognition);
+          return (await result).trim();
         },
         cancel() {
           if (process && child === process) process.postMessage({ kind: 'incremental-cancel', requestId });

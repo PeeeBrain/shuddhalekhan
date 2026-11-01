@@ -5,14 +5,14 @@ import { createManagedLocalModelManager, type ManagedLocalModelManifest } from '
 import { createManagedLocalTranscriber } from './managed-local-runtime';
 import { createManagedLocalEngine, type LocalRuntime } from './managed-local-engine';
 import { startLocalRuntimeProcess } from './managed-local-process';
-import { LOCAL_MODELS, legacyLocalModel } from './managed-local-catalog';
+import { LOCAL_MODELS, LOCAL_FORMATTING_MODEL, legacyLocalModel } from './managed-local-catalog';
 import type { ManagedLocalModelSnapshot, ManagedLocalModelState, ManagedLocalTarget } from '../types/ipc';
 import { resolveManagedLocalSelection } from '../shared/managed-local-selection';
 import { getConfig } from './config';
 import { getManagedLocalThreadLimits, resolveManagedLocalThreads } from './managed-local-threads';
 
 type ModelManager = ReturnType<typeof createManagedLocalModelManager>;
-/** What Settings installs and deletes for one model/backend. CPU is one part; GPU is several upstream parts. */
+/** What Settings installs and deletes: model and formatter files, plus GPU libraries when selected. */
 type Target = Pick<ModelManager, 'getState' | 'getInstallState' | 'getLegacy' | 'install' | 'delete' | 'deleteLegacy'> & {
   manifest: Pick<ManagedLocalModelManifest, 'id' | 'name' | 'languages' | 'downloadBytes' | 'installedBytes'>;
   parts: ModelManager[];
@@ -29,22 +29,28 @@ const selection = () => resolveManagedLocalSelection(getConfig().managedLocal);
 const selectionKey = () => JSON.stringify({ selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads) });
 
 export const managedLocalTranscriber = createManagedLocalEngine({
-  getSettings: () => ({ selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads), revision }),
+  getSettings: () => ({ selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads), revision,
+    contextual: selection().model === 'parakeet' && getConfig().dictionary.length > 0 }),
   async getCandidates(settings) {
     const preference = settings.devices[settings.model];
     const candidates: LocalRuntime[] = [];
+    const formatting = getManagedLocalModelManager({ model: settings.model, backend: 'cpu' }).parts
+      .find(part => part.manifest.id === LOCAL_FORMATTING_MODEL.id);
+    const formattingState = await formatting?.getInstallState();
+    const formattingPath = formattingState?.kind === 'ready' ? formattingState.path : undefined;
     if (preference !== 'cpu') {
       const parts = await Promise.all(getManagedLocalModelManager({ model: settings.model, backend: 'cuda' }).parts
+        .filter(part => part.manifest.id !== LOCAL_FORMATTING_MODEL.id)
         .map(async part => { const state = await part.getInstallState(); return state.kind === 'ready' ? state.path : null; }));
       const [modelPath, ...libraryPaths] = parts;
       if (modelPath && libraryPaths.every(path => path !== null)) {
-        candidates.push({ model: settings.model, backend: 'cuda', modelPath, libraryPaths });
+        candidates.push({ model: settings.model, backend: 'cuda', modelPath, libraryPaths, formattingPath });
       } else if (preference === 'cuda') throw new TranscriptionFailure('model', 'Set up GPU acceleration files for the selected model in Settings, or choose CPU.');
     }
     if (preference !== 'cuda') {
       const cpu = await getManagedLocalModelManager({ model: settings.model, backend: 'cpu' }).getState();
       if (cpu.kind !== 'ready') throw new TranscriptionFailure('model', 'Install CPU files for the selected model in Settings. Auto needs them for fallback.');
-      candidates.push({ model: settings.model, backend: 'cpu', modelPath: cpu.path });
+      candidates.push({ model: settings.model, backend: 'cpu', modelPath: cpu.path, formattingPath });
     }
     return candidates;
   },
@@ -79,14 +85,21 @@ export function configureManagedLocal({
   for (const model of LOCAL_MODELS) {
     const cpu = part(model.cpu, legacyLocalModel(model.key));
     cpuParts.add(cpu);
-    targets.set(`${model.key}:cpu`, { ...cpu, parts: [cpu] });
+    const formatting = part(LOCAL_FORMATTING_MODEL);
+    cpuParts.add(formatting);
+    targets.set(`${model.key}:cpu`, {
+      ...modelTarget(model.cpu.id, model.cpu.name, model.languages, [cpu, formatting], false),
+      // Existing installs remain usable until the user explicitly downloads formatting support.
+      getState: cpu.getState, getLegacy: cpu.getLegacy, deleteLegacy: cpu.deleteLegacy,
+    });
   }
   for (const model of LOCAL_MODELS) {
-    targets.set(`${model.key}:cuda`, gpuTarget(`${model.key}-cuda`, `${model.name} GPU`, model.languages, model.cuda.map(item => part(item))));
+    targets.set(`${model.key}:cuda`, modelTarget(`${model.key}-cuda`, `${model.name} GPU`, model.languages,
+      [...model.cuda, LOCAL_FORMATTING_MODEL].map(item => part(item))));
   }
 }
 
-function gpuTarget(id: string, name: string, languages: string[], parts: ModelManager[]): Target {
+function modelTarget(id: string, name: string, languages: string[], parts: ModelManager[], preserveCpuParts = true): Target {
   let pending: ModelManager[] | null = null;
   let active: Promise<void> | null = null;
   const getInstallState = async (): Promise<ManagedLocalModelState> => {
@@ -105,10 +118,16 @@ function gpuTarget(id: string, name: string, languages: string[], parts: ModelMa
   };
   const target: Target = {
     manifest: { id, name, languages, downloadBytes: sum(parts.map(part => part.manifest.downloadBytes)),
-      installedBytes: sum(parts.filter(part => !cpuParts.has(part)).map(part => part.manifest.installedBytes)) },
+      installedBytes: sum(parts.filter(part => !preserveCpuParts || !cpuParts.has(part)).map(part => part.manifest.installedBytes)) },
     parts,
     getInstallState,
-    getState: getInstallState,
+    async getState() {
+      const speech = parts.filter(part => part.manifest.id !== LOCAL_FORMATTING_MODEL.id);
+      const states = await Promise.all(speech.map(part => part.getInstallState()));
+      return states.every(state => state.kind === 'ready') && states[0]?.kind === 'ready'
+        ? { kind: 'ready', modelId: id, path: states[0].path }
+        : getInstallState();
+    },
     getLegacy: async () => null,
     deleteLegacy: async () => {},
     install() {
@@ -122,7 +141,8 @@ function gpuTarget(id: string, name: string, languages: string[], parts: ModelMa
       if (active) throw new Error('Wait for the model installation to finish before deleting it.');
       // Keep CPU model files and libraries another installed GPU setup still uses.
       for (const part of parts) {
-        if (cpuParts.has(part)) continue;
+        if (preserveCpuParts && cpuParts.has(part)) continue;
+        if (!preserveCpuParts && part === parts[0]) { await part.delete(); continue; }
         const others = [...targets.values()].filter(other => other !== target && other.parts.includes(part));
         const used = await Promise.all(others.map(async other => (await other.getInstallState()).kind === 'ready'));
         if (!used.includes(true)) await part.delete();
@@ -154,7 +174,7 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
       // A GPU setup only downloads the parts that are not installed yet.
       const missing = await Promise.all(manager.parts.map(async part =>
         (await part.getInstallState()).kind === 'ready' ? 0 : part.manifest.downloadBytes));
-      return { downloadBytes: backend === 'cpu' ? manager.manifest.downloadBytes : sum(missing),
+      return { downloadBytes: sum(missing),
         installedBytes: manager.manifest.installedBytes, state,
         legacy: legacy && { name: legacy.name, installedBytes: legacy.installedBytes, inUse: state.kind !== 'ready' } };
     };

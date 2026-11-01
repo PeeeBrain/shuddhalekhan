@@ -177,7 +177,7 @@ describe('RecordingSession', () => {
     expect(session.isActive()).toBe(false);
   });
 
-  it('submits completed audio and recognition settings through the provider-neutral transcriber', async () => {
+  it('pins recognition settings when recording starts even if Settings changes before completed audio arrives', async () => {
     const providerTranscriber: Transcriber = {
       id: 'local-whisper-cpp',
       capabilities: {
@@ -189,21 +189,19 @@ describe('RecordingSession', () => {
       },
       transcribe: vi.fn(async () => 'provider text'),
     };
+    const recognition = { language: 'mr', task: 'translate' as const, dictionary: ['Shuddhalekhan'], removeFillerWords: true };
     session = new RecordingSessionCtor({
       runtimeShell: audioStream,
       transcriber: providerTranscriber,
-      getRecognitionSettings: () => ({
-        language: 'mr',
-        task: 'translate',
-        dictionary: ['Shuddhalekhan'],
-        removeFillerWords: true,
-      }),
+      getRecognitionSettings: () => recognition,
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
     });
 
     session.begin('dictation');
+    recognition.dictionary[0] = 'Different term';
+    recognition.language = 'en';
     const resultPromise = session.end();
     const audio = new Uint8Array(64).fill(7);
     await session.complete(audio);

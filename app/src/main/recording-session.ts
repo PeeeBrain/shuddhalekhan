@@ -99,7 +99,7 @@ export interface RecordingSessionOptions {
   getRecordingActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
   getShortcutBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
   getSelectedDeviceId?: () => string | null;
-  getRecognitionSettings?: () => RecognitionSettings;
+  getRecognitionSettings?: (intent: RecordingIntent) => RecognitionSettings;
   getDictationMode?: () => DictationMode;
   getReadinessError?: (intent: RecordingIntent) => Error | null;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
@@ -120,6 +120,7 @@ interface RecordingRunContext {
   id: string;
   intent: RecordingIntent;
   transcriber: Transcriber;
+  recognition: RecognitionSettings;
   targetSnapshot: DictationTargetSnapshot | null;
   sequence: number;
   revision: number;
@@ -148,7 +149,7 @@ export class RecordingSession {
   private audioCapture: AudioCapture;
   private keyboardHook: KeyboardHook;
   private getTranscriber: () => Transcriber;
-  private getRecognitionSettings: () => RecognitionSettings;
+  private getRecognitionSettings: (intent: RecordingIntent) => RecognitionSettings;
   private getDictationMode: () => DictationMode;
   private getReadinessError: (intent: RecordingIntent) => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
@@ -244,6 +245,7 @@ export class RecordingSession {
       id: recordingSessionId,
       intent,
       transcriber,
+      recognition: structuredClone(this.getRecognitionSettings(intent)),
       targetSnapshot,
       sequence: 0,
       revision: 0,
@@ -477,7 +479,7 @@ export class RecordingSession {
     if (!startIncremental) return;
     try {
       run.streaming = {
-        session: startIncremental({ recognition: this.getRecognitionSettings() }),
+        session: startIncremental({ recognition: run.recognition }),
         ledger: null,
         queue: Promise.resolve(),
         expectedChunkSequence: 0,
@@ -517,7 +519,7 @@ export class RecordingSession {
       : null;
     try {
       const session = startStreaming({
-        recognition: this.getRecognitionSettings(),
+        recognition: run.recognition,
         onSnapshot: (snapshot) => {
           if (this.activeRun !== run) return;
           const update = ledger.apply(snapshot);
@@ -620,7 +622,7 @@ export class RecordingSession {
     if (this.activeRun !== run) return null;
     const text = streaming?.session.retryCompletedAudio
       ? await streaming.session.retryCompletedAudio(audioData)
-      : await transcriber.transcribe({ audio: audioData, recognition: this.getRecognitionSettings() });
+      : await transcriber.transcribe({ audio: audioData, recognition: run.recognition });
     if (this.activeRun !== run) return null;
     return text;
   }

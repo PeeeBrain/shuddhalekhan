@@ -310,21 +310,29 @@ export function DraftTextRow({
 interface ReadOnlyRowProps {
   label: string;
   value: string;
+  description?: string;
 }
 
-export function ReadOnlyRow({ label, value }: ReadOnlyRowProps) {
+export function ReadOnlyRow({ label, value, description }: ReadOnlyRowProps) {
   const labelId = useId();
+  const descriptionId = useId();
 
   return (
     <RowShell>
       <div
         role="group"
         aria-labelledby={labelId}
+        aria-describedby={description ? descriptionId : undefined}
         className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
       >
-        <span id={labelId} className="text-sm font-medium">
-          {label}
-        </span>
+        <div className="min-w-0 space-y-0.5">
+          <span id={labelId} className="text-sm font-medium">
+            {label}
+          </span>
+          {description ? (
+            <p id={descriptionId} className="text-xs leading-5 text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
         <span className="text-sm text-muted-foreground break-words sm:text-right">{value}</span>
       </div>
     </RowShell>
