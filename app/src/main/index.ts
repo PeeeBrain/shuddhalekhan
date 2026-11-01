@@ -56,11 +56,13 @@ import {
   configureManagedLocal,
   getManagedLocalModelManager,
   managedLocalTranscriber,
+  managedLocalSnapshot,
+  installManagedLocalModel,
+  deleteManagedLocalModel,
 } from './managed-local';
 import { outerTrimTranscript } from '../shared/live-dictation';
 import { applyDictationFormatter } from './dictation-formatter';
 import { getDictationFormatterApiKey } from './dictation-formatter-credential';
-import { getManagedLocalThreadLimits } from './managed-local-threads';
 import {
   isDictationResultStillDeliverable,
   markDictationResultPending,
@@ -651,12 +653,22 @@ ipcMain.handle('transcription:check-readiness', async () => {
   const provider = config.transcription.activeProvider;
   if (provider === 'managed-local') {
     const state = await getManagedLocalModelManager().getState();
+    if (state.kind === 'ready') {
+      try {
+        await managedLocalTranscriber.warmup();
+        const snapshot = await managedLocalSnapshot();
+        return { providerId: provider, state: 'ready' as const,
+          message: snapshot.runtime.status === 'ready' ? snapshot.runtime.message : 'Model files are installed. Changes apply to the next recording.',
+          checkedAt: new Date().toISOString() };
+      } catch (error) {
+        return { providerId: provider, state: 'unavailable' as const,
+          message: getSafeTranscriptionFailureMessage(error), checkedAt: new Date().toISOString() };
+      }
+    }
     return {
       providerId: provider,
-      state: state.kind === 'ready' ? 'ready' as const : 'unavailable' as const,
-      message: state.kind === 'ready'
-        ? 'Local speech recognition is ready and works offline.'
-        : state.kind === 'error'
+      state: 'unavailable' as const,
+      message: state.kind === 'error'
           ? state.message
           : 'Install the recommended local speech model to start Dictation.',
       checkedAt: new Date().toISOString(),
@@ -688,38 +700,9 @@ ipcMain.handle('transcription:check-readiness', async () => {
   return readiness;
 });
 
-function managedLocalSnapshot() {
-  const manager = getManagedLocalModelManager();
-  return manager.getState().then((state) => ({
-    model: {
-      id: manager.manifest.id,
-      name: manager.manifest.name,
-      downloadBytes: manager.manifest.downloadBytes,
-      installedBytes: manager.manifest.installedBytes,
-      languages: [...manager.manifest.languages],
-    },
-    state,
-    inference: getManagedLocalThreadLimits(),
-  }));
-}
-
 ipcMain.handle('managed-local:get-model', managedLocalSnapshot);
-ipcMain.handle('managed-local:install-model', async () => {
-  const manager = getManagedLocalModelManager();
-  await manager.install();
-  try {
-    await managedLocalTranscriber.warmup();
-  } catch (error) {
-    manager.reportFailure('Local speech recognition could not load. Repair the model and try again.');
-    throw error;
-  }
-  return managedLocalSnapshot();
-});
-ipcMain.handle('managed-local:delete-model', async () => {
-  await managedLocalTranscriber.shutdown();
-  await getManagedLocalModelManager().delete();
-  return managedLocalSnapshot();
-});
+ipcMain.handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
+ipcMain.handle('managed-local:delete-model', (_event, target: unknown) => deleteManagedLocalModel(target));
 
 ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   const previousConfig = getConfig();

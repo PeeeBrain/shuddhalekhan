@@ -31,6 +31,18 @@ class FakeUtilityProcess extends EventEmitter {
 }
 
 describe('managed local runtime supervision', () => {
+  it('does not spawn a stale worker when shutdown happens before model resolution', async () => {
+    let resolvePath!: (path: string) => void;
+    const startProcess = mock(() => new FakeUtilityProcess());
+    const transcriber = createManagedLocalTranscriber({
+      getModelPath: () => new Promise<string>(resolve => { resolvePath = resolve; }), startProcess,
+    });
+    const startup = transcriber.warmup();
+    await transcriber.shutdown();
+    resolvePath('model');
+    await expect(startup).rejects.toThrow('stopped');
+    expect(startProcess).not.toHaveBeenCalled();
+  });
   it.skipIf(availableParallelism() < 2)('uses new thread settings for a transcription waiting on startup', async () => {
     let numThreads = 1;
     const children: FakeUtilityProcess[] = [];

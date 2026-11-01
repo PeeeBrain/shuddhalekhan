@@ -25,23 +25,19 @@ export interface ManagedLocalModelManifest {
   sha256: string;
   archiveRoot: string;
   requiredFiles: string[];
+  format?: 'archive' | 'file';
 }
 
 export const MANAGED_LOCAL_MODEL = {
-  id: 'parakeet-tdt-0.6b-v3-int8',
+  id: 'parakeet-unified-en-0.6b-int8',
   version: '1',
   name: 'Recommended local speech model',
-  downloadBytes: 487_170_055,
-  installedBytes: 640_000_000,
-  languages: [
-    'English', 'French', 'German', 'Spanish', 'Italian', 'Portuguese', 'Dutch',
-    'Polish', 'Czech', 'Slovak', 'Romanian', 'Hungarian', 'Bulgarian', 'Croatian',
-    'Slovenian', 'Lithuanian', 'Latvian', 'Estonian', 'Finnish', 'Maltese',
-    'Swedish', 'Danish', 'Greek', 'Russian', 'Ukrainian',
-  ],
-  artifactUrl: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2',
-  sha256: '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf',
-  archiveRoot: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8',
+  downloadBytes: 501_350_460,
+  installedBytes: 664_000_000,
+  languages: ['English'],
+  artifactUrl: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming.tar.bz2',
+  sha256: '99f63605b3a85a54c250c0869670a687b7d6598a47bf2421515e1f839a76e150',
+  archiveRoot: 'sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming',
   requiredFiles: ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'],
 } satisfies ManagedLocalModelManifest;
 
@@ -54,21 +50,22 @@ const ORT_SESSION_OPTIONS = [
 ].join('\n');
 
 /** Recognizer settings shared by the local STT worker and the eval harness, so evals measure what users run. */
-export function managedLocalRecognizerConfig(modelPath: string, numThreads: number): OfflineRecognizerConfig {
+export function managedLocalRecognizerConfig(modelPath: string, numThreads: number, backend: 'cpu' | 'cuda' = 'cpu'): OfflineRecognizerConfig {
   // sherpa-onnx reads session options only from a file named by the provider string.
   const sessionOptions = join(modelPath, 'ort-session.cfg');
-  writeFileSync(sessionOptions, ORT_SESSION_OPTIONS);
+  writeFileSync(sessionOptions, backend === 'cpu' ? ORT_SESSION_OPTIONS : `${ORT_SESSION_OPTIONS}\nLogSeverityLevel=0\narena_extend_strategy=kSameAsRequested\ncudnn_conv_use_max_workspace=0\ncudnn_conv_algo_search=HEURISTIC`);
+  const suffix = backend === 'cpu' ? '.int8.onnx' : '.onnx';
   return {
     featConfig: { sampleRate: 16_000, featureDim: 80 },
     modelConfig: {
       transducer: {
-        encoder: join(modelPath, 'encoder.int8.onnx'),
-        decoder: join(modelPath, 'decoder.int8.onnx'),
-        joiner: join(modelPath, 'joiner.int8.onnx'),
+        encoder: join(modelPath, `encoder${suffix}`),
+        decoder: join(modelPath, `decoder${suffix}`),
+        joiner: join(modelPath, `joiner${suffix}`),
       },
       tokens: join(modelPath, 'tokens.txt'),
       numThreads,
-      provider: `cpu:${sessionOptions}`,
+      provider: `${backend}:${sessionOptions}`,
       modelType: 'nemo_transducer',
       debug: false,
     },
@@ -96,9 +93,14 @@ export function createManagedLocalModelManager({
   const stagingPath = join(root, `${manifest.id}-${manifest.version}.staging`);
   let current: ManagedLocalModelState = { kind: 'missing', modelId: manifest.id };
   let activeInstall: Promise<void> | null = null;
+  let notifiedAt = 0;
 
   const publish = (state: ManagedLocalModelState): void => {
+    const previous = current;
     current = state;
+    if (state.kind === 'downloading' && previous.kind === 'downloading'
+      && state.downloadedBytes !== state.totalBytes && Date.now() - notifiedAt < 100) return;
+    notifiedAt = Date.now();
     onStateChanged(state);
   };
 
@@ -171,8 +173,14 @@ export function createManagedLocalModelManager({
       publish({ kind: 'installing', modelId: manifest.id });
       await rm(stagingPath, { recursive: true, force: true });
       await mkdir(stagingPath, { recursive: true });
-      await extractArchive(partialPath, stagingPath);
       const extractedPath = join(stagingPath, manifest.archiveRoot);
+      if (manifest.format === 'file') {
+        await mkdir(extractedPath, { recursive: true });
+        const { copyFile } = await import('fs/promises');
+        await copyFile(partialPath, join(extractedPath, manifest.requiredFiles[0]));
+      } else {
+        await extractArchive(partialPath, stagingPath);
+      }
       if (!await isValidInstall(extractedPath, manifest.requiredFiles)) {
         throw new Error('The model archive is missing required files. Repair the installation.');
       }
@@ -205,6 +213,7 @@ export function createManagedLocalModelManager({
       return activeInstall;
     },
     async delete(): Promise<void> {
+      if (activeInstall) throw new Error('Wait for the model installation to finish before deleting it.');
       await rm(installPath, { recursive: true, force: true });
       await rm(partialPath, { force: true });
       await rm(stagingPath, { recursive: true, force: true });

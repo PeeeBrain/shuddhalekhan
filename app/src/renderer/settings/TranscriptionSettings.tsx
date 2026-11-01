@@ -27,8 +27,16 @@ import type {
   FormatterApiKeySource,
   TranscriptionProviderId,
   TranscriptionReadiness,
+  ManagedLocalDevice,
   ManagedLocalModelSnapshot,
+  ManagedLocalModelState,
+  ManagedLocalSelection,
+  ManagedLocalTarget,
 } from '../../types/ipc';
+import { cn } from '@/lib/utils';
+import { useManagedLocalSnapshot } from './use-managed-local-snapshot';
+import { ipcErrorMessage } from './use-settings-persistence';
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import {
   getAppConfigDictationError,
   classifyFormatterEndpoint,
@@ -64,6 +72,8 @@ const FIELD_ID_NVIDIA_ENDPOINT = 'nvidia-endpoint';
 const FIELD_ID_NVIDIA_MODEL = 'nvidia-model';
 const FIELD_ID_PROVIDER = 'provider';
 const FIELD_ID_LOCAL_THREADS = 'managed-local-threads';
+const FIELD_ID_LOCAL_MODEL = 'managed-local-model';
+const FIELD_ID_LOCAL_DEVICE = 'managed-local-device';
 const FIELD_ID_DICTATION_MODE = 'dictation-mode';
 const FIELD_ID_FORMATTER_BASE_URL = 'formatter-base-url';
 const FIELD_ID_FORMATTER_MODEL = 'formatter-model';
@@ -654,7 +664,7 @@ export function TranscriptionSettings({
           value={languageValue}
           options={languageOptions}
           description={provider === 'managed-local'
-            ? 'The installed model detects its supported European languages automatically.'
+            ? 'The selected local model transcribes its supported languages automatically.'
             : provider === 'google-cloud-speech-v2'
             ? 'Choose an explicit language. Shuddhalekhan does not substitute the Windows language.'
             : provider === 'sarvam'
@@ -688,9 +698,28 @@ export function TranscriptionSettings({
   );
 }
 
+const DEVICE_OPTIONS: Array<{ value: ManagedLocalDevice; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'cpu', label: 'CPU' },
+  { value: 'cuda', label: 'Dedicated GPU (NVIDIA)' },
+];
+
+const DEVICE_DESCRIPTIONS: Record<ManagedLocalDevice, string> = {
+  auto: 'Uses the NVIDIA GPU when its files are installed and it starts; otherwise the CPU. GPU files are never downloaded automatically.',
+  cpu: 'Runs offline on the processor. No GPU setup needed.',
+  cuda: 'NVIDIA CUDA only. If the GPU cannot start, recording fails instead of falling back to the CPU.',
+};
+
+type ManagedLocalArtifact = ManagedLocalModelSnapshot['catalog'][number]['cpu'];
+
 function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<SettingsSectionProps, 'config' | 'persistence' | 'settingsIpc'>) {
-  const [snapshot, setSnapshot] = useState<ManagedLocalModelSnapshot | null>(null);
+  const selection = config.managedLocal ?? DEFAULT_MANAGED_LOCAL;
+  const device = selection.devices[selection.model];
+  const { snapshot, loadError, refresh, accept } = useManagedLocalSnapshot(settingsIpc, `${selection.model}:${device}`);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const modelGroupName = useId();
+  const deviceErrorId = useId();
   const [draftThreads, setDraftThreads] = useState<number | null>(null);
   const threadsId = useId();
   const threadsDescriptionId = useId();
@@ -705,64 +734,150 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
     void persistence.commit('managedLocalThreads', next, FIELD_ID_LOCAL_THREADS);
   };
 
-  useEffect(() => {
-    void settingsIpc.getManagedLocalModel().then(setSnapshot).catch(() => {
-      setError('Could not check the local speech model.');
-    });
-    const off = settingsIpc.onManagedLocalModelStateChanged((state) => {
-      setSnapshot((current) => current ? { ...current, state } : current);
-    });
-    return () => off?.();
-  }, [settingsIpc]);
+  // Older snapshots have no catalog: fall back to the single primary model view.
+  const catalog = snapshot?.catalog;
+  const entry = catalog?.find((item) => item.key === selection.model);
+  const cpu: ManagedLocalArtifact | null = entry?.cpu
+    ?? (snapshot ? { downloadBytes: snapshot.model.downloadBytes, installedBytes: snapshot.model.installedBytes, state: snapshot.state } : null);
+  const gpu = entry?.cuda;
+  const runtime = snapshot?.runtime;
+  const showGpuFiles = device !== 'cpu' || (gpu !== undefined && gpu.state.kind !== 'missing');
+  const offerAlternatives = device === 'cuda' && (gpu?.state.kind !== 'ready' || runtime?.status === 'error');
 
-  const install = async () => {
-    setError('');
-    try {
-      setSnapshot(await settingsIpc.installManagedLocalModel());
-    } catch (installError) {
-      setError(installError instanceof Error ? installError.message : 'Model installation failed.');
-      void settingsIpc.getManagedLocalModel().then(setSnapshot);
-    }
+  const saveSelection = (next: ManagedLocalSelection, fieldId: string) => {
+    void persistence.commit('managedLocal', next, fieldId);
   };
+  const saveDevice = (next: ManagedLocalDevice) => saveSelection({
+    ...selection,
+    devices: { ...selection.devices, [selection.model]: next },
+  }, FIELD_ID_LOCAL_DEVICE);
 
-  const remove = async () => {
+  // ponytail: one artifact action at a time; allow parallel CPU/GPU downloads if main supports it.
+  const runAction = async (backend: ManagedLocalTarget['backend'], action: 'install' | 'delete') => {
+    const target = entry ? { model: selection.model, backend } : undefined;
     setError('');
+    setBusy(true);
     try {
-      setSnapshot(await settingsIpc.deleteManagedLocalModel());
-    } catch {
-      setError('Could not delete the local speech model. Retry.');
+      accept(await (action === 'install'
+        ? settingsIpc.installManagedLocalModel(target)
+        : settingsIpc.deleteManagedLocalModel(target)));
+    } catch (actionError) {
+      setError(ipcErrorMessage(actionError, action === 'install'
+        ? 'Installation failed. Retry.'
+        : 'Could not delete these files. Retry.'));
+      void refresh();
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <div className="border-b border-border/50 py-3.5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-0.5">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            Local speech model
-            {snapshot?.state.kind === 'ready' ? <Tag tone="success">Ready offline</Tag> : null}
-          </p>
-          {snapshot ? (
-            <p className="text-xs text-muted-foreground">
-              {snapshot.model.name} · {Math.round(snapshot.model.downloadBytes / 1_000_000)} MB download · {snapshot.model.languages.length} languages
-            </p>
-          ) : <p className="text-xs text-muted-foreground">Checking status…</p>}
-        </div>
-        {snapshot?.state.kind === 'ready' ? (
-          <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => void remove()}>Delete model</Button>
-        ) : snapshot?.state.kind === 'downloading' || snapshot?.state.kind === 'installing' ? null : (
-          <Button size="sm" onClick={() => void install()}>
-            {snapshot?.state.kind === 'error'
-              ? snapshot.state.action === 'resume' ? 'Resume' : snapshot.state.action === 'repair' ? 'Repair' : 'Retry'
-              : 'Install'}
-          </Button>
-        )}
-      </div>
-      {snapshot?.state.kind === 'downloading' ? (
-        <p className="mt-3 text-xs" role="status">Downloading… {Math.round(snapshot.state.downloadedBytes / snapshot.state.totalBytes * 100)}%</p>
+      {catalog && catalog.length > 1 ? (
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-sm font-medium">Local speech model</legend>
+          {catalog.map((item) => {
+            const selected = item.key === selection.model;
+            return (
+              <label
+                key={item.key}
+                className={cn(
+                  'flex cursor-pointer items-start gap-3 rounded-lg border p-3',
+                  selected ? 'border-primary/60 bg-primary/5' : 'border-border/60 hover:bg-muted/40',
+                )}
+              >
+                <input
+                  type="radio"
+                  name={modelGroupName}
+                  value={item.key}
+                  checked={selected}
+                  className="mt-1 accent-primary"
+                  onChange={() => saveSelection({ ...selection, model: item.key }, FIELD_ID_LOCAL_MODEL)}
+                />
+                <span className="min-w-0 space-y-0.5">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    {item.name}
+                    {item.key === DEFAULT_MANAGED_LOCAL.model ? <Tag tone="info">Recommended</Tag> : null}
+                  </span>
+                  <span className="block text-xs leading-5 text-muted-foreground">{item.description}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {item.languages.join(', ')} · CPU {artifactStateWord(item.cpu.state)} · GPU {artifactStateWord(item.cuda.state)}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+          {persistence.fieldErrors[FIELD_ID_LOCAL_MODEL] ? (
+            <p role="alert" className="text-xs text-destructive">{persistence.fieldErrors[FIELD_ID_LOCAL_MODEL]}</p>
+          ) : null}
+          <p className="text-xs text-muted-foreground">Model and processor changes apply to the next recording.</p>
+        </fieldset>
+      ) : (
+        <p className="text-sm font-medium">
+          Local speech model
+          {snapshot ? <span className="ml-2 text-xs font-normal text-muted-foreground">{entry?.name ?? snapshot.model.name}</span> : null}
+        </p>
+      )}
+      {!snapshot ? (
+        <p className="mt-1 text-xs text-muted-foreground">{loadError ? 'Could not check local speech models.' : 'Checking status…'}</p>
       ) : null}
-      {snapshot?.state.kind === 'installing' ? <p className="mt-3 text-xs" role="status">Verifying and installing…</p> : null}
-      {snapshot?.state.kind === 'error' ? <p className="mt-3 text-xs text-destructive" role="alert">{snapshot.state.message}</p> : null}
+
+      {entry ? (
+        <div className="mt-4 border-t border-border/50">
+          <SelectRow
+            label="Processor"
+            value={device}
+            options={DEVICE_OPTIONS}
+            description={`${DEVICE_DESCRIPTIONS[device]}${snapshot?.gpu ? ` ${snapshot.gpu.name ? `Detected: ${snapshot.gpu.name}.` : snapshot.gpu.message}` : ''}`}
+            errorId={deviceErrorId}
+            error={persistence.fieldErrors[FIELD_ID_LOCAL_DEVICE]}
+            onChange={(value) => saveDevice(value as ManagedLocalDevice)}
+          />
+          {runtime ? <RuntimeStatus runtime={runtime} /> : null}
+          {offerAlternatives ? (
+            <div className="flex flex-wrap items-center gap-2 pb-3 text-xs text-muted-foreground">
+              <span>
+                {gpu?.state.kind !== 'ready'
+                  ? 'Dedicated GPU needs GPU files for this model. Set them up below, or use another processor.'
+                  : 'The GPU could not start. Use another processor to keep dictating.'}
+              </span>
+              <Button variant="secondary" size="xs" onClick={() => saveDevice('auto')}>Use Auto</Button>
+              <Button variant="ghost" size="xs" onClick={() => saveDevice('cpu')}>Use CPU</Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {cpu ? (
+        <div className="mt-2 divide-y divide-border/50 border-t border-border/50">
+          <ArtifactRow
+            title={entry ? 'CPU files' : 'Model files'}
+            artifact={cpu}
+            hint={device === 'auto' ? 'Required so Auto can fall back to the CPU.' : undefined}
+            installLabel="Install"
+            deleteLabel={entry ? 'Delete CPU files' : 'Delete model'}
+            busy={busy}
+            onInstall={() => void runAction('cpu', 'install')}
+            onDelete={() => void runAction('cpu', 'delete')}
+          />
+          {gpu && showGpuFiles ? (
+            <ArtifactRow
+              title="GPU acceleration files"
+              artifact={gpu}
+              hint="NVIDIA CUDA runtime and model files. CPU files stay installed."
+              optional
+              installLabel={`Set up GPU · ${formatMegabytes(gpu.downloadBytes)}`}
+              deleteLabel="Delete GPU files"
+              busy={busy}
+              onInstall={() => void runAction('cuda', 'install')}
+              onDelete={() => void runAction('cuda', 'delete')}
+            />
+          ) : null}
+          {entry ? (
+            <p className="pt-2 text-xs text-muted-foreground">Deleting removes only this model&apos;s files. Other models stay installed.</p>
+          ) : null}
+        </div>
+      ) : null}
       {error ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
       {snapshot ? (
         <div className="mt-4 space-y-2 border-t border-border/50 pt-3.5">
@@ -789,7 +904,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           />
           <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
             <p id={threadsDescriptionId} className="max-w-md text-xs leading-5 text-muted-foreground">
-              More threads can finish sooner but use more CPU and battery. Quality is unchanged.
+              Used when running on the CPU. More threads can finish sooner but use more CPU and battery. Quality is unchanged.
               Default is {snapshot.inference.defaultThreads}; changes apply to the next transcription.
             </p>
             <Button
@@ -807,6 +922,82 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
       ) : null}
     </div>
   );
+}
+
+function RuntimeStatus({ runtime }: { runtime: ManagedLocalModelSnapshot['runtime'] }) {
+  const backend = runtime.backend === 'cuda' ? 'NVIDIA GPU' : 'CPU';
+  const tag = runtime.status === 'ready'
+    ? { tone: runtime.backend === 'cuda' ? 'success' as const : 'neutral' as const, label: `Running on ${backend}` }
+    : runtime.status === 'loading'
+      ? { tone: 'info' as const, label: 'Starting' }
+      : runtime.status === 'error'
+        ? { tone: 'error' as const, label: 'Could not start' }
+        : { tone: 'neutral' as const, label: 'Starts with the next recording' };
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pb-3 text-xs" role="status">
+      <Tag tone={tag.tone}>{tag.label}</Tag>
+      {runtime.message ? (
+        <span className={runtime.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}>{runtime.message}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function ArtifactRow({ title, artifact, hint, optional = false, installLabel, deleteLabel, busy, onInstall, onDelete }: {
+  title: string;
+  artifact: ManagedLocalArtifact;
+  hint?: string;
+  optional?: boolean;
+  installLabel: string;
+  deleteLabel: string;
+  busy: boolean;
+  onInstall: () => void;
+  onDelete: () => void;
+}) {
+  const { state } = artifact;
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-3">
+      <div className="min-w-0 space-y-0.5">
+        <p className="flex items-center gap-2 text-sm">
+          {title}
+          {state.kind === 'ready' ? <Tag tone="success">Installed</Tag> : null}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {formatMegabytes(artifact.downloadBytes)} download · {formatMegabytes(artifact.installedBytes)} on disk
+          {hint ? ` · ${hint}` : ''}
+        </p>
+        {state.kind === 'downloading' ? (
+          <p className="text-xs" role="status">
+            Downloading… {state.totalBytes > 0 ? Math.round(state.downloadedBytes / state.totalBytes * 100) : 0}%
+            {' '}({formatMegabytes(state.downloadedBytes)} of {formatMegabytes(state.totalBytes)})
+          </p>
+        ) : null}
+        {state.kind === 'installing' ? <p className="text-xs" role="status">Verifying and installing…</p> : null}
+        {state.kind === 'error' ? <p className="text-xs text-destructive" role="alert">{state.message}</p> : null}
+      </div>
+      {state.kind === 'ready' ? (
+        <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={busy} onClick={onDelete}>{deleteLabel}</Button>
+      ) : state.kind === 'downloading' || state.kind === 'installing' ? null : (
+        <Button size="sm" variant={optional && state.kind !== 'error' ? 'secondary' : 'default'} disabled={busy} onClick={onInstall}>
+          {state.kind === 'error'
+            ? state.action === 'resume' ? 'Resume' : state.action === 'repair' ? 'Repair' : 'Retry'
+            : installLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function artifactStateWord(state: ManagedLocalModelState): string {
+  if (state.kind === 'ready') return 'installed';
+  if (state.kind === 'downloading') return 'downloading';
+  if (state.kind === 'installing') return 'installing';
+  if (state.kind === 'error') return 'needs attention';
+  return 'not installed';
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${Math.round(bytes / 1_000_000)} MB`;
 }
 
 interface Props {

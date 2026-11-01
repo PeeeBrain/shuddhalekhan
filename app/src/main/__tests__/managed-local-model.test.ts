@@ -38,6 +38,20 @@ function manifestFor(bytes: Uint8Array): ManagedLocalModelManifest {
 }
 
 describe('managed local model lifecycle', () => {
+  it('installs a verified standalone GGUF without archive extraction', async () => {
+    const root = await tempRoot();
+    const bytes = new TextEncoder().encode('GGUF model fixture');
+    const manager = createManagedLocalModelManager({ root,
+      manifest: { ...manifestFor(bytes), format: 'file', requiredFiles: ['model.gguf'] },
+      fetchArtifact: async () => new Response(bytes),
+      extractArchive: async () => { throw new Error('A GGUF is not an archive'); },
+    });
+    await manager.install();
+    expect(await manager.getState()).toMatchObject({ kind: 'ready' });
+    expect(await readFile(join(root, 'test-model-1/model.gguf'))).toEqual(bytes);
+    await manager.delete();
+    expect((await manager.getState()).kind).toBe('missing');
+  });
   it('verifies and atomically promotes a complete download', async () => {
     const root = await tempRoot();
     const archive = new TextEncoder().encode('archive');

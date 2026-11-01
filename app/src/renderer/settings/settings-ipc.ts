@@ -12,6 +12,7 @@ import type {
   TranscriptionReadiness,
   ManagedLocalModelSnapshot,
   ManagedLocalModelState,
+  ManagedLocalTarget,
   AgentProviderConfig,
   AgentProviderValidation,
   AgentProviderTestResult,
@@ -40,8 +41,9 @@ export interface SettingsIpc {
   checkTranscriptionReadiness: () => Promise<TranscriptionReadiness>;
   onTranscriptionReadinessChanged: (callback: (readiness: TranscriptionReadiness) => void) => Unsubscribe | undefined;
   getManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
-  installManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
-  deleteManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
+  /** Omit `target` for the selected model's primary install (Auto means CPU). */
+  installManagedLocalModel: (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
+  deleteManagedLocalModel: (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
   onManagedLocalModelStateChanged: (callback: (state: ManagedLocalModelState) => void) => Unsubscribe | undefined;
   onOnboardingCompleted: (callback: () => void) => Unsubscribe | undefined;
   getShortcutsPaused: () => Promise<boolean>;
@@ -112,8 +114,8 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     onMcpStatusSnapshot: (callback) => electronAPI?.subscribe('mcp:status-snapshot', callback),
     onTranscriptionReadinessChanged: (callback) => electronAPI?.subscribe('transcription:readiness-changed', callback),
     getManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:get-model'),
-    installManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:install-model'),
-    deleteManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:delete-model'),
+    installManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:install-model', target),
+    deleteManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:delete-model', target),
     onManagedLocalModelStateChanged: (callback) => electronAPI?.subscribe('managed-local:model-state-changed', callback),
     onOnboardingCompleted: (callback) => electronAPI?.subscribe('onboarding:completed', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),

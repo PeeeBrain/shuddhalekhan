@@ -1,7 +1,9 @@
-import { OfflineRecognizer } from 'sherpa-onnx-node';
+import type { OfflineRecognizer } from 'sherpa-onnx-node';
+import { z } from 'zod';
+import { createLocalRecognizer } from './managed-local-recognizer';
 import { decodePcm16Wave } from './managed-local-wave';
-import { managedLocalRecognizerConfig } from './managed-local-model';
 import { isManagedLocalThreadCount } from './managed-local-threads';
+import { decodeManagedLocal } from './managed-local-decode';
 import { createIncrementalDecoder } from './managed-local-incremental';
 
 const SAMPLE_RATE = 16_000;
@@ -9,7 +11,7 @@ const SAMPLE_RATE = 16_000;
 const port = process.parentPort;
 if (!port) throw new Error('Local speech recognition must run as an Electron utility process.');
 
-let recognizer: OfflineRecognizer | null = null;
+let recognizer: Pick<OfflineRecognizer, 'createStream' | 'decodeAsync'> | null = null;
 
 port.on('message', (event) => {
   void handleMessage(event.data);
@@ -18,7 +20,11 @@ port.on('message', (event) => {
 async function handleMessage(message: unknown): Promise<void> {
   if (isLoadMessage(message)) {
     try {
-      recognizer = await OfflineRecognizer.createAsync(managedLocalRecognizerConfig(message.modelPath, message.numThreads));
+      recognizer = await createLocalRecognizer(message.runtime ?? {
+        model: 'parakeet', backend: 'cpu', modelPath: message.modelPath,
+      }, message.numThreads);
+      // A real encode/decode catches missing CUDA dependencies and incompatible graphs before recording.
+      await decodeManagedLocal(recognizer, { samples: new Float32Array(SAMPLE_RATE), sampleRate: SAMPLE_RATE });
       port.postMessage({ kind: 'ready' });
     } catch (error) {
       recognizer = null;
@@ -38,17 +44,12 @@ async function handleMessage(message: unknown): Promise<void> {
     return;
   }
   try {
-    const text = await decode(recognizer, decodePcm16Wave(message.audio));
+    const wave = decodePcm16Wave(message.audio);
+    const text = await decodeManagedLocal(recognizer, wave);
     port.postMessage({ kind: 'result', requestId: message.requestId, text });
   } catch (error) {
     port.postMessage({ kind: 'error', requestId: message.requestId, message: safeError(error, 'Local transcription failed.') });
   }
-}
-
-async function decode(model: OfflineRecognizer, wave: { samples: Float32Array; sampleRate: number }): Promise<string> {
-  const stream = model.createStream();
-  stream.acceptWaveform(wave);
-  return (await model.decodeAsync(stream)).text;
 }
 
 // One recording at a time streams PCM16 here so decoding can start before the user stops.
@@ -60,7 +61,7 @@ function handleIncremental(message: IncrementalMessage): void {
     const model = recognizer;
     incremental = model ? {
       id: message.requestId,
-      decoder: createIncrementalDecoder(samples => decode(model, { samples, sampleRate: SAMPLE_RATE }), SAMPLE_RATE),
+      decoder: createIncrementalDecoder(samples => decodeManagedLocal(model, { samples, sampleRate: SAMPLE_RATE }), SAMPLE_RATE),
     } : null;
     return;
   }
@@ -105,12 +106,19 @@ function isIncrementalMessage(message: unknown): message is IncrementalMessage {
   return message.kind === 'incremental-start' || message.kind === 'incremental-finish' || message.kind === 'incremental-cancel';
 }
 
-function isLoadMessage(message: unknown): message is { kind: 'load'; modelPath: string; numThreads: number } {
+const runtimeSchema = z.object({
+  model: z.enum(['parakeet', 'granite']), backend: z.enum(['cpu', 'cuda']), modelPath: z.string(), runtimePath: z.string().optional(),
+});
+
+function isLoadMessage(message: unknown): message is {
+  kind: 'load'; modelPath: string; numThreads: number; runtime?: z.infer<typeof runtimeSchema>;
+} {
   return Boolean(
     message && typeof message === 'object'
     && 'kind' in message && message.kind === 'load'
     && 'modelPath' in message && typeof message.modelPath === 'string'
-    && 'numThreads' in message && isManagedLocalThreadCount(message.numThreads),
+    && 'numThreads' in message && isManagedLocalThreadCount(message.numThreads)
+    && (!('runtime' in message) || runtimeSchema.safeParse(message.runtime).success),
   );
 }
 

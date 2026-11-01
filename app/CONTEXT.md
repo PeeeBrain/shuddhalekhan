@@ -229,7 +229,12 @@ The process of simulating keystrokes to type transcribed text into the active wi
 
 ## Technical Terms
 
+### Managed local inference
+
+Managed Local offers two English model families: Parakeet unified English for accuracy and formatting, and Granite Speech 5 TurboCTC 470M Q4 for lower memory use. Each remembers its Auto, CPU, or CUDA preference. Electron main chooses installed assets; the persistent utility process loads only one native runtime and verifies initialization with a decode before reporting ready. Auto requires CPU files and can retry completed audio on CPU after a GPU failure. Dedicated GPU reports failure instead of changing backends. Model/device changes take effect after the active recording finishes. Downloads are always explicit, including CUDA runtime dependencies. See [local model inference](docs/local-model-inference.md) for release assets and native checks.
+
 ### Audio Stream
+
 The runtime renderer acquires the selected microphone for each recording and stops every track at the terminal path. It observes the `AudioContext` sample rate, downmixes input to mono, and converts it to ordered 320-sample PCM16 chunks at 16 kHz. The same converted samples produce the retained final WAV. The renderer and `AudioContext` stay warm, but the microphone does not.
 
 ### Whisper Client

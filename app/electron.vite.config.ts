@@ -16,7 +16,7 @@ export default defineConfig({
       },
       sourcemap: true,
       rollupOptions: {
-        external: ['sherpa-onnx-node'],
+        external: ['sherpa-onnx-node', 'transcribe-cpp'],
       },
     },
   },
