@@ -467,11 +467,11 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
                 setInstructionsDraft(event.target.value);
                 clearFieldError(FIELD_ID_CUSTOM_INSTRUCTIONS);
               }}
+              // The draft outlives the blur: a failed save restores the old config, and typing must survive that.
               onBlur={() => {
                 if (instructionsDraft !== null && instructionsDraft !== (agent.customInstructions ?? '')) {
                   void commit('agent', { ...agent, customInstructions: instructionsDraft }, FIELD_ID_CUSTOM_INSTRUCTIONS);
                 }
-                setInstructionsDraft(null);
               }}
             />
             {fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS] ? (

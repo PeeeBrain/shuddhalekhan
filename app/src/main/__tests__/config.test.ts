@@ -117,11 +117,12 @@ describe('config store', () => {
   it('defaults legacy profiles to memory off and preserves validated feature settings on save', async () => {
     storeData.set('agent', { enabled: false, provider: { baseUrl: '', model: '', apiKeyEnvVar: '' }, mcpServers: [] });
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-agent-context`);
-    expect(getConfig().agent).toMatchObject({ memoryEnabled: false, disabledSkills: [] });
-    setConfig('agent', { ...getConfig().agent, memoryEnabled: true, disabledSkills: ['email-style'] });
-    expect(getConfig().agent).toMatchObject({ memoryEnabled: true, disabledSkills: ['email-style'] });
+    expect(getConfig().agent).toMatchObject({ memoryEnabled: false, disabledSkills: [], customInstructions: '' });
+    setConfig('agent', { ...getConfig().agent, memoryEnabled: true, disabledSkills: ['email-style'], customInstructions: 'Reply in French.' });
+    expect(getConfig().agent).toMatchObject({ memoryEnabled: true, disabledSkills: ['email-style'], customInstructions: 'Reply in French.' });
     const saved = storeData.get('agent');
     expect(() => Reflect.apply(setConfig, null, ['agent', { ...getConfig().agent, memoryEnabled: 'yes' }])).toThrow();
+    expect(() => setConfig('agent', { ...getConfig().agent, customInstructions: 'x'.repeat(4001) })).toThrow();
     expect(storeData.get('agent')).toEqual(saved);
   });
 
