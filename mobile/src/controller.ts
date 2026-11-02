@@ -3,6 +3,7 @@ import { parseAgentActivityLink, type AgentActivityPort, type AgentActivityUpdat
 import type { Fetch } from './network';
 import { defaultSettings, mobileSettingsSchema, settingsError, type MobileSettings } from './settings';
 import { transcribe } from './transcription';
+import type { ChatGptAuth } from './chatgpt';
 
 export type RecordingIntent = 'dictation' | 'agent';
 export type Phase = 'loading' | 'idle' | 'requestingPermission' | 'recording' | 'transcribing' | 'running' | 'awaitingApproval';
@@ -45,6 +46,7 @@ export class MobileController {
     loadSettings(): Promise<MobileSettings>;
     saveSettings(settings: MobileSettings): Promise<MobileSettings>;
     activity?: AgentActivityPort;
+    chatgpt?: Pick<ChatGptAuth, 'getAccessToken'>;
   }) {}
 
   getSnapshot = () => this.state;
@@ -142,6 +144,7 @@ export class MobileController {
     if (this.backgrounded) await this.enterBackground();
     active.signal.throwIfAborted();
     const response = await runAgent({ transcript, settings: this.state.settings, signal: active.signal, fetch: this.ports.fetch,
+      getChatGptAccessToken: this.ports.chatgpt?.getAccessToken,
       onStatus: (status, completedSteps) => {
         if (this.active !== active || active.signal.aborted) return;
         this.completedSteps = completedSteps;
@@ -308,7 +311,7 @@ export class MobileController {
     if (this.state.phase !== 'idle' || this.active) throw new Error('Wait for the current command to finish.');
     const parsed = mobileSettingsSchema.parse(settings);
     this.update({ phase: 'loading' });
-    try { this.update({ settings: await this.ports.saveSettings(parsed), error: null, status: 'Settings saved.' }); }
+    try { this.update({ settings: await this.ports.saveSettings(parsed), error: null }); }
     finally { this.update({ phase: 'idle' }); }
   };
   resetSettings = async () => {

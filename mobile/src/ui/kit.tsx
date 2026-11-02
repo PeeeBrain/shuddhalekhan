@@ -1,7 +1,8 @@
 /* oxlint-disable react/only-export-components -- Native screens share these controls and their style tokens. */
-import { createContext, useContext, useState, type ReactNode } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Switch, Text, TextInput, View, type TextInputProps } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { createContext, type ReactNode } from 'react';
+import { StyleSheet, View } from 'react-native';
+import { Button as SwiftButton, Host, Text as SwiftText } from '@expo/ui/swift-ui';
+import { buttonStyle, controlSize, disabled as off, frame, labelStyle, tint } from '@expo/ui/swift-ui/modifiers';
 
 export const ReducedMotionContext = createContext(true);
 
@@ -35,278 +36,44 @@ export const type = StyleSheet.create({
 });
 
 type ButtonKind = 'primary' | 'agent' | 'secondary' | 'ghost' | 'destructive';
+const swiftStyle = { primary: 'borderedProminent', agent: 'borderedProminent', secondary: 'bordered', ghost: 'borderless', destructive: 'bordered' } as const;
 
-export function Button({
-  label,
-  onPress,
-  kind = 'secondary',
-  disabled,
-  accessibilityLabel,
-  accessibilityHint,
-}: {
+/** A native SwiftUI button. `wide` fills the row; otherwise it sizes to its label. */
+export function Button({ label, onPress, kind = 'secondary', small, wide, disabled, systemImage, iconOnly }: {
   label: string;
   onPress: () => void;
   kind?: ButtonKind;
+  small?: boolean;
+  wide?: boolean;
   disabled?: boolean;
-  accessibilityLabel?: string;
-  accessibilityHint?: string;
+  systemImage?: Parameters<typeof SwiftButton>[0]['systemImage'];
+  iconOnly?: boolean;
 }) {
+  const modifiers = [
+    buttonStyle(swiftStyle[kind]),
+    controlSize(small ? 'small' : wide ? 'large' : 'regular'),
+    ...(kind === 'destructive' ? [] : [tint(kind === 'agent' ? color.vermilion : color.blue)]),
+    ...(iconOnly ? [labelStyle('iconOnly')] : []),
+    off(!!disabled),
+  ];
   return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? label}
-      accessibilityHint={accessibilityHint}
-      accessibilityState={{ disabled: !!disabled }}
-      hitSlop={4}
-      style={({ pressed }) => [
-        styles.button,
-        buttonFill[kind],
-        pressed && { opacity: 0.75 },
-        disabled && { opacity: 0.45 },
-      ]}
-    >
-      <Text style={[styles.buttonLabel, { color: buttonText[kind] }]}>{label}</Text>
-    </Pressable>
+    <Host matchContents={wide ? { vertical: true } : true} colorScheme="dark">
+      {wide ? (
+        <SwiftButton onPress={onPress} role={kind === 'destructive' ? 'destructive' : 'default'} modifiers={modifiers}>
+          <SwiftText modifiers={[frame({ maxWidth: Infinity })]}>{label}</SwiftText>
+        </SwiftButton>
+      ) : (
+        <SwiftButton label={label} systemImage={systemImage} onPress={onPress} role={kind === 'destructive' ? 'destructive' : 'default'} modifiers={modifiers} />
+      )}
+    </Host>
   );
 }
-
-const buttonFill = StyleSheet.create({
-  primary: { backgroundColor: color.blue },
-  agent: { backgroundColor: color.vermilion },
-  secondary: { backgroundColor: color.raised },
-  ghost: { backgroundColor: 'transparent' },
-  destructive: { backgroundColor: 'transparent', borderWidth: 1, borderColor: color.red },
-});
-
-const buttonText: Record<ButtonKind, string> = {
-  primary: color.onSignal,
-  agent: color.onSignal,
-  secondary: color.text,
-  ghost: color.blue,
-  destructive: color.red,
-};
 
 export function Card({ children, agent }: { children: ReactNode; agent?: boolean }) {
   return <View style={[styles.card, agent && styles.agentCard]}>{children}</View>;
 }
 
-export function Section({ title, footer, children }: { title: string; footer?: string; children: ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={[type.caption, styles.sectionTitle]} accessibilityRole="header">
-        {title}
-      </Text>
-      <Card>{children}</Card>
-      {footer ? <Text style={[type.footnote, styles.sectionFooter]}>{footer}</Text> : null}
-    </View>
-  );
-}
-
-// Plain text/URL/secret field. Settings values are machine strings: never autocorrect or autocapitalize.
-export function Field({
-  label,
-  hint,
-  secret,
-  ...input
-}: { label: string; hint?: string; secret?: boolean } & Omit<TextInputProps, 'style'>) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <View style={styles.field}>
-      <Text style={type.caption}>{label}</Text>
-      <TextInput
-        accessibilityLabel={label}
-        accessibilityHint={hint}
-        autoCapitalize="none"
-        autoCorrect={false}
-        spellCheck={false}
-        autoComplete="off"
-        secureTextEntry={secret}
-        textContentType={secret ? 'password' : 'none'}
-        keyboardAppearance="dark"
-        placeholderTextColor={color.muted}
-        selectionColor={color.blue}
-        {...input}
-        onFocus={(e) => { setFocused(true); input.onFocus?.(e); }}
-        onBlur={(e) => { setFocused(false); input.onBlur?.(e); }}
-        style={[styles.input, input.multiline && styles.multiline, focused && styles.inputFocused]}
-      />
-      {hint ? <Text style={type.footnote}>{hint}</Text> : null}
-    </View>
-  );
-}
-
-export function ToggleRow({
-  label,
-  hint,
-  value,
-  onValueChange,
-  disabled,
-}: {
-  label: string;
-  hint?: string;
-  value: boolean;
-  onValueChange: (value: boolean) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <View style={styles.toggleRow}>
-      <View style={{ flex: 1 }}>
-        <Text style={type.body}>{label}</Text>
-        {hint ? <Text style={type.footnote}>{hint}</Text> : null}
-      </View>
-      <Switch
-        accessibilityLabel={label}
-        accessibilityHint={hint}
-        value={value}
-        onValueChange={onValueChange}
-        disabled={disabled}
-        trackColor={{ true: color.blue, false: color.hairline }}
-        thumbColor={color.text}
-        ios_backgroundColor={color.hairline}
-      />
-    </View>
-  );
-}
-
-// One option of a `styles.segments` radiogroup.
-export function Segment({
-  label,
-  selected,
-  agent,
-  disabled,
-  onPress,
-}: {
-  label: string;
-  selected: boolean;
-  agent?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="radio"
-      accessibilityLabel={label}
-      accessibilityState={{ selected, disabled: !!disabled }}
-      style={({ pressed }) => [styles.segment, selected && styles.segmentOn, pressed && { backgroundColor: color.raised }, disabled && { opacity: 0.45 }]}
-    >
-      <Text style={[type.headline, { textAlign: 'center', color: selected ? (agent ? color.vermilion : color.blue) : color.muted }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-type Option = { value: string; label: string };
-
-// A labelled row that opens a sheet of options. Long lists get a search field; `custom` lets it accept a typed value.
-export function Choice({
-  label,
-  value,
-  options,
-  onChange,
-  hint,
-  custom,
-}: {
-  label: string;
-  value: string;
-  options: readonly Option[];
-  onChange: (value: string) => void;
-  hint?: string;
-  custom?: (query: string) => Option | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const reduceMotion = useContext(ReducedMotionContext);
-  const [query, setQuery] = useState('');
-  const current = options.find((option) => option.value === value)?.label ?? value;
-  const needle = query.trim().toLowerCase();
-  const matches = needle ? options.filter((option) => `${option.label} ${option.value}`.toLowerCase().includes(needle)) : options;
-  const typed = needle && custom ? custom(query) : null;
-  const shown = typed && !options.some((option) => option.value === typed.value) ? [...matches, typed] : matches;
-  const close = () => { setOpen(false); setQuery(''); };
-  return (
-    <View style={styles.field}>
-      <Text style={type.caption}>{label}</Text>
-      <Pressable
-        onPress={() => setOpen(true)}
-        accessibilityRole="button"
-        accessibilityLabel={`${label}: ${current}`}
-        accessibilityHint={hint ?? 'Opens a list of options'}
-        style={({ pressed }) => [styles.input, styles.choice, pressed && { opacity: 0.75 }]}
-      >
-        <Text style={[type.body, { flex: 1 }]} numberOfLines={1}>{current}</Text>
-        <Text style={type.body} importantForAccessibility="no">›</Text>
-      </Pressable>
-      {hint ? <Text style={type.footnote}>{hint}</Text> : null}
-      <Modal visible={open} animationType={reduceMotion ? 'none' : 'slide'} presentationStyle="pageSheet" onRequestClose={close}>
-        <SafeAreaView style={styles.sheet} edges={['bottom', 'left', 'right']}>
-          <View style={styles.sheetHeader}>
-            <Text style={type.headline} accessibilityRole="header">{label}</Text>
-            <Button label="Done" kind="ghost" onPress={close} />
-          </View>
-          {options.length > 8 || custom ? (
-            <TextInput
-              accessibilityLabel={`Search ${label}`}
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Search"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardAppearance="dark"
-              placeholderTextColor={color.muted}
-              selectionColor={color.blue}
-              style={styles.input}
-            />
-          ) : null}
-          <FlatList
-            data={shown}
-            keyExtractor={(option) => option.value || 'none'}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            automaticallyAdjustKeyboardInsets
-            renderItem={({ item }) => {
-              const selected = item.value === value;
-              return (
-                <Pressable
-                  onPress={() => { onChange(item.value); close(); }}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected }}
-                  style={({ pressed }) => [styles.option, pressed && { backgroundColor: color.raised }]}
-                >
-                  <Text style={[type.body, { flex: 1, color: selected ? color.blue : color.text }]}>{item.label}</Text>
-                  {selected ? <Text style={[type.body, { color: color.blue }]} importantForAccessibility="no">✓</Text> : null}
-                </Pressable>
-              );
-            }}
-            ListEmptyComponent={<Text style={[type.footnote, styles.empty]}>No matches for “{query.trim()}”.</Text>}
-          />
-        </SafeAreaView>
-      </Modal>
-    </View>
-  );
-}
-
 export const styles = StyleSheet.create({
-  segments: {
-    flexDirection: 'row',
-    backgroundColor: color.card,
-    borderRadius: 10,
-    padding: 3,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.hairline,
-  },
-  segment: { flex: 1, minHeight: 44, paddingHorizontal: 8, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  segmentOn: { backgroundColor: color.raised },
-  button: {
-    minHeight: 44,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  buttonLabel: { fontSize: 17, fontWeight: '600', textAlign: 'center' },
   card: {
     backgroundColor: color.card,
     borderRadius: 12,
@@ -316,28 +83,5 @@ export const styles = StyleSheet.create({
     gap: 12,
   },
   agentCard: { backgroundColor: color.agentCard, borderColor: color.agentBorder, borderRadius: 6 },
-  section: { gap: 6 },
-  sectionTitle: { paddingHorizontal: 4 },
-  sectionFooter: { paddingHorizontal: 4 },
-  field: { gap: 6 },
-  input: {
-    minHeight: 44,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: color.hairline,
-    backgroundColor: 'rgba(57,54,50,0.3)',
-    color: color.text,
-    fontSize: 17,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  inputFocused: { borderColor: color.blue },
-  multiline: { minHeight: 88, textAlignVertical: 'top' },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 44 },
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  choice: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sheet: { flex: 1, backgroundColor: color.page, padding: 16, gap: 12 },
-  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  empty: { textAlign: 'center', paddingVertical: 24 },
-  option: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: color.hairline },
+  buttons: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 });

@@ -384,6 +384,30 @@ test('unreachable endpoints name the failing stage: agent model vs MCP server', 
 });
 
 describe('provider-specific agent continuation', () => {
+  test('ChatGPT obtains a bearer for each tool-loop step and keeps it off MCP requests', async () => {
+    const mcpState = newMCPFixtureState();
+    const bearers: (string | null)[] = [];
+    let issued = 0;
+    await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
+      const answer = await runAgent({ transcript: 'Find the plan.', signal: new AbortController().signal,
+        settings: { ...agentSettings('https://api.openai.com', mcpUrl), agentProvider: 'chatgpt', agentApiMode: 'responses', agentAuth: 'none', agentKey: '',
+          agentEndpoint: 'https://api.openai.com/v1/responses' },
+        fetch: Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input) !== 'https://api.openai.com/v1/responses') return globalThis.fetch(input, init);
+          bearers.push(new Headers(init?.headers).get('authorization'));
+          const response = bearers.length === 1
+            ? { status: 'completed', output: [{ type: 'function_call', call_id: 'call-1', name: 'mcp_1_0', arguments: '{"query":"plan"}' }] }
+            : { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found it.' }] }] };
+          return new Response(`data: ${JSON.stringify({ type: 'response.completed', response })}\n\n`);
+        }, { preconnect: globalThis.fetch.preconnect }),
+        getChatGptAccessToken: async () => `step-token-${++issued}`, onStatus: () => {}, approve: async () => true,
+      });
+      expect(answer).toBe('Found it.');
+      expect(bearers).toEqual(['Bearer step-token-1', 'Bearer step-token-2']);
+      expect(mcpState.calls).toHaveLength(1);
+      expect(mcpState.requests.every(request => request.authorization === 'Bearer mcp-secret')).toBe(true);
+    });
+  });
   const toolResult = JSON.stringify({ content: [{ type: 'text', text: 'A matching document was found.' }] });
   const marked = (type: string, text: unknown) => [{ type, text, prompt_cache_breakpoint: { mode: 'explicit' } }];
 
@@ -425,11 +449,12 @@ describe('provider-specific agent continuation', () => {
         // The system prompt and the latest two inputs carry breakpoints; earlier inputs revert to plain strings.
         expect(bodies[2]!.input).toEqual([
           system,
-          { role: 'user', content: 'Find two things.' },
+          { role: 'user', content: expect.stringMatching(/<runtime_context>[\s\S]*<\/runtime_context>\n\nFind two things\.$/) },
           ...echoed(1), { ...result(1), output: marked('input_text', toolResult) },
           ...echoed(2), { ...result(2), output: marked('input_text', toolResult) },
         ]);
-        expect(bodies[1]!.input[1]).toEqual({ role: 'user', content: marked('input_text', 'Find two things.') });
+        expect(bodies[1]!.input[1]).toEqual({ role: 'user', content: [{ type: 'input_text',
+          text: expect.stringMatching(/\n\nFind two things\.$/), prompt_cache_breakpoint: { mode: 'explicit' } }] });
       });
     });
   });

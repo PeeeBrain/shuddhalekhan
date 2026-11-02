@@ -16,6 +16,7 @@ export const transcriptionProviders: { value: TranscriptionProvider; label: stri
 ];
 
 export const agentProviders: { value: AgentProvider; label: string; endpoint: string; model: string; placeholder: string }[] = [
+  { value: 'chatgpt', label: 'ChatGPT plan', endpoint: 'https://api.openai.com/v1/responses', model: '', placeholder: '' },
   { value: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/responses', model: 'gpt-4.1-mini', placeholder: '' },
   { value: 'azure-openai', label: 'Azure OpenAI', endpoint: '', model: '', placeholder: 'https://<resource>.openai.azure.com/openai/v1/responses' },
   { value: 'openrouter', label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: '', placeholder: '' },
@@ -35,13 +36,14 @@ export function selectAgentProvider(settings: MobileSettings, provider: AgentPro
   if (settings.agentProvider === provider) return settings;
   const preset = agentProviders.find(option => option.value === provider)!;
   return { ...settings, agentProvider: provider, agentEndpoint: preset.endpoint, agentModel: preset.model, agentKey: '',
-    agentAuth: provider === 'azure-openai' ? 'api-key' : provider === 'openai-compatible' ? 'none' : 'bearer',
-    agentApiMode: provider === 'openai' || provider === 'azure-openai' ? 'responses' : 'chat-completions',
+    agentAuth: provider === 'azure-openai' ? 'api-key' : provider === 'openai-compatible' || provider === 'chatgpt' ? 'none' : 'bearer',
+    agentApiMode: provider === 'openai' || provider === 'azure-openai' || provider === 'chatgpt' ? 'responses' : 'chat-completions',
     agentReasoning: 'default', agentCache: false };
 }
 
 /** Keeps the endpoint pointed at the selected API: `…/chat/completions` ↔ `…/responses`. */
 export function selectAgentApiMode(settings: MobileSettings, mode: MobileSettings['agentApiMode']): MobileSettings {
+  if (settings.agentProvider === 'chatgpt') return settings;
   const [from, to] = mode === 'responses' ? ['/chat/completions', '/responses'] : ['/responses', '/chat/completions'];
   const endpoint = settings.agentEndpoint.replace(/\/+$/, '');
   return { ...settings, agentApiMode: mode, agentEndpoint: endpoint.endsWith(from) ? endpoint.slice(0, -from.length) + to : settings.agentEndpoint };

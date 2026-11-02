@@ -4,7 +4,7 @@ import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioM
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
 import { MobileController, type Recorder } from './controller';
-import { loadSettings, saveSettings } from './native-settings';
+import { chatGptAuth, loadSettings, saveSettings } from './native-settings';
 import { localModelKey, signGoogleJwt, transcribeOnDevice, useKeyboardSession, useOnDeviceModel } from './on-device';
 import { recordingLimitSeconds } from './providers';
 import { agentActivity, onAgentApprovalAction, onAgentRunStopped } from './native-agent-activity';
@@ -74,7 +74,7 @@ export function useMobileApp() {
         }
       },
     };
-    return new MobileController({ recorder: nativeRecorder, fetch, loadSettings, saveSettings, signGoogleJwt, activity: agentActivity,
+    return new MobileController({ recorder: nativeRecorder, fetch, loadSettings, saveSettings, signGoogleJwt, activity: agentActivity, chatgpt: chatGptAuth,
       transcribeOnDevice: async (signal, language) => {
         if (!recordingFile?.exists) throw new Error('The recording file is unavailable. Record again.');
         return transcribeOnDevice(recordingFile.uri, signal, language);
@@ -82,6 +82,7 @@ export function useMobileApp() {
     });
   });
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const chatgpt = useSyncExternalStore(chatGptAuth.subscribe, chatGptAuth.getSnapshot);
   const { localModels, installLocalModel, preparingModel } = useOnDeviceModel(
     state.phase !== 'loading' && state.settings.transcriptionSource === 'on-device' ? state.settings.language : null,
   );
@@ -90,6 +91,7 @@ export function useMobileApp() {
   useEffect(() => {
     controllerRef.current = controller;
     void controller.initialize();
+    void chatGptAuth.initialize();
     const stopped = onAgentRunStopped(controller.agentRunStopped);
     const approvalAction = onAgentApprovalAction(() => { void controller.consumeApprovalAction(); });
     const open = (url: string) => { void controller.initialize().then(() => { controller.openActivity(url); }); };
@@ -117,6 +119,7 @@ export function useMobileApp() {
 
   return {
     ...state, elapsedSeconds: state.phase === 'recording' && state.recordingStartedAt !== null ? Math.max(0, Math.floor((now - state.recordingStartedAt) / 1000)) : 0,
+    chatgpt, signInChatGpt: chatGptAuth.signIn, signOutChatGpt: chatGptAuth.signOut, listChatGptModels: chatGptAuth.listModels,
     localModel: localModels[localModelKey(state.settings.language)], localModels, installLocalModel, preparingModel,
     keyboardSession, stopKeyboardSession,
     startKeyboardSession: async () => {

@@ -40,8 +40,8 @@ export function ApprovalSheet({ approval, onResolve }: { approval: Approval | nu
           </Card>
         </ScrollView>
         <View style={a.actions}>
-          <Button label="Approve once" kind="agent" disabled={approval === null} onPress={() => decide(true)} />
-          <Button label="Deny" kind="secondary" disabled={approval === null} onPress={() => decide(false)} />
+          <Button label="Approve Once" kind="agent" wide disabled={approval === null} onPress={() => decide(true)} />
+          <Button label="Deny" kind="secondary" wide disabled={approval === null} onPress={() => decide(false)} />
         </View>
       </SafeAreaView>
     </Modal>

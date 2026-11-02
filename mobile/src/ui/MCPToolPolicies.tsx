@@ -1,31 +1,25 @@
-import { useContext, useEffect, useRef, useState } from 'react';
-import { FlatList, Modal, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useEffect, useRef, useState } from 'react';
 import { fetch } from 'expo/fetch';
+import { Button, Form, Picker, ProgressView, Section, Text, useNativeState } from '@expo/ui/swift-ui';
+import { disabled, foregroundStyle, navigationTitle, pickerStyle, searchable, tag } from '@expo/ui/swift-ui/modifiers';
 import { MCPConnection, type MCPTool } from '../mcp';
 import { settingsError, toolApprovalPolicy, toolApprovalPolicySchema, type MCPServerSettings } from '../settings';
-import { Button, Choice, Field, ReducedMotionContext, styles, type } from './kit';
+import { color } from './kit';
 
-const options = [
-  { value: 'alwaysAsk', label: 'Ask every time' },
-  { value: 'alwaysAllow', label: 'Always allow' },
-  { value: 'disabled', label: 'Disabled' },
-];
 type Discovery = { phase: 'idle' | 'loading' } | { phase: 'ready'; tools: MCPTool[] } | { phase: 'failed'; error: string };
 
+/** Native drill-down page for one server's tool policies. Edits go into the Settings draft. */
 export function MCPToolPolicies({ server, allowHTTP, onChange }: {
   server: MCPServerSettings;
   allowHTTP: boolean;
   onChange: (policies: NonNullable<MCPServerSettings['toolPolicies']>) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const search = useNativeState('');
   const [query, setQuery] = useState('');
   const [discovery, setDiscovery] = useState<Discovery>({ phase: 'idle' });
   const request = useRef<AbortController | null>(null);
-  const reduceMotion = useContext(ReducedMotionContext);
   useEffect(() => {
     setDiscovery({ phase: 'idle' });
-    setQuery('');
     return () => { request.current?.abort(); request.current = null; };
   }, [server.endpoint, server.token, allowHTTP]);
 
@@ -45,12 +39,6 @@ export function MCPToolPolicies({ server, allowHTTP, onChange }: {
       if (request.current === active) request.current = null;
     }
   };
-  const close = () => {
-    request.current?.abort();
-    request.current = null;
-    if (discovery.phase === 'loading') setDiscovery({ phase: 'idle' });
-    setOpen(false);
-  };
   const tools = new Map(discovery.phase === 'ready' ? discovery.tools.map(tool => [tool.name, tool]) : []);
   // Saved policies remain editable offline, including tools no longer advertised by the server.
   const names = [...new Set([...tools.keys(), ...Object.keys(server.toolPolicies ?? {})])];
@@ -62,25 +50,29 @@ export function MCPToolPolicies({ server, allowHTTP, onChange }: {
     onChange(policies);
   };
 
-  return <>
-    <Button label="Tool approval policies" onPress={() => setOpen(true)} />
-    {open ? <Modal visible animationType={reduceMotion ? 'none' : 'slide'} presentationStyle="pageSheet" onRequestClose={close}>
-      <SafeAreaView style={styles.sheet} edges={['bottom', 'left', 'right']}>
-        <View style={styles.sheetHeader}>
-          <Text style={[type.headline, { flex: 1 }]} accessibilityRole="header">{server.name || 'MCP server'} tools</Text>
-          <Button label="Done" kind="ghost" onPress={close} />
-        </View>
-        <Text style={type.footnote}>New tools ask every time. Always allow lets this tool act without a prompt. Disabled tools are unavailable to the agent. Changes apply after you save Settings.</Text>
-        <Button label={discovery.phase === 'loading' ? 'Discovering tools…' : 'Discover tools'} disabled={discovery.phase === 'loading' || !server.endpoint.trim()} onPress={() => { void discover(); }} />
-        {discovery.phase === 'failed' ? <Text style={type.body} accessibilityRole="alert">{discovery.error}</Text> : null}
-        {names.length > 8 || query ? <Field label="Find a tool" value={query} onChangeText={setQuery} /> : null}
-        <FlatList data={shown} keyExtractor={name => name} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive"
-          renderItem={({ item: name }) => <View style={{ paddingVertical: 12, gap: 6 }}>
-            <Choice label={name} value={toolApprovalPolicy(server, name)} options={options} onChange={value => setPolicy(name, value)} />
-            {tools.get(name)?.description ? <Text style={type.footnote} numberOfLines={3}>{tools.get(name)?.description}</Text> : null}
-          </View>}
-          ListEmptyComponent={<Text style={type.footnote}>{query.trim() ? 'No matching tools.' : discovery.phase === 'ready' ? 'This server advertises no tools.' : 'Discover tools to choose their approval policies. Discovery does not run any tools.'}</Text>} />
-      </SafeAreaView>
-    </Modal> : null}
-  </>;
+  return (
+    <Form modifiers={[navigationTitle('Tool Approval'), searchable(search, { prompt: 'Search tools', onChange: setQuery })]}>
+      <Section footer={<Text modifiers={discovery.phase === 'failed' ? [foregroundStyle(color.red)] : undefined}>
+        {discovery.phase === 'failed' ? discovery.error : 'Discovery lists tools without running them. Changes apply when you save.'}
+      </Text>}>
+        {discovery.phase === 'loading'
+          ? <ProgressView><Text>Discovering tools…</Text></ProgressView>
+          : <Button label={discovery.phase === 'ready' ? 'Refresh Tools' : 'Discover Tools'} systemImage="arrow.clockwise"
+            onPress={() => { void discover(); }} modifiers={[disabled(!server.endpoint.trim())]} />}
+      </Section>
+      {shown.length ? shown.map(name => (
+        <Section key={name} footer={tools.get(name)?.description ? <Text>{tools.get(name)?.description ?? ''}</Text> : undefined}>
+          <Picker label={name} selection={toolApprovalPolicy(server, name)} onSelectionChange={v => setPolicy(name, String(v))} modifiers={[pickerStyle('menu')]}>
+            <Text modifiers={[tag('alwaysAsk')]}>Ask Every Time</Text>
+            <Text modifiers={[tag('alwaysAllow')]}>Always Allow</Text>
+            <Text modifiers={[tag('disabled')]}>Disabled</Text>
+          </Picker>
+        </Section>
+      )) : discovery.phase === 'ready' || query.trim() ? (
+        <Section><Text modifiers={[foregroundStyle({ type: 'hierarchical', style: 'secondary' })]}>
+          {query.trim() ? 'No matching tools.' : 'This server advertises no tools.'}
+        </Text></Section>
+      ) : null}
+    </Form>
+  );
 }

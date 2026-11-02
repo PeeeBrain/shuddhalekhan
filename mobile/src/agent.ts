@@ -2,6 +2,69 @@ import { z } from 'zod';
 import { MCPConnection, jsonObjectSchema, type MCPTool } from './mcp';
 import { bearerHeaders, parseResponse, readJSON, request, type Fetch } from './network';
 import { toolApprovalPolicy, type MobileSettings } from './settings';
+import { chatGptEndpoint, chatGptError } from './chatgpt';
+
+// Keep this prefix and assembly identical to desktop app/src/agent/runtime.ts.
+const SYSTEM_PROMPT = `<identity>
+You are Shuddhalekhan Agent, a concise voice-controlled assistant for short, one-off tasks.
+</identity>
+
+<persistence>
+- Keep going until the user's request is resolved or a stop condition is reached.
+- Do not ask clarifying questions when a reasonable assumption is available; proceed and state the assumption briefly in the final response.
+- Stop and hand back to the user when the request requires missing credentials, an unavailable tool, refused consent, or an unsafe/destructive action that was not explicitly requested.
+</persistence>
+
+<context_gathering>
+Goal: Get enough context fast, then act.
+- Use tools when the request depends on current, recent, external, online, web, search, news, factual lookup, URL-specific information, or an external/local integration.
+- Do not use tools for stable knowledge, casual conversation, or requests answerable from the user's message alone.
+- Avoid tangential exploration. Prefer one focused tool attempt; use additional tool calls only when the first result is incomplete, conflicting, or required to finish the task.
+- If no suitable tool is available or no tool was called for a requested lookup/action, say that plainly.
+</context_gathering>
+
+<tool_preambles>
+- Before tool use, briefly state what you are checking or doing.
+- Keep tool preambles short because this is a voice-first workflow.
+- After tool work, summarize the result and any user-relevant next step.
+</tool_preambles>
+
+<approval_handling>
+- Respect tool policies and approval decisions exactly.
+- If a Tool Approval Response is denied with the reason "Tool approval window expired.", stop execution and say the request stopped because tool approval expired.
+- Do not mention deliberate focus unless that exact timeout denial reason was received.
+- If a denied Tool Approval Response contains corrective feedback that changes the target, arguments, or scope, revise the tool call and continue.
+- If a denied Tool Approval Response refuses the action or withholds consent, stop and explain the limitation briefly.
+- Never retry the exact same rejected tool call with the same arguments.
+</approval_handling>
+
+<response_style>
+- Be concise, factual, and calm.
+- Prefer one short paragraph or a few bullets.
+- Do not expose hidden reasoning. Provide conclusions, key facts, assumptions, and caveats only when useful.
+- Do not claim a tool action succeeded unless a tool result confirms it.
+</response_style>`;
+
+function buildSystemPrompt(customInstructions: string): string {
+  const userInstructions = customInstructions.trim();
+  if (!userInstructions) return SYSTEM_PROMPT;
+  return `${SYSTEM_PROMPT}
+
+<user_instructions>
+The user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.
+${userInstructions}
+</user_instructions>`;
+}
+
+function runtimeContext(): string {
+  const now = new Date();
+  return `<runtime_context>
+- Current local datetime: ${new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' }).format(now)}
+- Current UTC datetime: ${now.toISOString()}
+- Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}
+- Use this datetime context when interpreting relative dates like today, tomorrow, yesterday, tonight, this week, current year, or latest.
+</runtime_context>`;
+}
 
 export type ToolApproval = { serverName: string; toolName: string; arguments: string };
 type ToolCall = { id: string; name: string; arguments: string };
@@ -36,21 +99,24 @@ const responsesSchema = z.object({
 type Text = { type: string; text: string; [key: string]: unknown };
 type ChatMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string | null | Text[]; tool_calls?: z.infer<typeof toolCallSchema>[];
   tool_call_id?: string; reasoning_details?: unknown[]; reasoning_content?: string | null };
-type ResponseInput = { role: 'system' | 'user' | 'assistant'; content: string | Text[] }
+type ResponseInput = { role: 'system' | 'developer' | 'user' | 'assistant'; content: string | Text[] }
   | { type: 'reasoning'; id: string; encrypted_content?: string | null; summary: unknown[] }
   | { type: 'function_call'; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string | Text[] };
 type AvailableTool = { connection: MCPConnection; tool: MCPTool };
 
-export async function runAgent({ transcript, settings, signal, fetch, onStatus, approve }: {
+export async function runAgent({ transcript, settings, signal, fetch, onStatus, approve, getChatGptAccessToken }: {
   transcript: string; settings: MobileSettings; signal: AbortSignal; fetch: Fetch;
   onStatus: (status: string, completedSteps: number) => void;
   approve: (request: ToolApproval) => Promise<boolean>;
+  getChatGptAccessToken?: () => Promise<string>;
 }): Promise<string> {
   if (!settings.agentEnabled) throw new Error('Enable Agent Mode in Settings first.');
   if (!transcript.trim()) throw new Error('Record a command first.');
   // Custom servers may run without a key even when a header mode is saved; hosted providers never do.
-  if (settings.agentProvider !== 'openai-compatible' && settings.agentAuth !== 'none' && !settings.agentKey) throw new Error('Enter the agent provider API key in Settings.');
+  const chatgpt = settings.agentProvider === 'chatgpt';
+  if (!chatgpt && settings.agentProvider !== 'openai-compatible' && settings.agentAuth !== 'none' && !settings.agentKey) throw new Error('Enter the agent provider API key in Settings.');
+  if (chatgpt && !getChatGptAccessToken) throw new Error('Sign in with ChatGPT in Settings.');
   // Name the failing stage; "could not reach the endpoint" alone doesn't say whether the model or an MCP server failed.
   let completedSteps = 0;
   const status = (message: string) => onStatus(message, completedSteps);
@@ -58,10 +124,11 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
     if (signal.aborted || !(error instanceof Error)) throw error;
     throw new Error(`${label}: ${error.message}`);
   });
-  const responses = settings.agentApiMode === 'responses';
-  const system = `${settings.systemPrompt}\nThis is a single command, without prior conversation. Local date: ${new Date().toLocaleString()}.`;
-  const messages: ChatMessage[] = [{ role: 'system', content: system }, { role: 'user', content: transcript }];
-  const input: ResponseInput[] = [{ role: 'system', content: system }, { role: 'user', content: transcript }];
+  const responses = chatgpt || settings.agentApiMode === 'responses';
+  const system = buildSystemPrompt(settings.customInstructions);
+  const command = `${runtimeContext()}\n\n${transcript}`;
+  const messages: ChatMessage[] = [{ role: 'system', content: system }, { role: 'user', content: command }];
+  const input: ResponseInput[] = [{ role: chatgpt ? 'developer' : 'system', content: system }, { role: 'user', content: command }];
   const connections: MCPConnection[] = [];
   const available = new Map<string, AvailableTool>();
   const usedCallIds = new Set<string>();
@@ -85,7 +152,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
       signal.throwIfAborted();
       status('Waiting for the agent…');
       const body = {
-        model: settings.agentModel, stream: false, ...reasoningOptions(settings),
+        model: settings.agentModel, stream: chatgpt, ...reasoningOptions(settings),
         ...(responses ? { input: withCache(settings, input), store: false, include: ['reasoning.encrypted_content'] } : { messages: withCache(settings, messages) }),
         ...(nativeCache(settings) ? { prompt_cache_key: 'shuddhalekhan-mobile-agent-v1' } : {}),
         ...(tools.length ? {
@@ -96,8 +163,10 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
       const auth = settings.agentAuth === 'none' ? {} : settings.agentAuth === 'api-key' ? { 'api-key': settings.agentKey } : bearerHeaders(settings.agentKey);
       const openRouter: Record<string, string> = settings.agentProvider === 'openrouter'
         ? { 'HTTP-Referer': 'https://github.com/parthashirolkar/shuddhalekhan', 'X-OpenRouter-Title': 'Shuddhalekhan' } : {};
-      const data = await stage('Agent model endpoint', request({ fetch, endpoint: settings.agentEndpoint, allowHTTP: settings.allowInsecureHTTP, signal,
-        init: { method: 'POST', headers: { 'Content-Type': 'application/json', ...openRouter, ...auth }, body: JSON.stringify(body) }, read: readJSON }));
+      const data = await stage('Agent model endpoint', chatgpt && getChatGptAccessToken
+        ? requestChatGpt({ fetch, body, signal, token: await getChatGptAccessToken() })
+        : request({ fetch, endpoint: settings.agentEndpoint, allowHTTP: settings.allowInsecureHTTP, signal,
+          init: { method: 'POST', headers: { 'Content-Type': 'application/json', ...openRouter, ...auth }, body: JSON.stringify(body) }, read: readJSON }));
 
       let text: string;
       let calls: ToolCall[];
@@ -172,6 +241,86 @@ function reasoningOptions(settings: MobileSettings) {
   if (settings.agentProvider === 'openrouter') return { reasoning: effort === 'none' ? { enabled: false } : { effort } };
   if (settings.agentApiMode === 'responses') return { reasoning: { effort } };
   return { reasoning_effort: effort, ...(isDeepSeekV4(settings) ? { thinking: { type: effort === 'none' ? 'disabled' : 'enabled' } } : {}) };
+}
+
+const chatGptRejectionSchema = z.object({ error: z.object({ code: z.string().optional(), param: z.string().optional() }) });
+const streamEventSchema = z.object({ type: z.string(), response: z.unknown().optional(), code: z.string().optional(),
+  error: z.object({ code: z.string().optional() }).optional() });
+
+async function requestChatGpt({ fetch, body, signal, token }: {
+  fetch: Fetch; body: Record<string, unknown>; signal: AbortSignal; token: string;
+}): Promise<unknown> {
+  signal.throwIfAborted();
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(abort, 90_000);
+  let response: Response | undefined;
+  try {
+    const send = () => fetch(chatGptEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body), signal: controller.signal, redirect: 'error', credentials: 'omit' });
+    response = await send();
+    if (response.status === 400 && body.include !== undefined) {
+      const rejection = chatGptRejectionSchema.safeParse(await readJSON(response).catch(() => null));
+      if (rejection.success && /^include(?:\[|\.|$)/.test(rejection.data.error.param ?? '')) {
+        delete body.include;
+        await response.body?.cancel().catch(() => {});
+        response = await send();
+      } else throw new Error(chatGptError(400, rejection.success ? rejection.data.error.code : undefined));
+    }
+    if (!response.ok) {
+      const rejection = chatGptRejectionSchema.safeParse(await readJSON(response).catch(() => null));
+      throw new Error(chatGptError(response.status, rejection.success ? rejection.data.error.code : undefined));
+    }
+    return await readChatGptStream(response, controller.signal);
+  } catch (error) {
+    signal.throwIfAborted();
+    if (controller.signal.aborted) throw new Error('ChatGPT stopped responding. The request timed out.');
+    if (!response || error instanceof TypeError) throw new Error('Could not reach ChatGPT. Check your connection and try again.');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', abort);
+    await response?.body?.cancel().catch(() => {});
+  }
+}
+
+/** Deltas are provisional. Only the final completed event may finish a run or authorize tool calls. */
+async function readChatGptStream(response: Response, signal: AbortSignal): Promise<unknown> {
+  if (!response.body) throw new Error('ChatGPT returned an empty response.');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let bytes = 0;
+  const parseEvent = (frame: string): z.infer<typeof streamEventSchema> | null => {
+    const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+    if (!data || data === '[DONE]') return null;
+    try { return streamEventSchema.parse(JSON.parse(data)); }
+    catch { throw new Error('ChatGPT returned an invalid stream event.'); }
+  };
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const chunk = await reader.read();
+      bytes += chunk.value?.byteLength ?? 0;
+      if (bytes > 8_000_000) throw new Error('The ChatGPT response is too large.');
+      buffer += chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
+      buffer = buffer.replace(/\r\n/g, '\n');
+      let end: number;
+      while ((end = buffer.indexOf('\n\n')) !== -1 || (chunk.done && buffer.length > 0)) {
+        if (end === -1) end = buffer.length;
+        const event = parseEvent(buffer.slice(0, end));
+        buffer = buffer.slice(end + 2);
+        if (event?.type === 'response.completed' || event?.type === 'response.incomplete') return event.response;
+        if (event?.type === 'error' || event?.type === 'response.failed') {
+          const failed = z.object({ error: z.object({ code: z.string().optional() }).nullable().optional() }).safeParse(event.response);
+          throw new Error(chatGptError(400, event.code ?? event.error?.code ?? (failed.success ? failed.data.error?.code : undefined)));
+        }
+      }
+      if (buffer.length > 2_000_000) throw new Error('The ChatGPT stream event is too large.');
+      if (chunk.done) throw new Error('ChatGPT disconnected before completing the response. Try again.');
+    }
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
 function isDeepSeekV4(settings: MobileSettings): boolean {

@@ -13,6 +13,8 @@ const serverSettingsSchema = mobileSettingsSchema.shape.mcpServers.element
 const storedSettingsSchema = z.object(mobileSettingsSchema.shape).omit({
   transcriptionKey: true, agentKey: true, googleServiceAccount: true, mcpServers: true,
 }).extend({
+  // Accept the legacy field, then discard it. It must never become standing instructions.
+  systemPrompt: z.unknown().optional(),
   transcriptionProvider: mobileSettingsSchema.shape.transcriptionProvider.removeDefault().optional(),
   mcpServers: z.array(serverSettingsSchema).max(10),
   transcriptionKeyRef: z.string().min(1).nullable(),

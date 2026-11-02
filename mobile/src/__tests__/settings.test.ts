@@ -42,3 +42,25 @@ test('empty remote endpoints fail validation while unused local endpoints remain
   expect(mobileSettingsSchema.safeParse(incomplete).success).toBe(false);
   expect(mobileSettingsSchema.safeParse({ ...incomplete, transcriptionSource: 'on-device' }).success).toBe(true);
 });
+
+test('ChatGPT selection clears the API key and model and requires a model before enabling Agent Mode', () => {
+  const settings = selectAgentProvider({ ...defaultSettings, agentKey: 'old-secret', agentCache: true }, 'chatgpt');
+  expect(settings).toMatchObject({ agentKey: '', agentModel: '', agentAuth: 'none', agentApiMode: 'responses', agentCache: false });
+  expect(mobileSettingsSchema.safeParse({ ...settings, agentEnabled: true }).success).toBe(false);
+  const configured = { ...settings, agentEnabled: true, agentModel: 'listed-model' };
+  expect(mobileSettingsSchema.safeParse(configured).success).toBe(true);
+  for (const invalid of [{ agentEndpoint: 'https://other.example/responses' }, { agentAuth: 'bearer' }, { agentKey: 'secret' },
+    { agentApiMode: 'chat-completions' }, { agentCache: true }]) {
+    expect(mobileSettingsSchema.safeParse({ ...configured, ...invalid }).success).toBe(false);
+  }
+  expect(selectAgentApiMode(configured, 'chat-completions')).toEqual(configured);
+});
+
+test('custom instructions are limited to 4000 characters and the old editable prompt is discarded', () => {
+  const legacy = { ...defaultSettings, customInstructions: undefined, systemPrompt: 'Replace the app prompt' };
+  const parsed = mobileSettingsSchema.parse(legacy);
+  expect(parsed.customInstructions).toBe('');
+  expect(parsed).not.toHaveProperty('systemPrompt');
+  expect(mobileSettingsSchema.safeParse({ ...defaultSettings, customInstructions: 'x'.repeat(4000) }).success).toBe(true);
+  expect(mobileSettingsSchema.safeParse({ ...defaultSettings, customInstructions: 'x'.repeat(4001) }).success).toBe(false);
+});

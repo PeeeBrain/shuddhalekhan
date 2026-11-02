@@ -30,6 +30,13 @@ function when(controller: MobileController, predicate: () => boolean): Promise<v
 }
 
 describe('mobile command lifecycle', () => {
+  test('saving settings leaves the resting Home status intact', async () => {
+    const controller = createController(recorder().port);
+    await controller.initialize();
+    const status = controller.getSnapshot().status;
+    await controller.saveSettings({ ...defaultSettings, customInstructions: 'Be brief.' });
+    expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', status });
+  });
   test('local dictation never uploads audio', async () => {
     const order: string[] = [];
     let selectedLanguage: string | undefined;
