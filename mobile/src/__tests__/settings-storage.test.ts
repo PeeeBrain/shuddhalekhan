@@ -76,13 +76,15 @@ describe('settings storage', () => {
   test('settings saved before providers existed keep their generic behavior and normalize the free-text language', async () => {
     const { store, metadataItems } = createHarness(['generation-1']);
     const original = configuredSettings({ transcriptionProvider: 'custom-open-ai-compatible', agentProvider: 'openai-compatible',
-      transcriptionEndpoint: 'https://whisper.example/inference', language: 'en-IN', systemPrompt: 'Saved instructions. '.repeat(300) });
+      transcriptionEndpoint: 'https://whisper.example/inference', language: 'en-IN' });
     await store.saveSettings(original);
     const raw = JSON.parse(metadataItems.get(metadataKey)!) as { settings: Record<string, unknown> };
     for (const key of ['transcriptionProvider', 'transcriptionAuth', 'transcriptionHeaderName', 'azureRegion', 'googleProject',
       'googleLocation', 'googleServiceAccountRef', 'sarvamMode', 'nimAutoLanguage', 'nimDictionary',
       'agentProvider', 'agentApiMode', 'agentAuth', 'agentReasoning', 'agentCache']) delete raw.settings[key];
     raw.settings.language = 'en_in';
+    delete raw.settings.customInstructions;
+    raw.settings.systemPrompt = 'Saved instructions. '.repeat(300);
     metadataItems.set(metadataKey, JSON.stringify(raw));
     expect(await store.loadSettings()).toEqual(original);
   });

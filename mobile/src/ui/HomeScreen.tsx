@@ -2,11 +2,14 @@ import { useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Host, Picker, Text as SwiftText } from '@expo/ui/swift-ui';
+import { disabled, pickerStyle, tag } from '@expo/ui/swift-ui/modifiers';
 import { isParakeetLanguage, languageLabel } from '../languages';
 import { recordingLimitSeconds, transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
-import { Button, Card, Segment, color, styles as kit, type } from './kit';
+import { Button, Card, color, styles as kit, type } from './kit';
 import { Markdown } from './Markdown';
+import type { SettingsPage } from './SettingsScreen';
 
 type App = ReturnType<typeof useMobileApp>;
 type Intent = App['intent'];
@@ -18,136 +21,112 @@ const busyLabel: Partial<Record<App['phase'], string>> = {
   running: 'Agent is working…',
   awaitingApproval: 'Waiting for your approval…',
 };
+// Statuses that only restate "nothing is happening" stay off screen.
+const restStatus = new Set(['Ready to record.', 'Settings saved.', 'Done.']);
 
-export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App; onOpenSettings: () => void; onReviewApproval: () => void }) {
+export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App; onOpenSettings: (page?: SettingsPage) => void; onReviewApproval: () => void }) {
   const { settings, phase, transcript, response, status, error } = app;
   const [picked, setPicked] = useState<Intent>('dictation');
   const idle = phase === 'idle';
   // While a run is in flight the hook's intent is the truth; the picker only matters at rest.
   const intent: Intent = idle ? (settings.agentEnabled ? picked : 'dictation') : app.intent;
-  const agent = intent === 'agent';
   const onDevice = settings.transcriptionSource === 'on-device';
   const configured = onDevice ? app.localModel.kind === 'ready' : transcriptionReady(settings);
-  const setupHint = onDevice ? localModelHint(app.localModel) : 'Add a transcription API key or endpoint in Settings.';
   const canRetry = idle && settings.agentEnabled && transcript.trim() !== '';
   // The keyboard session holds the microphone, so the in-app recorder has nothing to offer until it ends.
   const sessionOn = app.keyboardSession.active;
   const showRecorder = !(sessionOn && idle);
-  const keyboardCard = <KeyboardSessionCard app={app} onOpenSettings={onOpenSettings} />;
   const setupCard = idle && !configured && !sessionOn;
+  const line = (status && !restStatus.has(status) ? status : '') || busyLabel[phase] || '';
 
   return (
     <SafeAreaView style={home.screen}>
       <View style={home.header}>
-        <Text style={[type.largeTitle, { flexShrink: 1 }]} accessibilityRole="header">
-          Shuddhalekhan
-        </Text>
-        <Button label="Settings" kind="ghost" onPress={onOpenSettings} disabled={!idle} />
+        <Text style={[type.largeTitle, { flexShrink: 1 }]} accessibilityRole="header">Shuddhalekhan</Text>
+        <Button label="Settings" systemImage="gearshape" iconOnly kind="ghost" onPress={() => onOpenSettings()} disabled={!idle} />
       </View>
 
       <ScrollView contentContainerStyle={home.content} contentInsetAdjustmentBehavior="automatic">
         {error ? (
-          <View style={home.error} accessibilityRole="alert">
-            <Text style={[type.body, { color: color.red }]} selectable>
-              {error}
-            </Text>
-            {phase !== 'loading' ? <Button label="Dismiss" kind="ghost" onPress={app.dismissError} /> : (
-              <Button label="Reset saved settings" kind="destructive" onPress={() => Alert.alert(
+          <Card>
+            <Text style={[type.body, { color: color.red }]} selectable accessibilityRole="alert">{error}</Text>
+            {phase !== 'loading' ? <Button label="Dismiss" kind="ghost" small onPress={app.dismissError} /> : (
+              <Button label="Reset Saved Settings" kind="destructive" small onPress={() => Alert.alert(
                 'Reset saved settings?',
                 'This removes your saved provider settings, API keys, and MCP configuration. You will need to enter them again.',
-                [{ text: 'Cancel', style: 'cancel' }, { text: 'Reset settings', style: 'destructive', onPress: () => { void app.resetSettings(); } }],
+                [{ text: 'Cancel', style: 'cancel' }, { text: 'Reset Settings', style: 'destructive', onPress: () => { void app.resetSettings(); } }],
               )} />
             )}
-          </View>
+          </Card>
         ) : null}
 
         {app.activityNotice ? <Text style={type.footnote} accessibilityLiveRegion="polite">{app.activityNotice}</Text> : null}
 
         {app.approval ? (
           <Card agent>
-            <Text style={type.headline}>Tool approval needed</Text>
-            <Text style={type.body}>{app.approval.toolName}</Text>
-            <Text style={type.footnote}>from {app.approval.serverName}</Text>
-            <Button label="Review tool request" kind="agent" onPress={onReviewApproval} />
+            <Text style={type.headline}>{app.approval.toolName}</Text>
+            <Text style={type.footnote}>Tool approval needed · {app.approval.serverName}</Text>
+            <Button label="Review Request" kind="agent" wide onPress={onReviewApproval} />
           </Card>
         ) : null}
 
-        {sessionOn ? keyboardCard : null}
+        {sessionOn ? <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} /> : null}
 
         {setupCard ? (
           <Card>
-            <Text style={type.headline}>{onDevice ? 'Set up on-device transcription' : 'Set up transcription'}</Text>
-            <Text style={type.footnote}>
-              {onDevice ? setupHint : "Add your transcription provider credentials or endpoint in Settings. On your phone, use your computer's LAN address instead of localhost."}
-            </Text>
-            <Button label="Open Settings" kind="primary" onPress={onOpenSettings} />
+            <Text style={type.headline}>{onDevice ? 'Download a speech model' : 'Set up transcription'}</Text>
+            <Text style={type.footnote}>{onDevice ? localModelHint(app.localModel) : "Add your provider's key or endpoint. Use your computer's LAN address, not localhost."}</Text>
+            <Button label="Open Settings" kind="primary" wide onPress={() => onOpenSettings('transcription')} />
           </Card>
         ) : null}
 
-        {settings.agentEnabled && showRecorder ? (
-          <View style={kit.segments} accessibilityRole="radiogroup" accessibilityLabel="Mode">
-            <Segment label="Dictation" selected={!agent} disabled={!idle} onPress={() => setPicked('dictation')} />
-            <Segment label="Agent" agent selected={agent} disabled={!idle} onPress={() => setPicked('agent')} />
+        {showRecorder ? (
+          <View style={home.hero}>
+            {settings.agentEnabled ? (
+              <Host matchContents={{ vertical: true }} colorScheme="dark" style={home.modes}>
+                <Picker selection={intent} onSelectionChange={v => setPicked(v === 'agent' ? 'agent' : 'dictation')} modifiers={[pickerStyle('segmented'), disabled(!idle)]}>
+                  <SwiftText modifiers={[tag('dictation')]}>Dictation</SwiftText>
+                  <SwiftText modifiers={[tag('agent')]}>Agent</SwiftText>
+                </Picker>
+              </Host>
+            ) : null}
+            <RecordControl app={app} intent={intent} configured={configured} />
+            <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>{line}</Text>
           </View>
         ) : null}
 
-        {showRecorder ? (
-          <>
-            <RecordControl app={app} intent={intent} configured={configured} setupHint={setupHint} />
-            {setupCard ? null : (
-              <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>
-                {status || busyLabel[phase] || (agent ? 'Speak one command for the agent.' : 'Tap to dictate.')}
-              </Text>
-            )}
-          </>
-        ) : null}
-
-        {sessionOn ? null : keyboardCard}
+        {sessionOn ? null : <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} />}
 
         {transcript ? (
           <Card>
-            <Text style={type.caption} accessibilityRole="header">
-              Transcript
-            </Text>
-            <Text style={type.body} selectable>
-              {transcript}
-            </Text>
-            <View style={kit.row}>
-              <CopyShare text={transcript} what="transcript" />
+            <Text style={type.caption} accessibilityRole="header">Transcript</Text>
+            <Text style={type.body} selectable>{transcript}</Text>
+            <View style={kit.buttons}>
+              <CopyShare text={transcript} />
+              {canRetry ? <Button label="Send to Agent" systemImage="paperplane" small kind="agent" onPress={app.retryAgent} /> : null}
             </View>
-            {canRetry ? (
-              <Button
-                label="Send to agent"
-                kind="secondary"
-                onPress={app.retryAgent}
-                accessibilityHint="Runs Agent Mode again with this transcript"
-              />
-            ) : null}
           </Card>
         ) : null}
 
         {response ? (
           <Card agent>
-            <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">
-              Agent response
-            </Text>
+            <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">Agent response</Text>
             <Markdown>{response}</Markdown>
-            <View style={kit.row}>
-              <CopyShare text={response} what="agent response" />
-            </View>
+            <View style={kit.buttons}><CopyShare text={response} /></View>
           </Card>
         ) : null}
 
-        {idle && (transcript || response) ? <Button label="Clear" kind="ghost" onPress={app.clearResults} /> : null}
+        {idle && (transcript || response) ? <View style={home.clear}><Button label="Clear" kind="ghost" onPress={app.clearResults} /></View> : null}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function RecordControl({ app, intent, configured, setupHint }: { app: App; intent: Intent; configured: boolean; setupHint: string }) {
+function RecordControl({ app, intent, configured }: { app: App; intent: Intent; configured: boolean }) {
   const { phase } = app;
   const agent = intent === 'agent';
   const tint = agent ? color.vermilion : color.blue;
+  const shape = { borderRadius: agent ? 16 : 56 };
 
   if (phase === 'recording') {
     const m = Math.floor(app.elapsedSeconds / 60);
@@ -156,69 +135,53 @@ function RecordControl({ app, intent, configured, setupHint }: { app: App; inten
     const left = recordingLimitSeconds(app.settings) - app.elapsedSeconds;
     const ending = left <= 10;
     return (
-      <View style={home.recordWrap}>
+      <>
         <Pressable
           onPress={app.stopRecording}
           accessibilityRole="button"
           accessibilityLabel={agent ? 'Stop and send to agent' : 'Stop and transcribe'}
-          style={({ pressed }) => [home.record, { backgroundColor: tint, borderRadius: agent ? 10 : 44 }, pressed && { opacity: 0.8 }]}
+          style={({ pressed }) => [home.record, shape, { backgroundColor: tint }, pressed && { opacity: 0.8 }]}
         >
           <View style={home.stopGlyph} />
         </Pressable>
         <Text style={[type.title, home.timer, { color: ending ? color.ochre : tint }]} accessibilityLabel={`Recording, ${m} minutes ${s} seconds`}>
-          {m}:{s}
+          {ending ? `Stops in ${Math.max(0, left)} s` : `${m}:${s}`}
         </Text>
-        {ending ? (
-          <Text style={[type.footnote, { color: color.ochre }]}>
-            Stops in {Math.max(0, left)} s
-          </Text>
-        ) : null}
-        <Button label="Cancel" kind="ghost" onPress={app.cancel} accessibilityHint="Discards this recording" />
-      </View>
+        <Button label="Cancel" kind="ghost" onPress={app.cancel} />
+      </>
     );
   }
 
   if (phase !== 'idle' && phase !== 'loading') {
     return (
-      <View style={home.recordWrap}>
-        <View style={[home.record, home.recordIdle, { borderColor: tint, borderRadius: agent ? 10 : 44 }]}>
-          <ActivityIndicator color={tint} accessibilityLabel={busyLabel[phase]} />
+      <>
+        <View style={[home.record, home.recordIdle, shape, { borderColor: tint }]}>
+          <ActivityIndicator color={tint} size="large" accessibilityLabel={busyLabel[phase]} />
         </View>
         <Button label="Cancel" kind="ghost" onPress={app.cancel} />
-      </View>
+      </>
     );
   }
 
-  const disabled = phase !== 'idle' || !configured || app.keyboardSession.active;
+  const off = phase !== 'idle' || !configured || app.keyboardSession.active;
   const limit = recordingLimitSeconds(app.settings);
-  const limitLabel = limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`;
   return (
-    <View style={home.recordWrap}>
-      <Pressable
-        onPress={() => app.startRecording(intent)}
-        disabled={disabled}
-        accessibilityRole="button"
-        accessibilityLabel={agent ? 'Record agent command' : 'Start dictation'}
-        accessibilityHint={configured ? `Records up to ${limitLabel}` : setupHint}
-        accessibilityState={{ disabled }}
-        style={({ pressed }) => [
-          home.record,
-          home.recordIdle,
-          { borderColor: tint, borderRadius: agent ? 10 : 44 },
-          pressed && { backgroundColor: color.raised },
-          disabled && { opacity: 0.45 },
-        ]}
-      >
-        <View style={[home.micGlyph, { backgroundColor: tint, borderRadius: agent ? 3 : 10 }]} />
-      </Pressable>
-      <Text style={[type.headline, { color: tint }]}>{agent ? 'Ask agent' : 'Dictate'}</Text>
-      <Text style={type.footnote}>Record up to {limitLabel}.</Text>
-    </View>
+    <Pressable
+      onPress={() => app.startRecording(intent)}
+      disabled={off}
+      accessibilityRole="button"
+      accessibilityLabel={agent ? 'Record agent command' : 'Start dictation'}
+      accessibilityHint={`Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}`}
+      accessibilityState={{ disabled: off }}
+      style={({ pressed }) => [home.record, home.recordIdle, shape, { borderColor: tint }, pressed && { backgroundColor: color.raised }, off && { opacity: 0.4 }]}
+    >
+      <View style={[home.micGlyph, { backgroundColor: tint, borderRadius: agent ? 4 : 17 }]} />
+    </Pressable>
   );
 }
 
 // Native owns the session; this only starts, shows, and stops it. The countdown keeps the open mic obvious.
-function KeyboardSessionCard({ app, onOpenSettings }: { app: App; onOpenSettings: () => void }) {
+function KeyboardSession({ app, onSetUp }: { app: App; onSetUp: () => void }) {
   const session = app.keyboardSession;
   if (!session.available) return null;
   if (session.active) {
@@ -226,47 +189,48 @@ function KeyboardSessionCard({ app, onOpenSettings }: { app: App; onOpenSettings
     const s = String(session.remainingSeconds % 60).padStart(2, '0');
     return (
       <Card>
-        <View style={home.sessionHeader}>
-          <Text style={[type.headline, { flex: 1 }]} accessibilityRole="header">Keyboard session on</Text>
+        <View style={home.sessionRow}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={type.headline} accessibilityRole="header">Keyboard session on</Text>
+            <Text style={type.footnote}>
+              {session.remainingSeconds === 0 && session.busy ? 'Finishing this utterance…' : 'Mic open. Only audio between Dictate and Stop is kept.'}
+            </Text>
+          </View>
           <Text style={[type.title, home.timer, { color: session.remainingSeconds <= 60 ? color.ochre : color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>
             {m}:{s}
           </Text>
         </View>
-        <Text style={type.footnote}>
-          Use the Shuddhalekhan keyboard in any app. The microphone stays open until the timer ends or you stop. Only audio
-          between Dictate and Stop is kept, and it is transcribed on this iPhone.
-        </Text>
-        {session.remainingSeconds === 0 && session.busy ? (
-          <Text style={[type.footnote, { color: color.ochre }]} accessibilityLiveRegion="polite">Finishing this utterance before the microphone turns off.</Text>
-        ) : null}
-        <Button label="Stop session" kind="destructive" onPress={() => { void app.stopKeyboardSession(); }} />
+        <Button label="Stop Session" kind="destructive" wide onPress={() => { void app.stopKeyboardSession(); }} />
       </Card>
     );
   }
   const supported = isParakeetLanguage(app.settings.language);
   const ready = supported && app.localModel.kind === 'ready';
+  const detail = session.endedReason ? `Last session ended: ${session.endedReason}`
+    : app.preparingModel ? 'Preparing speech recognition…'
+      : ready ? 'Use the Shuddhalekhan keyboard in any app for 10 minutes.'
+        : supported ? 'Needs the on-device Parakeet model.'
+          : `Parakeet doesn't support ${languageLabel(app.settings.language)}.`;
   return (
     <Card>
-      <Text style={type.headline} accessibilityRole="header">Dictate in any app</Text>
-      <Text style={type.footnote}>
-        {ready
-          ? 'Start a 10-minute session, then use the Shuddhalekhan keyboard in any app: tap Dictate, speak, and tap Stop.'
-          : supported
-            ? 'Keyboard dictation runs on this iPhone. Download Parakeet for your language in Settings first.'
-            : `Keyboard dictation runs on this iPhone with Parakeet, which does not support ${languageLabel(app.settings.language)}. Choose a supported language in Settings.`}
-      </Text>
-      {session.endedReason ? <Text style={[type.footnote, { color: color.red }]}>Last session ended: {session.endedReason}</Text> : null}
-      {app.preparingModel ? <Text style={type.footnote} accessibilityLiveRegion="polite">Preparing speech recognition. The first session after an update may take longer.</Text> : null}
-      <Button
-        label={session.starting ? 'Starting…' : 'Start keyboard session'}
-        kind="primary"
-        disabled={!ready || session.starting || app.phase !== 'idle'}
-        onPress={async () => {
-          try { await app.startKeyboardSession(); }
-          catch (e) { Alert.alert('Keyboard session', e instanceof Error ? e.message : 'Could not start the session.'); }
-        }}
-      />
-      <Button label="Keyboard setup" kind="ghost" onPress={onOpenSettings} disabled={app.phase !== 'idle'} accessibilityHint="Opens Settings with steps to add the Shuddhalekhan keyboard" />
+      <View style={home.sessionRow}>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={type.headline} accessibilityRole="header">Keyboard</Text>
+          <Text style={[type.footnote, session.endedReason ? { color: color.red } : null]}>{detail}</Text>
+        </View>
+        {ready ? (
+          <Button
+            label={session.starting ? 'Starting…' : 'Start'}
+            kind="primary"
+            small
+            disabled={session.starting || app.phase !== 'idle'}
+            onPress={() => {
+              app.startKeyboardSession().catch((e: unknown) => Alert.alert('Keyboard session', e instanceof Error ? e.message : 'Could not start the session.'));
+            }}
+          />
+        ) : null}
+        <Button label="Set Up" kind={ready ? 'ghost' : 'secondary'} small onPress={onSetUp} disabled={app.phase !== 'idle'} />
+      </View>
     </Card>
   );
 }
@@ -275,30 +239,30 @@ function localModelHint(model: App['localModel']): string {
   switch (model.kind) {
     case 'checking': return 'Checking the installed on-device model…';
     case 'ready': return '';
-    case 'downloading': return `Downloading the on-device model (${Math.round(model.fraction * 100)}%). You can record once it is ready.`;
-    case 'installing': return 'Preparing the on-device model for this iPhone. The first time can take a few minutes.';
-    case 'unavailable': return 'Install the updated native app to use on-device Parakeet, or switch to an endpoint in Settings.';
-    case 'error': return 'The on-device model could not be installed. Retry in Settings.';
-    case 'missing': return 'Download the Parakeet model for your language (about 0.5 GB) in Settings to record on this iPhone.';
+    case 'downloading': return `Downloading (${Math.round(model.fraction * 100)}%). You can record once it's ready.`;
+    case 'installing': return 'Preparing the model for this iPhone. The first time can take a few minutes.';
+    case 'unavailable': return 'Install the updated app to use on-device Parakeet, or switch to an endpoint.';
+    case 'error': return "The model couldn't be installed. Retry in Settings.";
+    case 'missing': return 'Download Parakeet for your language (about 0.5 GB) to record on this iPhone.';
   }
 }
 
-function CopyShare({ text, what }: { text: string; what: string }) {
+function CopyShare({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <>
       <Button
         label={copied ? 'Copied' : 'Copy'}
-        accessibilityLabel={`Copy ${what}`}
-        onPress={async () => {
-          try {
-            await Clipboard.setStringAsync(text);
+        systemImage={copied ? 'checkmark' : 'doc.on.doc'}
+        small
+        onPress={() => {
+          Clipboard.setStringAsync(text).then(() => {
             setCopied(true);
             setTimeout(() => setCopied(false), 1500);
-          } catch { Alert.alert('Could not copy', 'Try selecting the text and copying it.'); }
+          }, () => Alert.alert('Could not copy', 'Try selecting the text and copying it.'));
         }}
       />
-      <Button label="Share" accessibilityLabel={`Share ${what}`} onPress={() => {
+      <Button label="Share" systemImage="square.and.arrow.up" small onPress={() => {
         void Share.share({ message: text }).catch(() => Alert.alert('Could not share', 'Try copying the text instead.'));
       }} />
     </>
@@ -307,29 +271,16 @@ function CopyShare({ text, what }: { text: string; what: string }) {
 
 const home = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.page },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
   content: { padding: 20, gap: 16, paddingBottom: 48 },
-  error: {
-    backgroundColor: color.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: color.red,
-    padding: 16,
-    gap: 8,
-  },
-  recordWrap: { alignItems: 'center', gap: 12, paddingVertical: 16 },
-  record: { width: 88, height: 88, alignItems: 'center', justifyContent: 'center' },
+  hero: { alignItems: 'center', gap: 16, paddingVertical: 12 },
+  modes: { alignSelf: 'stretch' },
+  record: { width: 112, height: 112, alignItems: 'center', justifyContent: 'center' },
   recordIdle: { borderWidth: 2, backgroundColor: color.card },
-  micGlyph: { width: 28, height: 28 },
-  stopGlyph: { width: 26, height: 26, borderRadius: 4, backgroundColor: color.onSignal },
+  micGlyph: { width: 34, height: 34 },
+  stopGlyph: { width: 32, height: 32, borderRadius: 5, backgroundColor: color.onSignal },
   timer: { fontVariant: ['tabular-nums'] },
-  sessionHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  status: { textAlign: 'center' },
+  status: { textAlign: 'center', minHeight: 18 },
+  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  clear: { alignItems: 'center' },
 });

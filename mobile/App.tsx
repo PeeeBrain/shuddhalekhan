@@ -5,7 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useMobileApp } from './src/useMobileApp';
 import { ApprovalSheet } from './src/ui/ApprovalSheet';
 import { HomeScreen } from './src/ui/HomeScreen';
-import { SettingsScreen } from './src/ui/SettingsScreen';
+import { SettingsScreen, type SettingsPage } from './src/ui/SettingsScreen';
 import { ReducedMotionContext } from './src/ui/kit';
 
 export default function App() {
@@ -28,24 +28,17 @@ export default function App() {
 
 function Main() {
   const app = useMobileApp();
-  const [screen, setScreen] = useState<'home' | 'settings'>('home');
+  // null = Home; otherwise Settings, opened at an optional page.
+  const [settings, setSettings] = useState<{ page?: SettingsPage } | null>(null);
   const [reviewingApproval, setReviewingApproval] = useState<string | null>(null);
-  useEffect(() => { if (app.activityOpenCount) setScreen('home'); }, [app.activityOpenCount]);
+  useEffect(() => { if (app.activityOpenCount) setSettings(null); }, [app.activityOpenCount]);
 
   return (
     <>
-      {screen === 'settings' ? (
-        <SettingsScreen
-          settings={app.settings}
-          localModels={app.localModels}
-          preparingModel={app.preparingModel}
-          onInstallLocalModel={app.installLocalModel}
-          canSave={app.phase === 'idle'}
-          onSave={app.saveSettings}
-          onClose={() => setScreen('home')}
-        />
+      {settings ? (
+        <SettingsScreen app={app} initialPage={settings.page} onClose={() => setSettings(null)} />
       ) : (
-        <HomeScreen app={app} onOpenSettings={() => setScreen('settings')} onReviewApproval={() => setReviewingApproval(app.approval?.approvalId ?? null)} />
+        <HomeScreen app={app} onOpenSettings={page => setSettings({ page })} onReviewApproval={() => setReviewingApproval(app.approval?.approvalId ?? null)} />
       )}
       <ApprovalSheet approval={app.approval && (!app.approvalNotified || reviewingApproval === app.approval.approvalId || app.approvalReviewId === app.approval.approvalId) ? app.approval : null} onResolve={app.resolveApproval} />
     </>
