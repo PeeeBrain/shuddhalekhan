@@ -257,7 +257,7 @@ async function requestChatGpt({ fetch, body, signal, token }: {
   const timer = setTimeout(abort, 90_000);
   let response: Response | undefined;
   try {
-    const send = () => fetch(chatGptEndpoint, { method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    const send = () => fetch(chatGptEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body), signal: controller.signal, redirect: 'error', credentials: 'omit' });
     response = await send();
     if (response.status === 400 && body.include !== undefined) {

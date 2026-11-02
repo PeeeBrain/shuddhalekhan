@@ -59,11 +59,11 @@ Goal: Get enough context fast, then act.
 - Do not claim a tool action succeeded unless a tool result confirms it.
 </response_style>`;
 
-test('ChatGPT sends a streamed developer prompt with only bearer auth and no cache or system fields', async () => {
+test('ChatGPT sends a streamed developer prompt with JSON bearer auth and no cache or system fields', async () => {
   const bodies: z.infer<typeof requestSchema>[] = [];
   const fetch: Fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
     expect(String(input)).toBe('https://api.openai.com/v1/responses');
-    expect(Object.fromEntries(new Headers(init?.headers))).toEqual({ authorization: 'Bearer fresh-bearer' });
+    expect(Object.fromEntries(new Headers(init?.headers))).toEqual({ authorization: 'Bearer fresh-bearer', 'content-type': 'application/json' });
     expect(init?.redirect).toBe('error');
     bodies.push(requestSchema.parse(JSON.parse(String(init?.body))));
     return sse('response.completed', completed);
