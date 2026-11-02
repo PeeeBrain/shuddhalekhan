@@ -83,6 +83,22 @@ Goal: Get enough context fast, then act.
 - Do not claim a tool action succeeded unless a tool result confirms it.
 </response_style>`;
 
+/**
+ * Appends the user's custom instructions after the fixed prompt. Everything here must be
+ * deterministic: the system message is the prompt-cache prefix for every provider, so it
+ * only changes when the user edits the setting. Per-run data belongs in the user message.
+ */
+export function buildSystemPrompt(customInstructions = ''): string {
+  const userInstructions = customInstructions.trim();
+  if (!userInstructions) return SYSTEM_PROMPT;
+  return `${SYSTEM_PROMPT}
+
+<user_instructions>
+The user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.
+${userInstructions}
+</user_instructions>`;
+}
+
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const LOCAL_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   dateStyle: "full",
@@ -271,7 +287,7 @@ export async function runAgent(
 
     callbacks.onStatus("Thinking...");
 
-    const instructions: SystemModelMessage = { role: 'system', content: SYSTEM_PROMPT, providerOptions: client.cacheMessageOptions };
+    const instructions: SystemModelMessage = { role: 'system', content: buildSystemPrompt(config.agent.customInstructions), providerOptions: client.cacheMessageOptions };
     const messages: ModelMessage[] = [command];
     const stableTools = Object.fromEntries(Object.entries(runTools).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
     const auditUsage = ({ usage }: { usage: import('ai').LanguageModelUsage }) => {
