@@ -129,15 +129,31 @@ async function startTest() {
 }
 
 describe('AgentSettings custom instructions', () => {
+  it('saves only from the Save button', async () => {
+    const { commit } = await renderAgent();
+    const field = screen.getByRole('textbox', { name: 'Custom instructions' });
+    const save = screen.getByRole('button', { name: 'Save instructions' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(field, { target: { value: 'Reply in French.' } });
+    await act(async () => { fireEvent.blur(field); });
+    expect(commit).not.toHaveBeenCalled();
+
+    await click(save);
+    expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({ customInstructions: 'Reply in French.' }), 'agent-custom-instructions');
+    expect(save).toBeDisabled();
+  });
+
   it('keeps typed instructions when the save is rejected', async () => {
     const { commit } = await renderAgent({ saveFails: true });
     const field = screen.getByRole('textbox', { name: 'Custom instructions' });
 
     fireEvent.change(field, { target: { value: 'Reply in French.' } });
-    await act(async () => { fireEvent.blur(field); });
+    await click(screen.getByRole('button', { name: 'Save instructions' }));
 
     expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({ customInstructions: 'Reply in French.' }), 'agent-custom-instructions');
     expect(field).toHaveValue('Reply in French.');
+    expect(screen.getByRole('button', { name: 'Save instructions' })).toBeEnabled();
   });
 });
 

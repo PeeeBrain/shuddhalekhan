@@ -453,9 +453,9 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
           <SettingsPanelHeader
             id="agent-custom-instructions-heading"
             title="Custom instructions"
-            description="Added to the agent's instructions on every command. Saves when you leave the field."
+            description="Added to the agent's instructions on every command."
           />
-          <SettingsCard className="py-3.5">
+          <SettingsCard className="space-y-3 py-3.5">
             <Textarea
               aria-labelledby="agent-custom-instructions-heading"
               aria-describedby={fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS] ? customInstructionsErrorId : undefined}
@@ -467,18 +467,25 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
                 setInstructionsDraft(event.target.value);
                 clearFieldError(FIELD_ID_CUSTOM_INSTRUCTIONS);
               }}
-              // The draft outlives the blur: a failed save restores the old config, and typing must survive that.
-              onBlur={() => {
-                if (instructionsDraft !== null && instructionsDraft !== (agent.customInstructions ?? '')) {
-                  void commit('agent', { ...agent, customInstructions: instructionsDraft }, FIELD_ID_CUSTOM_INSTRUCTIONS);
-                }
-              }}
             />
             {fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS] ? (
-              <p id={customInstructionsErrorId} role="alert" className="mt-2 text-xs text-destructive">
+              <p id={customInstructionsErrorId} role="alert" className="text-xs text-destructive">
                 {fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS]}
               </p>
             ) : null}
+            {/* The draft outlives the save: a failed save restores the old config, and typing must survive that. */}
+            <Button
+              type="button"
+              size="sm"
+              disabled={instructionsDraft === null || instructionsDraft === (agent.customInstructions ?? '')}
+              onClick={() => {
+                if (instructionsDraft !== null) {
+                  void commit('agent', { ...agent, customInstructions: instructionsDraft }, FIELD_ID_CUSTOM_INSTRUCTIONS);
+                }
+              }}
+            >
+              Save instructions
+            </Button>
           </SettingsCard>
         </SettingsPanel>
 
