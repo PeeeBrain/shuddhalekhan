@@ -563,6 +563,8 @@ export interface AppConfig {
     mcpServers: McpServerConfig[];
     disabledSkills?: string[];
     memoryEnabled?: boolean;
+    /** Appended to the agent system prompt; part of the cached prefix, so it never carries per-run data. */
+    customInstructions?: string;
   };
 }
 

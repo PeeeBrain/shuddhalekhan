@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { ToggleRow, DraftTextRow, SelectRow, ReadOnlyRow, Tag, type TagTone } from './ui/rows';
 import { CredentialControl } from './ui/CredentialControl';
@@ -38,6 +39,7 @@ const FIELD_ID_AUTH = 'agent-auth';
 const FIELD_ID_APIKEY = 'agent-api-key';
 const FIELD_ID_APIKEY_SOURCE = 'agent-api-key-source';
 const FIELD_ID_CHATGPT_MODEL = 'agent-chatgpt-model';
+const FIELD_ID_CUSTOM_INSTRUCTIONS = 'agent-custom-instructions';
 const DIAGNOSTIC_DETAIL_LIMIT = 4000;
 const CHATGPT_USAGE_URL = 'https://chatgpt.com/settings/usage';
 
@@ -152,6 +154,8 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
   const authErrorId = useId();
   const apiKeySourceErrorId = useId();
   const apiKeyEnvVarErrorId = useId();
+  const customInstructionsErrorId = useId();
+  const [instructionsDraft, setInstructionsDraft] = useState<string | null>(null);
 
   useEffect(
     () => settingsIpc.onAgentProviderInvalidated(() => setInvalidation((count) => count + 1)),
@@ -444,6 +448,46 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
             )}
           </SettingsCard>
         </SettingsPanel>}
+
+        <SettingsPanel>
+          <SettingsPanelHeader
+            id="agent-custom-instructions-heading"
+            title="Custom instructions"
+            description="Added to the agent's instructions on every command."
+          />
+          <SettingsCard className="space-y-3 py-3.5">
+            <Textarea
+              aria-labelledby="agent-custom-instructions-heading"
+              aria-describedby={fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS] ? customInstructionsErrorId : undefined}
+              className="min-h-28 text-sm"
+              maxLength={4000}
+              placeholder="Reply in British English. Prefer metric units. Keep answers to two sentences."
+              value={instructionsDraft ?? agent.customInstructions ?? ''}
+              onChange={(event) => {
+                setInstructionsDraft(event.target.value);
+                clearFieldError(FIELD_ID_CUSTOM_INSTRUCTIONS);
+              }}
+            />
+            {fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS] ? (
+              <p id={customInstructionsErrorId} role="alert" className="text-xs text-destructive">
+                {fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS]}
+              </p>
+            ) : null}
+            {/* The draft outlives the save: a failed save restores the old config, and typing must survive that. */}
+            <Button
+              type="button"
+              size="sm"
+              disabled={instructionsDraft === null || instructionsDraft === (agent.customInstructions ?? '')}
+              onClick={() => {
+                if (instructionsDraft !== null) {
+                  void commit('agent', { ...agent, customInstructions: instructionsDraft }, FIELD_ID_CUSTOM_INSTRUCTIONS);
+                }
+              }}
+            >
+              Save instructions
+            </Button>
+          </SettingsCard>
+        </SettingsPanel>
 
         <SettingsPanel>
           <SettingsPanelHeader

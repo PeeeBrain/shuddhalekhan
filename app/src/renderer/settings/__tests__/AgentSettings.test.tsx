@@ -49,6 +49,7 @@ async function renderAgent({
   chatGptStatus = { state: 'signed-out' },
   signIn = () => Promise.resolve(SIGNED_IN),
   models = () => Promise.resolve(MODELS),
+  saveFails = false,
 }: {
   provider?: Partial<AgentProviderConfig>;
   enabled?: boolean;
@@ -57,6 +58,8 @@ async function renderAgent({
   chatGptStatus?: ChatGptAccountStatus;
   signIn?: () => Promise<ChatGptAccountStatus>;
   models?: () => Promise<ChatGptModel[]>;
+  /** Like real persistence on a rejected save: the saved config is restored. */
+  saveFails?: boolean;
 } = {}) {
   let agent: AppConfig['agent'] = {
     enabled,
@@ -86,7 +89,7 @@ async function renderAgent({
     onChatGptChanged: mock(() => () => undefined),
   };
   const commit = mock(async (_key: 'agent', value: AppConfig['agent']) => {
-    agent = value;
+    if (!saveFails) agent = value;
     view.rerender(<AgentSettings {...props()} />);
   });
   const props = () => ({
@@ -124,6 +127,35 @@ async function startTest() {
   await waitFor(() => expect(button).toBeEnabled());
   await click(button);
 }
+
+describe('AgentSettings custom instructions', () => {
+  it('saves only from the Save button', async () => {
+    const { commit } = await renderAgent();
+    const field = screen.getByRole('textbox', { name: 'Custom instructions' });
+    const save = screen.getByRole('button', { name: 'Save instructions' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(field, { target: { value: 'Reply in French.' } });
+    await act(async () => { fireEvent.blur(field); });
+    expect(commit).not.toHaveBeenCalled();
+
+    await click(save);
+    expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({ customInstructions: 'Reply in French.' }), 'agent-custom-instructions');
+    expect(save).toBeDisabled();
+  });
+
+  it('keeps typed instructions when the save is rejected', async () => {
+    const { commit } = await renderAgent({ saveFails: true });
+    const field = screen.getByRole('textbox', { name: 'Custom instructions' });
+
+    fireEvent.change(field, { target: { value: 'Reply in French.' } });
+    await click(screen.getByRole('button', { name: 'Save instructions' }));
+
+    expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({ customInstructions: 'Reply in French.' }), 'agent-custom-instructions');
+    expect(field).toHaveValue('Reply in French.');
+    expect(screen.getByRole('button', { name: 'Save instructions' })).toBeEnabled();
+  });
+});
 
 describe('AgentSettings provider kind', () => {
   it('fills the recommended URL, Responses API, and standard auth over a preset, keeping model and key', async () => {

@@ -282,6 +282,7 @@ export function getConfig(): AppConfig {
       mcpServers,
       disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
       memoryEnabled: agent?.memoryEnabled === true,
+      customInstructions: typeof agent?.customInstructions === 'string' ? agent.customInstructions : '',
     },
   };
 }
@@ -325,6 +326,7 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
   if (key === 'agent') {
     const parsed = z.object({ enabled: z.boolean(), provider: agentProviderSchema,
       disabledSkills: z.array(z.string().max(64)).max(256).optional(), memoryEnabled: z.boolean().optional(),
+      customInstructions: z.string().max(4000).optional(),
     }).safeParse(value);
     if (!parsed.success) throw new Error('Provider settings contain an invalid value.');
     const previousAgent = store.get('agent');
