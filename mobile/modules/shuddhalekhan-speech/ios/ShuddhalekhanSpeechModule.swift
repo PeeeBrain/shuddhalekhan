@@ -120,9 +120,13 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
       Self.payload(await self.sessionHost().state)
     }
 
-    AsyncFunction("startKeyboardSession") { (minutes: Int, language: String) async throws -> [String: Any] in
-      try await self.sessionHost().start(minutes: minutes, configuration: ParakeetConfiguration(language: language))
+    AsyncFunction("startKeyboardSession") { (minutes: Int, language: String, agentReady: Bool) async throws -> [String: Any] in
+      try await self.sessionHost().start(minutes: minutes, configuration: ParakeetConfiguration(language: language), agentReady: agentReady)
       return Self.payload(await self.sessionHost().state)
+    }
+
+    AsyncFunction("resolveKeyboardAgentRequest") { (id: String, error: String?) async in
+      await self.sessionHost().resolveAgent(id, error: error)
     }
 
     AsyncFunction("stopKeyboardSession") { () async in
@@ -187,7 +191,11 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
   }
 
   private static func payload(_ state: KeyboardSession.State) -> [String: Any] {
-    var payload: [String: Any] = ["endsAt": Double(state.sessionEndsAt), "phase": state.phase.rawValue]
+    var payload: [String: Any] = ["endsAt": Double(state.sessionEndsAt), "phase": state.phase.rawValue,
+      "agentReady": state.agentReady]
+    if let id = state.requestId { payload["requestId"] = id }
+    if let mode = state.mode { payload["mode"] = mode.rawValue }
+    if let text = state.text { payload["text"] = text }
     if let error = state.error { payload["error"] = error }
     return payload
   }

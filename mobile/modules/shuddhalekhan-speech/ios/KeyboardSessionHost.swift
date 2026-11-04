@@ -37,6 +37,9 @@ final class KeyboardSessionHost {
   private var endWhenIdle = false
   private var endTimer: Timer?
   private var utteranceTimer: Timer?
+  private var levelTimer: Timer?
+  private var pendingAgent: KeyboardSession.State?
+  private var handoffTimeout: Task<Void, Never>?
   private var utteranceURL: URL?
   private var transcription: (id: String, task: Task<Void, Never>)?
   private var observers: [NSObjectProtocol] = []
@@ -50,7 +53,7 @@ final class KeyboardSessionHost {
     server.onFailure = { [weak self] in self?.end(reason: "The keyboard connection stopped. Start a new session.") }
   }
 
-  func start(minutes: Int, configuration: ParakeetConfiguration) async throws {
+  func start(minutes: Int, configuration: ParakeetConfiguration, agentReady: Bool) async throws {
     guard (1...30).contains(minutes) else { throw KeyboardSessionError.invalidDuration }
     guard !starting, !state.isLive(now: KeyboardSession.nowMs()) else { return }
     starting = true
@@ -120,7 +123,10 @@ final class KeyboardSessionHost {
       MainActor.assumeIsolated { self?.expire() }
     }
     publish(KeyboardSession.State(
-      sessionEndsAt: KeyboardSession.nowMs(endsAt), requestId: nil, phase: .idle, text: nil, error: nil))
+      sessionEndsAt: KeyboardSession.nowMs(endsAt), requestId: nil, mode: nil, agentReady: agentReady,
+      phase: .idle, text: nil, error: nil, level: nil))
+    NotificationCenter.default.post(name: Notification.Name("ShuddhalekhanKeyboardSessionActive"), object: nil,
+      userInfo: ["active": true, "agentReady": agentReady])
     mark("ready")
   }
 
@@ -137,9 +143,11 @@ final class KeyboardSessionHost {
     for observer in observers { NotificationCenter.default.removeObserver(observer) }
     observers = []
     publish(KeyboardSession.State(
-      sessionEndsAt: 0, requestId: completed?.requestId, phase: completed?.phase ?? .idle,
-      text: completed?.text, error: reason ?? completed?.error))
+      sessionEndsAt: 0, requestId: completed?.requestId, mode: completed?.mode, agentReady: false,
+      phase: completed?.phase ?? .idle, text: completed?.text, error: reason ?? completed?.error, level: nil))
     server.stop(final: state)
+    NotificationCenter.default.post(name: Notification.Name("ShuddhalekhanKeyboardSessionActive"), object: nil,
+      userInfo: ["active": false])
   }
 
   private func expire() {
@@ -155,6 +163,7 @@ final class KeyboardSessionHost {
     case .cancelled:
       discardUtterance()
       settle(next)
+    case .failed: settle(next)
     default: break
     }
   }
@@ -173,6 +182,13 @@ final class KeyboardSessionHost {
       return
     }
     utteranceURL = url
+    levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self, self.state.phase == .recording, let level = self.sink.currentLevel() else { return }
+        // Levels go only to the socket. Never call publish/onChange on this path.
+        self.server.publish(self.state.with(.recording, requestId: self.state.requestId, level: level))
+      }
+    }
     utteranceTimer = Timer.scheduledTimer(withTimeInterval: Self.maxUtteranceSeconds, repeats: false) { [weak self] _ in
       MainActor.assumeIsolated {
         guard let self, self.state.phase == .recording else { return }
@@ -183,6 +199,8 @@ final class KeyboardSessionHost {
   }
 
   private func finishUtterance(_ next: KeyboardSession.State) {
+    levelTimer?.invalidate()
+    levelTimer = nil
     utteranceTimer?.invalidate()
     utteranceTimer = nil
     let wrote = sink.end()
@@ -214,11 +232,35 @@ final class KeyboardSessionHost {
       } else if text.utf8.count > KeyboardSession.maxTextBytes {
         settle(state.with(.failed, requestId: id, error: "The transcript is too large."))
       } else {
-        settle(state.with(.done, requestId: id, text: text))
+        let done = state.with(.done, requestId: id, text: text)
+        if state.mode == .agent {
+          guard !endWhenIdle else {
+            settle(state.with(.failed, requestId: id, error: "The session expired. Start a new session to ask the agent."))
+            return
+          }
+          // JS must admit the run before the keyboard says it was sent. Keep socket state transcribing.
+          pendingAgent = done
+          onChange(done)
+          handoffTimeout = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            self?.resolveAgent(id, error: "The agent did not start. Open Shuddhalekhan and try again.")
+          }
+        } else { settle(done) }
       }
     case .failure:
       settle(state.with(.failed, requestId: id, error: "Parakeet could not transcribe this recording."))
     }
+  }
+
+  func resolveAgent(_ id: String, error: String?) {
+    guard let pending = pendingAgent, pending.requestId == id, state.requestId == id,
+      state.phase == .transcribing else { return }
+    pendingAgent = nil
+    handoffTimeout?.cancel()
+    handoffTimeout = nil
+    settle(error.map {
+      pending.with(.failed, requestId: id, error: String(decoding: $0.utf8.prefix(400), as: UTF8.self))
+    } ?? pending)
   }
 
   /// Publishes a terminal request state, then honours a session expiry that arrived mid-utterance.
@@ -228,6 +270,11 @@ final class KeyboardSessionHost {
   }
 
   private func discardUtterance() {
+    pendingAgent = nil
+    handoffTimeout?.cancel()
+    handoffTimeout = nil
+    levelTimer?.invalidate()
+    levelTimer = nil
     transcription?.task.cancel()
     transcription = nil
     utteranceTimer?.invalidate()
@@ -271,6 +318,7 @@ private final class UtteranceSink: @unchecked Sendable {
   private let lock = NSLock()
   private var file: AVAudioFile?
   private var failed = false
+  private var level: Float?
 
   func begin(_ url: URL, format: AVAudioFormat) throws {
     let file = try AVAudioFile(
@@ -278,12 +326,25 @@ private final class UtteranceSink: @unchecked Sendable {
     lock.withLock {
       self.file = file
       failed = false
+      level = nil
     }
   }
 
   func append(_ buffer: AVAudioPCMBuffer) {
     lock.withLock {
       guard let file else { return }
+      if let samples = buffer.floatChannelData, buffer.frameLength > 0 {
+        let count = Int(buffer.frameLength)
+        let stride = buffer.stride
+        var sum: Float = 0
+        for frame in 0..<count {
+          let sample = samples[0][frame * stride]
+          sum += sample * sample
+        }
+        let rms = sqrt(sum / Float(count))
+        let normalized = min(1, max(0, (20 * log10(max(rms, 0.000_001)) + 50) / 50))
+        level = (level ?? normalized) * 0.35 + normalized * 0.65
+      }
       do { try file.write(from: buffer) } catch {
         failed = true
         self.file = nil
@@ -291,11 +352,14 @@ private final class UtteranceSink: @unchecked Sendable {
     }
   }
 
+  func currentLevel() -> Float? { lock.withLock { level } }
+
   /// Closes the file (by releasing it) and reports whether every buffer was written.
   func end() -> Bool {
     lock.withLock {
       let ok = file != nil && !failed
       file = nil
+      level = nil
       return ok
     }
   }

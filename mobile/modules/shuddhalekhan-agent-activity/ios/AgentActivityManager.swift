@@ -20,16 +20,41 @@ final class AgentActivityManager {
   private var expirationFallback: Task<Void, Never>?
   private var pendingApprovalAction: AgentApprovalAction?
   private var notifiedApprovalId: String?
+  private var keyboardSessionActive = false
+  private var keyboardSessionObserver: NSObjectProtocol?
   private var usesSystemActivity: Bool {
     if #available(iOS 26.0, *) { return true }
     return false
   }
 
+  private init() {
+    keyboardSessionObserver = NotificationCenter.default.addObserver(
+      forName: Notification.Name("ShuddhalekhanKeyboardSessionActive"), object: nil, queue: .main
+    ) { [weak self] notification in
+      MainActor.assumeIsolated {
+        guard let self, let active = notification.userInfo?["active"] as? Bool else { return }
+        self.keyboardSessionActive = active
+        if active {
+          if notification.userInfo?["agentReady"] as? Bool == true { AgentNotifications.shared.requestAuthorization() }
+        } else if UIApplication.shared.applicationState != .active {
+          // Audio no longer keeps JS alive. Finish the native interruption notification before suspension.
+          let deadline = UIApplication.shared.beginBackgroundTask(withName: "Keyboard agent interruption")
+          Task { @MainActor in
+            await self.enterBackground()
+            if deadline != .invalid { UIApplication.shared.endBackgroundTask(deadline) }
+          }
+        }
+      }
+    }
+  }
+
   func start(maximumSteps: Int) async throws -> String {
-    guard UIApplication.shared.applicationState == .active else { throw AgentRunError.requiresForeground }
+    guard UIApplication.shared.applicationState == .active || keyboardSessionActive else { throw AgentRunError.requiresForeground }
     guard (1...34).contains(maximumSteps) else { throw AgentRunError.invalidUpdate }
     guard record?.phase.isTerminal != false else { throw AgentRunError.alreadyRunning }
     await dismissActivities()
+    guard UIApplication.shared.applicationState == .active || keyboardSessionActive else { throw AgentRunError.requiresForeground }
+    guard record?.phase.isTerminal != false else { throw AgentRunError.alreadyRunning }
     if let record { AgentNotifications.shared.removeAll(runId: record.runId) }
     pendingApprovalAction = nil
     notifiedApprovalId = nil
@@ -37,7 +62,7 @@ final class AgentActivityManager {
     try store.save(next)
     record = next
     // Continued processing supplies its own Live Activity on iOS 26; starting ours would duplicate it.
-    if !usesSystemActivity && ActivityAuthorizationInfo().areActivitiesEnabled {
+    if UIApplication.shared.applicationState == .active && !usesSystemActivity && ActivityAuthorizationInfo().areActivitiesEnabled {
       do {
         activityId = try Activity.request(attributes: AgentActivityAttributes(runId: next.runId), content: content(next), pushType: nil).id
       } catch { log.error("AgentActivity stage=start_activity_failed") }
@@ -65,7 +90,8 @@ final class AgentActivityManager {
 
   func canContinueInBackground(runId: String) -> Bool {
     // Waiting for a foreground decision needs no running task; the app may safely suspend.
-    record?.runId == runId && (record?.phase == .awaitingApproval || (record?.phase == .running && processingTask != nil))
+    record?.runId == runId && (record?.phase == .awaitingApproval ||
+      (record?.phase == .running && (processingTask != nil || keyboardSessionActive)))
   }
 
   func prepareApproval(_ update: AgentRunUpdate, title: String) async throws -> Bool {
@@ -130,7 +156,7 @@ final class AgentActivityManager {
       pendingApprovalAction = nil
       notifiedApprovalId = nil
       AgentNotifications.shared.removeApproval(runId: current.runId)
-      if usesSystemActivity && UIApplication.shared.applicationState != .active {
+      if (usesSystemActivity || activityId == nil) && UIApplication.shared.applicationState != .active {
         await AgentNotifications.shared.result(run: current)
       }
       if current.phase == .completed && UIApplication.shared.applicationState != .active {
@@ -298,6 +324,7 @@ final class AgentActivityManager {
     }
     await Self.activity(id: activityId)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
     activityId = nil
+    if UIApplication.shared.applicationState != .active { await AgentNotifications.shared.result(run: current) }
     log.notice("AgentActivity run=\(runId, privacy: .public) stage=interrupted")
   }
 
