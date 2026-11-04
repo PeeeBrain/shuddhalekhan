@@ -4,6 +4,7 @@ import Foundation
 // loopback port and session secret to a team-scoped named pasteboard. All commands and results use TCP:
 // iOS denies the containing app pasteboard access while it records in the background.
 enum KeyboardSession {
+  enum Mode: String, Codable, Sendable { case dictate, agent }
   static let discoveryPasteboard = "com.shuddhalekhan.mobile.session.connection.v2"
   static let payloadType = "com.shuddhalekhan.mobile.session.v2"
   static let maxTextBytes = 200_000
@@ -41,6 +42,7 @@ enum KeyboardSession {
     enum Action: String, Codable, Sendable { case start, stop, cancel }
     let id: String
     let action: Action
+    let mode: Mode
     let sentAt: Int64
   }
 
@@ -49,16 +51,22 @@ enum KeyboardSession {
     /// Milliseconds since 1970; 0 means no session.
     let sessionEndsAt: Int64
     let requestId: String?
+    let mode: Mode?
+    let agentReady: Bool
     let phase: Phase
     let text: String?
     let error: String?
+    let level: Float?
 
-    static let ended = State(sessionEndsAt: 0, requestId: nil, phase: .idle, text: nil, error: nil)
+    static let ended = State(sessionEndsAt: 0, requestId: nil, mode: nil, agentReady: false,
+      phase: .idle, text: nil, error: nil, level: nil)
 
     func isLive(now: Int64) -> Bool { sessionEndsAt > now }
     var isBusy: Bool { phase == .recording || phase == .transcribing }
-    func with(_ phase: Phase, requestId: String?, text: String? = nil, error: String? = nil) -> State {
-      State(sessionEndsAt: sessionEndsAt, requestId: requestId, phase: phase, text: text, error: error)
+    func with(_ phase: Phase, requestId: String?, mode: Mode? = nil, text: String? = nil,
+              error: String? = nil, level: Float? = nil) -> State {
+      State(sessionEndsAt: sessionEndsAt, requestId: requestId, mode: requestId == nil ? nil : mode ?? self.mode,
+        agentReady: agentReady, phase: phase, text: text, error: error, level: phase == .recording ? level : nil)
     }
   }
 
@@ -77,6 +85,9 @@ enum KeyboardSession {
     guard data.count <= maxTextBytes * 7,
           let state = try? JSONDecoder().decode(State.self, from: data),
           state.requestId.map(validId) ?? true,
+          (state.requestId == nil) == (state.mode == nil),
+          (state.phase == .idle || state.requestId != nil),
+          state.level.map({ state.phase == .recording && $0.isFinite && (0...1).contains($0) }) ?? true,
           (state.text?.utf8.count ?? 0) <= maxTextBytes,
           (state.error?.utf8.count ?? 0) <= maxErrorBytes else { return nil }
     return state
@@ -87,19 +98,23 @@ enum KeyboardSession {
     switch command.action {
     case .start:
       guard state.isLive(now: now), !state.isBusy, command.id != state.requestId else { return nil }
-      return state.with(.recording, requestId: command.id)
+      if command.mode == .agent && !state.agentReady {
+        return state.with(.failed, requestId: command.id, mode: command.mode,
+          error: "Set up Agent Mode in Shuddhalekhan first.")
+      }
+      return state.with(.recording, requestId: command.id, mode: command.mode)
     case .stop:
-      guard command.id == state.requestId, state.phase == .recording else { return nil }
+      guard command.id == state.requestId, command.mode == state.mode, state.phase == .recording else { return nil }
       return state.with(.transcribing, requestId: command.id)
     case .cancel:
-      guard command.id == state.requestId, state.isBusy else { return nil }
+      guard command.id == state.requestId, command.mode == state.mode, state.isBusy else { return nil }
       return state.with(.cancelled, requestId: command.id)
     }
   }
 
   /// Keyboard side: text to insert for the request this keyboard started, at most once per request.
   static func insertion(_ state: State, pendingId: String?, inserted: Set<String>) -> String? {
-    guard let pendingId, state.requestId == pendingId, state.phase == .done, !inserted.contains(pendingId),
+    guard state.mode == .dictate, let pendingId, state.requestId == pendingId, state.phase == .done, !inserted.contains(pendingId),
           let text = state.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
     return text
   }

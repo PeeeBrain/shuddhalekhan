@@ -133,9 +133,15 @@ test.each([
   ['response.failed', { status: 'failed', error: { code: 'chatpass_v2_scope_not_authorized' }, output: [] }, 'allow plan usage'],
   ['response.incomplete', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: completed.output }, 'output limit'],
 ])('rejects the terminal %s event instead of returning a partial answer', async (type, response, message) => {
-  await expect(run(async () => sse(type, response))).rejects.toThrow(message);
+  const finalized = { type: 'response.output_item.done', output_index: 0, item: completed.output[0] };
+  await expect(run(async () => new Response(`data: ${JSON.stringify(finalized)}\n\n${await sse(type, response).text()}`))).rejects.toThrow(message);
 });
 
-test('a stream that ends after deltas cannot return an answer', async () => {
-  await expect(run(async () => sse('response.output_text.delta', { delta: 'partial' }))).rejects.toThrow('disconnected before completing');
+test('a stream that ends after deltas or finalized items cannot return an answer', async () => {
+  const events = [
+    { type: 'response.output_text.delta', delta: 'partial' },
+    { type: 'response.output_item.done', output_index: 0, item: completed.output[0] },
+  ];
+  await expect(run(async () => new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''))))
+    .rejects.toThrow('disconnected before completing');
 });

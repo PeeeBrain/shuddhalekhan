@@ -12,7 +12,7 @@ final class KeyboardSessionServer {
   private var startupTimeout: Task<Void, Never>?
   private var clients: [UUID: KeyboardSessionChannel] = [:]
   private var authenticated = Set<UUID>()
-  private var owners: [UUID: String] = [:]
+  private var owners: [UUID: KeyboardSession.Command] = [:]
   private var token = ""
   private var expiresAt: Int64 = 0
   private var state = KeyboardSession.State.ended
@@ -112,8 +112,10 @@ final class KeyboardSessionServer {
       if self.authenticated.insert(id).inserted { self.log.notice("KeyboardBridge keyboard authenticated") }
       if let command = request.command {
         // A peer can stop only its own utterance, including on disconnect.
-        if command.action != .start && self.owners[id] != command.id { return client.send(self.state) }
-        if command.action == .start && !self.state.isBusy { self.owners[id] = command.id }
+        if command.action != .start && (self.owners[id]?.id != command.id || self.owners[id]?.mode != command.mode) {
+          return client.send(self.state)
+        }
+        if command.action == .start && !self.state.isBusy { self.owners[id] = command }
         self.log.notice("KeyboardBridge command \(command.action.rawValue, privacy: .public)")
         let previousState = self.state
         self.onCommand(command)
@@ -126,8 +128,8 @@ final class KeyboardSessionServer {
       guard let self else { return }
       self.clients[id] = nil
       self.authenticated.remove(id)
-      if let requestId = self.owners.removeValue(forKey: id) {
-        self.onCommand(.init(id: requestId, action: .cancel, sentAt: KeyboardSession.nowMs()))
+      if let request = self.owners.removeValue(forKey: id) {
+        self.onCommand(.init(id: request.id, action: .cancel, mode: request.mode, sentAt: KeyboardSession.nowMs()))
       }
     }
     client.start()

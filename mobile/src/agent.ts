@@ -245,6 +245,7 @@ function reasoningOptions(settings: MobileSettings) {
 
 const chatGptRejectionSchema = z.object({ error: z.object({ code: z.string().optional(), param: z.string().optional() }) });
 const streamEventSchema = z.object({ type: z.string(), response: z.unknown().optional(), code: z.string().optional(),
+  output_index: z.number().int().min(0).max(99).optional(), item: z.unknown().optional(),
   error: z.object({ code: z.string().optional() }).optional() });
 
 async function requestChatGpt({ fetch, body, signal, token }: {
@@ -292,6 +293,7 @@ async function readChatGptStream(response: Response, signal: AbortSignal): Promi
   const decoder = new TextDecoder();
   let buffer = '';
   let bytes = 0;
+  const output = new Map<number, unknown>();
   const parseEvent = (frame: string): z.infer<typeof streamEventSchema> | null => {
     const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
     if (!data || data === '[DONE]') return null;
@@ -311,7 +313,16 @@ async function readChatGptStream(response: Response, signal: AbortSignal): Promi
         if (end === -1) end = buffer.length;
         const event = parseEvent(buffer.slice(0, end));
         buffer = buffer.slice(end + 2);
-        if (event?.type === 'response.completed' || event?.type === 'response.incomplete') return event.response;
+        if (event?.type === 'response.output_item.done') {
+          if (event.output_index === undefined || event.item === undefined) throw new Error('ChatGPT returned an invalid stream event.');
+          output.set(event.output_index, event.item);
+        }
+        if (event?.type === 'response.completed' || event?.type === 'response.incomplete') {
+          const response = parseResponse(responsesSchema, event.response);
+          // ChatGPT can send finalized items only in output_item.done and leave the terminal output empty.
+          return { ...response, output: response.output.length ? response.output
+            : [...output.entries()].sort(([a], [b]) => a - b).map(([, item]) => item) };
+        }
         if (event?.type === 'error' || event?.type === 'response.failed') {
           const failed = z.object({ error: z.object({ code: z.string().optional() }).nullable().optional() }).safeParse(event.response);
           throw new Error(chatGptError(400, event.code ?? event.error?.code ?? (failed.success ? failed.data.error?.code : undefined)));

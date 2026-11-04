@@ -18,7 +18,6 @@ const recordingOptions: RecordingOptions = {
 };
 
 export function useMobileApp() {
-  const { keyboardSession, startKeyboardSession, stopKeyboardSession } = useKeyboardSession();
   const controllerRef = useRef<MobileController | null>(null);
   const recorder = useAudioRecorder(recordingOptions, status => {
     if (status.hasError || status.isFinished || status.mediaServicesDidReset) controllerRef.current?.recordingInterrupted();
@@ -81,6 +80,7 @@ export function useMobileApp() {
       },
     });
   });
+  const { keyboardSession, startKeyboardSession, stopKeyboardSession } = useKeyboardSession(controller.handleKeyboardSession);
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const chatgpt = useSyncExternalStore(chatGptAuth.subscribe, chatGptAuth.getSnapshot);
   const { localModels, installLocalModel, preparingModel } = useOnDeviceModel(
@@ -125,7 +125,11 @@ export function useMobileApp() {
     startKeyboardSession: async () => {
       // The session holds the microphone; in-app recording stays disabled until it ends.
       if (controller.getSnapshot().phase !== 'idle') throw new Error('Finish the current command first.');
-      await startKeyboardSession(controller.getSnapshot().settings.language);
+      const settings = controller.getSnapshot().settings;
+      const agentReady = settings.agentEnabled && agentActivity !== undefined &&
+        (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' :
+          settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey);
+      await startKeyboardSession(settings.language, agentReady);
     },
     startRecording: controller.startRecording, stopRecording: controller.stopRecording, cancel: controller.cancel,
     retryAgent: controller.retryAgent, resolveApproval: controller.resolveApproval,

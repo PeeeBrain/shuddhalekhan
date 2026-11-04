@@ -4,6 +4,7 @@ import type { Fetch } from './network';
 import { defaultSettings, mobileSettingsSchema, settingsError, type MobileSettings } from './settings';
 import { transcribe } from './transcription';
 import type { ChatGptAuth } from './chatgpt';
+import type { KeyboardSessionEvent } from './keyboard-session';
 
 export type RecordingIntent = 'dictation' | 'agent';
 export type Phase = 'loading' | 'idle' | 'requestingPermission' | 'recording' | 'transcribing' | 'running' | 'awaitingApproval';
@@ -38,6 +39,10 @@ export class MobileController {
   private interrupted = false;
   private backgrounded = false;
   private savedRunId: string | null = null;
+  private keyboardRequestId: string | null = null;
+  private handledKeyboardRequests = new Set<string>();
+  private keyboardRun = false;
+  private keyboardSessionActive = false;
 
   constructor(private readonly ports: {
     recorder: Recorder; fetch: Fetch;
@@ -74,7 +79,7 @@ export class MobileController {
   }
 
   startRecording = async (intent: RecordingIntent) => {
-    if (this.state.phase !== 'idle' || this.active || this.backgrounded) return;
+    if (this.state.phase !== 'idle' || this.active || this.backgrounded || this.keyboardSessionActive) return;
     if (intent === 'agent' && !this.state.settings.agentEnabled) { this.update({ error: 'Enable Agent Mode in Settings first.' }); return; }
     const active = new AbortController();
     this.active = active;
@@ -130,7 +135,36 @@ export class MobileController {
     } catch (error) { await this.finish(active, error); }
   };
 
-  private async agent(active: AbortController, transcript: string) {
+  /** Admits a native transcript without touching the recorder that owns the keyboard microphone. */
+  handleKeyboardSession = async (event: KeyboardSessionEvent): Promise<void> => {
+    this.keyboardSessionActive = event.endsAt !== 0 || event.phase === 'recording' || event.phase === 'transcribing';
+    if (event.phase === 'idle' && !event.requestId) this.handledKeyboardRequests.clear();
+    if (event.mode !== 'agent' || !event.requestId) return;
+    if ((event.phase === 'cancelled' || event.phase === 'failed') && event.requestId === this.keyboardRequestId && this.keyboardRun) {
+      this.cancel();
+      return;
+    }
+    if (event.phase !== 'done' || this.handledKeyboardRequests.has(event.requestId)) return;
+    this.handledKeyboardRequests.add(event.requestId);
+    if (this.active || this.state.phase !== 'idle') throw new Error('The agent is busy. Wait for the current command to finish.');
+    if (!this.state.settings.agentEnabled) throw new Error('Set up Agent Mode in Shuddhalekhan first.');
+    const transcript = event.text?.trim();
+    if (!transcript) throw new Error('No speech was recognized.');
+    const active = new AbortController();
+    this.active = active;
+    this.keyboardRequestId = event.requestId;
+    this.keyboardRun = true;
+    this.interrupted = false;
+    this.update({ intent: 'agent', transcript, response: '', error: null, runId: null, activityNotice: null });
+    const admission = Promise.withResolvers<void>();
+    void this.agent(active, transcript, admission.resolve).then(() => this.finish(active), async error => {
+      admission.reject(error);
+      await this.finish(active, error);
+    });
+    await admission.promise;
+  };
+
+  private async agent(active: AbortController, transcript: string, admitted?: () => void) {
     this.update({ phase: 'running', response: '', status: 'Starting agent…' });
     this.completedSteps = 0;
     this.activityStarted = false;
@@ -138,11 +172,16 @@ export class MobileController {
     try {
       const started = await this.ports.activity?.start(24 + this.state.settings.mcpServers.filter(server => server.enabled).length);
       if (started) { runId = started.runId; this.savedRunId = runId; this.activityStarted = true; }
-    } catch { this.update({ activityNotice: 'Live Activity unavailable. Keep Shuddhalekhan open to finish this run.' }); }
+    } catch {
+      if (this.keyboardRun) throw new Error('The agent could not start. Open Shuddhalekhan and try again.');
+      this.update({ activityNotice: 'Live Activity unavailable. Keep Shuddhalekhan open to finish this run.' });
+    }
+    if (this.keyboardRun && !this.activityStarted) throw new Error('Agent Mode requires the updated native app build.');
     this.update({ runId });
     active.signal.throwIfAborted();
     if (this.backgrounded) await this.enterBackground();
     active.signal.throwIfAborted();
+    admitted?.();
     const response = await runAgent({ transcript, settings: this.state.settings, signal: active.signal, fetch: this.ports.fetch,
       getChatGptAccessToken: this.ports.chatgpt?.getAccessToken,
       onStatus: (status, completedSteps) => {
@@ -288,7 +327,7 @@ export class MobileController {
   private async finish(active: AbortController, error?: unknown) {
     if (this.active !== active || this.finishing) return;
     this.finishing = true;
-    try { await this.ports.recorder.discard(); }
+    try { if (!this.keyboardRun && !this.keyboardSessionActive) await this.ports.recorder.discard(); }
     catch { if (!error && !active.signal.aborted) error = new Error('Could not remove the temporary recording. It remains in the app cache.'); }
     if (this.active !== active) return;
     if (this.state.intent === 'agent' && this.state.runId) {
@@ -299,6 +338,7 @@ export class MobileController {
         : { ...base, phase: 'completed', status: 'Answer ready.', response: this.state.response.slice(0, 200_000) });
     }
     this.active = null;
+    this.keyboardRun = false;
     this.finishing = false;
     this.approvalDecision = null;
     this.update({ phase: 'idle', approval: null, approvalNotified: false,

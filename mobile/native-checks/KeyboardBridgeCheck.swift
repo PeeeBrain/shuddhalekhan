@@ -44,7 +44,7 @@ struct KeyboardBridgeCheck {
     }
     let server = KeyboardSessionServer()
     var state = KeyboardSession.State(sessionEndsAt: KeyboardSession.nowMs() + 60_000,
-      requestId: nil, phase: .idle, text: nil, error: nil)
+      requestId: nil, mode: nil, agentReady: true, phase: .idle, text: nil, error: nil, level: nil)
     var commands: [KeyboardSession.Command.Action] = []
     server.onCommand = { command in
       commands.append(command.action)
@@ -68,20 +68,24 @@ struct KeyboardBridgeCheck {
     peer.channel.start()
     _ = await peer.phase(.idle)
     let id = UUID().uuidString
-    peer.send(.init(id: id, action: .start, sentAt: KeyboardSession.nowMs()))
+    peer.send(.init(id: id, action: .start, mode: .dictate, sentAt: KeyboardSession.nowMs()))
     let recording = await peer.phase(.recording)
     precondition(recording.requestId == id, "Start acknowledgement lost")
-    peer.send(.init(id: id, action: .stop, sentAt: KeyboardSession.nowMs()))
+    server.publish(recording.with(.recording, requestId: id, level: 0.7))
+    peer.send(.init(id: id, action: .stop, mode: .dictate, sentAt: KeyboardSession.nowMs()))
     _ = await peer.phase(.transcribing)
 
     // A large transcript crosses multiple receive chunks and survives session expiry and connection close.
     let text = String(repeating: "hello ", count: 20_000)
-    let final = KeyboardSession.State(sessionEndsAt: 0, requestId: id, phase: .done, text: text, error: nil)
+    let final = KeyboardSession.State(sessionEndsAt: 0, requestId: id, mode: .dictate, agentReady: false,
+      phase: .done, text: text, error: nil, level: nil)
     server.stop(final: final)
     let done = await peer.phase(.done)
     // Receiving the final frame also drains all earlier acknowledgements on this ordered connection.
-    precondition(peer.states.filter { $0.requestId == id && $0.phase == .recording }.count == 1,
+    precondition(peer.states.filter { $0.requestId == id && $0.phase == .recording && $0.level == nil }.count == 1,
       "Start acknowledgement was published more than once")
+    precondition(peer.states.contains { $0.requestId == id && $0.level == 0.7 }, "Microphone level frame lost")
+    precondition(peer.states.allSatisfy { $0.phase == .recording || $0.level == nil }, "Level leaked after recording")
     precondition(peer.states.filter { $0.requestId == id && $0.phase == .transcribing }.count == 1,
       "Stop acknowledgement was published more than once")
     precondition(KeyboardSession.insertion(done, pendingId: id, inserted: []) == text, "Final result lost")
@@ -95,10 +99,13 @@ struct KeyboardBridgeCheck {
     await withCheckedContinuation { (cancelled: CheckedContinuation<Void, Never>) in
       second.onCommand = { command in
         if command.action == .start { disappearing.channel.close() }
-        if command.action == .cancel { cancelled.resume() }
+        if command.action == .cancel {
+          precondition(command.mode == .agent, "Disconnect cancellation lost the request mode")
+          cancelled.resume()
+        }
       }
       disappearing.channel.onOpen = {
-        disappearing.send(.init(id: "hidden", action: .start, sentAt: KeyboardSession.nowMs()))
+        disappearing.send(.init(id: "hidden", action: .start, mode: .agent, sentAt: KeyboardSession.nowMs()))
       }
       disappearing.channel.start()
     }

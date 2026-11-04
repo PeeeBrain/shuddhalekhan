@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { requireOptionalNativeModule } from 'expo';
 import { isParakeetLanguage, languageBase } from './languages';
+import { keyboardSessionSchema, type KeyboardSessionEvent } from './keyboard-session';
 
 type Progress = { phase: 'downloading' | 'installing'; fraction: number };
 type NativeSpeech = {
@@ -10,13 +11,14 @@ type NativeSpeech = {
   transcribe(uri: string, language: string): Promise<string>;
   signGoogleJwt(privateKey: string, input: string): Promise<string>;
   getKeyboardSession(): Promise<NativeKeyboardSession>;
-  startKeyboardSession(minutes: number, language: string): Promise<NativeKeyboardSession>;
+  startKeyboardSession(minutes: number, language: string, agentReady: boolean): Promise<NativeKeyboardSession>;
+  resolveKeyboardAgentRequest(id: string, error: string | null): Promise<void>;
   stopKeyboardSession(): Promise<void>;
   addListener(event: 'onModelProgress', listener: (progress: Progress) => void): { remove(): void };
   addListener(event: 'onKeyboardSession', listener: (session: NativeKeyboardSession) => void): { remove(): void };
 };
 /** endsAt is epoch ms, 0 when no session; error explains why native ended a session early. */
-type NativeKeyboardSession = { endsAt: number; phase: string; error?: string };
+type NativeKeyboardSession = KeyboardSessionEvent;
 
 export type LocalModelState =
   | { kind: 'unavailable' | 'checking' | 'missing' | 'ready' }
@@ -116,17 +118,35 @@ export const keyboardSessionMinutes = 10;
 
 /**
  * Native owns the keyboard session (mic, timer, Parakeet) so it keeps working while this JS is in the
- * background; React only mirrors it for the countdown and the Start/Stop controls.
+ * background. Agent handoffs are handled directly in the native listener, independently of rendering.
  */
-export function useKeyboardSession() {
-  const [session, setSession] = useState<NativeKeyboardSession>({ endsAt: 0, phase: 'idle' });
+export function useKeyboardSession(onSession: (event: KeyboardSessionEvent) => Promise<void>) {
+  const [session, setSession] = useState<NativeKeyboardSession>({ endsAt: 0, phase: 'idle', agentReady: false });
   const [now, setNow] = useState(Date.now);
   const [starting, setStarting] = useState(false);
   useEffect(() => {
-    const subscription = speech?.addListener('onKeyboardSession', setSession);
-    void speech?.getKeyboardSession().then(setSession).catch(() => {});
+    let handedOff: string | undefined;
+    const receive = (value: unknown) => {
+      const parsed = keyboardSessionSchema.safeParse(value);
+      if (!parsed.success) return;
+      const event = parsed.data;
+      setSession(event);
+      if (event.mode === 'agent' && event.phase === 'done' && event.requestId) {
+        if (handedOff === event.requestId) return;
+        handedOff = event.requestId;
+        const id = event.requestId;
+        void onSession(event).then(
+          () => speech?.resolveKeyboardAgentRequest(id, null),
+          error => speech?.resolveKeyboardAgentRequest(id, error instanceof Error ? error.message : 'The agent could not start.'),
+        ).catch(() => {});
+      } else { void onSession(event).catch(() => {}); }
+    };
+    // A listener event is newer than the initial read; a late snapshot must not overwrite it.
+    let heard = false;
+    const subscription = speech?.addListener('onKeyboardSession', (value: unknown) => { heard = true; receive(value); });
+    void speech?.getKeyboardSession().then(value => { if (!heard) receive(value); }).catch(() => {});
     return () => subscription?.remove();
-  }, []);
+  }, [onSession]);
   const active = session.endsAt !== 0;
   useEffect(() => {
     if (session.endsAt === 0) return;
@@ -135,11 +155,11 @@ export function useKeyboardSession() {
     return () => clearInterval(timer);
   }, [session.endsAt]);
 
-  const startKeyboardSession = async (language: string) => {
+  const startKeyboardSession = async (language: string, agentReady: boolean) => {
     if (!speech || starting) return;
     setStarting(true);
     const selected = checkedLocalLanguage(language);
-    try { setSession(await speech.startKeyboardSession(keyboardSessionMinutes, selected)); }
+    try { setSession(keyboardSessionSchema.parse(await speech.startKeyboardSession(keyboardSessionMinutes, selected, agentReady))); }
     catch { throw new Error('Could not start the keyboard session. Check microphone access and that Parakeet is downloaded, then try again.'); }
     finally { setStarting(false); }
   };
