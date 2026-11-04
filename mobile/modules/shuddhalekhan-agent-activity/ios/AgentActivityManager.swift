@@ -31,11 +31,14 @@ final class AgentActivityManager {
     keyboardSessionObserver = NotificationCenter.default.addObserver(
       forName: Notification.Name("ShuddhalekhanKeyboardSessionActive"), object: nil, queue: .main
     ) { [weak self] notification in
+      // Read the non-Sendable notification here; only Sendable values cross into the main-actor closure.
+      let active = notification.userInfo?["active"] as? Bool
+      let agentReady = notification.userInfo?["agentReady"] as? Bool == true
       MainActor.assumeIsolated {
-        guard let self, let active = notification.userInfo?["active"] as? Bool else { return }
+        guard let self, let active else { return }
         self.keyboardSessionActive = active
         if active {
-          if notification.userInfo?["agentReady"] as? Bool == true { AgentNotifications.shared.requestAuthorization() }
+          if agentReady { AgentNotifications.shared.requestAuthorization() }
         } else if UIApplication.shared.applicationState != .active {
           // Audio no longer keeps JS alive. Finish the native interruption notification before suspension.
           let deadline = UIApplication.shared.beginBackgroundTask(withName: "Keyboard agent interruption")
