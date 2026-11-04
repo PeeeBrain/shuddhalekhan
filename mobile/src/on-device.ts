@@ -141,8 +141,10 @@ export function useKeyboardSession(onSession: (event: KeyboardSessionEvent) => P
         ).catch(() => {});
       } else { void onSession(event).catch(() => {}); }
     };
-    const subscription = speech?.addListener('onKeyboardSession', receive);
-    void speech?.getKeyboardSession().then(receive).catch(() => {});
+    // A listener event is newer than the initial read; a late snapshot must not overwrite it.
+    let heard = false;
+    const subscription = speech?.addListener('onKeyboardSession', (value: unknown) => { heard = true; receive(value); });
+    void speech?.getKeyboardSession().then(value => { if (!heard) receive(value); }).catch(() => {});
     return () => subscription?.remove();
   }, [onSession]);
   const active = session.endsAt !== 0;

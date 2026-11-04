@@ -186,7 +186,7 @@ final class KeyboardViewController: UIInputViewController {
     sentText.numberOfLines = 2
     sentText.textAlignment = .center
     let sentHint = UILabel()
-    sentHint.text = "The answer arrives as a notification."
+    sentHint.text = "The answer will be in Shuddhalekhan."
     sentHint.font = scaledFont(12, .regular, .footnote)
     sentHint.adjustsFontForContentSizeCategory = true
     sentHint.textColor = Palette.faded
@@ -437,7 +437,7 @@ final class KeyboardViewController: UIInputViewController {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.sentHold) { [weak self] in
       guard let self, self.sent?.id == id else { return }
       self.sent = nil
-      self.render(message: "Sent to the agent. The answer arrives as a notification.")
+      self.render(message: "Sent to the agent. The answer will be in Shuddhalekhan.")
     }
   }
 
@@ -469,7 +469,7 @@ final class KeyboardViewController: UIInputViewController {
   @objc private func shutterTapped() {
     if sent != nil {
       sent = nil
-      return render(message: "Sent to the agent. The answer arrives as a notification.")
+      return render(message: "Sent to the agent. The answer will be in Shuddhalekhan.")
     }
     guard let pendingId, activePhase == .recording else { return }
     tapFeedback.impactOccurred()
@@ -512,7 +512,7 @@ final class KeyboardViewController: UIInputViewController {
     dictateRow.isAvailable = session != nil
     agentRow.isAvailable = agentReady
     agentRow.subtitle = session == nil || agentReady
-      ? "One-off command · answer as a notification" : "Set up Agent Mode in the app first"
+      ? "One-off command · answer in the app" : "Set up Agent Mode in the app first"
     announce(message ?? (session == nil ? "No active keyboard session." : "Keyboard session"), in: statusLabel)
 
     if case .live(let mode) = screen { renderLive(mode) }
@@ -757,6 +757,7 @@ final class KeyboardViewController: UIInputViewController {
   private func wireDelete(_ key: PressControl) {
     key.addTarget(self, action: #selector(deleteDown), for: .touchDown)
     key.addTarget(self, action: #selector(stopDeleting), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+    key.accessibilityAction = { [weak self] in self?.textDocumentProxy.deleteBackward() }
   }
 
   @objc private func deleteDown() {
@@ -859,6 +860,14 @@ private class PressControl: UIControl {
   var pressedScale: CGFloat = 0.96
   var restingColor: UIColor? { didSet { backgroundColor = restingColor } }
   var pressedColor: UIColor?
+  /// Runs on VoiceOver or Switch Control activation, which may skip touch-down; delete keys act through this.
+  var accessibilityAction: (() -> Void)?
+
+  override func accessibilityActivate() -> Bool {
+    guard let accessibilityAction else { return super.accessibilityActivate() }
+    accessibilityAction()
+    return true
+  }
 
   override var isHighlighted: Bool {
     didSet {
@@ -943,7 +952,7 @@ private final class ActionRow: PressControl {
     isAccessibilityElement = true
     accessibilityTraits = .button
     accessibilityLabel = title.text
-    subtitle = agent ? "One-off command · answer as a notification" : "Types at the cursor"
+    subtitle = agent ? "One-off command · answer in the app" : "Types at the cursor"
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

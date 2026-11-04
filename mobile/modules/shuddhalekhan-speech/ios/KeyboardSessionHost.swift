@@ -338,12 +338,16 @@ private final class UtteranceSink: @unchecked Sendable {
       if let samples = buffer.floatChannelData, buffer.frameLength > 0 {
         let count = Int(buffer.frameLength)
         let stride = buffer.stride
+        let channels = Int(buffer.format.channelCount)
         var sum: Float = 0
-        for frame in 0..<count {
-          let sample = samples[0][frame * stride]
-          sum += sample * sample
+        for channel in 0..<channels {
+          let pointer = buffer.format.isInterleaved ? samples[0] + channel : samples[channel]
+          for frame in 0..<count {
+            let sample = pointer[frame * stride]
+            sum += sample * sample
+          }
         }
-        let rms = sqrt(sum / Float(count))
+        let rms = sqrt(sum / Float(count * channels))
         let normalized = min(1, max(0, (20 * log10(max(rms, 0.000_001)) + 50) / 50))
         level = (level ?? normalized) * 0.35 + normalized * 0.65
       }
