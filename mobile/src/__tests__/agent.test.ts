@@ -384,9 +384,15 @@ test('unreachable endpoints name the failing stage: agent model vs MCP server', 
 });
 
 describe('provider-specific agent continuation', () => {
-  test('ChatGPT obtains a bearer for each tool-loop step and keeps it off MCP requests', async () => {
+  test('ChatGPT retains finalized streamed items when completed output is empty and continues the tool loop', async () => {
     const mcpState = newMCPFixtureState();
     const bearers: (string | null)[] = [];
+    const inputs: unknown[][] = [];
+    const firstOutput = [
+      { type: 'reasoning', id: 'rs-1', encrypted_content: 'opaque-reasoning', summary: [] },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Checking the plan.' }] },
+      { type: 'function_call', call_id: 'call-1', name: 'mcp_1_0', arguments: '{"query":"plan"}' },
+    ];
     let issued = 0;
     await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
       const answer = await runAgent({ transcript: 'Find the plan.', signal: new AbortController().signal,
@@ -395,10 +401,13 @@ describe('provider-specific agent continuation', () => {
         fetch: Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
           if (String(input) !== 'https://api.openai.com/v1/responses') return globalThis.fetch(input, init);
           bearers.push(new Headers(init?.headers).get('authorization'));
-          const response = bearers.length === 1
-            ? { status: 'completed', output: [{ type: 'function_call', call_id: 'call-1', name: 'mcp_1_0', arguments: '{"query":"plan"}' }] }
-            : { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found it.' }] }] };
-          return new Response(`data: ${JSON.stringify({ type: 'response.completed', response })}\n\n`);
+          inputs.push(z.object({ input: z.array(z.unknown()) }).parse(JSON.parse(String(init?.body))).input);
+          const output = bearers.length === 1 ? firstOutput
+            : [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found it.' }] }];
+          // Observed on build 14: output_item.done carries the items; response.completed has output: [].
+          const events = output.map((item, output_index) => ({ type: 'response.output_item.done', output_index, item }));
+          return new Response([...events, { type: 'response.completed', response: { status: 'completed', output: [] } }]
+            .map(event => `data: ${JSON.stringify(event)}\n\n`).join(''));
         }, { preconnect: globalThis.fetch.preconnect }),
         getChatGptAccessToken: async () => `step-token-${++issued}`, onStatus: () => {}, approve: async () => true,
       });
@@ -406,6 +415,10 @@ describe('provider-specific agent continuation', () => {
       expect(bearers).toEqual(['Bearer step-token-1', 'Bearer step-token-2']);
       expect(mcpState.calls).toHaveLength(1);
       expect(mcpState.requests.every(request => request.authorization === 'Bearer mcp-secret')).toBe(true);
+      expect(inputs[1]?.slice(2, 5)).toEqual([
+        firstOutput[0], { role: 'assistant', content: 'Checking the plan.' }, firstOutput[2],
+      ]);
+      expect(inputs[1]?.[5]).toMatchObject({ type: 'function_call_output', call_id: 'call-1' });
     });
   });
   const toolResult = JSON.stringify({ content: [{ type: 'text', text: 'A matching document was found.' }] });
