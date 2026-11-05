@@ -379,7 +379,10 @@ final class KeyboardViewController: UIInputViewController {
       self.bridge = nil
       self.pendingId = nil
       self.session = nil
-      if endedNormally { self.render() } else {
+      if !self.receivedState {
+        self.render(message: "Tap Dictate or Ask the agent to open Shuddhalekhan and start a session.")
+        if let intent = self.pendingStartIntent() { self.openSession(for: intent.mode) }
+      } else if endedNormally { self.render() } else {
         self.log.error("KeyboardBridge connection lost")
         self.render(message: "Keyboard connection lost. Open Shuddhalekhan and start a new session.")
       }
@@ -453,7 +456,10 @@ final class KeyboardViewController: UIInputViewController {
     guard hasFullAccess else { return refresh() }
     guard pendingId == nil, sent == nil else { return }
     guard let session, session.isLive(now: KeyboardSession.nowMs()) else {
-      if channel != nil, !receivedState { return }
+      if channel != nil, !receivedState {
+        _ = persistStartIntent(for: mode)
+        return
+      }
       disconnect()
       return openSession(for: mode)
     }
@@ -476,11 +482,16 @@ final class KeyboardViewController: UIInputViewController {
     }
   }
 
-  private func openSession(for mode: KeyboardSession.Mode) {
-    guard !openingSession else { return }
+  private func persistStartIntent(for mode: KeyboardSession.Mode) -> Data? {
     let intent = KeyboardSession.StartIntent(mode: mode, createdAt: KeyboardSession.nowMs())
-    guard let data = KeyboardSession.encode(intent), let url = URL(string: "shuddhalekhan://keyboard-session") else { return }
+    guard let data = KeyboardSession.encode(intent) else { return nil }
     UserDefaults.standard.set(data, forKey: Self.startIntentKey)
+    return data
+  }
+
+  private func openSession(for mode: KeyboardSession.Mode) {
+    guard !openingSession, let url = URL(string: "shuddhalekhan://keyboard-session"),
+      let data = persistStartIntent(for: mode) else { return }
     var responder: UIResponder? = self
     while let current = responder {
       if let application = current as? UIApplication {
@@ -505,18 +516,23 @@ final class KeyboardViewController: UIInputViewController {
     render(message: "Open Shuddhalekhan and tap Start keyboard session.")
   }
 
-  private func resumePendingStart() {
+  private func pendingStartIntent() -> KeyboardSession.StartIntent? {
     let defaults = UserDefaults.standard
-    guard let data = defaults.data(forKey: Self.startIntentKey) else { return }
+    guard let data = defaults.data(forKey: Self.startIntentKey) else { return nil }
     guard let intent = try? JSONDecoder().decode(KeyboardSession.StartIntent.self, from: data),
       intent.isFresh(now: KeyboardSession.nowMs()) else {
       defaults.removeObject(forKey: Self.startIntentKey)
-      return
+      return nil
     }
+    return intent
+  }
+
+  private func resumePendingStart() {
+    guard let intent = pendingStartIntent() else { return }
     guard hasFullAccess, let session, session.isLive(now: KeyboardSession.nowMs()),
       !session.isBusy, pendingId == nil, sent == nil else { return }
     // Consume before start: reconnects and appearance callbacks cannot replay this intent twice.
-    defaults.removeObject(forKey: Self.startIntentKey)
+    UserDefaults.standard.removeObject(forKey: Self.startIntentKey)
     start(intent.mode)
   }
 

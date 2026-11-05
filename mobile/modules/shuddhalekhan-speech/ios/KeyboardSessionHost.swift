@@ -106,7 +106,7 @@ final class KeyboardSessionHost {
       guard UIApplication.shared.applicationState == .active,
             let board = UIPasteboard(name: UIPasteboard.Name(KeyboardSession.discoveryPasteboard), create: true),
             let payload = KeyboardSession.encode(bridge) else { throw KeyboardSessionError.bridgeUnavailable }
-      // This is the only app-side pasteboard access, before the app backgrounds.
+      // Publish discovery while the app is foregrounded; iOS denies background pasteboard access.
       board.setData(payload, forPasteboardType: KeyboardSession.payloadType)
       guard board.data(forPasteboardType: KeyboardSession.payloadType) == payload else {
         throw KeyboardSessionError.bridgeUnavailable
@@ -133,6 +133,10 @@ final class KeyboardSessionHost {
   /// Ends the session now. An utterance in flight is discarded and the keyboard sees the session end.
   func end(reason: String? = nil, completed: KeyboardSession.State? = nil) {
     guard state.sessionEndsAt != 0 else { return }
+    if UIApplication.shared.applicationState == .active,
+      let board = UIPasteboard(name: UIPasteboard.Name(KeyboardSession.discoveryPasteboard), create: false) {
+      board.items = []
+    }
     // An agent run still awaiting admission must be cancelled in JS, not left to start after the session ends.
     let completed = completed ?? pendingAgent.map { $0.with(.cancelled, requestId: $0.requestId) }
     endTimer?.invalidate()

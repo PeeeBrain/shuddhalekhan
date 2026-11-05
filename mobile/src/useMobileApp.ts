@@ -17,6 +17,16 @@ const recordingOptions: RecordingOptions = {
     linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
 };
 const keyboardSessionLink = /^shuddhalekhan:\/\/keyboard-session(?:[/?#]|$)/;
+// iOS delivers an opening link before the app is active; the session needs the foreground for audio and the pasteboard.
+// Leaving before activation drops the link rather than starting a session on a later, unrelated open.
+const whenActive = () => new Promise<boolean>(resolve => {
+  if (AppState.currentState === 'active') return resolve(true);
+  const subscription = AppState.addEventListener('change', next => {
+    if (next === 'inactive') return;
+    subscription.remove();
+    resolve(next === 'active');
+  });
+});
 
 export function useMobileApp() {
   const controllerRef = useRef<MobileController | null>(null);
@@ -113,9 +123,10 @@ export function useMobileApp() {
     const stopped = onAgentRunStopped(controller.agentRunStopped);
     const approvalAction = onAgentApprovalAction(() => { void controller.consumeApprovalAction(); });
     const open = (url: string) => {
-      void controller.initialize().then(() => {
-        // The keyboard opens this when tapped without a session; it resumes its own intent once the session is live.
+      void Promise.all([controller.initialize(), whenActive()]).then(([, active]) => {
         if (!keyboardSessionLink.test(url)) return controller.openActivity(url);
+        // The keyboard opens this when tapped without a session; it resumes its own intent once the session is live.
+        if (!active) return;
         startSessionRef.current().catch((e: unknown) => Alert.alert('Keyboard session', e instanceof Error ? e.message : 'Could not start the session.'));
       });
     };
