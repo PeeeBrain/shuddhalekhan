@@ -9,7 +9,7 @@ struct AgentActivityBundle: WidgetBundle {
   }
 }
 
-// Renders app-published state only. Every tap deep-links to the run; the app validates IDs and owns approval.
+// Renders app-published state only. Taps open the session or run; the app validates IDs and owns approval.
 struct AgentLiveActivity: Widget {
   var body: some WidgetConfiguration {
     ActivityConfiguration(for: AgentActivityAttributes.self) { context in
@@ -37,10 +37,16 @@ struct AgentLiveActivity: Widget {
       } compactLeading: {
         PhaseIcon(phase: run.phase)
       } compactTrailing: {
-        Text(run.phase.shortTitle)
-          .font(.caption2.weight(.semibold))
-          .foregroundStyle(run.phase.tint)
-          .lineLimit(1)
+        if let endsAt = run.sessionEndsAt, run.phase == .keyboardSession {
+          SessionCountdown(endsAt: endsAt)
+            .font(.caption2.monospacedDigit())
+            .frame(width: 42)
+        } else {
+          Text(run.phase.shortTitle)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(run.phase.tint)
+            .lineLimit(1)
+        }
       } minimal: {
         PhaseIcon(phase: run.phase)
       }
@@ -50,12 +56,13 @@ struct AgentLiveActivity: Widget {
 }
 
 private enum Phase: String {
-  case running, awaitingApproval, completed, failed, cancelled, interrupted
+  case keyboardSession, running, awaitingApproval, completed, failed, cancelled, interrupted
 
-  var isTerminal: Bool { self != .running && self != .awaitingApproval }
+  var isTerminal: Bool { self != .keyboardSession && self != .running && self != .awaitingApproval }
 
   var title: String {
     switch self {
+    case .keyboardSession: "Keyboard session"
     case .running: "Agent working"
     case .awaitingApproval: "Agent needs approval"
     case .completed: "Agent finished"
@@ -67,6 +74,7 @@ private enum Phase: String {
 
   var shortTitle: String {
     switch self {
+    case .keyboardSession: "Keyboard"
     case .running: "Working"
     case .awaitingApproval: "Review"
     case .completed: "Done"
@@ -75,9 +83,10 @@ private enum Phase: String {
     }
   }
 
-  // Static symbols only: no symbol effects or timers, so the activity repaints on state changes alone.
+  // Static symbols; the session countdown uses the system timer view, with no app-side updates.
   var symbol: String {
     switch self {
+    case .keyboardSession: "keyboard"
     case .running: "ellipsis.circle.fill"
     case .awaitingApproval: "hand.raised.fill"
     case .completed: "checkmark.circle.fill"
@@ -89,7 +98,7 @@ private enum Phase: String {
 
   var tint: Color {
     switch self {
-    case .running: .cyan
+    case .keyboardSession, .running: .cyan
     case .awaitingApproval: .orange
     case .completed: .green
     case .failed: .red
@@ -104,6 +113,7 @@ private struct AgentRun {
   let answerPreview: String?
   let isStale: Bool
   let url: URL?
+  let sessionEndsAt: Date?
 
   init(_ context: ActivityViewContext<AgentActivityAttributes>) {
     let state = context.state
@@ -111,11 +121,14 @@ private struct AgentRun {
     status = state.status
     answerPreview = phase == .completed && state.answerPreview?.isEmpty == false ? state.answerPreview : nil
     isStale = context.isStale && !phase.isTerminal
+    sessionEndsAt = state.sessionEndsAt
 
     var link = URLComponents()
     link.scheme = "shuddhalekhan"
-    link.host = "agent"
-    link.queryItems = [URLQueryItem(name: "runId", value: context.attributes.runId)]
+    link.host = phase == .keyboardSession ? "keyboard-session" : "agent"
+    if phase != .keyboardSession {
+      link.queryItems = [URLQueryItem(name: "runId", value: state.runId ?? context.attributes.runId)]
+    }
     if let approvalId = state.approvalId {
       link.queryItems?.append(URLQueryItem(name: "approvalId", value: approvalId))
     }
@@ -158,6 +171,10 @@ private struct RunDetail: View {
       }
       if let preview = run.answerPreview {
         AnswerPreview(text: preview)
+      } else if let endsAt = run.sessionEndsAt, run.phase == .keyboardSession {
+        SessionCountdown(endsAt: endsAt)
+          .font(.subheadline.monospacedDigit())
+          .foregroundStyle(run.phase.tint)
       } else if run.phase == .awaitingApproval {
         Text("Tap to review in Shuddhalekhan")
           .font(.footnote.weight(.semibold))
@@ -169,6 +186,15 @@ private struct RunDetail: View {
           .foregroundStyle(.secondary)
       }
     }
+  }
+}
+
+private struct SessionCountdown: View {
+  let endsAt: Date
+
+  var body: some View {
+    Text(timerInterval: min(Date(), endsAt)...endsAt, countsDown: true)
+      .multilineTextAlignment(.trailing)
   }
 }
 

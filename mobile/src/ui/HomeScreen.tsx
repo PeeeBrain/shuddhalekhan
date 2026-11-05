@@ -193,7 +193,7 @@ function KeyboardSession({ app, onSetUp }: { app: App; onSetUp: () => void }) {
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={type.headline} accessibilityRole="header">Keyboard session on</Text>
             <Text style={type.footnote}>
-              {session.remainingSeconds === 0 && session.busy ? 'Finishing this utterance…' : 'Mic open. Only audio between Dictate and Stop is kept.'}
+              {session.remainingSeconds === 0 && session.busy ? 'Finishing this utterance…' : 'Switch back and use the keyboard. Only audio between Dictate and Stop is kept.'}
             </Text>
           </View>
           <Text style={[type.title, home.timer, { color: session.remainingSeconds <= 60 ? color.ochre : color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>

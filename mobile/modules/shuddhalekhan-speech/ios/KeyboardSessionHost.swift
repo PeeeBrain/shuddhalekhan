@@ -126,7 +126,7 @@ final class KeyboardSessionHost {
       sessionEndsAt: KeyboardSession.nowMs(endsAt), requestId: nil, mode: nil, agentReady: agentReady,
       phase: .idle, text: nil, error: nil, level: nil))
     NotificationCenter.default.post(name: Notification.Name("ShuddhalekhanKeyboardSessionActive"), object: nil,
-      userInfo: ["active": true, "agentReady": agentReady])
+      userInfo: ["active": true, "agentReady": agentReady, "endsAt": endsAt])
     mark("ready")
   }
 

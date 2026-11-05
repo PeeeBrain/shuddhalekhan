@@ -21,6 +21,7 @@ final class AgentActivityManager {
   private var pendingApprovalAction: AgentApprovalAction?
   private var notifiedApprovalId: String?
   private var keyboardSessionActive = false
+  private var keyboardSessionActivityId: String?
   private var keyboardSessionObserver: NSObjectProtocol?
   private var usesSystemActivity: Bool {
     if #available(iOS 26.0, *) { return true }
@@ -34,16 +35,26 @@ final class AgentActivityManager {
       // Read the non-Sendable notification here; only Sendable values cross into the main-actor closure.
       let active = notification.userInfo?["active"] as? Bool
       let agentReady = notification.userInfo?["agentReady"] as? Bool == true
+      let endsAt = notification.userInfo?["endsAt"] as? Date
       MainActor.assumeIsolated {
         guard let self, let active else { return }
         self.keyboardSessionActive = active
         if active {
+          if let endsAt { self.startKeyboardSessionActivity(endsAt: endsAt) }
           if agentReady { AgentNotifications.shared.requestAuthorization() }
-        } else if UIApplication.shared.applicationState != .active {
-          // Audio no longer keeps JS alive. Finish the native interruption notification before suspension.
-          let deadline = UIApplication.shared.beginBackgroundTask(withName: "Keyboard agent interruption")
+        } else {
+          // Audio no longer keeps JS alive. Finish activity cleanup and interruption before suspension.
+          let backgrounded = UIApplication.shared.applicationState != .active
+          let deadline = backgrounded ? UIApplication.shared.beginBackgroundTask(withName: "Keyboard agent interruption") : .invalid
+          let idleActivityId = self.keyboardSessionActivityId != self.activityId || self.record?.phase.isTerminal != false
+            ? self.keyboardSessionActivityId : nil
+          if let idleActivityId {
+            self.keyboardSessionActivityId = nil
+            if self.activityId == idleActivityId { self.activityId = nil }
+          }
           Task { @MainActor in
-            await self.enterBackground()
+            await Self.activity(id: idleActivityId)?.end(nil, dismissalPolicy: .immediate)
+            if backgrounded, UIApplication.shared.applicationState != .active { await self.enterBackground() }
             if deadline != .invalid { UIApplication.shared.endBackgroundTask(deadline) }
           }
         }
@@ -65,7 +76,12 @@ final class AgentActivityManager {
     try store.save(next)
     record = next
     // Continued processing supplies its own Live Activity on iOS 26; starting ours would duplicate it.
-    if UIApplication.shared.applicationState == .active && !usesSystemActivity && ActivityAuthorizationInfo().areActivitiesEnabled {
+    if keyboardSessionActive, UIApplication.shared.applicationState != .active, let id = keyboardSessionActivityId {
+      activityId = id
+      await Self.activity(id: id)?.update(content(next))
+      // Session loss can interrupt the run while ActivityKit is updating; don't acknowledge a stopped run.
+      guard record?.runId == next.runId, record?.phase == .running else { throw AgentRunError.unknownRun }
+    } else if UIApplication.shared.applicationState == .active && !usesSystemActivity && ActivityAuthorizationInfo().areActivitiesEnabled {
       do {
         activityId = try Activity.request(attributes: AgentActivityAttributes(runId: next.runId), content: content(next), pushType: nil).id
       } catch { log.error("AgentActivity stage=start_activity_failed") }
@@ -159,15 +175,12 @@ final class AgentActivityManager {
       pendingApprovalAction = nil
       notifiedApprovalId = nil
       AgentNotifications.shared.removeApproval(runId: current.runId)
-      if (usesSystemActivity || activityId == nil) && UIApplication.shared.applicationState != .active {
+      if (activityId == nil || (usesSystemActivity && activityId != keyboardSessionActivityId)) && UIApplication.shared.applicationState != .active {
         await AgentNotifications.shared.result(run: current)
       }
-      if current.phase == .completed && UIApplication.shared.applicationState != .active {
-        await Self.activity(id: activityId)?.update(content(current), alertConfiguration: AlertConfiguration(
-          title: "Agent finished", body: "Open Shuddhalekhan to read the answer.", sound: .default))
-      }
-      await Self.activity(id: activityId)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
-      activityId = nil
+      let alert: AlertConfiguration? = current.phase == .completed && UIApplication.shared.applicationState != .active
+        ? AlertConfiguration(title: "Agent finished", body: "Open Shuddhalekhan to read the answer.", sound: .default) : nil
+      await finishActivity(current, alert: alert)
     } else {
       let alert: AlertConfiguration? = current.phase == .awaitingApproval && notifiedApprovalId != current.approvalId && UIApplication.shared.applicationState != .active
         ? AlertConfiguration(title: "Approval needed", body: "Open Shuddhalekhan to review a tool request.", sound: .default)
@@ -198,6 +211,7 @@ final class AgentActivityManager {
     record = saved
     AgentNotifications.shared.removeAll(runId: saved.runId)
     for old in Activity<AgentActivityAttributes>.activities {
+      guard old.id != keyboardSessionActivityId else { continue }
       await old.end(old.attributes.runId == saved.runId ? content(saved) : nil, dismissalPolicy: .immediate)
     }
     return saved
@@ -238,6 +252,8 @@ final class AgentActivityManager {
   }
 
   private func submitProcessing(for current: AgentRunRecord) {
+    // Keyboard runs already have a session activity, including when an approval opens the app.
+    guard activityId == nil || activityId != keyboardSessionActivityId else { return }
     guard #available(iOS 26.0, *), UIApplication.shared.applicationState == .active else { return }
     finishProcessing(success: true)
     // Dynamic continued-processing registrations are made at the foreground user action, once per identifier.
@@ -325,21 +341,48 @@ final class AgentActivityManager {
     } else {
       finishProcessing(success: false)
     }
-    await Self.activity(id: activityId)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
-    activityId = nil
+    await finishActivity(current)
     if UIApplication.shared.applicationState != .active { await AgentNotifications.shared.result(run: current) }
     log.notice("AgentActivity run=\(runId, privacy: .public) stage=interrupted")
   }
 
   private func content(_ record: AgentRunRecord) -> ActivityContent<AgentActivityAttributes.ContentState> {
     ActivityContent(state: AgentActivityAttributes.ContentState(phase: record.phase.rawValue, status: record.status,
-      answerPreview: record.answerPreview, approvalId: record.approvalId),
+      answerPreview: record.answerPreview, approvalId: record.approvalId, runId: record.runId),
       staleDate: record.phase.isTerminal ? nil : record.approvalExpiresAt ?? Date().addingTimeInterval(120))
   }
 
   private func dismissActivities() async {
     activityId = nil
-    for old in Activity<AgentActivityAttributes>.activities { await old.end(nil, dismissalPolicy: .immediate) }
+    // Preserve only this process's session activity. Recovery still dismisses every stale process's activity.
+    for old in Activity<AgentActivityAttributes>.activities where old.id != keyboardSessionActivityId {
+      await old.end(nil, dismissalPolicy: .immediate)
+    }
+  }
+
+  private func startKeyboardSessionActivity(endsAt: Date) {
+    guard keyboardSessionActivityId == nil, endsAt > Date(), UIApplication.shared.applicationState == .active,
+      ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+    let state = AgentActivityAttributes.ContentState(phase: "keyboardSession", status: "Ready when you switch back to the keyboard.",
+      sessionEndsAt: endsAt)
+    do {
+      keyboardSessionActivityId = try Activity.request(attributes: AgentActivityAttributes(runId: UUID().uuidString),
+        content: ActivityContent(state: state, staleDate: endsAt), pushType: nil).id
+    } catch { log.error("AgentActivity stage=keyboard_session_activity_failed") }
+  }
+
+  private func finishActivity(_ current: AgentRunRecord, alert: AlertConfiguration? = nil) async {
+    guard record?.runId == current.runId else { return }
+    let id = activityId
+    let keepForSession = id != nil && id == keyboardSessionActivityId && keyboardSessionActive
+    activityId = nil
+    if !keepForSession, id == keyboardSessionActivityId { keyboardSessionActivityId = nil }
+    if keepForSession || alert != nil {
+      await Self.activity(id: id)?.update(content(current), alertConfiguration: alert)
+    }
+    if !keepForSession {
+      await Self.activity(id: id)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
+    }
   }
 
   // Keep only a Sendable ID on the actor; each async SDK call receives its own disconnected handle.

@@ -6,6 +6,15 @@ struct KeyboardSessionCheck {
   static func main() {
     typealias S = KeyboardSession
     let now: Int64 = 1_800_000_000_000
+    // Returning from the app must never replay an old or future-dated microphone start.
+    for mode in [S.Mode.dictate, .agent] {
+      let intent = S.StartIntent(mode: mode, createdAt: now)
+      let restored = try! JSONDecoder().decode(S.StartIntent.self, from: S.encode(intent)!)
+      precondition(restored.mode == mode && restored.isFresh(now: now))
+      precondition(restored.isFresh(now: now + 60_000), "resume at the freshness boundary")
+      precondition(!restored.isFresh(now: now + 60_001), "discard a stale start")
+      precondition(!restored.isFresh(now: now - 1), "discard a future-dated start")
+    }
     let live = S.State(sessionEndsAt: now + 60_000, requestId: nil, mode: nil, agentReady: true,
       phase: .idle, text: nil, error: nil, level: nil)
     func command(_ id: String, _ action: S.Command.Action, mode: S.Mode = .dictate, at: Int64 = now) -> S.Command {

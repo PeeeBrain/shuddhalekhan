@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { AppState, Linking, Platform } from 'react-native';
+import { Alert, AppState, Linking, Platform } from 'react-native';
 import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions } from 'expo-audio';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
@@ -16,6 +16,7 @@ const recordingOptions: RecordingOptions = {
   ios: { extension: '.wav', outputFormat: IOSOutputFormat.LINEARPCM, audioQuality: AudioQuality.HIGH,
     linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
 };
+const keyboardSessionLink = /^shuddhalekhan:\/\/keyboard-session(?:[/?#]|$)/;
 
 export function useMobileApp() {
   const controllerRef = useRef<MobileController | null>(null);
@@ -88,13 +89,34 @@ export function useMobileApp() {
   );
   const [now, setNow] = useState(Date.now);
 
+  const startSession = async () => {
+    // The session holds the microphone; in-app recording stays disabled until it ends.
+    if (controller.getSnapshot().phase !== 'idle') throw new Error('Finish the current command first.');
+    const settings = controller.getSnapshot().settings;
+    const agentReady = settings.agentEnabled && agentActivity !== undefined &&
+      (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' :
+        settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey);
+    await startKeyboardSession(settings.language, agentReady);
+  };
+  // Links arrive in a mount-time listener; it calls the latest start, not the first render's.
+  // The session Live Activity opens the same link, so a live session is left alone.
+  const startFromLink = async () => { if (!keyboardSession.active) await startSession(); };
+  const startSessionRef = useRef(startFromLink);
+  useEffect(() => { startSessionRef.current = startFromLink; });
+
   useEffect(() => {
     controllerRef.current = controller;
     void controller.initialize();
     void chatGptAuth.initialize();
     const stopped = onAgentRunStopped(controller.agentRunStopped);
     const approvalAction = onAgentApprovalAction(() => { void controller.consumeApprovalAction(); });
-    const open = (url: string) => { void controller.initialize().then(() => { controller.openActivity(url); }); };
+    const open = (url: string) => {
+      void controller.initialize().then(() => {
+        // The keyboard opens this when tapped without a session; it resumes its own intent once the session is live.
+        if (!keyboardSessionLink.test(url)) return controller.openActivity(url);
+        startSessionRef.current().catch((e: unknown) => Alert.alert('Keyboard session', e instanceof Error ? e.message : 'Could not start the session.'));
+      });
+    };
     const links = Linking.addEventListener('url', event => open(event.url));
     void Linking.getInitialURL().then(url => { if (url) open(url); }).catch(() => {});
     const subscription = AppState.addEventListener('change', next => {
@@ -121,16 +143,7 @@ export function useMobileApp() {
     ...state, elapsedSeconds: state.phase === 'recording' && state.recordingStartedAt !== null ? Math.max(0, Math.floor((now - state.recordingStartedAt) / 1000)) : 0,
     chatgpt, signInChatGpt: chatGptAuth.signIn, signOutChatGpt: chatGptAuth.signOut, listChatGptModels: chatGptAuth.listModels,
     localModel: localModels[localModelKey(state.settings.language)], localModels, installLocalModel, preparingModel,
-    keyboardSession, stopKeyboardSession,
-    startKeyboardSession: async () => {
-      // The session holds the microphone; in-app recording stays disabled until it ends.
-      if (controller.getSnapshot().phase !== 'idle') throw new Error('Finish the current command first.');
-      const settings = controller.getSnapshot().settings;
-      const agentReady = settings.agentEnabled && agentActivity !== undefined &&
-        (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' :
-          settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey);
-      await startKeyboardSession(settings.language, agentReady);
-    },
+    keyboardSession, stopKeyboardSession, startKeyboardSession: startSession,
     startRecording: controller.startRecording, stopRecording: controller.stopRecording, cancel: controller.cancel,
     retryAgent: controller.retryAgent, resolveApproval: controller.resolveApproval,
     saveSettings: controller.saveSettings, resetSettings: controller.resetSettings,

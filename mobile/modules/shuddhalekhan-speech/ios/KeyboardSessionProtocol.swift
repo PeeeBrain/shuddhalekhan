@@ -5,6 +5,14 @@ import Foundation
 // iOS denies the containing app pasteboard access while it records in the background.
 enum KeyboardSession {
   enum Mode: String, Codable, Sendable { case dictate, agent }
+
+  // The keyboard keeps this locally while the app starts a session, then consumes it before recording.
+  struct StartIntent: Codable, Sendable {
+    let mode: Mode
+    let createdAt: Int64
+
+    func isFresh(now: Int64) -> Bool { createdAt <= now && createdAt >= now - 60_000 }
+  }
   static let discoveryPasteboard = "com.shuddhalekhan.mobile.session.connection.v2"
   static let payloadType = "com.shuddhalekhan.mobile.session.v2"
   static let maxTextBytes = 200_000
