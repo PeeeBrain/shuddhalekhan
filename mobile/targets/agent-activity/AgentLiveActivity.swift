@@ -20,7 +20,7 @@ struct AgentLiveActivity: Widget {
       let run = AgentRun(context)
       return DynamicIsland {
         DynamicIslandExpandedRegion(.leading) {
-          PhaseIcon(phase: run.phase)
+          PhaseIcon(phase: run.phase, imageSize: 22)
             .font(.title2)
             .padding(.leading, 4)
         }
@@ -141,7 +141,7 @@ private struct LockScreenView: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      PhaseIcon(phase: run.phase)
+      PhaseIcon(phase: run.phase, imageSize: 22)
         .font(.title2)
       VStack(alignment: .leading, spacing: 4) {
         Text(run.phase.title)
@@ -218,10 +218,21 @@ private struct AnswerPreview: View {
 
 private struct PhaseIcon: View {
   let phase: Phase
+  var imageSize: CGFloat = 18
 
   var body: some View {
-    Image(systemName: phase.symbol)
-      .foregroundStyle(phase.tint)
-      .accessibilityHidden(true)
+    Group {
+      if phase == .keyboardSession {
+        Image("AppMark")
+          .renderingMode(.original)
+          .resizable()
+          .scaledToFit()
+          .frame(width: imageSize, height: imageSize)
+      } else {
+        Image(systemName: phase.symbol)
+          .foregroundStyle(phase.tint)
+      }
+    }
+    .accessibilityHidden(true)
   }
 }
