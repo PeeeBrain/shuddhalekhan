@@ -79,7 +79,7 @@ final class AgentActivityManager {
     record = next
     // Continued processing supplies its own Live Activity on iOS 26; starting ours would duplicate it.
     if keyboardSessionActive, UIApplication.shared.applicationState != .active, let id = keyboardSessionActivityId {
-      if Self.activity(id: id)?.activityState == .active {
+      if Self.isLive(id) {
         activityId = id
         await Self.activity(id: id)?.update(content(next))
         // Session loss can interrupt the run while ActivityKit is updating; don't acknowledge a stopped run.
@@ -182,7 +182,7 @@ final class AgentActivityManager {
       pendingApprovalAction = nil
       notifiedApprovalId = nil
       AgentNotifications.shared.removeApproval(runId: current.runId)
-      if let id = activityId, id == keyboardSessionActivityId, Self.activity(id: id)?.activityState != .active {
+      if let id = activityId, id == keyboardSessionActivityId, !Self.isLive(id) {
         keyboardSessionActivityId = nil
         keyboardSessionEndsAt = nil
         activityId = nil
@@ -408,6 +408,11 @@ final class AgentActivityManager {
     if !keepForSession {
       await Self.activity(id: id)?.end(content(current), dismissalPolicy: .after(Date().addingTimeInterval(5 * 60)))
     }
+  }
+
+  private nonisolated static func isLive(_ id: String) -> Bool {
+    guard let state = activity(id: id)?.activityState else { return false }
+    return state != .ended && state != .dismissed
   }
 
   // Keep only a Sendable ID on the actor; each async SDK call receives its own disconnected handle.
