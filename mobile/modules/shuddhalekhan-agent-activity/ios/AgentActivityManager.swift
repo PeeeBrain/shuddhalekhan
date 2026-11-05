@@ -22,6 +22,7 @@ final class AgentActivityManager {
   private var notifiedApprovalId: String?
   private var keyboardSessionActive = false
   private var keyboardSessionActivityId: String?
+  private var keyboardSessionEndsAt: Date?
   private var keyboardSessionObserver: NSObjectProtocol?
   private var usesSystemActivity: Bool {
     if #available(iOS 26.0, *) { return true }
@@ -43,6 +44,7 @@ final class AgentActivityManager {
           if let endsAt { self.startKeyboardSessionActivity(endsAt: endsAt) }
           if agentReady { AgentNotifications.shared.requestAuthorization() }
         } else {
+          self.keyboardSessionEndsAt = nil
           // Audio no longer keeps JS alive. Finish activity cleanup and interruption before suspension.
           let backgrounded = UIApplication.shared.applicationState != .active
           let deadline = backgrounded ? UIApplication.shared.beginBackgroundTask(withName: "Keyboard agent interruption") : .invalid
@@ -84,6 +86,7 @@ final class AgentActivityManager {
         guard record?.runId == next.runId, record?.phase == .running else { throw AgentRunError.unknownRun }
       } else {
         keyboardSessionActivityId = nil
+        keyboardSessionEndsAt = nil
       }
     } else if UIApplication.shared.applicationState == .active && !usesSystemActivity && ActivityAuthorizationInfo().areActivitiesEnabled {
       do {
@@ -181,9 +184,12 @@ final class AgentActivityManager {
       AgentNotifications.shared.removeApproval(runId: current.runId)
       if let id = activityId, id == keyboardSessionActivityId, Self.activity(id: id)?.activityState != .active {
         keyboardSessionActivityId = nil
+        keyboardSessionEndsAt = nil
         activityId = nil
       }
-      if (activityId == nil || (usesSystemActivity && activityId != keyboardSessionActivityId)) && UIApplication.shared.applicationState != .active {
+      let keyboardRunFailed = activityId != nil && activityId == keyboardSessionActivityId &&
+        (current.phase == .failed || current.phase == .interrupted)
+      if (activityId == nil || (usesSystemActivity && activityId != keyboardSessionActivityId) || keyboardRunFailed) && UIApplication.shared.applicationState != .active {
         await AgentNotifications.shared.result(run: current)
       }
       let alert: AlertConfiguration? = current.phase == .completed && UIApplication.shared.applicationState != .active
@@ -234,6 +240,9 @@ final class AgentActivityManager {
     notifiedApprovalId = nil
     record = nil
     await dismissActivities()
+    if record == nil, keyboardSessionActive, let id = keyboardSessionActivityId, let endsAt = keyboardSessionEndsAt {
+      await Self.activity(id: id)?.update(keyboardSessionContent(endsAt: endsAt))
+    }
   }
 
   func enterBackground() async {
@@ -260,8 +269,8 @@ final class AgentActivityManager {
   }
 
   private func submitProcessing(for current: AgentRunRecord) {
-    // Keyboard runs already have a session activity, including when an approval opens the app.
-    guard activityId == nil || activityId != keyboardSessionActivityId else { return }
+    // An active keyboard session keeps adopted runs alive, including when an approval opens the app.
+    guard !keyboardSessionActive || activityId == nil || activityId != keyboardSessionActivityId else { return }
     guard #available(iOS 26.0, *), UIApplication.shared.applicationState == .active else { return }
     finishProcessing(success: true)
     // Dynamic continued-processing registrations are made at the foreground user action, once per identifier.
@@ -368,14 +377,19 @@ final class AgentActivityManager {
     }
   }
 
+  private func keyboardSessionContent(endsAt: Date) -> ActivityContent<AgentActivityAttributes.ContentState> {
+    let state = AgentActivityAttributes.ContentState(phase: "keyboardSession", status: "Ready when you switch back to the keyboard.",
+      sessionEndsAt: endsAt)
+    return ActivityContent(state: state, staleDate: endsAt)
+  }
+
   private func startKeyboardSessionActivity(endsAt: Date) {
     guard keyboardSessionActivityId == nil, endsAt > Date(), UIApplication.shared.applicationState == .active,
       ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-    let state = AgentActivityAttributes.ContentState(phase: "keyboardSession", status: "Ready when you switch back to the keyboard.",
-      sessionEndsAt: endsAt)
     do {
       keyboardSessionActivityId = try Activity.request(attributes: AgentActivityAttributes(runId: UUID().uuidString),
-        content: ActivityContent(state: state, staleDate: endsAt), pushType: nil).id
+        content: keyboardSessionContent(endsAt: endsAt), pushType: nil).id
+      keyboardSessionEndsAt = endsAt
     } catch { log.error("AgentActivity stage=keyboard_session_activity_failed") }
   }
 
@@ -384,7 +398,10 @@ final class AgentActivityManager {
     let id = activityId
     let keepForSession = id != nil && id == keyboardSessionActivityId && keyboardSessionActive
     activityId = nil
-    if !keepForSession, id == keyboardSessionActivityId { keyboardSessionActivityId = nil }
+    if !keepForSession, id == keyboardSessionActivityId {
+      keyboardSessionActivityId = nil
+      keyboardSessionEndsAt = nil
+    }
     if keepForSession || alert != nil {
       await Self.activity(id: id)?.update(content(current), alertConfiguration: alert)
     }
