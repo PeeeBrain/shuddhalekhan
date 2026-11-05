@@ -77,10 +77,14 @@ final class AgentActivityManager {
     record = next
     // Continued processing supplies its own Live Activity on iOS 26; starting ours would duplicate it.
     if keyboardSessionActive, UIApplication.shared.applicationState != .active, let id = keyboardSessionActivityId {
-      activityId = id
-      await Self.activity(id: id)?.update(content(next))
-      // Session loss can interrupt the run while ActivityKit is updating; don't acknowledge a stopped run.
-      guard record?.runId == next.runId, record?.phase == .running else { throw AgentRunError.unknownRun }
+      if Self.activity(id: id)?.activityState == .active {
+        activityId = id
+        await Self.activity(id: id)?.update(content(next))
+        // Session loss can interrupt the run while ActivityKit is updating; don't acknowledge a stopped run.
+        guard record?.runId == next.runId, record?.phase == .running else { throw AgentRunError.unknownRun }
+      } else {
+        keyboardSessionActivityId = nil
+      }
     } else if UIApplication.shared.applicationState == .active && !usesSystemActivity && ActivityAuthorizationInfo().areActivitiesEnabled {
       do {
         activityId = try Activity.request(attributes: AgentActivityAttributes(runId: next.runId), content: content(next), pushType: nil).id
@@ -175,6 +179,10 @@ final class AgentActivityManager {
       pendingApprovalAction = nil
       notifiedApprovalId = nil
       AgentNotifications.shared.removeApproval(runId: current.runId)
+      if let id = activityId, id == keyboardSessionActivityId, Self.activity(id: id)?.activityState != .active {
+        keyboardSessionActivityId = nil
+        activityId = nil
+      }
       if (activityId == nil || (usesSystemActivity && activityId != keyboardSessionActivityId)) && UIApplication.shared.applicationState != .active {
         await AgentNotifications.shared.result(run: current)
       }
