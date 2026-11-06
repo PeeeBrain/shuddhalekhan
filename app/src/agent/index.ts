@@ -58,6 +58,13 @@ function main(): void {
     crlfDelay: Infinity,
   });
 
+  // Electron gone (or stopping us): close MCP clients, then exit so no orphan
+  // outlives the app. Bounded, since nobody is left to force-kill a stuck close.
+  input.on('close', () => {
+    setTimeout(() => process.exit(0), 5000).unref();
+    void beginShutdown(false).finally(() => process.exit(0));
+  });
+
   input.on('line', (line) => {
     try {
       handleLine(line);

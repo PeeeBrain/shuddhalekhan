@@ -36,6 +36,8 @@ export class JsonlProcessManager<TReceive, TSend> {
     const child = spawn(launch.command, launch.args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
+      // Own process group on POSIX so ProcessGroupJobPort can kill descendants.
+      detached: process.platform !== 'win32',
       env: launch.env,
     });
 

@@ -206,7 +206,7 @@ export async function checkForUpdates(options: { silent?: boolean } = {}): Promi
       state: 'latest',
       currentVersion: app.getVersion(),
       latestVersion: app.getVersion(),
-      message: 'Update checks run only in the packaged Windows app.',
+      message: 'Update checks run only in the packaged app.',
       checkedAt: now(),
     };
     setStatus(status);

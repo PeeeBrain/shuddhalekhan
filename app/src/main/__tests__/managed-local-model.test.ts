@@ -6,6 +6,7 @@ import { join } from 'path';
 import {
   createManagedLocalModelManager,
   replaceDirectory,
+  selectArchiveMembers,
   validateArchiveEntries,
 } from '../managed-local-model';
 
@@ -82,6 +83,14 @@ describe('managed local model lifecycle', () => {
 
     expect(await manager.getState()).toMatchObject({ kind: 'ready', modelId: 'test-model' });
     expect(await readFile(join(root, 'test-model-1', 'tokens.txt'), 'utf8')).toBe('test');
+  });
+
+  it('names selected members as the archive spells them, so GNU tar finds "./"-prefixed entries', () => {
+    // Upstream punctuation archives are packed with "./"; GNU tar needs exact member names.
+    const listing = ['./', './test-model/', './test-model/tokens.txt', './test-model/unused.bin'];
+    expect(selectArchiveMembers(listing, ['test-model/tokens.txt'])).toEqual(['./test-model/tokens.txt']);
+    expect(selectArchiveMembers(['model/tokens.txt'], ['model/tokens.txt'])).toEqual(['model/tokens.txt']);
+    expect(() => selectArchiveMembers(listing, ['test-model/missing.txt'])).toThrow('missing expected files');
   });
 
   it('rejects archive entries that could escape the staging directory', () => {

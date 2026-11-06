@@ -6,18 +6,27 @@ import {
   type UnicodeDispatchRecovery,
 } from '../../shared/live-dictation';
 
-const user32 = koffi.load('user32.dll');
-const kernel32 = koffi.load('kernel32.dll');
-
 const INPUT_KEYBOARD = 1;
 const INPUT_SIZE = 40;
 const KEYEVENTF_KEYUP = 0x0002;
 const KEYEVENTF_UNICODE = 0x0004;
 
-const SendInput = user32.func(
-  'uint32_t __stdcall SendInput(uint32_t cInputs, uint8_t * pInputs, int32_t cbSize)',
-);
-const GetLastError = kernel32.func('uint32_t __stdcall GetLastError()');
+let win32Api: ReturnType<typeof loadWin32Api> | null = null;
+
+/** Loaded on first use so importing this module never touches user32.dll off Windows. */
+function loadWin32Api() {
+  return {
+    SendInput: koffi.load('user32.dll').func(
+      'uint32_t __stdcall SendInput(uint32_t cInputs, uint8_t * pInputs, int32_t cbSize)',
+    ),
+    GetLastError: koffi.load('kernel32.dll').func('uint32_t __stdcall GetLastError()'),
+  };
+}
+
+function win32() {
+  win32Api ??= loadWin32Api();
+  return win32Api;
+}
 
 export interface UnicodeKeyboardInput {
   codeUnit: number;
@@ -84,6 +93,10 @@ export function dispatchUnicodeText(
 }
 
 function sendUnicodeInputs(text: string): Pick<UnicodeDispatchResult, 'acceptedEvents' | 'errorCode'> {
+  // uinput sends layout-bound key codes, not characters. Zero accepted events
+  // halts live typing safely and the final transcript is pasted instead.
+  if (process.platform !== 'win32') return { acceptedEvents: 0 };
+  const { SendInput, GetLastError } = win32();
   const inputs = buildUnicodeKeyboardInputs(text).map((event) =>
     keyboardInputBuffer(event.codeUnit, event.keyUp));
   const expectedEvents = inputs.length;

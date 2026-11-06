@@ -1,3 +1,4 @@
+import { homedir } from 'os';
 import { createHash, randomBytes } from 'crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { createServer, type Server } from 'http';
@@ -292,7 +293,7 @@ export function createRedirectAwareFetch(
 }
 
 function getAgentDataDir(): string {
-  const base = process.env.APPDATA ?? process.env.LOCALAPPDATA ?? process.cwd();
+  const base = process.env.APPDATA ?? process.env.LOCALAPPDATA ?? process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
   return join(base, 'Shuddhalekhan', 'agent');
 }
 

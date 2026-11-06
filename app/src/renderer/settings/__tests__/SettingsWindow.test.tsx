@@ -1134,7 +1134,7 @@ describe('Settings section reachability', () => {
 
     expect(screen.getByRole('region', { name: 'First-run setup' })).toBeInTheDocument();
     expect(screen.getByText('Set the whisper.cpp endpoint')).toBeInTheDocument();
-    expect(screen.getByText('Try a dictation (Ctrl + Win)')).toBeInTheDocument();
+    expect(screen.getByText(`Try a dictation (Ctrl + ${process.platform === 'linux' ? 'Super' : 'Win'})`)).toBeInTheDocument();
   });
 
   it('points fresh Live Dictation setups at WhisperLiveKit readiness in the checklist', async () => {

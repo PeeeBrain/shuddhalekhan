@@ -106,10 +106,13 @@ export function isSupportedOrdinaryKey(keyCode: number): boolean {
   return BY_KEY_CODE.has(keyCode);
 }
 
+/** Main has `process`; the sandboxed renderer only has the user agent. */
+const IS_LINUX = typeof process !== 'undefined' ? process.platform === 'linux' : navigator.userAgent.includes('Linux');
+
 export interface ModifierDefinition {
   /** Logical modifier identity shared by left and right variants. */
   id: ShortcutModifier;
-  /** Logical Windows key name shown on keycaps. */
+  /** Key name shown on keycaps (the Windows key is "Super" on Linux). */
   name: string;
   keyCodes: number[];
   domCodes: string[];
@@ -119,7 +122,7 @@ export const MODIFIER_DEFINITIONS: ModifierDefinition[] = [
   { id: 'ctrl', name: 'Ctrl', keyCodes: [0xa2, 0xa3], domCodes: ['ControlLeft', 'ControlRight'] },
   { id: 'alt', name: 'Alt', keyCodes: [0xa4, 0xa5], domCodes: ['AltLeft', 'AltRight'] },
   { id: 'shift', name: 'Shift', keyCodes: [0xa0, 0xa1], domCodes: ['ShiftLeft', 'ShiftRight'] },
-  { id: 'win', name: 'Win', keyCodes: [0x5b, 0x5c], domCodes: ['MetaLeft', 'MetaRight'] },
+  { id: 'win', name: IS_LINUX ? 'Super' : 'Win', keyCodes: [0x5b, 0x5c], domCodes: ['MetaLeft', 'MetaRight'] },
 ];
 
 const MODIFIER_BY_KEY_CODE = new Map<number, ShortcutModifier>();

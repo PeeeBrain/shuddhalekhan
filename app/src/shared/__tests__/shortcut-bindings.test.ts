@@ -55,7 +55,8 @@ describe('formatBinding', () => {
   });
 
   it('formats modifier-only bindings', () => {
-    expect(formatBinding({ keyCode: null, modifiers: ['ctrl', 'win'] })).toBe('Ctrl + Win');
+    expect(formatBinding({ keyCode: null, modifiers: ['ctrl', 'win'] }))
+      .toBe(process.platform === 'linux' ? 'Ctrl + Super' : 'Ctrl + Win');
   });
 
   it('formats navigation and punctuation keys', () => {

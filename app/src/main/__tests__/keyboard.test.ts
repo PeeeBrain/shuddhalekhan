@@ -30,6 +30,11 @@ mock.module('koffi', () => ({
   },
 }));
 
+// The state machine is platform-neutral; keep Linux test runs off real evdev.
+// Spread the real module: Bun module mocks leak into other test files.
+const linuxInput = await import('../native/linux-input');
+mock.module('../native/linux-input', () => ({ ...linuxInput, startEvdevKeyboardReader: () => () => undefined }));
+
 type HookModule = typeof import('../native/keyboard');
 
 async function importHook(testName: string): Promise<HookModule> {

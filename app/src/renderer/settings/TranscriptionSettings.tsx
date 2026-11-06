@@ -691,7 +691,7 @@ export function TranscriptionSettings({
                 : 'Sarvam supports 22 Indian languages and Indian English.'
               : features.automaticLanguageDetection
                 ? undefined
-                : `${engineLabel} needs an explicit language. Shuddhalekhan does not substitute the Windows language.`}
+                : `${engineLabel} needs an explicit language. Shuddhalekhan does not substitute the system language.`}
             errorId={languageErrorId}
             error={fieldErrors[FIELD_ID_LANGUAGE] ?? languageError}
             onChange={(value) => void transition({ language: provider === 'sarvam' ? value.split('-')[0] : value }, FIELD_ID_LANGUAGE)}

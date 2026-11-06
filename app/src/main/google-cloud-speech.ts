@@ -96,7 +96,7 @@ export function createGoogleCloudSpeechTranscriber(
 function loadApplicationDefaultCredential(): GoogleServiceAccount | AuthorizedUser | null {
   const candidates = [
     process.env.GOOGLE_APPLICATION_CREDENTIALS,
-    join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'gcloud', 'application_default_credentials.json'),
+    join(process.env.APPDATA || join(homedir(), '.config'), 'gcloud', 'application_default_credentials.json'),
   ].filter((value): value is string => Boolean(value));
   for (const path of candidates) {
     try {

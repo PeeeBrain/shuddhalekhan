@@ -227,7 +227,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
       if (uncertain) {
         const message = !fullyDispatched
           ? 'Live Dictation stopped before the full transcript was inserted.'
-          : 'Live Dictation stopped because Windows could not confirm the last insertion.';
+          : 'Live Dictation stopped because the system could not confirm the last insertion.';
         if (runtimeShell) {
           runtimeShell.showFailure(
             result.recordingSessionId,
@@ -385,7 +385,7 @@ function getRecoveryMessage(result: InjectResult): string {
     return 'Clipboard changed before Shuddhalekhan could paste the transcript.';
   }
   if (result.kind === 'target-changed') return result.reason;
-  if (result.kind === 'input-blocked') return result.reason ?? 'Windows blocked automatic paste.';
+  if (result.kind === 'input-blocked') return result.reason ?? 'The system blocked automatic paste.';
   if (result.kind === 'error') return result.message;
   return 'Automatic paste failed.';
 }
@@ -849,7 +849,17 @@ if (!gotSingleInstanceLock) {
       },
     });
 
-    recordingSession.start();
+    try {
+      recordingSession.start();
+    } catch (error) {
+      // Linux: keyboards are unreadable until the user joins the `input` group.
+      void dialog.showMessageBox({
+        type: 'warning',
+        title: 'Shortcuts unavailable',
+        message: 'Shuddhalekhan could not listen for its keyboard shortcuts.',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
     const failClosed = () => { void recordingSession.cancel(); };
     powerMonitor.on('suspend', failClosed);
     powerMonitor.on('lock-screen', failClosed);
@@ -906,7 +916,9 @@ if (!gotSingleInstanceLock) {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;
-      app.quit();
+      // Cleanup often settles as a microtask inside this same before-quit
+      // dispatch; a re-entrant app.quit() there hangs Electron (seen on SIGTERM).
+      setImmediate(() => app.quit());
     });
   });
 }

@@ -6,7 +6,7 @@ import { failedProviderTest } from '../shared/agent-provider';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
 import { getPersistentStoreDirectory } from './store-path';
-import { KoffiJobObjectPort, type JobObjectPort } from './native/job-object';
+import { createJobObjectPort, type JobObjectPort } from './native/job-object';
 import type { AgentMemoryCommitResult, AgentRunContext } from '../shared/agent-context';
 
 export type SidecarLifecycleError =
@@ -60,7 +60,7 @@ export class AgentSidecarManager {
     private readonly onEvent: SidecarEventHandler,
     deps: SidecarManagerDeps = {},
   ) {
-    this.jobPort = deps.jobPort ?? new KoffiJobObjectPort();
+    this.jobPort = deps.jobPort ?? createJobObjectPort();
     this.shutdownTimeoutMs = deps.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     this.scheduleTimeout =
       deps.scheduleTimeout ??

@@ -223,6 +223,8 @@ export async function deleteManagedLocalModel(value?: unknown): Promise<ManagedL
 let gpu: Promise<ManagedLocalModelSnapshot['gpu']> | null = null;
 function gpuInfo(): Promise<ManagedLocalModelSnapshot['gpu']> {
   return gpu ??= new Promise(resolve => {
+    // CUDA runtime artifacts in the catalog are Windows builds.
+    if (process.platform !== 'win32') return resolve({ name: null, message: 'GPU acceleration is available on Windows only.' });
     execFile('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true, timeout: 3000 }, (error, stdout) => {
       const name = !error ? stdout.trim().split(/\r?\n/)[0] : null;
       resolve({ name, message: name ? '' : 'No NVIDIA GPU detected.' });

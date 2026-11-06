@@ -101,7 +101,7 @@ export function assessBinding(
   ) {
     return {
       status: 'error',
-      message: 'Ctrl + Alt + Delete is reserved by Windows and cannot be hooked reliably.',
+      message: 'Ctrl + Alt + Delete is reserved by the system and cannot be hooked reliably.',
     };
   }
 

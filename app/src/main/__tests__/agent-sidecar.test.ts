@@ -1,3 +1,4 @@
+import { join } from 'path';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'events';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
@@ -155,8 +156,8 @@ describe('AgentSidecarManager', () => {
     manager.startRun('run-1', 'check mail', config);
 
     expect(spawn).toHaveBeenCalledWith(
-      'bun.exe',
-      ['D:\\git_repos\\speech-2-text\\src\\agent\\index.ts'],
+      process.platform === 'win32' ? 'bun.exe' : 'bun',
+      [join('D:\\git_repos\\speech-2-text', 'src', 'agent', 'index.ts')],
       expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
     );
     expect(sentMessages()).toEqual([]);
@@ -282,13 +283,13 @@ describe('AgentSidecarManager', () => {
 
       expect(spawn).toHaveBeenCalledWith(
         process.execPath,
-        ['C:\\Program Files\\Shuddhalekhan\\resources\\app.asar\\out\\agent\\index.js'],
+        [join('C:\\Program Files\\Shuddhalekhan\\resources', 'app.asar', 'out', 'agent', 'index.js')],
         expect.objectContaining({
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
           env: expect.objectContaining({
             ELECTRON_RUN_AS_NODE: '1',
-            SHUDDHALEKHAN_AUDIT_DIR: 'C:\\Users\\tester\\AppData\\Roaming\\Shuddhalekhan',
+            SHUDDHALEKHAN_AUDIT_DIR: join('C:\\Users\\tester\\AppData\\Roaming', 'Shuddhalekhan'),
           }),
         })
       );

@@ -172,7 +172,12 @@ function App() {
   }
 
   if (hash === 'settings') {
-    return <SettingsWindow />;
+    return (
+      <>
+        <div className="title-bar-drag" aria-hidden="true" />
+        <SettingsWindow />
+      </>
+    );
   }
 
   return null;
