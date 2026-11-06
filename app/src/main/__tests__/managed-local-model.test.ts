@@ -93,6 +93,14 @@ describe('managed local model lifecycle', () => {
     expect(() => selectArchiveMembers(listing, ['test-model/missing.txt'])).toThrow('missing expected files');
   });
 
+  it('selects every member a CUDA-style wildcard include matches', () => {
+    const listing = ['nvidia/cublas/bin/', 'nvidia/cublas/bin/cublas64_12.dll', 'nvidia/cublas/bin/cublasLt64_12.dll',
+      'nvidia/cublas/include/cublas.h'];
+    expect(selectArchiveMembers(listing, ['nvidia/cublas/bin/*.dll']))
+      .toEqual(['nvidia/cublas/bin/cublas64_12.dll', 'nvidia/cublas/bin/cublasLt64_12.dll']);
+    expect(() => selectArchiveMembers(listing, ['nvidia/cudnn/bin/*.dll'])).toThrow('missing expected files');
+  });
+
   it('rejects archive entries that could escape the staging directory', () => {
     expect(() => validateArchiveEntries(['model/tokens.txt', '../outside'])).toThrow('unsafe');
     expect(() => validateArchiveEntries(['model/tokens.txt', '/absolute'])).toThrow('unsafe');

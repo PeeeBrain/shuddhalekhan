@@ -85,20 +85,27 @@ export function startEvdevKeyboardReader(onKey: (vkCode: number, isDown: boolean
   // ponytail: one `cat` per keyboard keeps blocking evdev reads off libuv's
   // small threadpool without a native poll binding. Keyboards plugged in
   // later are picked up on the next app start.
+  // Which keyboards hold each key: a key is released only when the last one
+  // lets go, so the same key held on two keyboards stays down.
+  const holders = new Map<number, Set<string>>();
+  const release = (vkCode: number, path: string) => {
+    const held = holders.get(vkCode);
+    if (!held?.delete(path) || held.size > 0) return;
+    holders.delete(vkCode);
+    onKey(vkCode, false);
+  };
   const readers: ChildProcess[] = devices.map((path) => {
     const child = spawn('cat', [path], { stdio: ['ignore', 'pipe', 'ignore'] });
-    const held = new Set<number>();
     child.stdout?.on('data', createInputEventParser((vkCode, isDown) => {
-      if (isDown) held.add(vkCode);
-      else held.delete(vkCode);
-      onKey(vkCode, isDown);
+      if (!isDown) return release(vkCode, path);
+      holders.set(vkCode, (holders.get(vkCode) ?? new Set()).add(path));
+      onKey(vkCode, true);
     }));
     child.on('error', (error) => console.error(`Failed to read ${path}:`, error));
-    // An unplugged keyboard never sends its key-ups; release them so a held
+    // An unplugged keyboard never sends its key-ups; release what it held so a
     // shortcut does not stay down.
     child.on('close', () => {
-      for (const vkCode of held) onKey(vkCode, false);
-      held.clear();
+      for (const vkCode of [...holders.keys()]) release(vkCode, path);
     });
     return child;
   });

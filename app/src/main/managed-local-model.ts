@@ -294,13 +294,17 @@ export function validateArchiveEntries(entries: string[]): void {
 }
 
 /**
- * Maps wanted paths to members as the archive spells them ("./dir/file" or
- * "dir/file"): bsdtar matches either form, GNU tar only the exact one.
+ * Maps wanted paths (exact, or with `*` such as `bin/*.dll`) to members as the
+ * archive spells them ("./dir/file" or "dir/file"): bsdtar matches either form,
+ * GNU tar only the exact one.
  */
 export function selectArchiveMembers(listing: string[], include: string[]): string[] {
-  const members = listing.filter((entry) => include.includes(entry.replace(/^\.\//, '')));
-  if (members.length !== include.length) throw new Error('The model archive is missing expected files.');
-  return members;
+  const patterns = include.map((path) => new RegExp(`^${path.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)); // `*` spans `/`, as bsdtar's does
+  const names = listing.map((entry) => entry.replace(/^\.\//, ''));
+  if (!patterns.every((pattern) => names.some((name) => pattern.test(name)))) {
+    throw new Error('The model archive is missing expected files.');
+  }
+  return listing.filter((_, index) => patterns.some((pattern) => pattern.test(names[index])));
 }
 
 /** Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. */

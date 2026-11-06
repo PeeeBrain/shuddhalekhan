@@ -59,10 +59,19 @@ function main(): void {
   });
 
   // Electron gone (or stopping us): close MCP clients, then exit so no orphan
-  // outlives the app. Bounded, since nobody is left to force-kill a stuck close.
+  // outlives the app. On POSIX we lead our own process group (detached spawn)
+  // and Electron may not be alive to kill it, so the last step kills the group:
+  // any MCP server or tool process that ignored EOF dies with us.
+  const exitWithGroup = () => {
+    auditStore.close();
+    if (process.platform !== 'win32') {
+      try { process.kill(-process.pid, 'SIGKILL'); } catch { /* not a group leader */ }
+    }
+    process.exit(0);
+  };
   input.on('close', () => {
-    setTimeout(() => process.exit(0), 5000).unref();
-    void beginShutdown(false).finally(() => process.exit(0));
+    setTimeout(exitWithGroup, 3000).unref();
+    void beginShutdown(false).finally(exitWithGroup);
   });
 
   input.on('line', (line) => {
