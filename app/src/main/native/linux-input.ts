@@ -189,12 +189,14 @@ export function sendVirtualKeys(events: Array<{ vk: number; keyUp: boolean }>): 
       else down.add(code);
       accepted += 1;
     }
+    // A sequence cut short by an unmapped key must not leave Ctrl/Shift held.
+    for (const code of down) write(code, 0);
   } catch (error) {
     console.error('uinput write failed:', error);
-  }
-  // A short or failed sequence must not leave Ctrl/Shift held on the desktop.
-  for (const code of down) {
-    try { write(code, 0); } catch { /* device gone; nothing left to release */ }
+    // Destroying the device makes the kernel release every key it held, so no
+    // Ctrl/Shift stays down; the next paste recreates it.
+    try { closeSync(fd); } catch { /* already gone */ }
+    virtualKeyboardFd = null;
   }
   return accepted;
 }
