@@ -1,8 +1,5 @@
-import { describe, expect, it, mock } from 'bun:test';
-
-mock.module('koffi', () => ({ default: { load: mock() } }));
-
-const { createInputEventParser, parseKeyboardDevices } = await import('../linux-input');
+import { describe, expect, it } from 'bun:test';
+import { createInputEventParser, parseKeyboardDevices } from '../linux-input';
 
 function inputEvent(type: number, code: number, value: number): Buffer {
   const event = Buffer.alloc(24);
