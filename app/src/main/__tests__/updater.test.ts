@@ -49,7 +49,7 @@ describe('updater', () => {
       state: 'latest',
       currentVersion: '4.0.0',
       latestVersion: '4.0.0',
-      message: 'Update checks run only in the packaged Windows app.',
+      message: 'Update checks run only in the packaged app.',
     }));
     expect(electronMock.dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Updates Unavailable in Development',

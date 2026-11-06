@@ -1,5 +1,7 @@
 import { createHash } from 'crypto';
-import { clipboard } from 'electron';
+// Namespace import: resolved only on use, so modules importing this without an
+// Electron runtime (Windows tests) don't fail on a missing named export.
+import * as electron from 'electron';
 import koffi from 'koffi';
 import { buildPasteStrategyEvents } from '../paste-strategy';
 import type { PasteStrategy } from '../../types/ipc';
@@ -48,7 +50,7 @@ export function getClipboardSequenceNumber(): number {
   if (process.platform !== 'win32') {
     // ponytail: X11/Wayland expose no change counter; a text hash detects a
     // user copy during paste but misses image-only changes.
-    return createHash('sha1').update(clipboard.readText()).digest().readUInt32LE(0);
+    return createHash('sha1').update(electron.clipboard.readText()).digest().readUInt32LE(0);
   }
   // GetClipboardSequenceNumber returns a uint32_t value. Windows documents it as
   // "monotonically increasing", but it can wrap around after ~4 billion writes.
