@@ -177,11 +177,24 @@ export function sendVirtualKeys(events: Array<{ vk: number; keyUp: boolean }>): 
     return 0;
   }
   let accepted = 0;
-  for (const { vk, keyUp } of events) {
-    const code = VK_TO_EVDEV.get(vk);
-    if (code === undefined) break;
-    writeSync(fd, Buffer.concat([inputEvent(EV_KEY, code, keyUp ? 0 : 1), inputEvent(EV_SYN, 0, 0)]));
-    accepted += 1;
+  const down = new Set<number>();
+  const write = (code: number, value: number) =>
+    writeSync(fd, Buffer.concat([inputEvent(EV_KEY, code, value), inputEvent(EV_SYN, 0, 0)]));
+  try {
+    for (const { vk, keyUp } of events) {
+      const code = VK_TO_EVDEV.get(vk);
+      if (code === undefined) break;
+      write(code, keyUp ? 0 : 1);
+      if (keyUp) down.delete(code);
+      else down.add(code);
+      accepted += 1;
+    }
+  } catch (error) {
+    console.error('uinput write failed:', error);
+  }
+  // A short or failed sequence must not leave Ctrl/Shift held on the desktop.
+  for (const code of down) {
+    try { write(code, 0); } catch { /* device gone; nothing left to release */ }
   }
   return accepted;
 }

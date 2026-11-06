@@ -135,12 +135,11 @@
   font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
 }
 
-/* Window-drag strip under the hidden title bar; height matches titleBarOverlay in settings-window.ts. */
+/* Window-drag strip under the hidden title bar; height matches titleBarOverlay in settings-window.ts.
+   It takes layout space, so scrolled content never slides under it (or the caption buttons). */
 .title-bar-drag {
-  position: fixed;
-  inset: 0 0 auto;
   height: 36px;
-  z-index: 50;
+  flex-shrink: 0;
   -webkit-app-region: drag;
 }
 

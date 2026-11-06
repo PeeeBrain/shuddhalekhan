@@ -107,7 +107,7 @@ export function isSupportedOrdinaryKey(keyCode: number): boolean {
 }
 
 /** Main has `process`; the sandboxed renderer only has the user agent. */
-const IS_LINUX = typeof process !== 'undefined' ? process.platform === 'linux' : navigator.userAgent.includes('Linux');
+export const IS_LINUX = typeof process !== 'undefined' ? process.platform === 'linux' : navigator.userAgent.includes('Linux');
 
 export interface ModifierDefinition {
   /** Logical modifier identity shared by left and right variants. */

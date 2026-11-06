@@ -19,10 +19,12 @@ function drawWaveform(canvas: HTMLCanvasElement, level: number, phase: number): 
     BAR_INDICES.map((index) => computeBarScale(level, phase, index)),
     dpr,
   );
-  if (canvas.width !== canvasWidth || canvas.height !== canvasHeight) {
+  const cssWidth = `${canvasWidth / dpr}px`;
+  // A scale change can keep the rounded backing size but still change the CSS size.
+  if (canvas.width !== canvasWidth || canvas.height !== canvasHeight || canvas.style.width !== cssWidth) {
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
-    canvas.style.width = `${canvasWidth / dpr}px`;
+    canvas.style.width = cssWidth;
     canvas.style.height = `${canvasHeight / dpr}px`;
   }
   const context = canvas.getContext('2d');
@@ -82,6 +84,21 @@ export function RecordingPopup({
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('recording:duration-warning', setRemainingSeconds);
     return unsubscribe;
+  }, []);
+
+  // Redraw when the pill moves to a display with another scale, even while parked.
+  useEffect(() => {
+    let query: MediaQueryList;
+    const redraw = () => {
+      if (canvasRef.current) drawWaveform(canvasRef.current, levelRef.current, phaseRef.current);
+      watch();
+    };
+    const watch = () => {
+      query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      query.addEventListener('change', redraw, { once: true });
+    };
+    watch();
+    return () => query.removeEventListener('change', redraw);
   }, []);
 
   useEffect(() => {

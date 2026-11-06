@@ -3,6 +3,16 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { TranscriptionProviderId } from '../types/ipc';
+
+/** Where gcloud keeps Application Default Credentials, in lookup order. */
+export function applicationDefaultCredentialPaths(): string[] {
+  const configDir = process.env.APPDATA
+    || (process.platform === 'win32' ? join(homedir(), 'AppData', 'Roaming') : join(homedir(), '.config'));
+  return [
+    process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    join(configDir, 'gcloud', 'application_default_credentials.json'),
+  ].filter((value): value is string => Boolean(value));
+}
 import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '../shared/transcription-features';
 export type { TranscriptionProviderId } from '../types/ipc';
 
@@ -261,11 +271,7 @@ export function validateProviderReadiness(
       errors.push('Google service-account credentials are not configured. Import them in Settings.');
     }
     if (google.credentialSource === 'adc') {
-      const adcPaths = [
-        process.env.GOOGLE_APPLICATION_CREDENTIALS,
-        join(process.env.APPDATA || join(homedir(), '.config'), 'gcloud', 'application_default_credentials.json'),
-      ].filter((value): value is string => Boolean(value));
-      if (!adcPaths.some((path) => existsSync(path))) {
+      if (!applicationDefaultCredentialPaths().some((path) => existsSync(path))) {
         errors.push('Application Default Credentials could not be found. Configure ADC before recording.');
       }
     }

@@ -1,9 +1,8 @@
 import { createSign } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
 import type { GoogleCloudSpeechProviderConfig } from '../types/ipc';
 import {
+  applicationDefaultCredentialPaths,
   cleanFillerWords,
   failureForHttpStatus,
   type RecognitionSettings,
@@ -94,11 +93,7 @@ export function createGoogleCloudSpeechTranscriber(
 }
 
 function loadApplicationDefaultCredential(): GoogleServiceAccount | AuthorizedUser | null {
-  const candidates = [
-    process.env.GOOGLE_APPLICATION_CREDENTIALS,
-    join(process.env.APPDATA || join(homedir(), '.config'), 'gcloud', 'application_default_credentials.json'),
-  ].filter((value): value is string => Boolean(value));
-  for (const path of candidates) {
+  for (const path of applicationDefaultCredentialPaths()) {
     try {
       if (!existsSync(path)) continue;
       const parsed = JSON.parse(readFileSync(path, 'utf8')) as GoogleServiceAccount | AuthorizedUser;
