@@ -41,25 +41,36 @@ const ExtendedLimitInformationType = koffi.struct('JOBOBJECT_EXTENDED_LIMIT_INFO
   PeakJobMemoryUsed: 'uintptr_t',
 });
 
-const kernel32 = koffi.load('kernel32.dll');
+let win32Api: ReturnType<typeof loadWin32Api> | null = null;
 
-const CreateJobObjectW = kernel32.func(
-  'uintptr_t __stdcall CreateJobObjectW(void * lpJobAttributes, char16_t * lpName)'
-);
-// Win32 BOOL is a 4-byte int; koffi's bool is the 1-byte C++ _Bool.
-const SetInformationJobObject = kernel32.func(
-  'int32_t __stdcall SetInformationJobObject(uintptr_t hJob, int32_t jobObjectInfoClass, JOBOBJECT_EXTENDED_LIMIT_INFORMATION * lpJobObjectInfo, uint32_t cbJobObjectInfoLength)'
-);
-const AssignProcessToJobObjectFn = kernel32.func(
-  'int32_t __stdcall AssignProcessToJobObject(uintptr_t hJob, uintptr_t hProcess)'
-);
-const OpenProcessForContainment = kernel32.func(
-  'uintptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, int32_t bInheritHandle, uint32_t dwProcessId)'
-);
-const TerminateJobObjectFn = kernel32.func(
-  'int32_t __stdcall TerminateJobObject(uintptr_t hJob, uint32_t uExitCode)'
-);
-const CloseHandleFn = kernel32.func('int32_t __stdcall CloseHandle(uintptr_t hObject)');
+/** Loaded on first use so importing this module never touches kernel32.dll off Windows. */
+function loadWin32Api() {
+  const kernel32 = koffi.load('kernel32.dll');
+  return {
+    CreateJobObjectW: kernel32.func(
+      'uintptr_t __stdcall CreateJobObjectW(void * lpJobAttributes, char16_t * lpName)'
+    ),
+    // Win32 BOOL is a 4-byte int; koffi's bool is the 1-byte C++ _Bool.
+    SetInformationJobObject: kernel32.func(
+      'int32_t __stdcall SetInformationJobObject(uintptr_t hJob, int32_t jobObjectInfoClass, JOBOBJECT_EXTENDED_LIMIT_INFORMATION * lpJobObjectInfo, uint32_t cbJobObjectInfoLength)'
+    ),
+    AssignProcessToJobObjectFn: kernel32.func(
+      'int32_t __stdcall AssignProcessToJobObject(uintptr_t hJob, uintptr_t hProcess)'
+    ),
+    OpenProcessForContainment: kernel32.func(
+      'uintptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, int32_t bInheritHandle, uint32_t dwProcessId)'
+    ),
+    TerminateJobObjectFn: kernel32.func(
+      'int32_t __stdcall TerminateJobObject(uintptr_t hJob, uint32_t uExitCode)'
+    ),
+    CloseHandleFn: kernel32.func('int32_t __stdcall CloseHandle(uintptr_t hObject)'),
+  };
+}
+
+function win32() {
+  win32Api ??= loadWin32Api();
+  return win32Api;
+}
 
 function killOnCloseLimits(): Record<string, unknown> {
   return {
@@ -91,6 +102,7 @@ function killOnCloseLimits(): Record<string, unknown> {
 
 export class KoffiJobObjectPort implements JobObjectPort {
   createKillOnCloseJob(): unknown | null {
+    const { CreateJobObjectW, SetInformationJobObject, CloseHandleFn } = win32();
     const job = CreateJobObjectW(null, null);
     if (!job) return null;
 
@@ -109,6 +121,7 @@ export class KoffiJobObjectPort implements JobObjectPort {
   }
 
   assign(job: unknown, pid: number): boolean {
+    const { OpenProcessForContainment, AssignProcessToJobObjectFn, CloseHandleFn } = win32();
     const process = OpenProcessForContainment(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
     if (!process) return false;
 
@@ -120,7 +133,39 @@ export class KoffiJobObjectPort implements JobObjectPort {
   }
 
   terminate(job: unknown): void {
+    const { TerminateJobObjectFn, CloseHandleFn } = win32();
     TerminateJobObjectFn(job, 1);
     CloseHandleFn(job);
   }
+}
+
+/**
+ * POSIX stand-in for a Job Object: the sidecar is spawned as its own process
+ * group leader (see JsonlProcessManager), so killing the group also kills MCP
+ * descendants. If Electron dies without teardown, the sidecar exits on stdin
+ * EOF and its stdio MCP servers follow.
+ */
+export class ProcessGroupJobPort implements JobObjectPort {
+  createKillOnCloseJob(): { pid: number | null } {
+    return { pid: null };
+  }
+
+  assign(job: unknown, pid: number): boolean {
+    (job as { pid: number | null }).pid = pid;
+    return true;
+  }
+
+  terminate(job: unknown): void {
+    const { pid } = job as { pid: number | null };
+    if (!pid) return;
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      // Group already gone.
+    }
+  }
+}
+
+export function createJobObjectPort(): JobObjectPort {
+  return process.platform === 'win32' ? new KoffiJobObjectPort() : new ProcessGroupJobPort();
 }

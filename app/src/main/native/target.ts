@@ -84,40 +84,64 @@ export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTar
   };
 }
 
-const user32 = koffi.load('user32.dll');
-const kernel32 = koffi.load('kernel32.dll');
+/** Loaded on first use so importing this module never touches user32.dll off Windows. */
+function loadWin32Deps(): TargetCaptureDeps {
+  const user32 = koffi.load('user32.dll');
+  const kernel32 = koffi.load('kernel32.dll');
 
-const GetForegroundWindow = user32.func('uintptr_t __stdcall GetForegroundWindow()');
-const GetWindowThreadProcessId = user32.func(
-  'uint32_t __stdcall GetWindowThreadProcessId(uintptr_t hWnd, uint32_t * lpdwProcessId)'
-);
-const GetClassNameW = user32.func(
-  'int32_t __stdcall GetClassNameW(uintptr_t hWnd, char16_t * lpClassName, int32_t nMaxCount)'
-);
-const OpenProcess = kernel32.func(
-  'uintptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, bool bInheritHandle, uint32_t dwProcessId)'
-);
-const QueryFullProcessImageNameW = kernel32.func(
-  'bool __stdcall QueryFullProcessImageNameW(uintptr_t hProcess, uint32_t dwFlags, char16_t * lpExeName, uint32_t * lpdwSize)'
-);
-const GetProcessTimes = kernel32.func(
-  'bool __stdcall GetProcessTimes(uintptr_t hProcess, void * lpCreationTime, void * lpExitTime, void * lpKernelTime, void * lpUserTime)'
-);
-const CloseHandle = kernel32.func('bool __stdcall CloseHandle(uintptr_t hObject)');
+  const GetForegroundWindow = user32.func('uintptr_t __stdcall GetForegroundWindow()');
+  const GetWindowThreadProcessId = user32.func(
+    'uint32_t __stdcall GetWindowThreadProcessId(uintptr_t hWnd, uint32_t * lpdwProcessId)'
+  );
+  const GetClassNameW = user32.func(
+    'int32_t __stdcall GetClassNameW(uintptr_t hWnd, char16_t * lpClassName, int32_t nMaxCount)'
+  );
+  const OpenProcess = kernel32.func(
+    'uintptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, bool bInheritHandle, uint32_t dwProcessId)'
+  );
+  const QueryFullProcessImageNameW = kernel32.func(
+    'bool __stdcall QueryFullProcessImageNameW(uintptr_t hProcess, uint32_t dwFlags, char16_t * lpExeName, uint32_t * lpdwSize)'
+  );
+  const GetProcessTimes = kernel32.func(
+    'bool __stdcall GetProcessTimes(uintptr_t hProcess, void * lpCreationTime, void * lpExitTime, void * lpKernelTime, void * lpUserTime)'
+  );
+  const CloseHandle = kernel32.func('bool __stdcall CloseHandle(uintptr_t hObject)');
 
-const realDeps: TargetCaptureDeps = {
-  getForegroundWindow: () => GetForegroundWindow() as bigint,
-  getWindowThreadProcessId: (hwnd, processIdBuf) =>
-    GetWindowThreadProcessId(hwnd, processIdBuf) as bigint,
-  getClassName: (hwnd, classNameBuf, maxCount) =>
-    Number(GetClassNameW(hwnd, classNameBuf, maxCount)),
-  openProcess: (desiredAccess, inheritHandle, processId) =>
-    OpenProcess(desiredAccess, inheritHandle, processId) as bigint,
-  queryFullProcessImageName: (handle, flags, exeNameBuf, sizeBuf) =>
-    QueryFullProcessImageNameW(handle, flags, exeNameBuf, sizeBuf) as boolean,
-  getProcessCreationTime: (handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) =>
-    GetProcessTimes(handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) as boolean,
-  closeHandle: (handle) => CloseHandle(handle) as boolean,
+  return {
+    getForegroundWindow: () => GetForegroundWindow() as bigint,
+    getWindowThreadProcessId: (hwnd, processIdBuf) =>
+      GetWindowThreadProcessId(hwnd, processIdBuf) as bigint,
+    getClassName: (hwnd, classNameBuf, maxCount) =>
+      Number(GetClassNameW(hwnd, classNameBuf, maxCount)),
+    openProcess: (desiredAccess, inheritHandle, processId) =>
+      OpenProcess(desiredAccess, inheritHandle, processId) as bigint,
+    queryFullProcessImageName: (handle, flags, exeNameBuf, sizeBuf) =>
+      QueryFullProcessImageNameW(handle, flags, exeNameBuf, sizeBuf) as boolean,
+    getProcessCreationTime: (handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) =>
+      GetProcessTimes(handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) as boolean,
+    closeHandle: (handle) => CloseHandle(handle) as boolean,
+  };
+}
+
+/**
+ * Linux has no portable focused-window query (Wayland hides it), so every
+ * capture returns the same anonymous target: pastes are always allowed and
+ * per-app paste overrides fall back to the default strategy.
+ */
+const LINUX_TARGET: DictationTargetSnapshot = {
+  hwnd: 0,
+  processId: 0,
+  processCreationTime: '',
+  threadId: 0,
+  windowClass: '',
+  executablePath: null,
+  capturedAt: new Date(0).toISOString(),
 };
 
-export const captureForegroundTarget = createTargetCapture(realDeps);
+let captureWin32Target: (() => DictationTargetSnapshot | null) | null = null;
+
+export function captureForegroundTarget(): DictationTargetSnapshot | null {
+  if (process.platform !== 'win32') return LINUX_TARGET;
+  captureWin32Target ??= createTargetCapture(loadWin32Deps());
+  return captureWin32Target();
+}

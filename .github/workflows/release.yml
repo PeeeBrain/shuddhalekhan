@@ -1,4 +1,4 @@
-name: Release Windows App
+name: Release App
 
 on:
   push:
@@ -116,15 +116,75 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
-      - name: Finalize GitHub release metadata
+      - name: Share release notes with later jobs
         shell: pwsh
+        run: Copy-Item (Join-Path $env:RUNNER_TEMP 'release-notes.md') app/release-notes.md
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: |
+            app/release-notes.json
+            app/release-notes.md
+
+  # Runs after the Windows job so it reuses its checks, draft release, and notes.
+  release-linux:
+    needs: release
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install rpmbuild
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: app
+
+      - name: Derive application version from release tag
+        working-directory: app
+        run: bun pm pkg set "version=${GITHUB_REF_NAME#v}"
+
+      - name: Build
+        run: bun run --cwd app build
+
+      - name: Package and publish deb and rpm
+        run: bun run --cwd app dist -- --linux deb rpm --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  finalize:
+    needs: [release, release-linux]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Finalize GitHub release metadata
         run: |
-          $tag = '${{ steps.release_version.outputs.tag }}'
-          $version = '${{ steps.release_version.outputs.version }}'
-          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          gh release edit $tag `
-            --title "Shuddhalekhan $version" `
-            --notes-file $notesFile `
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Shuddhalekhan ${GITHUB_REF_NAME#v}" \
+            --notes-file release-notes.md \
             --draft=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -6,9 +6,11 @@
   "type": "module",
   "main": "./out/main/index.cjs",
   "author": "parthashirolkar",
+  "homepage": "https://github.com/PeeeBrain/shuddhalekhan",
+  "desktopName": "shuddhalekhan.desktop",
   "scripts": {
     "predev": "install-electron",
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev -- --ozone-platform=x11",
     "build": "electron-vite build && bun run build:agent",
     "build:agent": "vite build --config vite.agent.config.ts",
     "preview": "electron-vite preview",
@@ -116,6 +118,36 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "rpm"
+      ],
+      "icon": "icons/icon.png",
+      "category": "Utility",
+      "executableName": "shuddhalekhan",
+      "artifactName": "shuddhalekhan-${version}-${arch}.${ext}",
+      "syncDesktopName": true,
+      "maintainer": "parthashirolkar <parthashirolkar@gmail.com>",
+      "synopsis": "Voice dictation and voice-to-agent commands",
+      "executableArgs": [
+        "--ozone-platform=x11"
+      ]
+    },
+    "deb": {
+      "packageName": "shuddhalekhan",
+      "afterInstall": "packaging/linux/after-install.sh",
+      "fpm": [
+        "packaging/linux/70-shuddhalekhan-uinput.rules=/usr/lib/udev/rules.d/70-shuddhalekhan-uinput.rules"
+      ]
+    },
+    "rpm": {
+      "packageName": "shuddhalekhan",
+      "afterInstall": "packaging/linux/after-install.sh",
+      "fpm": [
+        "packaging/linux/70-shuddhalekhan-uinput.rules=/usr/lib/udev/rules.d/70-shuddhalekhan-uinput.rules"
+      ]
     },
     "publish": {
       "provider": "github",

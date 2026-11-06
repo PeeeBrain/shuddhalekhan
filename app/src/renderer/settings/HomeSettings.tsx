@@ -74,7 +74,7 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
           />
           <StatusRow
             label="Microphone"
-            detail={hasChosenMic ? 'Chosen device' : 'Follows the Windows default input'}
+            detail={hasChosenMic ? 'Chosen device' : 'Follows the system default input'}
             tone="success"
             status={hasChosenMic ? 'Selected' : 'System default'}
             section="shortcuts"

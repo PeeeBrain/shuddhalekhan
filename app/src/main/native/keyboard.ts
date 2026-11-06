@@ -2,9 +2,40 @@ import koffi from 'koffi';
 import type { RecordingActivationMode, RecordingIntent, ShortcutBinding, ShortcutModifier } from '../../types/ipc';
 import { modifierForKeyCode } from '../../shared/shortcut-keys';
 import { DEFAULT_SHORTCUTS, normalizeBinding, SHORTCUT_MODIFIER_ORDER } from '../../shared/shortcut-bindings';
+import { startEvdevKeyboardReader } from './linux-input';
 
-const user32 = koffi.load('user32.dll');
-const kernel32 = koffi.load('kernel32.dll');
+const KbdLlHookStructType = koffi.struct('KBDLLHOOKSTRUCT', {
+  vkCode: 'uint32_t',
+  scanCode: 'uint32_t',
+  flags: 'uint32_t',
+  time: 'uint32_t',
+  dwExtraInfo: 'uintptr_t',
+});
+
+const callbackProto = koffi.proto('LowLevelKeyboardProc', 'intptr_t', ['int32_t', 'uintptr_t', koffi.pointer(KbdLlHookStructType)]);
+
+let win32Api: ReturnType<typeof loadWin32Api> | null = null;
+
+/** Loaded on first use so importing this module never touches user32.dll off Windows. */
+function loadWin32Api() {
+  const user32 = koffi.load('user32.dll');
+  const kernel32 = koffi.load('kernel32.dll');
+  return {
+    SetWindowsHookEx: user32.func(
+      'uintptr_t __stdcall SetWindowsHookExW(int32_t idHook, void * lpfn, uintptr_t hMod, uint32_t dwThreadId)'
+    ),
+    CallNextHookEx: user32.func(
+      'intptr_t __stdcall CallNextHookEx(uintptr_t hhk, int32_t nCode, uintptr_t wParam, void * lParam)'
+    ),
+    UnhookWindowsHookEx: user32.func('bool __stdcall UnhookWindowsHookEx(uintptr_t hhk)'),
+    GetModuleHandle: kernel32.func('uintptr_t __stdcall GetModuleHandleW(const char16_t * lpModuleName)'),
+  };
+}
+
+function win32() {
+  win32Api ??= loadWin32Api();
+  return win32Api;
+}
 
 const WH_KEYBOARD_LL = 13;
 const WM_KEYDOWN = 0x0100;
@@ -15,24 +46,6 @@ const WM_SYSKEYUP = 0x0105;
 const VK_LWIN = 0x5b;
 const VK_RWIN = 0x5c;
 
-const KbdLlHookStructType = koffi.struct('KBDLLHOOKSTRUCT', {
-  vkCode: 'uint32_t',
-  scanCode: 'uint32_t',
-  flags: 'uint32_t',
-  time: 'uint32_t',
-  dwExtraInfo: 'uintptr_t',
-});
-
-const SetWindowsHookEx = user32.func(
-  'uintptr_t __stdcall SetWindowsHookExW(int32_t idHook, void * lpfn, uintptr_t hMod, uint32_t dwThreadId)'
-);
-const CallNextHookEx = user32.func(
-  'intptr_t __stdcall CallNextHookEx(uintptr_t hhk, int32_t nCode, uintptr_t wParam, void * lParam)'
-);
-const UnhookWindowsHookEx = user32.func('bool __stdcall UnhookWindowsHookEx(uintptr_t hhk)');
-const GetModuleHandle = kernel32.func('uintptr_t __stdcall GetModuleHandleW(const char16_t * lpModuleName)');
-
-const callbackProto = koffi.proto('LowLevelKeyboardProc', 'intptr_t', ['int32_t', 'uintptr_t', koffi.pointer(KbdLlHookStructType)]);
 type KoffiRegisteredCallback = ReturnType<typeof koffi.register>;
 
 interface ActiveSession {
@@ -55,6 +68,7 @@ export interface KeyboardHookStartOptions {
 export class KeyboardHook {
   private hookHandle: number = 0;
   private callback: KoffiRegisteredCallback | null = null;
+  private stopLinuxReader: (() => void) | null = null;
   private readonly pressed = new Set<number>();
   private session: ActiveSession | null = null;
   private toggleAwaitingRelease: ActiveSession | null = null;
@@ -75,6 +89,15 @@ export class KeyboardHook {
     this.getBinding = options.getBinding ?? ((intent) => DEFAULT_SHORTCUTS[intent].binding);
     this.getActivationMode = options.getActivationMode ?? (() => 'push-to-talk');
 
+    if (process.platform === 'linux') {
+      // evdev observes keys but cannot consume them; triggers also reach the focused app.
+      this.stopLinuxReader = startEvdevKeyboardReader((vkCode, isDown) => {
+        this.handleKey(vkCode, isDown);
+      });
+      return;
+    }
+
+    const { SetWindowsHookEx, CallNextHookEx, GetModuleHandle } = win32();
     const proc = (nCode: number, wParam: bigint, lParam: unknown): bigint => {
       if (nCode >= 0) {
         const msg = Number(wParam);
@@ -135,8 +158,10 @@ export class KeyboardHook {
   }
 
   stop(): void {
+    this.stopLinuxReader?.();
+    this.stopLinuxReader = null;
     if (this.hookHandle) {
-      UnhookWindowsHookEx(this.hookHandle);
+      win32().UnhookWindowsHookEx(this.hookHandle);
       this.hookHandle = 0;
     }
     if (this.callback) {

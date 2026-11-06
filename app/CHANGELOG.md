@@ -7,6 +7,9 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Platforms
+- Linux builds: `.deb` for Ubuntu/Debian and `.rpm` for Fedora/RHEL, published with each release and updated in-app. Shortcuts and paste work on X11 and Wayland once the user is in the `input` group.
+
 ### Transcription
 - Managed Local setup includes on-device English punctuation and capitalization for CPU and NVIDIA GPU inference. Existing installations keep working and can explicitly install the remaining formatting files.
 - Parakeet supports personal dictionary hints, pinned to each recording and retained through CPU fallback. Granite TurboCTC vocabulary hints remain unavailable in its native runtime.

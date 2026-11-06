@@ -87,7 +87,7 @@ export function Onboarding({
   const shortcut = formatBinding(config.shortcuts.dictation.binding);
 
   return (
-    <main className="min-h-screen bg-canvas px-6 py-10 text-foreground">
+    <main className="min-h-full bg-background px-6 py-10 text-foreground">
       <div className="mx-auto max-w-2xl">
         <header className="mb-8">
           <p className="mb-2 text-[13px] font-medium text-muted-foreground">Welcome to Shuddhalekhan</p>
@@ -122,7 +122,7 @@ export function Onboarding({
           </Step>
 
           <Step icon={Mic} number="2" title="Check your microphone" done={micState === 'verified'} disabled={!modelReady}>
-            <p className="text-sm text-muted-foreground">Shuddhalekhan will use your default Windows input device.</p>
+            <p className="text-sm text-muted-foreground">Shuddhalekhan will use your default input device.</p>
             {micState === 'checking' ? (
               <div className="mt-4">
                 <div className="h-2 overflow-hidden rounded-full bg-muted" aria-label="Microphone level">
@@ -136,7 +136,7 @@ export function Onboarding({
             ) : (
               <>
                 <Button className="mt-4" disabled={!modelReady} onClick={() => void startMicrophoneCheck()}>Start microphone check</Button>
-                {micState === 'error' ? <p role="alert" className="mt-3 text-sm text-destructive">Microphone access failed. Check Windows microphone privacy settings, then retry.</p> : null}
+                {micState === 'error' ? <p role="alert" className="mt-3 text-sm text-destructive">Microphone access failed. Check your system microphone privacy settings, then retry.</p> : null}
               </>
             )}
           </Step>

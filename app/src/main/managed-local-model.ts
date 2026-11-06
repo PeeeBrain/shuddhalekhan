@@ -293,21 +293,38 @@ export function validateArchiveEntries(entries: string[]): void {
   }
 }
 
+/**
+ * Maps wanted paths (exact, or with `*` such as `bin/*.dll`) to members as the
+ * archive spells them ("./dir/file" or "dir/file"): bsdtar matches either form,
+ * GNU tar only the exact one.
+ */
+export function selectArchiveMembers(listing: string[], include: string[]): string[] {
+  const patterns = include.map((path) => new RegExp(`^${path.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)); // `*` spans `/`, as bsdtar's does
+  const names = listing.map((entry) => entry.replace(/^\.\//, ''));
+  if (!patterns.every((pattern) => names.some((name) => pattern.test(name)))) {
+    throw new Error('The model archive is missing expected files.');
+  }
+  return listing.filter((_, index) => patterns.some((pattern) => pattern.test(names[index])));
+}
+
 /** Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. */
 async function extractTar(archivePath: string, stagingPath: string, include: string[] = []): Promise<void> {
-  const entries = (await runTar(['-tf', archivePath, ...include])).split(/\r?\n/).filter(Boolean);
-  validateArchiveEntries(entries);
-  const verbose = (await runTar(['-tvf', archivePath, ...include])).split(/\r?\n/).filter(Boolean);
+  const listing = (await runTar(['-tf', archivePath])).split(/\r?\n/).filter(Boolean);
+  const members = selectArchiveMembers(listing, include);
+  validateArchiveEntries(listing);
+  const verbose = (await runTar(['-tvf', archivePath, ...members])).split(/\r?\n/).filter(Boolean);
   if (verbose.some((line) => line[0] !== '-' && line[0] !== 'd')) {
     throw new Error('The model archive contains unsupported links or device entries.');
   }
-  await runTar(['-xf', archivePath, '-C', stagingPath, ...include]);
+  await runTar(['-xf', archivePath, '-C', stagingPath, ...members]);
 }
 
 function runTar(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     // Windows' own bsdtar; a GNU tar earlier on PATH (Git for Windows) cannot read zip or drive-letter paths.
-    const child = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe'), args, { windowsHide: true });
+    // Elsewhere the system tar is fine: zip archives (CUDA wheels) are Windows-only.
+    const tar = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+    const child = spawn(tar, args, { windowsHide: true });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');

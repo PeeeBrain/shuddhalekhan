@@ -2,6 +2,7 @@ import type { ShortcutBinding, ShortcutModifier, ShortcutsConfig } from '../type
 import {
   DELETE_KEY_CODE,
   ESCAPE_KEY_CODE,
+  IS_LINUX,
   isSupportedOrdinaryKey,
   modifierDisplayName,
   ordinaryKeyByCode,
@@ -101,7 +102,7 @@ export function assessBinding(
   ) {
     return {
       status: 'error',
-      message: 'Ctrl + Alt + Delete is reserved by Windows and cannot be hooked reliably.',
+      message: 'Ctrl + Alt + Delete is reserved by the system and cannot be hooked reliably.',
     };
   }
 
@@ -115,7 +116,10 @@ export function assessBinding(
   if (binding.keyCode !== null && binding.modifiers.length === 0) {
     return {
       status: 'warning',
-      message: `${formatBinding(binding)} will be consumed everywhere while assigned and cannot be typed in other apps.`,
+      // Linux observes keys without consuming them (evdev), so the key also reaches the focused app.
+      message: IS_LINUX
+        ? `${formatBinding(binding)} will start recording everywhere and still reach the app you are typing in.`
+        : `${formatBinding(binding)} will be consumed everywhere while assigned and cannot be typed in other apps.`,
     };
   }
 

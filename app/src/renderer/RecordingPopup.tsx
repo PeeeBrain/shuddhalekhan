@@ -1,14 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic, Bot } from 'lucide-react';
 import type { RecordingIntent } from '../types/ipc';
 import {
   BAR_COUNT,
   computeBarScale,
   isWaveformSettled,
-  PHASE_STEP,
-  SMOOTHING_FACTOR,
+  layoutBars,
+  stepWaveform,
 } from './recording-popup-math';
 import './RecordingPopup.css';
+
+const BAR_INDICES = Array.from({ length: BAR_COUNT }, (_, index) => index);
+
+/** Paints the bars on whole device pixels; the canvas takes its tint from CSS `color`. */
+function drawWaveform(canvas: HTMLCanvasElement, level: number, phase: number): void {
+  const dpr = window.devicePixelRatio || 1;
+  const { canvasWidth, canvasHeight, bars } = layoutBars(
+    BAR_INDICES.map((index) => computeBarScale(level, phase, index)),
+    dpr,
+  );
+  const cssWidth = `${canvasWidth / dpr}px`;
+  // A scale change can keep the rounded backing size but still change the CSS size.
+  if (canvas.width !== canvasWidth || canvas.height !== canvasHeight || canvas.style.width !== cssWidth) {
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    canvas.style.width = cssWidth;
+    canvas.style.height = `${canvasHeight / dpr}px`;
+  }
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  context.clearRect(0, 0, canvasWidth, canvasHeight);
+  context.fillStyle = getComputedStyle(canvas).color;
+  context.beginPath();
+  for (const bar of bars) context.roundRect(bar.x, bar.y, bar.width, bar.height, bar.width / 2);
+  context.fill();
+}
 
 interface RecordingPopupProps {
   initialMode?: RecordingIntent;
@@ -30,12 +56,17 @@ export function RecordingPopup({
     recordingSessionId ? 'visible' : 'hidden'
   );
   const targetLevelRef = useRef(0);
-  // The waveform is painted straight to the DOM from refs: a level change must
+  // The waveform is painted straight to a canvas from refs: a level change must
   // not re-render React, and a silent mic must not repaint at all.
-  const barRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const levelRef = useRef(0);
   const phaseRef = useRef(0);
   const wakeRef = useRef<(() => void) | null>(null);
+  // Sizes and draws the canvas during commit, so its first paint is never the default 300×150.
+  const attachCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
+    canvasRef.current = canvas;
+    if (canvas) drawWaveform(canvas, levelRef.current, phaseRef.current);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('recording:mode-changed', setMode);
@@ -53,6 +84,21 @@ export function RecordingPopup({
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('recording:duration-warning', setRemainingSeconds);
     return unsubscribe;
+  }, []);
+
+  // Redraw when the pill moves to a display with another scale, even while parked.
+  useEffect(() => {
+    let query: MediaQueryList;
+    const redraw = () => {
+      if (canvasRef.current) drawWaveform(canvasRef.current, levelRef.current, phaseRef.current);
+      watch();
+    };
+    const watch = () => {
+      query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      query.addEventListener('change', redraw, { once: true });
+    };
+    watch();
+    return () => query.removeEventListener('change', redraw);
   }, []);
 
   useEffect(() => {
@@ -97,24 +143,32 @@ export function RecordingPopup({
   }, [pillState]);
 
   useEffect(() => {
-    if (reducedMotion || pillState === 'hidden') return;
+    if (pillState === 'hidden') return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Repaint for the new tint on mode change; under reduced motion this static shape is the whole waveform.
+    drawWaveform(canvas, levelRef.current, phaseRef.current);
+    if (reducedMotion) return;
 
     let raf = 0;
-    const frame = () => {
+    let last = 0;
+    const frame = (now: number) => {
       raf = 0;
       const target = targetLevelRef.current;
-      levelRef.current += (target - levelRef.current) * SMOOTHING_FACTOR;
-      phaseRef.current += PHASE_STEP;
-      barRefs.current.forEach((bar, index) => {
-        if (bar) bar.style.transform = `scaleY(${computeBarScale(levelRef.current, phaseRef.current, index)})`;
-      });
+      const next = stepWaveform(levelRef.current, phaseRef.current, target, last ? now - last : 0);
+      last = now;
+      levelRef.current = next.level;
+      phaseRef.current = next.phase;
+      drawWaveform(canvas, next.level, next.phase);
       // Park once silent; the next audible level wakes the loop again.
       if (!isWaveformSettled(target, levelRef.current) && !document.hidden) {
         raf = requestAnimationFrame(frame);
       }
     };
     const wake = () => {
-      if (!raf && !document.hidden) raf = requestAnimationFrame(frame);
+      if (raf || document.hidden) return;
+      last = 0; // a parked loop resumes without a time jump
+      raf = requestAnimationFrame(frame);
     };
 
     wakeRef.current = wake;
@@ -125,7 +179,7 @@ export function RecordingPopup({
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', wake);
     };
-  }, [reducedMotion, pillState]);
+  }, [reducedMotion, pillState, mode]);
 
   useEffect(() => {
     if (pillState === 'hidden') return;
@@ -157,15 +211,9 @@ export function RecordingPopup({
         <span aria-hidden="true" className="recording-glyph flex size-7 shrink-0 items-center justify-center">
           <Glyph className="size-3.5" />
         </span>
-        <div className={`h-8 flex-1 items-center justify-center gap-[3px] ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
-          {Array.from({ length: BAR_COUNT }, (_, index) => (
-            <span
-              key={index}
-              ref={(bar) => { barRefs.current[index] = bar; }}
-              className="bar"
-              style={{ transform: `scaleY(${computeBarScale(0, 0, index)})` }}
-            />
-          ))}
+        <div className={`h-8 flex-1 items-center justify-center ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
+          <canvas ref={attachCanvas} />
+
         </div>
         {remainingSeconds !== null ? (
           <span className="flex-1 whitespace-nowrap text-[11px] font-medium tabular-nums text-warning">

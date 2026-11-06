@@ -32,7 +32,8 @@ export const managedLocalTranscriber = createManagedLocalEngine({
   getSettings: () => ({ selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads), revision,
     contextual: selection().model === 'parakeet' && getConfig().dictionary.length > 0 }),
   async getCandidates(settings) {
-    const preference = settings.devices[settings.model];
+    // CUDA artifacts are Windows builds; elsewhere a GPU choice runs on CPU.
+    const preference = process.platform === 'win32' ? settings.devices[settings.model] : 'cpu';
     const candidates: LocalRuntime[] = [];
     const formatting = getManagedLocalModelManager({ model: settings.model, backend: 'cpu' }).parts
       .find(part => part.manifest.id === LOCAL_FORMATTING_MODEL.id);
@@ -197,6 +198,7 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
 
 export async function installManagedLocalModel(value?: unknown): Promise<ManagedLocalModelSnapshot> {
   const target = managedLocalTarget(value);
+  if (target.backend === 'cuda' && process.platform !== 'win32') throw new Error('GPU acceleration is available on Windows only.');
   await getManagedLocalModelManager(target).install();
   revision++;
   const settings = selection();
@@ -223,6 +225,8 @@ export async function deleteManagedLocalModel(value?: unknown): Promise<ManagedL
 let gpu: Promise<ManagedLocalModelSnapshot['gpu']> | null = null;
 function gpuInfo(): Promise<ManagedLocalModelSnapshot['gpu']> {
   return gpu ??= new Promise(resolve => {
+    // CUDA runtime artifacts in the catalog are Windows builds.
+    if (process.platform !== 'win32') return resolve({ name: null, message: 'GPU acceleration is available on Windows only.' });
     execFile('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true, timeout: 3000 }, (error, stdout) => {
       const name = !error ? stdout.trim().split(/\r?\n/)[0] : null;
       resolve({ name, message: name ? '' : 'No NVIDIA GPU detected.' });
