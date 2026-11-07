@@ -7,7 +7,6 @@ import { createManagedLocalModelManager } from '../src/main/managed-local-model'
 import { LOCAL_MODELS, LOCAL_FORMATTING_MODEL } from '../src/main/managed-local-catalog';
 import { createManagedLocalTranscriber } from '../src/main/managed-local-runtime';
 import { startLocalRuntimeProcess } from '../src/main/managed-local-process';
-import { decodePcm16Wave } from '../src/main/managed-local-wave';
 import type { LocalRuntime } from '../src/main/managed-local-engine';
 
 // Downloads every pinned upstream part into --root (reused across runs), then transcribes on each model/backend.
@@ -25,10 +24,6 @@ void app.whenReady().then(async () => {
   try {
     const bytes = await readFile(audioPath);
     const audio = new Uint8Array(bytes);
-    const wave = decodePcm16Wave(audio.buffer);
-    const pcm = new Uint8Array(wave.samples.length * 2);
-    const pcmView = new DataView(pcm.buffer);
-    for (let i = 0; i < wave.samples.length; i++) pcmView.setInt16(i * 2, Math.max(-32768, Math.min(32767, Math.round(wave.samples[i] * 32768))), true);
     for (const model of LOCAL_MODELS) {
       for (const backend of ['cpu', 'cuda'] as const) {
         const paths: string[] = [];
@@ -50,11 +45,7 @@ void app.whenReady().then(async () => {
         await worker.warmup();
         const text = await worker.transcribe(request);
         if (!text.trim()) throw new Error(`${model.key}/${backend} returned an empty transcript.`);
-        const recording = worker.startIncremental(request);
-        for (let offset = 0; offset < pcm.length; offset += 1280) await recording.send(pcm.slice(offset, offset + 1280));
-        const incremental = await recording.finish();
-        if (!incremental.trim()) throw new Error(`${model.key}/${backend} returned an empty incremental transcript.`);
-        results.push({ model: model.key, backend, text, incremental, verified: true });
+        results.push({ model: model.key, backend, text, verified: true });
         await worker.shutdown();
       }
     }

@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import * as fs from 'fs';
 import { generateKeyPairSync } from 'crypto';
 import type { GoogleCloudSpeechProviderConfig } from '../../types/ipc';
 import {
@@ -26,6 +27,29 @@ const CREDENTIAL = JSON.stringify({
 
 describe('Google Cloud Speech-to-Text v2', () => {
   beforeEach(() => { globalThis.fetch = mock() as unknown as typeof fetch; });
+
+  it('pins Application Default Credentials before the recording can outlive a file change', async () => {
+    const previous = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = '/adc-fixture';
+    let document = JSON.stringify({ type: 'authorized_user', client_id: 'original', client_secret: 'secret', refresh_token: 'refresh' });
+    const exists = spyOn(fs, 'existsSync').mockImplementation((path: unknown) => path === '/adc-fixture');
+    const read = spyOn(fs, 'readFileSync').mockImplementation(() => Buffer.from(document));
+    try {
+      const transcriber = createGoogleCloudSpeechTranscriber({ ...CONFIG, credentialSource: 'adc' }, null);
+      document = JSON.stringify({ type: 'authorized_user', client_id: 'replacement', client_secret: 'new', refresh_token: 'new' });
+      const fetchMock = fetch as unknown as ReturnType<typeof mock>;
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token' })))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ results: [{ alternatives: [{ transcript: 'done' }] }] })));
+      await transcriber.transcribe({ audio: new Uint8Array(64),
+        recognition: { language: 'en', task: 'transcribe', dictionary: [], removeFillerWords: false } });
+      expect(fetchMock.mock.calls[0]?.[1]?.body.get('client_id')).toBe('original');
+    } finally {
+      exists.mockRestore();
+      read.mockRestore();
+      if (previous === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      else process.env.GOOGLE_APPLICATION_CREDENTIALS = previous;
+    }
+  });
 
   it('validates imported service-account documents without returning fields', () => {
     expect(parseGoogleServiceAccount(CREDENTIAL).type).toBe('service_account');
@@ -93,6 +117,24 @@ describe('Google Cloud Speech-to-Text v2', () => {
     delete original.config.features;
     expect(retry).toEqual(original);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('carries cancellation through authentication and skips the punctuation retry once cancelled', async () => {
+    const controller = new AbortController();
+    const fetchMock = fetch as unknown as ReturnType<typeof mock>;
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token' })))
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        return new Response('', { status: 400 });
+      });
+    await expect(createGoogleCloudSpeechTranscriber(CONFIG, CREDENTIAL).transcribe({
+      audio: new Uint8Array([1, 2, 3]),
+      recognition: { language: 'en', task: 'transcribe', dictionary: [], removeFillerWords: false },
+      signal: controller.signal,
+    })).rejects.toMatchObject({ status: 400 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) expect(init?.signal).toBe(controller.signal);
   });
 
   it('stops after a second invalid recognition response', async () => {

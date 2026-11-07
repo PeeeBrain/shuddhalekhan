@@ -16,6 +16,7 @@ import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from 
 import { Tag, ToggleRow, SelectRow, DraftTextRow, ReadOnlyRow } from './ui/rows';
 import { Disclosure } from './ui/Disclosure';
 import { SetupChecklist } from './SetupChecklist';
+import { WaylandInsertionPanel } from './WaylandInsertionPanel';
 import { CredentialControl } from './ui/CredentialControl';
 import { WHISPER_LANGUAGES, isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
@@ -37,7 +38,7 @@ import { useManagedLocalSnapshot } from './use-managed-local-snapshot';
 import { ipcErrorMessage } from './use-settings-persistence';
 import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import {
-  getAppConfigDictationError,
+  getDictationConfigError,
   classifyFormatterEndpoint,
 } from '../../shared/dictation-runtime';
 import {
@@ -108,7 +109,7 @@ const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: Pro
     options: [
       { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM', description: 'Self-hosted NVIDIA offline transcription.' },
       { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible', description: 'A compatible private or local audio endpoint.' },
-      { value: 'whisper-live-kit', label: 'WhisperLiveKit', description: 'Self-hosted Batch and Live Dictation with health and protocol readiness checks.' },
+      { value: 'whisper-live-kit', label: 'WhisperLiveKit', description: 'Self-hosted Dictation with live previews, health and protocol readiness checks.' },
     ],
   },
 ];
@@ -376,7 +377,6 @@ export function TranscriptionSettings({
   const { commitTranscription, fieldErrors } = persistence;
   const provider = config.transcription.activeProvider;
   const [transitionNotice, setTransitionNotice] = useState<string | null>(null);
-  const [pendingLive, setPendingLive] = useState(false);
   const [formatterSetupOpen, setFormatterSetupOpen] = useState(false);
   // Unsaved formatter edits; only a profile main can keep (URL + model) is saved while not Corrected.
   const [formatterDraft, setFormatterDraft] = useState<DictationFormatterProfile | null>(null);
@@ -425,10 +425,9 @@ export function TranscriptionSettings({
     return () => off?.();
   }, [settingsIpc, provider]);
   const dictation = config.dictation;
-  const storedDictationModeError = getAppConfigDictationError(config) ?? undefined;
+  const storedDictationModeError = getDictationConfigError(dictation) ?? undefined;
   const formatter = formatterDraft ?? defaultFormatterProfile(dictation);
-  const correctedError = getAppConfigDictationError({ ...config, dictation: { mode: 'corrected', formatter } });
-  const pushToTalk = config.shortcuts.dictation.activationMode !== 'toggle';
+  const correctedError = getDictationConfigError({ mode: 'corrected', formatter });
 
   const sarvam = config.transcription.providers.sarvam;
   const sarvamVerbatim = provider === 'sarvam' && sarvam.mode === 'verbatim' && config.task === 'transcribe';
@@ -448,7 +447,6 @@ export function TranscriptionSettings({
   const dictionaryError = features.dictionaryHints ? getTranscriptionDictionaryError(config) ?? undefined : undefined;
   const modeOptions = [
     { value: 'batch', label: MODE_LABELS.batch },
-    ...(features.streaming ? [{ value: 'live', label: `${MODE_LABELS.live} (beta)` }] : []),
     { value: 'corrected', label: MODE_LABELS.corrected },
   ];
   const transcriptionStep = provider === 'whisper-live-kit'
@@ -461,7 +459,6 @@ export function TranscriptionSettings({
     };
 
   const handleProviderChange = (value: string) => {
-    setPendingLive(false);
     void transition({
       transcription: { ...config.transcription, activeProvider: value as TranscriptionProviderId },
     }, FIELD_ID_PROVIDER);
@@ -478,7 +475,6 @@ export function TranscriptionSettings({
 
   const handleDictationModeChange = (value: string) => {
     const mode = value as DictationMode;
-    setPendingLive(false);
     if (mode === 'corrected') {
       // An incomplete formatter is set up in place instead of saving a broken Corrected mode.
       if (correctedError) setFormatterSetupOpen(true);
@@ -486,22 +482,7 @@ export function TranscriptionSettings({
       return;
     }
     closeFormatterSetup();
-    if (mode === 'live' && pushToTalk) {
-      setPendingLive(true);
-      return;
-    }
     void transition({ dictation: { ...dictation, mode } }, FIELD_ID_DICTATION_MODE);
-  };
-
-  const enableLiveWithToggle = async () => {
-    const saved = await transition({
-      dictation: { ...dictation, mode: 'live' },
-      shortcuts: {
-        ...config.shortcuts,
-        dictation: { ...config.shortcuts.dictation, activationMode: 'toggle' },
-      },
-    }, FIELD_ID_DICTATION_MODE);
-    if (saved) setPendingLive(false);
   };
 
   /** Outside Corrected, only a profile main keeps (URL + model) is saved; anything less stays a draft. */
@@ -614,31 +595,22 @@ export function TranscriptionSettings({
           />
         ) : (
           <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
-            {dictation.mode === 'live'
-              ? 'Clean transcription is off in Live Dictation, so text appears as it is recognized. Your saved choice applies to Batch and Corrected Dictation.'
-              : sarvamVerbatim
-                ? 'Clean transcription is off while Sarvam verbatim mode is selected, so filler words stay exactly as spoken. Your saved choice applies to other modes.'
-                : `Clean transcription is not available with ${engineLabel}. Your saved choice applies to other providers.`}
+            {sarvamVerbatim
+              ? 'Clean transcription is off while Sarvam verbatim mode is selected, so filler words stay exactly as spoken. Your saved choice applies to other modes.'
+              : `Clean transcription is not available with ${engineLabel}. Your saved choice applies to other providers.`}
           </p>
         )}
         <SelectRow
           label="Dictation mode"
-          value={dictation.mode === 'live' && !features.streaming ? '' : dictation.mode}
+          value={dictation.mode}
           options={modeOptions}
-          description={`Batch inserts text once you stop.${features.streaming ? ' Live inserts text as you speak.' : ''} Corrected sends the finished transcript to a formatter model you set up.`}
+          description={`Text is inserted once, after you stop. Corrected Dictation first sends the finished transcript to a formatter model you set up.${features.streaming
+            ? ` ${engineLabel} also shows a preview while you speak; it replaces the former Live Dictation mode.`
+            : ''}`}
           errorId={modeErrorId}
           error={storedDictationModeError ?? fieldErrors[FIELD_ID_DICTATION_MODE]}
           onChange={handleDictationModeChange}
         />
-        {pendingLive ? (
-          <div role="note" className="flex flex-wrap items-center gap-2 border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
-            <span>Live Dictation needs Toggle activation, and your Dictation shortcut uses Push to Talk.</span>
-            <Button size="xs" variant="secondary" onClick={() => void enableLiveWithToggle()}>
-              Switch to Toggle and turn on Live
-            </Button>
-            <Button size="xs" variant="ghost" onClick={() => setPendingLive(false)}>Cancel</Button>
-          </div>
-        ) : null}
         {dictation.mode === 'corrected' || formatterSetupOpen ? (
           <CorrectedDictationFormatterSection
             formatter={formatter}
@@ -719,6 +691,7 @@ export function TranscriptionSettings({
         )}
         </SettingsCard>
       </SettingsPanel>
+      <WaylandInsertionPanel settingsIpc={settingsIpc} />
       <PrivacyNote provider={provider} formatter={dictation.mode === 'corrected' ? dictation.formatter : null} />
     </div>
   );
@@ -727,8 +700,7 @@ export function TranscriptionSettings({
 type Transition = (patch: TranscriptionSettingsPatch, fieldId: string) => Promise<AppConfig | null>;
 
 const MODE_LABELS: Record<DictationMode, string> = {
-  batch: 'Batch Dictation',
-  live: 'Live Dictation',
+  batch: 'Dictation',
   corrected: 'Corrected Dictation',
 };
 
@@ -746,9 +718,6 @@ function languageLabel(code: string): string {
 function describeNormalization(requested: AppConfig, saved: AppConfig): string | null {
   const engine = providerLabel(saved.transcription.activeProvider);
   const notes: string[] = [];
-  if (requested.dictation.mode !== saved.dictation.mode) {
-    notes.push(`${MODE_LABELS[saved.dictation.mode]} is on because ${engine} doesn't support ${MODE_LABELS[requested.dictation.mode]}.`);
-  }
   if (requested.task !== saved.task) notes.push(`Task is now Transcribe because ${engine} doesn't translate.`);
   if (requested.language !== saved.language) {
     notes.push(`Spoken language is now ${languageLabel(saved.language)} because ${engine} doesn't support ${languageLabel(requested.language)}.`);
@@ -843,7 +812,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc, local, transiti
   const gpu = entry?.cuda;
   const runtime = snapshot?.runtime;
   const showGpuFiles = device !== 'cpu' || (gpu !== undefined && gpu.state.kind !== 'missing');
-  const offerAlternatives = device === 'cuda' && (gpu?.state.kind !== 'ready' || runtime?.status === 'error');
+  const offerAlternatives = gpu !== undefined && device === 'cuda' && (gpu.state.kind !== 'ready' || runtime?.status === 'error');
 
   const saveDevice = (next: ManagedLocalDevice) => void persistence.commit('managedLocal', {
     ...selection,
@@ -903,7 +872,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc, local, transiti
                     {[
                       item.languages.join(', '),
                       item.cpu.state.kind === 'ready' || item.cpu.legacy?.inUse ? 'Installed' : null,
-                      item.cuda.state.kind === 'ready' ? 'GPU ready' : null,
+                      item.cuda?.state.kind === 'ready' ? 'GPU ready' : null,
                     ].filter(Boolean).join(' · ')}
                   </span>
                 </span>
@@ -926,7 +895,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc, local, transiti
 
       {entry ? (
         <div className="mt-4 border-t border-border/50">
-          <SelectRow
+          {gpu ? <SelectRow
             label="Processor"
             value={device}
             options={[
@@ -938,7 +907,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc, local, transiti
             errorId={deviceErrorId}
             error={persistence.fieldErrors[FIELD_ID_LOCAL_DEVICE]}
             onChange={(value) => saveDevice(value as ManagedLocalDevice)}
-          />
+          /> : null}
           {runtime ? <RuntimeStatus runtime={runtime} /> : null}
           {offerAlternatives ? (
             <div className="flex flex-wrap items-center gap-2 pb-3 text-xs text-muted-foreground">
@@ -1419,7 +1388,7 @@ function SarvamSection({ config, persistence, settingsIpc, transition }: Props &
         />
       </div>
       <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
-        Recordings stop automatically at Sarvam's 30-second REST limit. Works with Batch and Corrected Dictation; Live Dictation is not available.
+        Recordings stop automatically at Sarvam's 30-second REST limit. Text appears once you stop; Sarvam doesn't show a preview while you speak.
       </p>
     </>
   );
@@ -1803,7 +1772,7 @@ function WhisperLiveKitSection({
         {readiness ? <WhisperLiveKitReadinessTag readiness={readiness} /> : null}
       </div>
       <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
-        WhisperLiveKit is a user-hosted service. Batch Dictation sends audio to its REST endpoint and Live Dictation streams it over a WebSocket while you record; readiness opens a short-lived handshake socket and keeps no idle ASR connection.
+        WhisperLiveKit is a user-hosted service. Dictation streams audio while recording to show previews, then inserts the final transcript once after stopping. If streaming fails, the complete recording is sent to the same service. Readiness opens a short-lived handshake socket and keeps no idle ASR connection.
       </p>
     </>
   );

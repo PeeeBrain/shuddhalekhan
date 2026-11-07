@@ -1,11 +1,12 @@
-import { afterAll, describe, expect, it, mock } from 'bun:test';
+import { afterAll, describe, expect, it } from 'bun:test';
 import { access, mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { LOCAL_MODELS, LOCAL_FORMATTING_MODEL } from '../managed-local-catalog';
 import type { ManagedLocalModelManifest } from '../managed-local-model';
+import { mockConfigModule } from '../../test/config-mock';
 
-mock.module('../config', () => ({ getConfig: () => ({ dictionary: [] }) }));
+mockConfigModule({ getConfig: () => ({ dictionary: [] }) });
 // Main's orchestration tests initialize their own registry; this fixture owns a separate model root.
 const { configureManagedLocal, deleteManagedLocalModel, getManagedLocalModelManager } = await import(`../managed-local?test=${Date.now()}`);
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 import type {
-  DictationMode,
+  DictationConfig,
   DictationTargetSnapshot,
   RecordingActivationMode,
   RecordingIntent,
@@ -18,15 +18,24 @@ import { captureForegroundTarget } from './native/target';
 import { localWhisperCppTranscriber } from './whisper';
 import {
   TranscriptionFailure,
+  cleanFillerWords,
   type RecognitionSettings,
   type StreamingTranscriptionSession,
   type Transcriber,
 } from './transcription';
 import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from './streaming-transcript';
-import { LiveDictationController } from './live-dictation-controller';
-import { sendUnicodeText } from './native/unicode-input';
-import { LIVE_KEYBOARD_RELEASE_GRACE_MS } from '../shared/live-dictation';
 import { RuntimeShell } from './runtime-shell';
+
+/** Matches Managed Local's per-request bound; recording length itself is not capped here. */
+const RECOGNITION_TIMEOUT_MS = 120_000;
+
+/** Main-process-only settings and resolved formatter credential, pinned at Begin. */
+export interface DictationDeliveryContext {
+  config: DictationConfig;
+  language: string;
+  protectedTerms: string[];
+  formatterApiKey: string | null;
+}
 
 export interface RecordingResult {
   text: string;
@@ -37,13 +46,8 @@ export interface RecordingResult {
   revision: number;
   capabilities: RecordingPresentationEnvelope['capabilities'];
   outcome: NonNullable<RecordingPresentationEnvelope['outcome']>;
-  liveDictation?: {
-    halted: boolean;
-    uncertain: boolean;
-    hasAcceptedEvents: boolean;
-    dispatchedProjectedLength: number;
-    rawCommitted: string;
-  };
+  dictation: DictationDeliveryContext | null;
+  signal: AbortSignal;
 }
 
 export interface AudioCapture {
@@ -75,7 +79,7 @@ export interface RuntimeShellBackend extends AudioCapture {
   updateDurationWarning(remainingSeconds: number | null): void;
   updateAudioLevel(level: number): void;
   showStreamingPreview?(recordingSessionId: string, committed: string, tentative: string): void;
-  showInsertionHalted?(recordingSessionId: string): void;
+  markCaptureReady?(recordingSessionId: string): void;
   acceptsAudioEvent?(generation: number, recordingSessionId: string, sequence: number): boolean;
   consumeAudioEvent(generation: number, recordingSessionId: string, sequence: number): boolean;
 }
@@ -90,8 +94,6 @@ export interface KeyboardHook {
   }): void;
   stop(): void;
   recordingEndedExternally?(): void;
-  isKeyboardClear?(): boolean;
-  setKeyboardStateListener?(listener: (() => void) | null): void;
 }
 
 export interface RecordingSessionOptions {
@@ -100,12 +102,11 @@ export interface RecordingSessionOptions {
   getShortcutBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
   getSelectedDeviceId?: () => string | null;
   getRecognitionSettings?: (intent: RecordingIntent) => RecognitionSettings;
-  getDictationMode?: () => DictationMode;
+  getDictationContext?: () => DictationDeliveryContext;
   getReadinessError?: (intent: RecordingIntent) => Error | null;
   onResult?: (result: RecordingResult | null) => void | Promise<void>;
   onError?: (error: Error) => void;
   onBegin?: (intent: RecordingIntent) => void;
-  onFirstAudioBuffer?: (transcriber: Transcriber) => void;
 
   runtimeShell?: RuntimeShellBackend;
   keyboardHook?: KeyboardHook;
@@ -124,19 +125,22 @@ interface RecordingRunContext {
   targetSnapshot: DictationTargetSnapshot | null;
   sequence: number;
   revision: number;
-  state: 'recording' | 'stopping' | 'transcribing';
+  state: 'recording' | 'stopping' | 'transcribing' | 'delivering';
+  captureReady: boolean;
+  abort: AbortController;
+  dictation: DictationDeliveryContext | null;
   pendingEnd: {
     resolve: (result: RecordingResult | null) => void;
     reject: (error: unknown) => void;
   } | null;
   streaming: {
     session: StreamingTranscriptionSession;
-    /** Null for incremental sessions, whose finish() is the transcript without live snapshots. */
-    ledger: StreamingTranscriptLedger | null;
+    /** Latest preview, kept as Recognized So Far if finalization and fallback fail. */
+    ledger: StreamingTranscriptLedger;
     queue: Promise<void>;
     expectedChunkSequence: number;
     failed: boolean;
-    liveInsertion: LiveDictationController | null;
+    cancelled: boolean;
   } | null;
 }
 
@@ -150,7 +154,7 @@ export class RecordingSession {
   private keyboardHook: KeyboardHook;
   private getTranscriber: () => Transcriber;
   private getRecognitionSettings: (intent: RecordingIntent) => RecognitionSettings;
-  private getDictationMode: () => DictationMode;
+  private getDictationContext: () => DictationDeliveryContext;
   private getReadinessError: (intent: RecordingIntent) => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
   private showRecordingPillFn: (
@@ -169,11 +173,12 @@ export class RecordingSession {
   private setTimeoutFn: typeof setTimeout;
   private clearTimeoutFn: typeof clearTimeout;
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
+  private captureStartupTimer: ReturnType<typeof setTimeout> | null = null;
   private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
   private onErrorCallback?: (error: Error) => void;
   private onBeginCallback?: (intent: RecordingIntent) => void;
-  private onFirstAudioBufferCallback?: (transcriber: Transcriber) => void;
   private getSelectedDeviceId?: () => string | null;
+  private pendingDeviceUpdate: { deviceId: string | null } | null = null;
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
@@ -191,7 +196,9 @@ export class RecordingSession {
       dictionary: [],
       removeFillerWords: false,
     }));
-    this.getDictationMode = options.getDictationMode ?? (() => 'batch');
+    this.getDictationContext = options.getDictationContext ?? (() => ({
+      config: { mode: 'batch', formatter: null }, language: 'auto', protectedTerms: [], formatterApiKey: null,
+    }));
     this.getReadinessError = options.getReadinessError ?? (() => null);
     this.captureTarget = options.captureTarget ?? captureForegroundTarget;
     this.showRecordingPillFn = runtimeShell.show.bind(runtimeShell);
@@ -208,7 +215,6 @@ export class RecordingSession {
     this.onResultCallback = options.onResult;
     this.onErrorCallback = options.onError;
     this.onBeginCallback = options.onBegin;
-    this.onFirstAudioBufferCallback = options.onFirstAudioBuffer;
     this.getSelectedDeviceId = options.getSelectedDeviceId;
   }
 
@@ -221,26 +227,8 @@ export class RecordingSession {
       this.onErrorCallback?.(readinessError);
       return false;
     }
-    const targetSnapshot = this.captureTarget();
+    const targetSnapshot = intent === 'dictation' ? this.captureTarget() : null;
     const transcriber = this.getTranscriber();
-    const liveDictationRequested = intent === 'dictation' && this.getDictationMode() === 'live';
-    if (liveDictationRequested) {
-      if (this.getRecordingActivationMode('dictation') !== 'toggle') {
-        const error = new Error('Live Dictation requires Toggle activation.');
-        this.onErrorCallback?.(error);
-        return false;
-      }
-      if (!targetSnapshot) {
-        const error = new Error('Live Dictation requires a focused target application.');
-        this.onErrorCallback?.(error);
-        return false;
-      }
-      if (!this.canStartLiveStreaming(transcriber)) {
-        const error = new Error('Live Dictation requires a streaming-capable provider.');
-        this.onErrorCallback?.(error);
-        return false;
-      }
-    }
     const run: RecordingRunContext = {
       id: recordingSessionId,
       intent,
@@ -250,17 +238,14 @@ export class RecordingSession {
       sequence: 0,
       revision: 0,
       state: 'recording',
+      captureReady: false,
+      abort: new AbortController(),
+      dictation: intent === 'dictation' ? structuredClone(this.getDictationContext()) : null,
       pendingEnd: null,
       streaming: null,
     };
     this.activeRun = run;
-    const streamingStarted = this.startStreamingIfEligible(run);
-    if (liveDictationRequested && !streamingStarted) {
-      this.activeRun = null;
-      const error = new Error('Live Dictation streaming could not start.');
-      this.onErrorCallback?.(error);
-      return false;
-    }
+    this.startStreamingIfEligible(run);
 
     this.onBeginCallback?.(intent);
 
@@ -269,13 +254,21 @@ export class RecordingSession {
 
     const presentation = this.createPresentationEnvelope(run);
     this.audioCapture.prepare();
+    if (this.pendingDeviceUpdate) {
+      this.audioCapture.setSelectedDevice(this.pendingDeviceUpdate.deviceId);
+      this.pendingDeviceUpdate = null;
+    }
     this.audioCapture.beginCapture(presentation);
     this.showRecordingPillFn(
       intent,
       run.id,
       presentation,
     );
-    this.scheduleDurationLimit(transcriber.capabilities.maxDurationSeconds);
+    this.captureStartupTimer = this.setTimeoutFn(() => {
+      if (this.activeRun !== run || run.state !== 'recording' || run.captureReady) return;
+      this.audioCapture.cancelCapture();
+      this.failActiveCapture(new TranscriptionFailure('unknown', 'Microphone did not start in time. Check the input device and try again.'));
+    }, 30_000);
     return true;
   }
 
@@ -293,7 +286,7 @@ export class RecordingSession {
     return new Promise((resolve, reject) => {
       run.pendingEnd = { resolve, reject };
       if (this.audioCapture.endCapture() === false) {
-        this.teardownLiveDictation(run);
+        this.cancelStreaming(run);
         run.pendingEnd = null;
         this.finishPresentationFn?.();
         if (this.activeRun === run) this.activeRun = null;
@@ -309,7 +302,8 @@ export class RecordingSession {
     this.finishPresentationFn?.();
     this.audioCapture.cancelCapture();
     if (run) {
-      this.teardownLiveDictation(run);
+      run.abort.abort();
+      this.cancelStreaming(run);
       run.pendingEnd?.resolve(null);
       this.activeRun = null;
     }
@@ -317,6 +311,10 @@ export class RecordingSession {
 
   isActive(): boolean {
     return this.activeRun !== null && this.activeRun.state === 'recording';
+  }
+
+  isBusy(): boolean {
+    return this.activeRun !== null;
   }
 
   markRuntimeShellCrashed(reason: string): void {
@@ -329,7 +327,8 @@ export class RecordingSession {
     const run = this.activeRun;
     this.hideRecordingPillFn();
     if (run) {
-      this.teardownLiveDictation(run);
+      run.abort.abort();
+      this.cancelStreaming(run);
       run.pendingEnd?.reject(error);
       this.activeRun = null;
     }
@@ -342,7 +341,12 @@ export class RecordingSession {
       audioData.fill(0);
       return null;
     }
+    if (run.state === 'transcribing' || run.state === 'delivering') {
+      audioData.fill(0);
+      return null;
+    }
     run.state = 'transcribing';
+    this.clearDurationTimers();
     const pendingEnd = run.pendingEnd;
 
     if (audioData.byteLength <= 44) {
@@ -351,7 +355,7 @@ export class RecordingSession {
         'unknown',
         'No microphone audio was captured. Check the selected input device and try again.',
       );
-      this.teardownLiveDictation(run);
+      this.cancelStreaming(run);
       run.streaming = null;
       audioData.fill(0);
       pendingEnd?.reject(error);
@@ -363,22 +367,44 @@ export class RecordingSession {
 
     const transcriber = run.transcriber;
     try {
-      const text = await this.transcribeCompletedAudio(run, transcriber, audioData);
-      if (text === null || this.activeRun !== run) return null;
-      const result = text
-        ? this.createRecordingResult(run, transcriber, text, { kind: 'completed' })
-        : null;
-      this.keyboardHook.setKeyboardStateListener?.(null);
-      this.finishPresentationFn?.();
-      pendingEnd?.resolve(result);
-      if (this.onResultCallback) {
-        void this.onResultCallback(result);
+      const recognized = await this.recognizeWithinDeadline(run, transcriber, audioData);
+      if (recognized === null || this.activeRun !== run) return null;
+      const text = run.recognition.removeFillerWords ? cleanFillerWords(recognized) : recognized;
+      if (!text.trim()) {
+        // Content-free level summary so a silent mic is distinguishable from a decoder miss.
+        const pcm = new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
+        let peak = 0;
+        let energy = 0;
+        for (const sample of pcm) {
+          peak = Math.max(peak, Math.abs(sample));
+          energy += sample * sample;
+        }
+        const level = { peak: peak / 32_768, rms: Math.sqrt(energy / pcm.length) / 32_768 };
+        console.warn('No speech recognized', {
+          samples: pcm.length, peak: +level.peak.toFixed(5), rms: +level.rms.toFixed(6),
+        });
+        // ponytail: fixed thresholds; speech peaks well above 0.01 and stays far below 0.3 RMS at sane gain.
+        const hint = level.peak < 0.01 ? 'The microphone input was nearly silent; raise its input level or check the selected device.'
+          : level.rms > 0.3 ? 'The microphone input was clipping; lower its input level in your system sound settings.'
+            : 'Check the microphone input level and selected device.';
+        throw new TranscriptionFailure('unknown', `No speech was recognized. ${hint} Then try again.`);
       }
+      const result = this.createRecordingResult(run, transcriber, text, { kind: 'completed' });
+      run.state = 'delivering';
+      await this.onResultCallback?.(result);
+      if (this.activeRun !== run) return null;
+      if (!this.onResultCallback) this.finishPresentationFn?.();
+      pendingEnd?.resolve(result);
       return result;
     } catch (error) {
       if (this.activeRun !== run) return null;
       const err = error instanceof Error ? error : new Error(String(error));
-      const recognizedSoFar = run.streaming?.liveInsertion?.getState().rawCommitted;
+      if (run.state === 'delivering') {
+        pendingEnd?.reject(err);
+        this.onErrorCallback?.(err);
+        return null;
+      }
+      const recognizedSoFar = run.streaming?.ledger.current().committed;
       if (recognizedSoFar) {
         const result = this.createRecordingResult(
           run,
@@ -386,12 +412,19 @@ export class RecordingSession {
           recognizedSoFar,
           { kind: 'failed', message: err.message },
         );
-        this.keyboardHook.setKeyboardStateListener?.(null);
-        this.finishPresentationFn?.();
-        pendingEnd?.resolve(result);
-        if (this.onResultCallback) {
-          void this.onResultCallback(result);
+        run.state = 'delivering';
+        try {
+          await this.onResultCallback?.(result);
+        } catch (deliveryError) {
+          if (this.activeRun !== run) return null;
+          const failure = deliveryError instanceof Error ? deliveryError : new Error(String(deliveryError));
+          pendingEnd?.reject(failure);
+          this.onErrorCallback?.(failure);
+          return null;
         }
+        if (this.activeRun !== run) return null;
+        if (!this.onResultCallback) this.finishPresentationFn?.();
+        pendingEnd?.resolve(result);
         return result;
       }
       pendingEnd?.reject(err);
@@ -403,7 +436,7 @@ export class RecordingSession {
       return null;
     } finally {
       audioData.fill(0);
-      if (run.streaming?.session.retryCompletedAudio) run.streaming.session.cancel();
+      this.cancelStreaming(run);
       if (this.activeRun === run) {
         this.activeRun = null;
       }
@@ -438,7 +471,7 @@ export class RecordingSession {
     this.preparePresentationFn();
 
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
-    ipcMain.on('runtime:audio-first-buffer', this.handleAudioFirstBuffer);
+    ipcMain.on('runtime:audio-ready', this.handleRuntimeAudioReady);
     ipcMain.on('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.on('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
     ipcMain.on('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
@@ -451,19 +484,22 @@ export class RecordingSession {
   stop(): void {
     this.clearDurationTimers();
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
-    ipcMain.off('runtime:audio-first-buffer', this.handleAudioFirstBuffer);
+    ipcMain.off('runtime:audio-ready', this.handleRuntimeAudioReady);
     ipcMain.off('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.off('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
     ipcMain.off('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
     ipcMain.off('runtime:audio-failed', this.handleRuntimeAudioFailed);
     ipcMain.off('audio-level-changed', this.handleAudioLevelChanged);
 
+    void this.cancel();
     this.stopKeyboardHook();
     this.audioCapture.destroy?.();
   }
 
   updateDevice(deviceId: string | null): void {
-    this.audioCapture.setSelectedDevice(deviceId);
+    // A device edit applies to the next recording, never its in-flight capture.
+    if (this.activeRun) this.pendingDeviceUpdate = { deviceId };
+    else this.audioCapture.setSelectedDevice(deviceId);
   }
 
   getAudioWebContents(): import('electron').WebContents | null {
@@ -474,61 +510,21 @@ export class RecordingSession {
     return typeof transcriber.startStreaming === 'function';
   }
 
-  private startIncrementalIfSupported(run: RecordingRunContext): void {
-    const startIncremental = run.transcriber.startIncremental;
-    if (!startIncremental) return;
-    try {
-      run.streaming = {
-        session: startIncremental({ recognition: run.recognition }),
-        ledger: null,
-        queue: Promise.resolve(),
-        expectedChunkSequence: 0,
-        failed: false,
-        liveInsertion: null,
-      };
-    } catch {
-      // The completed recording is still transcribed in one pass.
-      run.streaming = null;
-    }
-  }
-
   private startStreamingIfEligible(run: RecordingRunContext): boolean {
-    if (!this.canStartLiveStreaming(run.transcriber)) {
-      this.startIncrementalIfSupported(run);
-      return false;
-    }
-    if (run.intent === 'dictation' && (
-      this.getDictationMode() !== 'live'
-      || this.getRecordingActivationMode('dictation') !== 'toggle'
-    )) return false;
-
+    if (!this.canStartLiveStreaming(run.transcriber)) return false;
     const startStreaming = run.transcriber.startStreaming;
     if (!startStreaming) return false;
-
     const ledger = createStreamingTranscriptLedger();
-    const liveInsertion = run.intent === 'dictation' && this.getDictationMode() === 'live' && run.targetSnapshot
-      ? new LiveDictationController({
-          originalTarget: run.targetSnapshot,
-          captureTarget: this.captureTarget,
-          isKeyboardClear: () => this.keyboardHook.isKeyboardClear?.() ?? true,
-          dispatchUnicode: sendUnicodeText,
-          onHalted: () => {
-            this.runtimeShellBackend?.showInsertionHalted?.(run.id);
-          },
-        })
-      : null;
     try {
       const session = startStreaming({
         recognition: run.recognition,
         onSnapshot: (snapshot) => {
-          if (this.activeRun !== run) return;
+          if (this.activeRun !== run || run.streaming?.failed) return;
           const update = ledger.apply(snapshot);
           if (update.kind === 'protocol-failure') {
-            liveInsertion?.haltForReason('prefix-violation');
             this.disableStreaming(run);
             return;
           }
-          void liveInsertion?.onCommittedUpdate(update.committed);
           this.runtimeShellBackend?.showStreamingPreview?.(
             run.id,
             update.committed,
@@ -542,88 +538,97 @@ export class RecordingSession {
         queue: Promise.resolve(),
         expectedChunkSequence: 0,
         failed: false,
-        liveInsertion,
+        cancelled: false,
       };
-      if (liveInsertion) {
-        this.keyboardHook.setKeyboardStateListener?.(() => {
-          if (this.activeRun !== run) return;
-          void liveInsertion.onKeyboardStateChanged();
-        });
-      }
       return true;
     } catch {
       try {
-        this.teardownLiveDictation(run);
+        this.cancelStreaming(run);
       } catch {
-        // Startup failure is reported by begin(); teardown remains best effort.
+        // Capture can still complete through the provider's batch path.
       }
       run.streaming = null;
       return false;
     }
   }
 
-  private teardownLiveDictation(run: RecordingRunContext): void {
-    if (!run.streaming) return;
-    run.streaming.liveInsertion?.invalidate();
-    run.streaming.session.cancel();
-    this.keyboardHook.setKeyboardStateListener?.(null);
+  private cancelStreaming(run: RecordingRunContext): void {
+    if (!run.streaming || run.streaming.cancelled) return;
+    run.streaming.cancelled = true;
+    try {
+      run.streaming.session.cancel();
+    } catch {
+      console.warn('Could not close the transcription stream.');
+    }
   }
 
   private disableStreaming(run: RecordingRunContext): void {
     if (!run.streaming || run.streaming.failed) return;
     run.streaming.failed = true;
-    const liveInsertion = run.streaming.liveInsertion;
-    if (liveInsertion && !liveInsertion.getState().halted) {
-      liveInsertion.haltForReason('session-invalidated');
+    this.cancelStreaming(run);
+  }
+
+  /**
+   * Bounds recognition after stop. The deadline aborts the provider request and
+   * stream, then fails without a fallback retry; run.abort stays untouched so
+   * Recognized So Far can still be delivered. Cancellation resolves null at
+   * once even when the provider ignores its signal.
+   */
+  private async recognizeWithinDeadline(
+    run: RecordingRunContext,
+    transcriber: Transcriber,
+    audioData: Uint8Array<ArrayBuffer>,
+  ): Promise<string | null> {
+    const recognition = new AbortController();
+    const cancelled = new Promise<null>((resolve) => {
+      const onCancel = () => { recognition.abort(); resolve(null); };
+      if (run.abort.signal.aborted) onCancel();
+      else run.abort.signal.addEventListener('abort', onCancel, { once: true });
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = this.setTimeoutFn(() => {
+        reject(new TranscriptionFailure('network', 'Transcription did not finish in time.'));
+        recognition.abort();
+        this.cancelStreaming(run);
+      }, RECOGNITION_TIMEOUT_MS);
+    });
+    const work = this.transcribeCompletedAudio(run, transcriber, audioData, recognition.signal);
+    work.catch(() => undefined);
+    try {
+      return await Promise.race([work, deadline, cancelled]);
+    } finally {
+      this.clearTimeoutFn(timer);
     }
-    // Managed Local owns the recording's settings and files until its completed-WAV retry or cancellation.
-    if (!run.streaming.session.retryCompletedAudio) this.teardownLiveDictation(run);
   }
 
   private async transcribeCompletedAudio(
     run: RecordingRunContext,
     transcriber: Transcriber,
     audioData: Uint8Array<ArrayBuffer>,
+    signal: AbortSignal,
   ): Promise<string | null> {
+    const stale = () => signal.aborted || this.activeRun !== run;
     const streaming = run.streaming;
     if (streaming) {
       await streaming.queue;
-      if (this.activeRun !== run) return null;
+      if (stale()) return null;
       if (!streaming.failed) {
         try {
+          // The provider's final is authoritative, even where it revises the last preview.
           const providerFinal = await streaming.session.finish();
-          if (this.activeRun !== run) return null;
-          if (!streaming.ledger) return providerFinal;
-          const acceptedFinal = streaming.ledger.finalize();
-          if (providerFinal !== acceptedFinal) {
-            throw new TranscriptionFailure(
-              'malformed-response',
-              'WhisperLiveKit finalized a transcript that was not committed.',
-            );
-          }
-          if (streaming.liveInsertion) {
-            const keyboardClear = await this.waitForKeyboardClear(LIVE_KEYBOARD_RELEASE_GRACE_MS);
-            if (this.activeRun !== run) return null;
-            if (!keyboardClear) {
-              streaming.liveInsertion.haltForReason('keyboard-timeout');
-            } else if (this.activeRun === run) {
-              await streaming.liveInsertion.finalize(acceptedFinal);
-              if (this.activeRun !== run) return null;
-            }
-          }
-          return acceptedFinal;
+          if (stale()) return null;
+          return providerFinal;
         } catch {
-          if (this.activeRun !== run) return null;
+          if (stale()) return null;
           this.disableStreaming(run);
         }
       }
     }
 
-    if (this.activeRun !== run) return null;
-    const text = streaming?.session.retryCompletedAudio
-      ? await streaming.session.retryCompletedAudio(audioData)
-      : await transcriber.transcribe({ audio: audioData, recognition: run.recognition });
-    if (this.activeRun !== run) return null;
+    if (stale()) return null;
+    const text = await transcriber.transcribe({ audio: audioData, recognition: run.recognition, signal });
+    if (stale()) return null;
     return text;
   }
 
@@ -633,7 +638,6 @@ export class RecordingSession {
     text: string,
     outcome: RecordingResult['outcome'],
   ): RecordingResult {
-    const liveState = run.streaming?.liveInsertion?.getState();
     const envelope = this.createPresentationEnvelope(run, transcriber, outcome);
     return {
       text,
@@ -644,15 +648,8 @@ export class RecordingSession {
       revision: envelope.revision,
       capabilities: envelope.capabilities,
       outcome: envelope.outcome ?? outcome,
-      ...(liveState ? {
-        liveDictation: {
-          halted: liveState.halted,
-          uncertain: liveState.uncertain,
-          hasAcceptedEvents: liveState.hasAcceptedEvents,
-          dispatchedProjectedLength: liveState.dispatchedProjectedLength,
-          rawCommitted: liveState.rawCommitted,
-        },
-      } : {}),
+      dictation: run.dictation,
+      signal: run.abort.signal,
     };
   }
 
@@ -693,42 +690,32 @@ export class RecordingSession {
   }
 
   private clearDurationTimers(): void {
+    if (this.captureStartupTimer !== null) this.clearTimeoutFn(this.captureStartupTimer);
+    this.captureStartupTimer = null;
     for (const timer of this.durationTimers) this.clearTimeoutFn(timer);
     this.durationTimers = [];
     this.updateDurationWarningFn(null);
-  }
-
-  private async waitForKeyboardClear(timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (this.keyboardHook.isKeyboardClear?.()) return true;
-      await new Promise<void>((resolve) => {
-        this.setTimeoutFn(resolve, 50);
-      });
-    }
-    return this.keyboardHook.isKeyboardClear?.() ?? false;
   }
 
   private handleAudioStreamReady = (): void => {
     this.audioCapture.markReady?.();
   };
 
-  private handleAudioFirstBuffer = (
-    _event: unknown,
+  private handleRuntimeAudioReady = (
+    event: import('electron').IpcMainEvent,
     generation: number,
     recordingSessionId: string,
     sequence: number,
   ): void => {
-    if (!this.acceptsAudioMarker(generation, recordingSessionId, sequence)) return;
-    if (this.activeRun) this.onFirstAudioBufferCallback?.(this.activeRun.transcriber);
-  };
-
-  private acceptsAudioMarker(generation: number, recordingSessionId: string, sequence: number): boolean {
     const run = this.activeRun;
-    return Boolean(run && run.id === recordingSessionId && run.sequence === sequence && (
-      this.runtimeShellBackend?.acceptsAudioEvent?.(generation, recordingSessionId, sequence) ?? true
-    ));
-  }
+    if (!run || run.id !== recordingSessionId || run.sequence !== sequence
+      || run.state !== 'recording' || run.captureReady) return;
+    if (!event.sender || event.sender !== this.audioCapture.getWebContents?.()) return;
+    if (!this.runtimeShellBackend?.acceptsAudioEvent?.(generation, recordingSessionId, sequence)) return;
+    run.captureReady = true;
+    this.runtimeShellBackend.markCaptureReady?.(run.id);
+    this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
+  };
 
   private handleRuntimeAudioChunk = async (
     _event: unknown,
@@ -751,7 +738,7 @@ export class RecordingSession {
     }
     streaming.expectedChunkSequence += 1;
     const send = streaming.queue.then(async () => {
-      if (streaming.failed) return;
+      if (streaming.failed || this.activeRun !== run) { pcm.fill(0); return; }
       try {
         await streaming.session.send(pcm);
         if (this.activeRun === run && !streaming.failed) {
@@ -816,14 +803,12 @@ export class RecordingSession {
     this.failActiveCapture();
   };
 
-  private failActiveCapture(): void {
+  private failActiveCapture(error = new TranscriptionFailure(
+    'unknown', 'Microphone capture failed. Check the selected input device and try again.',
+  )): void {
     const run = this.activeRun;
     if (!run) return;
-    this.teardownLiveDictation(run);
-    const error = new TranscriptionFailure(
-      'unknown',
-      'Microphone capture failed. Check the selected input device and try again.',
-    );
+    this.cancelStreaming(run);
     this.clearDurationTimers();
     this.keyboardHook.recordingEndedExternally?.();
     run.pendingEnd?.reject(error);

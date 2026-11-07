@@ -1,12 +1,10 @@
 import { spawn, type ChildProcess } from 'child_process';
-import { accessSync, closeSync, constants, openSync, readFileSync, writeSync } from 'fs';
-import koffi from 'koffi';
+import { accessSync, constants, readFileSync } from 'fs';
 
 /**
- * Linux keyboard I/O through the kernel, so it works the same on X11 and
- * Wayland: hotkeys are read from evdev (/dev/input/event*), paste keystrokes
- * are written through a uinput virtual keyboard. Both need the user in the
- * `input` group (the deb/rpm udev rule opens /dev/uinput to that group).
+ * Raw keyboard observation is a fallback for desktops without working portal
+ * shortcuts or X11 grabs. It needs input-group access and cannot suppress
+ * the shortcut in the focused app.
  *
  * Key codes are translated to Windows virtual-key codes so the shared
  * shortcut model and KeyboardHook state machine stay platform-neutral.
@@ -28,12 +26,7 @@ const EVDEV_TO_VK = new Map<number, number>([
   [87, 0x7a], [88, 0x7b], // F11, F12
   ...Array.from({ length: 12 }, (_, i) => [183 + i, 0x7c + i] as [number, number]), // F13–F24
 ]);
-const VK_TO_EVDEV = new Map([...EVDEV_TO_VK].filter(([code]) => code !== 96).map(([code, vk]) => [vk, code]));
-// Paste strategies send generic VK_CONTROL/VK_SHIFT.
-VK_TO_EVDEV.set(0x11, 29);
-VK_TO_EVDEV.set(0x10, 42);
 
-const EV_SYN = 0;
 const EV_KEY = 1;
 const EV_REP_BIT = 1 << 20;
 const INPUT_EVENT_SIZE = 24; // struct input_event on 64-bit
@@ -42,6 +35,7 @@ const VIRTUAL_KEYBOARD_NAME = 'Shuddhalekhan virtual keyboard';
 export function evdevToVirtualKey(code: number): number | undefined {
   return EVDEV_TO_VK.get(code);
 }
+
 
 /** Keyboards from /proc/bus/input/devices: `kbd` handler with key repeat (skips power buttons and our own device). */
 export function parseKeyboardDevices(procDevices: string): string[] {
@@ -82,7 +76,7 @@ export function startEvdevKeyboardReader(onKey: (vkCode: number, isDown: boolean
   if (devices.length === 0) {
     throw new Error('No readable keyboard found. Add your user to the "input" group (sudo usermod -aG input $USER), then restart your computer. Logging out is often not enough because the desktop session keeps the old groups.');
   }
-  // ponytail: one `cat` per keyboard keeps blocking evdev reads off libuv's
+  // shortcut: one `cat` per keyboard keeps blocking evdev reads off libuv's
   // small threadpool without a native poll binding. Keyboards plugged in
   // later are picked up on the next app start.
   // Which keyboards hold each key: a key is released only when the last one
@@ -109,94 +103,10 @@ export function startEvdevKeyboardReader(onKey: (vkCode: number, isDown: boolean
     });
     return child;
   });
-  try {
-    ensureVirtualKeyboard(); // early, so the compositor has adopted it before the first paste
-  } catch (error) {
-    console.error('uinput unavailable; dictation will copy instead of paste:', error);
-  }
   return () => {
     for (const reader of readers) {
       reader.removeAllListeners('close'); // a deliberate stop releases nothing
       reader.kill();
     }
   };
-}
-
-// ---- uinput virtual keyboard ----
-
-const UI_SET_EVBIT = 0x40045564;
-const UI_SET_KEYBIT = 0x40045565;
-const UI_DEV_SETUP = 0x405c5503;
-const UI_DEV_CREATE = 0x5501;
-const BUS_VIRTUAL = 0x06;
-
-let virtualKeyboardFd: number | null = null;
-
-/**
- * Created once and kept open: compositors take a moment to adopt a new input
- * device, so creating it per paste would drop the first keystrokes.
- */
-function ensureVirtualKeyboard(): number {
-  if (virtualKeyboardFd !== null) return virtualKeyboardFd;
-  const ioctl = koffi.load('libc.so.6').func('int ioctl(int fd, unsigned long request, ...)');
-  const fd = openSync('/dev/uinput', constants.O_WRONLY | constants.O_NONBLOCK);
-  const setup = Buffer.alloc(92); // struct uinput_setup
-  setup.writeUInt16LE(BUS_VIRTUAL, 0);
-  setup.write(VIRTUAL_KEYBOARD_NAME, 8, 'latin1');
-  const created = ioctl(fd, UI_SET_EVBIT, 'int', EV_KEY) >= 0
-    && [...new Set(VK_TO_EVDEV.values())].every((code) => ioctl(fd, UI_SET_KEYBIT, 'int', code) >= 0)
-    && ioctl(fd, UI_DEV_SETUP, 'void *', setup) >= 0
-    && ioctl(fd, UI_DEV_CREATE) >= 0;
-  if (!created) {
-    closeSync(fd); // otherwise every later paste retries and leaks another fd
-    throw new Error('Could not create the uinput virtual keyboard.');
-  }
-  virtualKeyboardFd = fd;
-  return fd;
-}
-
-function inputEvent(type: number, code: number, value: number): Buffer {
-  const event = Buffer.alloc(INPUT_EVENT_SIZE);
-  event.writeUInt16LE(type, 16);
-  event.writeUInt16LE(code, 18);
-  event.writeInt32LE(value, 20);
-  return event;
-}
-
-/**
- * Sends VK key events through uinput. Codes are physical (QWERTY) positions,
- * so on remapped layouts such as Dvorak, Ctrl+V lands on that layout's key.
- * Returns how many events were written.
- */
-export function sendVirtualKeys(events: Array<{ vk: number; keyUp: boolean }>): number {
-  let fd: number;
-  try {
-    fd = ensureVirtualKeyboard();
-  } catch (error) {
-    console.error('uinput unavailable:', error);
-    return 0;
-  }
-  let accepted = 0;
-  const down = new Set<number>();
-  const write = (code: number, value: number) =>
-    writeSync(fd, Buffer.concat([inputEvent(EV_KEY, code, value), inputEvent(EV_SYN, 0, 0)]));
-  try {
-    for (const { vk, keyUp } of events) {
-      const code = VK_TO_EVDEV.get(vk);
-      if (code === undefined) break;
-      write(code, keyUp ? 0 : 1);
-      if (keyUp) down.delete(code);
-      else down.add(code);
-      accepted += 1;
-    }
-    // A sequence cut short by an unmapped key must not leave Ctrl/Shift held.
-    for (const code of down) write(code, 0);
-  } catch (error) {
-    console.error('uinput write failed:', error);
-    // Destroying the device makes the kernel release every key it held, so no
-    // Ctrl/Shift stays down; the next paste recreates it.
-    try { closeSync(fd); } catch { /* already gone */ }
-    virtualKeyboardFd = null;
-  }
-  return accepted;
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
   buildOpenAiEndpoint,
   validateOpenAiModel,
@@ -577,6 +577,43 @@ describe('Microsoft Azure Speech provider', () => {
       authentication: 'required',
       maxDurationSeconds: null,
     });
+  });
+});
+
+describe('getTranscriber pins one recording to its starting settings', () => {
+  const realFetch = globalThis.fetch;
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ text: 'ok' }) }) as Response) as unknown as typeof fetch;
+  });
+  afterEach(() => { globalThis.fetch = realFetch; });
+  const recognition = { language: 'auto', task: 'transcribe' as const, dictionary: [], removeFillerWords: false };
+
+  it('keeps the credential resolved at start when the saved key changes mid-recording', async () => {
+    const { getTranscriber } = await import('../providers');
+    const keys: Record<string, string | undefined> = { 'openai-api-key': 'sk-original' };
+    const transcriber = getTranscriber(BASE_CONFIG, createVault(keys));
+    keys['openai-api-key'] = 'sk-edited';
+
+    await transcriber.transcribe({ audio: new Uint8Array([1]), recognition });
+
+    const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-original' });
+  });
+
+  it('sends local whisper.cpp audio to the endpoint configured at start, not the stored one', async () => {
+    const { getTranscriber } = await import('../providers');
+    const config: AppConfig = {
+      ...BASE_CONFIG,
+      transcription: {
+        ...BASE_CONFIG.transcription,
+        activeProvider: 'local-whisper-cpp',
+        providers: { ...BASE_CONFIG.transcription.providers, localWhisperCpp: { endpoint: 'http://pinned.test/inference' } },
+      },
+    };
+
+    await getTranscriber(config, createVault()).transcribe({ audio: new Uint8Array([1]), recognition });
+
+    expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe('http://pinned.test/inference');
   });
 });
 

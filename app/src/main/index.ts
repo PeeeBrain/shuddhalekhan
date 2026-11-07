@@ -51,7 +51,7 @@ import type { RecordingResult } from './recording-session';
 import { createRuntimeReadinessBarrier } from './runtime-readiness';
 import { RuntimeShell } from './runtime-shell';
 import { createRuntimeShellPresenter } from './agent-presentation';
-import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
+import { getRecoveryActions } from './dictation-recovery';
 import { getPersistentStoreDirectory, preparePersistentStoreDirectory } from './store-path';
 import { registerAgentContextIpcHandlers } from './agent-context';
 import {
@@ -62,13 +62,60 @@ import {
   installManagedLocalModel,
   deleteManagedLocalModel,
 } from './managed-local';
-import { outerTrimTranscript } from '../shared/live-dictation';
 import { applyDictationFormatter } from './dictation-formatter';
 import { getDictationFormatterApiKey } from './dictation-formatter-credential';
-import {
-  isDictationResultStillDeliverable,
-  markDictationResultPending,
-} from './dictation-result-delivery';
+import { getAutomaticDeliveryError, isKdeWaylandSession, isWaylandSession } from './dictation-delivery-policy';
+import type { DesktopStatus } from '../shared/desktop-status';
+import { prepareDevelopmentIdentity } from './desktop/dev-identity';
+import { createKdeFocusTracker } from './desktop/kde-focus';
+import { createRemoteDesktopKeyboard } from './desktop/remote-desktop-keyboard';
+import { BEST_EFFORT_DISCLOSURE, KdeWaylandDelivery } from './kde-wayland-delivery';
+import { captureForegroundTarget } from './native/target';
+import { resolvePasteStrategy } from './paste-strategy';
+
+let desktopShortcuts: DesktopStatus['shortcuts'] = process.platform === 'win32'
+  ? { backend: 'windows' } : { backend: 'initializing' };
+
+/** Opt-in KDE Wayland test mode; null everywhere else, which keeps Wayland copy-only. */
+const waylandDelivery = isKdeWaylandSession(process.platform, process.env) ? new KdeWaylandDelivery({
+  createTracker: () => createKdeFocusTracker(publishDesktopStatus),
+  createKeyboard: () => createRemoteDesktopKeyboard(publishDesktopStatus),
+  waitForShortcutRelease: signal => keyboardHook.waitForShortcutDeactivation(signal),
+  stageClipboard: copyLastTranscriptToClipboard,
+  getPasteStrategy: appId => resolvePasteStrategy(appId, getConfig().pasteStrategy),
+  onChange: publishDesktopStatus,
+}) : null;
+
+function getDesktopStatus(): DesktopStatus {
+  const bestEffortReady = waylandDelivery?.isReady() ?? false;
+  const deliveryError = getAutomaticDeliveryError(process.platform, process.env, bestEffortReady);
+  return {
+    shortcuts: desktopShortcuts,
+    delivery: {
+      available: !deliveryError,
+      message: deliveryError ?? (bestEffortReady ? BEST_EFFORT_DISCLOSURE
+        : 'Final text is pasted after checking the original window. A window check cannot identify changes between fields in the same window.'),
+    },
+    waylandInsertion: !isWaylandSession(process.platform, process.env) ? undefined : waylandDelivery?.status()
+      ?? { state: 'unsupported', message: 'Best-effort insertion is available only on KDE Plasma. Copy finished transcripts from Last Transcript.' },
+  };
+}
+
+function publishDesktopStatus(): void {
+  getSettingsWindow()?.webContents.send('desktop:status-changed', getDesktopStatus());
+}
+
+/** Persists the opt-in only once setup actually succeeded, so a declined prompt never re-prompts at launch. */
+async function setWaylandInsertion(enabled: boolean): Promise<void> {
+  if (!waylandDelivery) return;
+  if (!enabled) {
+    setConfig('waylandBestEffortInsertion', false);
+    await waylandDelivery.disable();
+    return;
+  }
+  const outcome = await waylandDelivery.enable();
+  if (outcome !== 'superseded') setConfig('waylandBestEffortInsertion', outcome === 'ready');
+}
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
@@ -147,20 +194,25 @@ const recordingSession = new RecordingSession({
   onBegin: (intent) => {
     if (intent === 'agent') invalidateActiveAgentRun();
   },
-  onFirstAudioBuffer: (transcriber) => {
-    if (transcriber === managedLocalTranscriber) {
-      void managedLocalTranscriber.warmup().catch(() => undefined);
-    }
-  },
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
-  getDictationMode: () => getConfig().dictation.mode,
+  getDictationContext: () => {
+    const config = getConfig();
+    return {
+      config: config.dictation,
+      language: config.language,
+      protectedTerms: config.dictionary,
+      formatterApiKey: config.dictation.formatter?.processingConsent
+        ? getDictationFormatterApiKey(config.dictation.formatter, credentialVault) : null,
+    };
+  },
   getRecognitionSettings: (intent) => {
     const config = getConfig();
     return resolveRecognitionSettings(intent === 'agent'
       ? { ...config, dictation: { ...config.dictation, mode: 'batch' } } : config);
   },
   getTranscriber: () => getTranscriber(getConfig(), credentialVault),
+  captureTarget: () => waylandDelivery?.capture() ?? captureForegroundTarget(),
   getReadinessError: (intent) => {
     const config = getConfig();
     if (intent === 'agent') {
@@ -181,102 +233,48 @@ runtimeShell.setCrashHandler((reason) => recordingSession.markRuntimeShellCrashe
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
-  if (!result?.text) return;
+  if (!result?.text || result.signal.aborted) return;
+
+  if (result.outcome.kind === 'failed') {
+    if (result.intent === 'dictation') {
+      setLastTranscript(result.text, result.targetSnapshot);
+      markLastTranscriptInjected('failed');
+      runtimeShell.showFailure(result.recordingSessionId,
+        'Transcription could not complete. Last Transcript contains the text recognized so far.',
+        ['copy-full-transcript']);
+    } else {
+      showTranscriptionError(new TranscriptionFailure('unknown', 'Transcription could not complete. No Agent command was sent.'));
+    }
+    return;
+  }
 
   if (result.intent === 'agent') {
+    // Processing outranks every Agent card, so it must end before the run starts reporting.
+    runtimeShell.finish();
     handleAgentTranscript(result.text);
     return;
   }
 
   const sessionId = result.recordingSessionId;
-  markDictationResultPending(sessionId);
-
-  const live = result.liveDictation;
-  const liveDispatch = live ? {
-    hasAcceptedEvents: live.hasAcceptedEvents,
-    uncertain: live.uncertain,
-  } : undefined;
-
-  if (live) {
-    setLastTranscript(result.text, result.targetSnapshot, liveDispatch);
-
-    if (result.outcome.kind === 'failed') {
-      markLastTranscriptInjected(live.hasAcceptedEvents || live.uncertain ? 'uncertain' : 'failed');
-      const message = 'Live Dictation could not complete. Last Transcript contains Recognized So Far.';
-      const actions = getLiveRecoveryActions(live);
-      if (runtimeShell) {
-        runtimeShell.showFailure(result.recordingSessionId, message, actions);
-      } else {
-        showRecoveryNotification(
-          { kind: 'input-blocked', acceptedEvents: live.hasAcceptedEvents || live.uncertain ? 1 : 0, reason: message },
-          'Live Dictation stopped',
-        );
-      }
-      return;
-    }
-
-    const projectedFull = outerTrimTranscript(result.text);
-    const sameTranscript = outerTrimTranscript(live.rawCommitted) === projectedFull;
-    const fullyDispatched = sameTranscript
-      && live.dispatchedProjectedLength >= projectedFull.length;
-
-    if (live.hasAcceptedEvents || live.uncertain) {
-      const uncertain = live.uncertain || !fullyDispatched;
-      markLastTranscriptInjected(uncertain ? 'uncertain' : 'dispatched');
-      if (!uncertain) completeOnboarding();
-      if (uncertain) {
-        const message = !fullyDispatched
-          ? 'Live Dictation stopped before the full transcript was inserted.'
-          : 'Live Dictation stopped because the system could not confirm the last insertion.';
-        if (runtimeShell) {
-          runtimeShell.showFailure(
-            result.recordingSessionId,
-            message,
-            getLiveRecoveryActions(live),
-          );
-        } else {
-          showRecoveryNotification(
-            { kind: 'input-blocked', acceptedEvents: 1, reason: message },
-            'Live Dictation stopped',
-          );
-        }
-      }
-      return;
-    }
-
-    const fallbackText = outerTrimTranscript(result.text);
-    const injectResult = await injectIntoFocusedApp(fallbackText, result.targetSnapshot);
-    if (injectResult.kind === 'input-dispatched') {
-      markLastTranscriptInjected('dispatched');
-      completeOnboarding();
-      return;
-    }
-    markLastTranscriptInjected('failed');
-    runtimeShell?.showFailure(
-      result.recordingSessionId,
-      getRecoveryMessage(injectResult),
-      getRecoveryActions(injectResult),
-    );
-    return;
-  }
-
-  const config = getConfig();
+  const delivery = result.dictation;
+  if (!delivery) return;
   let text = result.text;
   let formatterDegraded = false;
 
   if (
-    config.dictation.mode === 'corrected'
-    && config.dictation.formatter?.processingConsent
+    delivery.config.mode === 'corrected'
+    && delivery.config.formatter?.processingConsent
   ) {
     if (runtimeShell) runtimeShell.showProcessing(sessionId);
     const outcome = await applyDictationFormatter({
-      profile: config.dictation.formatter,
+      profile: delivery.config.formatter,
       rawText: result.text,
-      language: config.language,
-      protectedTerms: config.dictionary,
-      apiKey: getDictationFormatterApiKey(config.dictation.formatter, credentialVault),
+      language: delivery.language,
+      protectedTerms: delivery.protectedTerms,
+      apiKey: delivery.formatterApiKey,
+      signal: result.signal,
     });
-    if (!isDictationResultStillDeliverable(sessionId)) return;
+    if (result.signal.aborted) return;
     if (outcome.kind === 'fallback') {
       text = outcome.rawText;
       formatterDegraded = true;
@@ -285,16 +283,57 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     }
   }
 
-  if (!isDictationResultStillDeliverable(sessionId)) return;
+  if (result.signal.aborted) return;
 
   setLastTranscript(text, result.targetSnapshot);
 
-  const injectResult = await injectIntoFocusedApp(text, result.targetSnapshot);
+  const deliveryError = getAutomaticDeliveryError(process.platform, process.env, waylandDelivery?.isReady() ?? false);
+  if (deliveryError) {
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(sessionId, deliveryError, ['copy-full-transcript']);
+    return;
+  }
+
+  if (!result.targetSnapshot) {
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(sessionId,
+      'The original destination could not be identified when recording began. Copy the transcript to the intended field.',
+      ['copy-full-transcript']);
+    return;
+  }
+
+  if (result.targetSnapshot.kind === 'kde-wayland') {
+    if (!waylandDelivery) return;
+    runtimeShell.finish();
+    const waylandResult = await waylandDelivery.deliver(text, result.targetSnapshot, result.signal);
+    if (result.signal.aborted) return;
+    if (waylandResult.kind === 'input-dispatched') {
+      markLastTranscriptInjected('dispatched');
+      completeOnboarding();
+      if (formatterDegraded) showFormatterDegradedNotice();
+      return;
+    }
+    // Never retried: the clipboard already holds the text, and a second paste could double-insert.
+    markLastTranscriptInjected(waylandResult.kind === 'error' ? 'uncertain' : 'failed');
+    runtimeShell.showFailure(sessionId, getRecoveryMessage(waylandResult), ['copy-full-transcript']);
+    return;
+  }
+
+  const released = await keyboardHook.waitForKeysReleased(result.signal);
+  if (result.signal.aborted) return;
+  if (!released) {
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(sessionId, 'Release the recording shortcut before pasting the transcript.',
+      ['retry-paste', 'copy-full-transcript']);
+    return;
+  }
+  runtimeShell.finish();
+  const injectResult = await injectIntoFocusedApp(text, result.targetSnapshot, undefined, result.signal);
+  if (result.signal.aborted) return;
   if (injectResult.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
     completeOnboarding();
     if (formatterDegraded) showFormatterDegradedNotice();
-    runtimeShell?.finish();
     return;
   }
 
@@ -329,24 +368,11 @@ function showFormatterDegradedNotice(): void {
 async function pasteLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
   if (!transcript) return;
-  if (transcript.liveDispatch?.hasAcceptedEvents || transcript.liveDispatch?.uncertain) {
-    showLiveCopyOnlyNotification();
-    return;
-  }
 
   const result = await injectIntoFocusedApp(transcript.text);
   if (result.kind !== 'input-dispatched') {
     showRecoveryNotification(result, 'Paste last transcript failed');
   }
-}
-
-function showLiveCopyOnlyNotification(): void {
-  if (!Notification.isSupported()) return;
-  new Notification({
-    title: 'Paste last transcript unavailable',
-    body: 'Live Dictation may already have inserted this text. Use “Copy last transcript” in the tray menu to avoid duplication.',
-    silent: true,
-  }).show();
 }
 
 async function copyLastTranscript(): Promise<void> {
@@ -382,7 +408,7 @@ function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste
 
 function getRecoveryMessage(result: InjectResult): string {
   if (result.kind === 'clipboard-conflict') {
-    return 'Clipboard changed before Shuddhalekhan could paste the transcript.';
+    return 'Clipboard changed during Dictation. Check the destination before copying the transcript; text may already have been inserted.';
   }
   if (result.kind === 'target-changed') return result.reason;
   if (result.kind === 'input-blocked') return result.reason ?? 'The system blocked automatic paste.';
@@ -399,7 +425,8 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     return;
   }
   if (action !== 'retry-paste') return;
-  if (retryPasteInFlight) return;
+  // KDE Wayland best-effort delivery is attempted once per recording.
+  if (retryPasteInFlight || transcript.targetSnapshot?.kind === 'kde-wayland') return;
   retryPasteInFlight = true;
   try {
     runtimeShell.finish();
@@ -429,8 +456,10 @@ function setShortcutsPaused(paused: boolean): void {
 
 function showTranscriptionError(err: unknown): void {
   const message = getSafeTranscriptionFailureMessage(err);
-  const detail = err instanceof Error ? `${err.name}: ${err.message}` : 'Unknown failure';
-  console.error(`Transcription failed (${detail}):`, message);
+  console.error('Transcription failed:', {
+    category: err instanceof TranscriptionFailure ? err.category : 'unknown',
+    message,
+  });
   runtimeShell.showFailure(null, message);
 }
 
@@ -599,6 +628,11 @@ ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
 ipcMain.handle('config:get', () => {
   return getConfig();
 });
+ipcMain.handle('desktop:get-status', getDesktopStatus);
+ipcMain.handle('desktop:set-wayland-insertion', async (_event, enabled: unknown) => {
+  await setWaylandInsertion(enabled === true);
+  return getDesktopStatus();
+});
 
 ipcMain.handle('shortcuts:get-paused', () => {
   return keyboardHook.isPaused();
@@ -702,7 +736,10 @@ ipcMain.handle('transcription:check-readiness', async () => {
 
 ipcMain.handle('managed-local:get-model', managedLocalSnapshot);
 ipcMain.handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
-ipcMain.handle('managed-local:delete-model', (_event, target: unknown) => deleteManagedLocalModel(target));
+ipcMain.handle('managed-local:delete-model', (_event, target: unknown) => {
+  if (recordingSession.isBusy()) throw new Error('Finish the current recording before deleting local model files.');
+  return deleteManagedLocalModel(target);
+});
 
 ipcMain.handle('config:patch-transcription', async (_event, patch: unknown) => {
   const previous = getConfig();
@@ -723,6 +760,7 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
   cachedAgentEnabled = config.agent.enabled;
+  if (key === 'shortcuts' || key === 'agent') keyboardHook.refreshShortcuts();
   // A switched-away provider has no next use with this runtime; release
   // the loaded model instead of holding ~1.1GB idling all session.
   if (
@@ -839,6 +877,24 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.whenReady().then(() => {
+    if (process.platform === 'linux' && !app.isPackaged) {
+      try {
+        const cleanup = prepareDevelopmentIdentity({ executable: process.execPath, appPath: app.getAppPath() });
+        app.on('will-quit', cleanup);
+      } catch (error) {
+        console.warn('Could not prepare the development desktop identity:', error);
+      }
+    }
+    keyboardHook.setLinuxShortcutStatusListener(status => {
+      desktopShortcuts = status;
+      publishDesktopStatus();
+      if (status.backend === 'unavailable') {
+        void dialog.showMessageBox({
+          type: 'warning', title: 'Shortcuts unavailable',
+          message: 'Shuddhalekhan could not register its keyboard shortcuts.', detail: status.error,
+        });
+      }
+    });
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(permission === 'media');
     });
@@ -887,6 +943,8 @@ if (!gotSingleInstanceLock) {
       );
     }
     if (startupConfig.onboarding.status === 'pending') openSettingsWindow();
+    // The user opted in earlier; reconnect at launch (never after recognition).
+    if (startupConfig.waylandBestEffortInsertion) void setWaylandInsertion(true);
 
     setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
     publishUpdateStatus(getUpdateStatus());
@@ -912,7 +970,7 @@ if (!gotSingleInstanceLock) {
     agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
-    void Promise.all([agentSidecar.stop(), managedLocalTranscriber.shutdown()]).finally(() => {
+    void Promise.all([agentSidecar.stop(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable()]).finally(() => {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;

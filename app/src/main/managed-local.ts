@@ -180,7 +180,7 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
         legacy: legacy && { name: legacy.name, installedBytes: legacy.installedBytes, inUse: state.kind !== 'ready' } };
     };
     return { key: model.key, name: model.name, description: model.description, languages: [...model.languages],
-      cpu: await variant('cpu'), cuda: await variant('cuda') };
+      cpu: await variant('cpu'), cuda: process.platform === 'win32' ? await variant('cuda') : undefined };
   }));
   // Primary state is what the next recording can use, so upgraded installs stay ready on their previous files.
   const state = await selected.getState();

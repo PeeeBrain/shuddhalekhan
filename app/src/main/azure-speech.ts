@@ -64,14 +64,14 @@ export function createAzureSpeechTranscriber(
   return {
     id: 'azure-speech',
     capabilities: AZURE_SPEECH_CAPABILITIES,
-    async transcribe({ audio, recognition }) {
+    async transcribe({ audio, recognition, signal }) {
       if (!apiKey) {
         throw new TranscriptionFailure(
           'authentication',
           'Microsoft Azure Speech key is not configured. Save one in Settings.',
         );
       }
-      return transcribeAzureSpeech(audio, recognition, buildAzureSpeechEndpoint(config), apiKey);
+      return transcribeAzureSpeech(audio, recognition, buildAzureSpeechEndpoint(config), apiKey, signal);
     },
   };
 }
@@ -81,6 +81,7 @@ async function transcribeAzureSpeech(
   recognition: RecognitionSettings,
   endpoint: string,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (recognition.task === 'translate') {
     throw new TranscriptionFailure(
@@ -109,6 +110,7 @@ async function transcribeAzureSpeech(
       method: 'POST',
       headers: { 'Ocp-Apim-Subscription-Key': apiKey },
       body: form as unknown as BodyInit,
+      signal,
     });
   } catch {
     throw new TranscriptionFailure(

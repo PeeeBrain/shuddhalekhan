@@ -1,18 +1,17 @@
-import { createHash } from 'crypto';
-// Namespace import: resolved only on use, so modules importing this without an
-// Electron runtime (Windows tests) don't fail on a missing named export.
-import * as electron from 'electron';
 import koffi from 'koffi';
 import { buildPasteStrategyEvents } from '../paste-strategy';
 import type { PasteStrategy } from '../../types/ipc';
-import { sendVirtualKeys } from './linux-input';
+import { openX11ClipboardMonitor } from './x11-clipboard';
+import { simulateX11Paste } from './x11-paste';
 
 const INPUT_KEYBOARD = 1;
-const KEYEVENTF_KEYUP = 0x0002;
 
 const INPUT_SIZE = 40; // sizeof(INPUT) on 64-bit Windows
 
 let win32Api: ReturnType<typeof loadWin32Api> | null = null;
+let x11Monitor: ReturnType<typeof openX11ClipboardMonitor> | null = null;
+let x11Sequence = 0;
+let x11Observed = 0;
 
 /** Loaded on first use so importing this module never touches user32.dll off Windows. */
 function loadWin32Api() {
@@ -48,9 +47,27 @@ function buildKeyboardInput(vk: number, flags: number): Buffer {
 
 export function getClipboardSequenceNumber(): number {
   if (process.platform !== 'win32') {
-    // ponytail: X11/Wayland expose no change counter; a text hash detects a
-    // user copy during paste but misses image-only changes.
-    return createHash('sha1').update(electron.clipboard.readText()).digest().readUInt32LE(0);
+    if (process.platform !== 'linux' || process.env.XDG_SESSION_TYPE === 'wayland'
+      || process.env.WAYLAND_DISPLAY || !process.env.DISPLAY) {
+      throw new Error('Clipboard ownership tracking is unavailable on this desktop.');
+    }
+    if (!x11Monitor) {
+      x11Monitor = openX11ClipboardMonitor();
+      x11Observed = 0;
+      x11Sequence += 1;
+      process.once('exit', () => x11Monitor?.close());
+    }
+    try {
+      const observed = x11Monitor.sequence();
+      x11Sequence += observed - x11Observed;
+      x11Observed = observed;
+      return x11Sequence;
+    }
+    catch (error) {
+      x11Monitor.close();
+      x11Monitor = null;
+      throw error;
+    }
   }
   // GetClipboardSequenceNumber returns a uint32_t value. Windows documents it as
   // "monotonically increasing", but it can wrap around after ~4 billion writes.
@@ -64,9 +81,11 @@ export function getClipboardSequenceNumber(): number {
 export function simulatePaste(strategy: PasteStrategy = 'ctrl-v'): PasteDispatchResult {
   const events = buildPasteStrategyEvents(strategy);
   if (process.platform !== 'win32') {
-    return {
-      acceptedEvents: sendVirtualKeys(events.map((event) => ({ vk: event.vk, keyUp: (event.flags & KEYEVENTF_KEYUP) !== 0 }))),
-    };
+    if (process.platform === 'linux' && process.env.DISPLAY
+      && process.env.XDG_SESSION_TYPE !== 'wayland' && !process.env.WAYLAND_DISPLAY) {
+      return simulateX11Paste(strategy);
+    }
+    return { acceptedEvents: 0 };
   }
   const { SendInput, GetLastError } = win32();
   const inputs = Buffer.concat(events.map((event) => buildKeyboardInput(event.vk, event.flags)));

@@ -36,6 +36,15 @@ describe('paste strategy resolver', () => {
     expect(resolvePasteStrategy('C:\\Windows\\NOTEPAD.EXE', config)).toBe('shift-insert');
   });
 
+  it('pastes into Linux terminals with Ctrl+Shift+V unless the user overrode them', () => {
+    const config: PasteStrategyConfig = { default: 'ctrl-v', overrides: { kitty: 'shift-insert' } };
+
+    expect(resolvePasteStrategy('org.kde.konsole', config)).toBe('ctrl-shift-v');
+    expect(resolvePasteStrategy('/usr/libexec/gnome-terminal-server', config)).toBe('ctrl-shift-v');
+    expect(resolvePasteStrategy('kitty', config)).toBe('shift-insert');
+    expect(resolvePasteStrategy('org.kde.kate', config)).toBe('ctrl-v');
+  });
+
   it('validates known paste strategies', () => {
     expect(isValidPasteStrategy('ctrl-v')).toBe(true);
     expect(isValidPasteStrategy('shift-insert')).toBe(true);

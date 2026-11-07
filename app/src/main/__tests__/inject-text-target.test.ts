@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { installElectronMock } from '../../test/electron-mock';
+import { mockConfigModule } from '../../test/config-mock';
 import type { validatePasteTarget as ValidatePasteTarget } from '../inject-text';
 import type { DictationTargetSnapshot } from '../../types/ipc';
 
@@ -8,11 +9,7 @@ mock.module('../native/clipboard', () => ({
   simulatePaste: mock(() => undefined),
   getClipboardSequenceNumber: mock(() => 1),
 }));
-mock.module('../config', () => ({
-  getConfig: () => ({
-    pasteStrategy: { default: 'ctrl-v', overrides: {} },
-  }),
-}));
+mockConfigModule({ getConfig: () => ({ pasteStrategy: { default: 'ctrl-v', overrides: {} } }) });
 
 let validatePasteTarget: typeof ValidatePasteTarget;
 
@@ -20,8 +17,9 @@ beforeEach(async () => {
   ({ validatePasteTarget } = await import(`../inject-text?test=${Date.now()}-${Math.random()}`));
 });
 
-function snapshot(partial: Partial<DictationTargetSnapshot>): DictationTargetSnapshot {
+function snapshot(partial: Partial<Extract<DictationTargetSnapshot, { kind: 'win32' }>>): DictationTargetSnapshot {
   return {
+    kind: 'win32',
     hwnd: 1,
     processId: 100,
     processCreationTime: '2026-01-01T00:00:00.000Z',
@@ -41,11 +39,17 @@ describe('validatePasteTarget', () => {
     expect(validatePasteTarget(start, current)).toEqual({ allowed: true, transition: false });
   });
 
-  it('allows paste and records transition for a different window in the same process', () => {
+  it('blocks paste into a different window in the same process', () => {
     const start = snapshot({ hwnd: 1, processId: 100 });
     const current = snapshot({ hwnd: 2, processId: 100 });
 
-    expect(validatePasteTarget(start, current)).toEqual({ allowed: true, transition: true });
+    expect(validatePasteTarget(start, current).allowed).toBe(false);
+  });
+
+  it('blocks paste after the original process ID is reused', () => {
+    const start = snapshot({});
+    const current = snapshot({ processCreationTime: '2026-02-01T00:00:00.000Z' });
+    expect(validatePasteTarget(start, current).allowed).toBe(false);
   });
 
   it('blocks paste when the current process differs from the start process', () => {

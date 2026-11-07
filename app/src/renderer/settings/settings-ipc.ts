@@ -27,6 +27,7 @@ import type {
   AgentSkillImport,
   AgentSkillSummary,
 } from '../../shared/agent-context';
+import type { DesktopStatus } from '../../shared/desktop-status';
 
 type Unsubscribe = () => void;
 
@@ -55,6 +56,9 @@ export interface SettingsIpc {
   beginShortcutCapture: () => Promise<void>;
   endShortcutCapture: () => Promise<void>;
   onShortcutsPausedChanged: (callback: (paused: boolean) => void) => Unsubscribe | undefined;
+  getDesktopStatus: () => Promise<DesktopStatus>;
+  setWaylandInsertion: (enabled: boolean) => Promise<DesktopStatus>;
+  onDesktopStatusChanged: (callback: (status: DesktopStatus) => void) => Unsubscribe | undefined;
   onUpdateStatusChanged: (callback: (status: UpdateStatus) => void) => Unsubscribe | undefined;
   onNavigateRequested: (callback: (section: 'about') => void) => Unsubscribe | undefined;
   onMcpStatusSnapshot: (callback: (snapshot: McpStatusSnapshot) => void) => Unsubscribe | undefined;
@@ -114,6 +118,9 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await requireElectronApi(electronAPI).invoke('shortcuts:end-capture');
     },
     onShortcutsPausedChanged: (callback) => electronAPI?.subscribe('shortcuts:paused-changed', callback),
+    getDesktopStatus: () => requireElectronApi(electronAPI).invoke('desktop:get-status'),
+    setWaylandInsertion: (enabled) => requireElectronApi(electronAPI).invoke('desktop:set-wayland-insertion', enabled),
+    onDesktopStatusChanged: (callback) => electronAPI?.subscribe('desktop:status-changed', callback),
     onUpdateStatusChanged: (callback) => electronAPI?.subscribe('updater:status-changed', callback),
     onNavigateRequested: (callback) => electronAPI?.subscribe('settings:navigate', callback),
     onMcpStatusSnapshot: (callback) => electronAPI?.subscribe('mcp:status-snapshot', callback),

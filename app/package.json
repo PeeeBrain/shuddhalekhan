@@ -138,16 +138,13 @@
     "deb": {
       "packageName": "shuddhalekhan",
       "afterInstall": "packaging/linux/after-install.sh",
-      "fpm": [
-        "packaging/linux/70-shuddhalekhan-uinput.rules=/usr/lib/udev/rules.d/70-shuddhalekhan-uinput.rules"
-      ]
+      "fpm": ["--depends", "libxcb1", "--depends", "libxcb-xfixes0", "--depends", "libxcb-xtest0"]
     },
     "rpm": {
       "packageName": "shuddhalekhan",
       "afterInstall": "packaging/linux/after-install.sh",
-      "fpm": [
-        "packaging/linux/70-shuddhalekhan-uinput.rules=/usr/lib/udev/rules.d/70-shuddhalekhan-uinput.rules"
-      ]
+      "afterRemove": "packaging/linux/after-remove.sh",
+      "fpm": ["--depends", "libxcb"]
     },
     "publish": {
       "provider": "github",

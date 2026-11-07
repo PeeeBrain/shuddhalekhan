@@ -1,5 +1,6 @@
 import koffi from 'koffi';
 import type { DictationTargetSnapshot } from '../../types/ipc';
+import { captureX11Target } from './x11-target';
 
 export interface TargetCaptureDeps {
   getForegroundWindow: () => bigint;
@@ -73,6 +74,7 @@ export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTar
     if (!processCreationTime) return null;
 
     return {
+      kind: 'win32',
       hwnd,
       processId,
       processCreationTime,
@@ -123,25 +125,14 @@ function loadWin32Deps(): TargetCaptureDeps {
   };
 }
 
-/**
- * Linux has no portable focused-window query (Wayland hides it), so every
- * capture returns the same anonymous target: pastes are always allowed and
- * per-app paste overrides fall back to the default strategy.
- */
-const LINUX_TARGET: DictationTargetSnapshot = {
-  hwnd: 0,
-  processId: 0,
-  processCreationTime: '',
-  threadId: 0,
-  windowClass: '',
-  executablePath: null,
-  capturedAt: new Date(0).toISOString(),
-};
-
 let captureWin32Target: (() => DictationTargetSnapshot | null) | null = null;
 
 export function captureForegroundTarget(): DictationTargetSnapshot | null {
-  if (process.platform !== 'win32') return LINUX_TARGET;
+  if (process.platform === 'linux') {
+    if (process.env.XDG_SESSION_TYPE === 'wayland' || process.env.WAYLAND_DISPLAY || !process.env.DISPLAY) return null;
+    return captureX11Target();
+  }
+  if (process.platform !== 'win32') return null;
   captureWin32Target ??= createTargetCapture(loadWin32Deps());
   return captureWin32Target();
 }

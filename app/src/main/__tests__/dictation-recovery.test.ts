@@ -16,7 +16,7 @@ describe('Batch Dictation recovery certainty', () => {
       'copy-full-transcript',
     ]);
     expect(getRecoveryActions({ kind: 'clipboard-conflict', reason: 'changed' })).toEqual([
-      'retry-paste', 'copy-full-transcript',
+      'copy-full-transcript',
     ]);
   });
 });

@@ -1,5 +1,6 @@
-import { screen } from 'electron';
-import type { BrowserWindow, WebContents } from 'electron';
+import { ipcMain, screen } from 'electron';
+import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
+import { AudioSpool, sweepOrphanedSpools } from './audio-spool';
 import type {
   DictationRecoveryAction,
   RecordingIntent,
@@ -79,6 +80,8 @@ export class RuntimeShell {
   private ready = false;
   private pendingBegin: RecordingPresentationEnvelope | null = null;
   private activeCommand: RuntimeAudioCommand | null = null;
+  /** The active command's canonical audio; lives exactly as long as that command. */
+  private spool: AudioSpool | null = null;
   private generation = 1;
   private revision = 0;
   private pendingSnapshot: RuntimePresentationSnapshot | null = null;
@@ -132,10 +135,16 @@ export class RuntimeShell {
           console.error(`Runtime shell failed to load: ${code} ${description}`);
         });
         win.webContents.on('render-process-gone', (_event, details) => {
-          this.handleCrash(details.reason);
+          if (this.windows.get() === win) this.handleCrash(details.reason);
+        });
+        win.on('unresponsive', () => {
+          if (this.windows.get() === win) this.handleCrash('unresponsive');
         });
       },
     });
+    sweepOrphanedSpools();
+    ipcMain.handle('runtime:audio-spool', this.handleAudioSpool);
+    ipcMain.on('runtime:audio-end', this.handleAudioEnd);
   }
 
   prepare(): void {
@@ -176,12 +185,14 @@ export class RuntimeShell {
   }
 
   cancelCapture(): void {
-    this.endCapture();
+    this.pendingBegin = null;
+    if (!this.activeCommand) return;
+    const command = this.activeCommand;
+    this.clearCommand();
+    this.send('runtime:audio-cancel', command);
   }
 
   setSelectedDevice(deviceId: string | null): void {
-    this.ready = false;
-    this.pendingBegin = null;
     this.send('audio:recreate-stream', deviceId);
   }
 
@@ -202,6 +213,7 @@ export class RuntimeShell {
         recordingSessionId,
         intent,
         capabilities: envelope.capabilities,
+        captureStartedAt: null,
         durationWarningSeconds: null,
       };
     }
@@ -236,20 +248,12 @@ export class RuntimeShell {
     if (
       this.activeRecording.committed === committed
       && this.activeRecording.tentative === tentative
-      && !this.activeRecording.insertionHalted
     ) return;
     this.activeRecording = {
       ...this.activeRecording,
       committed,
       tentative,
-      insertionHalted: this.activeRecording.insertionHalted === true,
     };
-    this.republish();
-  }
-
-  showInsertionHalted(recordingSessionId: string): void {
-    if (this.activeRecording?.recordingSessionId !== recordingSessionId) return;
-    this.activeRecording = { ...this.activeRecording, insertionHalted: true };
     this.republish();
   }
 
@@ -279,7 +283,7 @@ export class RuntimeShell {
   }
 
   finish(): void {
-    this.activeCommand = null;
+    this.clearCommand();
     this.activeRecording = null;
     this.processingSessionId = null;
     this.dictationFailure = null;
@@ -455,6 +459,13 @@ export class RuntimeShell {
     return win && !win.isDestroyed() ? win.webContents : null;
   }
 
+  markCaptureReady(recordingSessionId: string): void {
+    if (this.activeRecording?.recordingSessionId !== recordingSessionId
+      || this.activeRecording.captureStartedAt !== null) return;
+    this.activeRecording.captureStartedAt = Date.now();
+    this.republish();
+  }
+
   acceptsAudioEvent(generation: number, recordingSessionId: string, sequence: number): boolean {
     return this.activeCommand?.generation === generation
       && this.activeCommand.recordingSessionId === recordingSessionId
@@ -463,16 +474,18 @@ export class RuntimeShell {
 
   consumeAudioEvent(generation: number, recordingSessionId: string, sequence: number): boolean {
     if (!this.acceptsAudioEvent(generation, recordingSessionId, sequence)) return false;
-    this.activeCommand = null;
+    this.clearCommand();
     return true;
   }
 
   destroy(): void {
+    ipcMain.removeHandler('runtime:audio-spool');
+    ipcMain.off('runtime:audio-end', this.handleAudioEnd);
     this.cancelPendingHide();
     this.clearAgentTimers();
     this.ready = false;
     this.pendingBegin = null;
-    this.activeCommand = null;
+    this.clearCommand();
     this.activeRecording = null;
     this.processingSessionId = null;
     this.dictationFailure = null;
@@ -603,8 +616,7 @@ export class RuntimeShell {
         return { width: SHELL_WIDTH, height: SHELL_HEIGHT, focusable: false, interactive: false };
       case 'recording': {
         const expanded = state.committed !== undefined
-          || state.tentative !== undefined
-          || state.insertionHalted === true;
+          || state.tentative !== undefined;
         return expanded
           ? { width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT, focusable: false, interactive: false }
           : { width: SHELL_WIDTH, height: SHELL_HEIGHT, focusable: false, interactive: false };
@@ -729,7 +741,88 @@ export class RuntimeShell {
     webContents?.send(channel, ...args);
   }
 
+  private clearCommand(): void {
+    this.activeCommand = null;
+    this.spool?.discard();
+    this.spool = null;
+  }
+
+  /**
+   * Appends one renderer PCM batch for the active command, in order. The
+   * returned acknowledgement returns the batch's worklet credit; false makes
+   * the renderer fail the capture.
+   */
+  private readonly handleAudioSpool = (
+    event: IpcMainInvokeEvent,
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+    chunkSequence: number,
+    pcm: unknown,
+  ): boolean => {
+    if (event.sender !== this.getWebContents()) return false;
+    if (!this.acceptsAudioEvent(generation, recordingSessionId, commandSequence)) return false;
+    if (!(pcm instanceof ArrayBuffer)) {
+      this.failCapture(event, new Error('Audio chunk is not binary.'));
+      return false;
+    }
+    const data = new Uint8Array(pcm);
+    try {
+      this.spool ??= AudioSpool.open();
+      this.spool.append(chunkSequence, data);
+      return true;
+    } catch (error) {
+      this.failCapture(event, error);
+      return false;
+    } finally {
+      data.fill(0);
+    }
+  };
+
+  /**
+   * The renderer's acknowledged end boundary. Only a spool holding exactly the
+   * declared chunks/samples becomes a WAV; it is delivered on the existing
+   * `runtime:audio-data-ready` main-process boundary.
+   */
+  private readonly handleAudioEnd = (
+    event: IpcMainEvent,
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+    chunkCount: number,
+    sampleCount: number,
+  ): void => {
+    if (event.sender !== this.getWebContents()) return;
+    if (!this.acceptsAudioEvent(generation, recordingSessionId, commandSequence)) return;
+    let wav: Uint8Array<ArrayBuffer>;
+    try {
+      wav = (this.spool ?? AudioSpool.open()).finish(chunkCount, sampleCount);
+    } catch (error) {
+      this.failCapture(event, error);
+      return;
+    } finally {
+      this.spool = null;
+    }
+    const command = this.activeCommand;
+    ipcMain.emit('runtime:audio-data-ready', event, generation, recordingSessionId, commandSequence, wav.buffer);
+    // The end boundary retires the command even if no consumer claimed it.
+    if (this.activeCommand === command) this.clearCommand();
+  };
+
+  /** Recoverable capture failure (e.g. disk full, lost chunk): drop audio, release the mic, report once. */
+  private failCapture(event: IpcMainEvent | IpcMainInvokeEvent, error: unknown): void {
+    const command = this.activeCommand;
+    if (!command) return;
+    console.error('Audio capture spool failed:', error);
+    this.spool?.discard();
+    this.spool = null;
+    this.send('runtime:audio-cancel', command);
+    ipcMain.emit('runtime:audio-failed', event, command.generation, command.recordingSessionId, command.sequence);
+    if (this.activeCommand === command) this.clearCommand();
+  }
+
   private startAudio(envelope: RecordingPresentationEnvelope): void {
+    this.clearCommand();
     this.activeCommand = {
       generation: this.generation,
       recordingSessionId: envelope.recordingSessionId,
@@ -742,7 +835,7 @@ export class RuntimeShell {
   private handleCrash(reason: string): void {
     this.ready = false;
     this.pendingBegin = null;
-    this.activeCommand = null;
+    this.clearCommand();
     this.activeRecording = null;
     this.generation += 1;
     this.revision = 0;

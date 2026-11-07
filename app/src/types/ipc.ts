@@ -1,4 +1,5 @@
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
+import type { DesktopStatus } from '../shared/desktop-status';
 
 export type AudioDevice = {
   deviceId: string;
@@ -161,10 +162,10 @@ export interface McpServerConfig {
 
 export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
-  'runtime:audio-first-buffer': (generation: number, recordingSessionId: string, sequence: number) => void;
   'surface-paint-proxy': (surface: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
+  'runtime:audio-ready': (generation: number, recordingSessionId: string, commandSequence: number) => void;
   'runtime:audio-chunk': (
     generation: number,
     recordingSessionId: string,
@@ -177,11 +178,13 @@ export interface RendererToMainSendChannels {
     recordingSessionId: string,
     commandSequence: number,
   ) => void;
-  'runtime:audio-data-ready': (
+  /** Acknowledged end boundary: main verifies the spool holds exactly this much audio. */
+  'runtime:audio-end': (
     generation: number,
     recordingSessionId: string,
-    sequence: number,
-    audioData: ArrayBuffer,
+    commandSequence: number,
+    chunkCount: number,
+    sampleCount: number,
   ) => void;
   'runtime:audio-failed': (
     generation: number,
@@ -193,16 +196,7 @@ export interface RendererToMainSendChannels {
   'runtime:agent-dismiss': () => void;
 }
 
-export interface DictationTargetSnapshot {
-  hwnd: number;
-  processId: number;
-  /** UTC ISO timestamp for the original process; used to detect PID reuse. */
-  processCreationTime: string;
-  threadId: number;
-  windowClass: string;
-  executablePath: string | null;
-  capturedAt: string;
-}
+export type { DictationTargetSnapshot } from '../shared/dictation-target';
 
 export type PasteStrategy = 'ctrl-v' | 'shift-insert' | 'ctrl-shift-v';
 
@@ -237,6 +231,18 @@ export interface RendererToMainInvokeChannels {
   'transcription:check-server': () => Promise<boolean>;
   'settings:open': () => void;
   'clipboard:inject-text': (text: string) => Promise<InjectResult>;
+  /**
+   * Canonical 16 kHz mono PCM16 batch, appended to main's per-recording spool
+   * in order. Resolves true once written; false means main dropped the
+   * recording (stale identity or failed write) and the capture must fail.
+   */
+  'runtime:audio-spool': (
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+    chunkSequence: number,
+    pcm: ArrayBuffer,
+  ) => Promise<boolean>;
   'agent:approval-decision': (
     agentRunId: string,
     approvalId: string,
@@ -255,6 +261,9 @@ export interface RendererToMainInvokeChannels {
   'audit:get-runs': () => Promise<AuditRunSummary[]>;
   'audit:get-run-detail': (agentRunId: string) => Promise<AuditEventDetail[]>;
   'shortcuts:get-paused': () => Promise<boolean>;
+  'desktop:get-status': () => Promise<DesktopStatus>;
+  /** Enabling runs KWin focus tracking and the RemoteDesktop consent prompt before it reports ready. */
+  'desktop:set-wayland-insertion': (enabled: boolean) => Promise<DesktopStatus>;
   'shortcuts:set-paused': (paused: boolean) => Promise<boolean>;
   'shortcuts:begin-capture': () => void;
   'shortcuts:end-capture': () => void;
@@ -283,8 +292,10 @@ export interface MainToRendererChannels {
   'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;
   'shortcuts:paused-changed': (paused: boolean) => void;
+  'desktop:status-changed': (status: DesktopStatus) => void;
   'runtime:audio-start': (command: RuntimeAudioCommand) => void;
   'runtime:audio-stop': (command: RuntimeAudioCommand) => void;
+  'runtime:audio-cancel': (command: RuntimeAudioCommand) => void;
   'runtime:audio-chunk-accepted': (
     generation: number,
     recordingSessionId: string,
@@ -313,10 +324,10 @@ export type RuntimePresentationState =
       recordingSessionId: string;
       intent: RecordingIntent;
       capabilities: TranscriptionTransportCapabilities;
+      captureStartedAt: number | null;
       durationWarningSeconds: number | null;
       committed?: string;
       tentative?: string;
-      insertionHalted?: boolean;
     }
   | { kind: 'processing'; recordingSessionId: string }
   | {
@@ -470,7 +481,8 @@ export interface ManagedLocalModelSnapshot {
     description: string;
     languages: string[];
     cpu: ManagedLocalVariant;
-    cuda: ManagedLocalVariant;
+    /** Absent where no GPU build exists (outside Windows). */
+    cuda?: ManagedLocalVariant;
   }>;
   runtime: {
     status: 'idle' | 'loading' | 'ready' | 'error';
@@ -501,7 +513,7 @@ interface ManagedLocalVariant {
   legacy?: { name: string; installedBytes: number; inUse: boolean } | null;
 }
 
-export type DictationMode = 'batch' | 'live' | 'corrected';
+export type DictationMode = 'batch' | 'corrected';
 
 export interface DictationFormatterProfile {
   baseUrl: string;
@@ -553,6 +565,8 @@ export interface AppConfig {
   task: 'transcribe' | 'translate';
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
+  /** KDE Wayland best-effort insertion test mode. Off by default; enabled only through Settings setup. */
+  waylandBestEffortInsertion?: boolean;
   setupChecklistDismissed: boolean;
   onboarding: { status: 'pending' | 'complete' };
   shortcuts: ShortcutsConfig;

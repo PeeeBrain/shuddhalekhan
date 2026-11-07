@@ -57,6 +57,13 @@ export function formatBinding(binding: ShortcutBinding | null): string {
   return parts.length > 0 ? parts.join(' + ') : 'Not assigned';
 }
 
+/** Chords simulatePaste sends: Ctrl+V, Shift+Insert, Ctrl+Shift+V (see main/paste-strategy). */
+const PASTE_CHORDS: ShortcutBinding[] = [
+  { keyCode: 0x56, modifiers: ['ctrl'] },
+  { keyCode: 0x2d, modifiers: ['shift'] },
+  { keyCode: 0x56, modifiers: ['ctrl', 'shift'] },
+];
+
 export type BindingVerdict =
   | { status: 'ok' }
   | { status: 'warning'; message: string }
@@ -106,6 +113,17 @@ export function assessBinding(
     };
   }
 
+  // Our own synthetic paste would trigger the shortcut instead of reaching the app (X11 grabs, Windows hook).
+  const pasteChord = PASTE_CHORDS.find((chord) => binding.keyCode === null
+    ? binding.modifiers.every((modifier) => chord.modifiers.includes(modifier))
+    : bindingsEqual(binding, chord));
+  if (pasteChord) {
+    return {
+      status: 'error',
+      message: `${formatBinding(binding)} overlaps ${formatBinding(pasteChord)}, which Shuddhalekhan sends to paste transcripts.`,
+    };
+  }
+
   if (otherIntentBinding !== null && bindingsEqual(binding, otherIntentBinding)) {
     return {
       status: 'error',
@@ -116,9 +134,8 @@ export function assessBinding(
   if (binding.keyCode !== null && binding.modifiers.length === 0) {
     return {
       status: 'warning',
-      // Linux observes keys without consuming them (evdev), so the key also reaches the focused app.
       message: IS_LINUX
-        ? `${formatBinding(binding)} will start recording everywhere and still reach the app you are typing in.`
+        ? `${formatBinding(binding)} will start recording everywhere. With the input-device fallback it also reaches the app you are typing in.`
         : `${formatBinding(binding)} will be consumed everywhere while assigned and cannot be typed in other apps.`,
     };
   }

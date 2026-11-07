@@ -5,6 +5,7 @@ import type { AppConfig, ManagedLocalModelState } from '../../types/ipc';
 import { formatBinding } from '../../shared/shortcut-bindings';
 import type { SettingsIpc } from './settings-ipc';
 import { useManagedLocalSnapshot } from './use-managed-local-snapshot';
+import { activeTrigger, useDesktopStatus } from './use-desktop-status';
 import { ipcErrorMessage } from './use-settings-persistence';
 
 export function Onboarding({
@@ -22,6 +23,7 @@ export function Onboarding({
   const [micLevel, setMicLevel] = useState(0);
   const [installError, setInstallError] = useState('');
   const micCleanup = useRef<(() => void) | null>(null);
+  const desktopStatus = useDesktopStatus(settingsIpc);
 
   useEffect(() => () => micCleanup.current?.(), []);
 
@@ -84,7 +86,8 @@ export function Onboarding({
   };
 
   const modelReady = !!legacy || model?.state.kind === 'ready';
-  const shortcut = formatBinding(config.shortcuts.dictation.binding);
+  const trigger = activeTrigger(desktopStatus, 'dictation', config.shortcuts.dictation.binding);
+  const shortcut = trigger.kind === 'active' ? trigger.text : formatBinding(config.shortcuts.dictation.binding);
 
   return (
     <main className="min-h-full bg-background px-6 py-10 text-foreground">
@@ -143,6 +146,10 @@ export function Onboarding({
 
           <Step icon={Keyboard} number="3" title="Complete one Dictation" done={false} disabled={micState !== 'verified'}>
             <p className="text-sm text-muted-foreground">Open any text field, then press <strong className="text-foreground">{shortcut}</strong> to start recording. Press it again to stop.</p>
+            {trigger.kind === 'inactive' ? <p className="mt-3 text-sm text-warning">{trigger.message}</p> : null}
+            {desktopStatus && !desktopStatus.delivery.available ? (
+              <p className="mt-3 text-sm text-warning">{desktopStatus.delivery.message}</p>
+            ) : null}
             {micState === 'verified' ? (
               <p className="mt-3 flex items-center gap-2 text-sm font-medium text-primary"><ArrowRight className="size-4" aria-hidden="true" />Waiting for a successful Dictation…</p>
             ) : null}

@@ -34,6 +34,8 @@ export interface RecognitionSettings {
 export interface TranscriptionRequest {
   audio: Uint8Array<ArrayBuffer>;
   recognition: RecognitionSettings;
+  /** Aborts in-flight provider requests and prevents further ones (auth, retries). */
+  signal?: AbortSignal;
 }
 
 export interface StreamingTranscriptSnapshot {
@@ -46,8 +48,6 @@ export interface StreamingTranscriptionSession {
   send(pcm: Uint8Array): Promise<void>;
   finish(): Promise<string>;
   cancel(): void;
-  /** Retry the completed WAV with this recording's original model and recognition settings. */
-  retryCompletedAudio?(audio: Uint8Array<ArrayBuffer>): Promise<string>;
 }
 
 export interface StreamingTranscriptionRequest {
@@ -61,8 +61,6 @@ export interface Transcriber {
   readonly transportCapabilities?: import('../types/ipc').TranscriptionTransportCapabilities;
   transcribe(request: TranscriptionRequest): Promise<string>;
   startStreaming?(request: StreamingTranscriptionRequest): StreamingTranscriptionSession;
-  /** Receives audio while recording, without previews; finish() returns the final transcript. */
-  startIncremental?(request: { recognition: RecognitionSettings }): StreamingTranscriptionSession;
 }
 
 export type TranscriptionFailureCategory =

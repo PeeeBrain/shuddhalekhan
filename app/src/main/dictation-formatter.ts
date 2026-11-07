@@ -26,6 +26,7 @@ export interface DictationFormatterRequest {
   protectedTerms: string[];
   apiKey: string | null;
   deadlineMs?: number;
+  signal?: AbortSignal;
 }
 
 export type DictationFormatterSuccess = { kind: 'success'; text: string };
@@ -210,7 +211,7 @@ export async function applyDictationFormatter(
       method: 'POST',
       headers,
       body: JSON.stringify(buildFormatterPayload(profile, rawText, language, protectedTerms)),
-      signal: controller.signal,
+      signal: request.signal ? AbortSignal.any([controller.signal, request.signal]) : controller.signal,
     });
 
     if (response.status === 401 || response.status === 403) {

@@ -3,9 +3,9 @@ import {
 } from './clipboard-transaction-manager';
 import {
   ElectronClipboardAdapter,
-  Win32ForegroundInspector,
-  Win32InputSimulator,
-  Win32ClipboardMonitor,
+  NativeForegroundInspector,
+  NativeInputSimulator,
+  NativeClipboardMonitor,
   ConfigPasteStrategyResolver,
 } from './production-adapters';
 import type { DictationTargetSnapshot, InjectResult } from '../types/ipc';
@@ -18,9 +18,9 @@ export function getClipboardTransactionManager(): ClipboardTransactionManager {
   if (!defaultManager) {
     defaultManager = new ClipboardTransactionManager(
       new ElectronClipboardAdapter(),
-      new Win32ForegroundInspector(),
-      new Win32InputSimulator(),
-      new Win32ClipboardMonitor(),
+      new NativeForegroundInspector(),
+      new NativeInputSimulator(),
+      new NativeClipboardMonitor(),
       new ConfigPasteStrategyResolver()
     );
   }
@@ -30,9 +30,10 @@ export function getClipboardTransactionManager(): ClipboardTransactionManager {
 export async function injectIntoFocusedApp(
   text: string,
   targetSnapshot: DictationTargetSnapshot | null = null,
-  manager = getClipboardTransactionManager()
+  manager = getClipboardTransactionManager(),
+  signal?: AbortSignal,
 ): Promise<InjectResult> {
-  return manager.inject(text, { target: targetSnapshot });
+  return manager.inject(text, { target: targetSnapshot, signal });
 }
 
 export async function copyLastTranscriptToClipboard(

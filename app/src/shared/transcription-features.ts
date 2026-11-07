@@ -2,7 +2,7 @@ import type { AppConfig, TranscriptionSettingsPatch } from '../types/ipc';
 import { getTranscriptionTransportCapabilities } from './dictation-runtime';
 import { SARVAM_LANGUAGES, sarvamLanguageCode } from './sarvam';
 
-type FeatureConfig = Pick<AppConfig, 'transcription' | 'managedLocal' | 'dictation' | 'task'>;
+type FeatureConfig = Pick<AppConfig, 'transcription' | 'managedLocal' | 'task'>;
 
 export function hasDictionaryControlCharacters(term: string): boolean {
   return [...term].some(character => {
@@ -67,8 +67,7 @@ export function resolveTranscriptionFeatures(config: FeatureConfig, localLanguag
   return {
     ...getTranscriptionTransportCapabilities(provider),
     translation, automaticLanguageDetection, dictionaryHints, language,
-    cleanup: config.dictation.mode !== 'live'
-      && !(provider === 'sarvam' && config.task === 'transcribe' && providers.sarvam.mode === 'verbatim'),
+    cleanup: !(provider === 'sarvam' && config.task === 'transcribe' && providers.sarvam.mode === 'verbatim'),
     dictionaryMaxTerms, dictionaryMaxTermLength,
   };
 }
@@ -90,7 +89,6 @@ export function resolveRecognitionSettings(config: AppConfig, localLanguages?: r
 export function normalizeTranscriptionTransition(config: AppConfig, patch: TranscriptionSettingsPatch): AppConfig {
   const next = { ...config, ...patch };
   const features = resolveTranscriptionFeatures(next);
-  if (!features.streaming && next.dictation.mode === 'live') next.dictation = { ...next.dictation, mode: 'batch' };
   if (!features.translation) next.task = 'transcribe';
   // Local models ignore language hints; keep the saved preference for providers that accept them.
   if (features.language.kind === 'select') {

@@ -11,10 +11,6 @@ export interface LastTranscript {
   createdAt: string;
   injectionStatus: LastTranscriptInjectionStatus;
   targetSnapshot: DictationTargetSnapshot | null;
-  liveDispatch?: {
-    hasAcceptedEvents: boolean;
-    uncertain: boolean;
-  };
 }
 
 let lastTranscript: LastTranscript | null = null;
@@ -22,7 +18,6 @@ let lastTranscript: LastTranscript | null = null;
 export function setLastTranscript(
   text: string,
   targetSnapshot: DictationTargetSnapshot | null = null,
-  liveDispatch?: LastTranscript['liveDispatch'],
 ): void {
   if (!text) return;
   lastTranscript = {
@@ -30,7 +25,6 @@ export function setLastTranscript(
     createdAt: new Date().toISOString(),
     injectionStatus: 'pending',
     targetSnapshot,
-    ...(liveDispatch ? { liveDispatch } : {}),
   };
 }
 

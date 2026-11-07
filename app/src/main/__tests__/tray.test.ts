@@ -1,6 +1,8 @@
-import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import * as fs from 'fs';
 import { normalize } from 'path';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
+import { mockConfigModule } from '../../test/config-mock';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
 
@@ -18,6 +20,7 @@ const config = {
   whisperUrl: 'http://localhost:8080/inference',
   selectedDeviceId: null as string | null,
   removeFillerWords: true,
+  dictionary: [],
   agent: {
     enabled: false,
     provider: {
@@ -57,14 +60,12 @@ const text = (label: string): MenuItemSpec => {
 };
 
 installElectronMock();
-mock.module('fs', () => ({ existsSync }));
-mock.module('../config', () => ({
-  getConfig: () => config,
-  setConfig,
-}));
+let filesystemSpy: { mockRestore(): void };
+mockConfigModule({ getConfig: () => config, setConfig });
 
 describe('tray', () => {
   beforeEach(() => {
+    filesystemSpy = spyOn(fs, 'existsSync').mockImplementation(existsSync);
     resetElectronMock();
     electronMock.Tray.mockImplementation(() => ({
       setToolTip,
@@ -92,6 +93,8 @@ describe('tray', () => {
     config.removeFillerWords = true;
   });
 
+  afterEach(() => filesystemSpy.mockRestore());
+
   it('falls back to an embedded icon when the file icon is missing', async () => {
     existsSync.mockReturnValue(false);
     const { createTray } = await import(`../tray?test=${Date.now()}-2`);
@@ -111,7 +114,8 @@ describe('tray', () => {
 
     createTray({ onOpenSettings: vi.fn() });
 
-    expect(createFromPath).toHaveBeenCalledWith(normalize('/resources/icons/tray-icon.ico'));
+    const icon = process.platform === 'win32' ? 'tray-icon.ico' : 'icon.png';
+    expect(createFromPath).toHaveBeenCalledWith(normalize(`/resources/icons/${icon}`));
   });
 
   it('filters audio inputs and routes device selections through the onSelectDevice handler', async () => {

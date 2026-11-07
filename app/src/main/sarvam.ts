@@ -18,7 +18,7 @@ export function createSarvamTranscriber(
       authentication: 'required',
       maxDurationSeconds: 30,
     },
-    async transcribe({ audio, recognition }) {
+    async transcribe({ audio, recognition, signal }) {
       if (!apiKey) throw new TranscriptionFailure('authentication', 'Sarvam API key is not configured. Save one in Settings.');
       const errors = getSarvamSettingsErrors(config, recognition.language, recognition.dictionary);
       if (errors.length) throw new TranscriptionFailure('model', errors.join(' '));
@@ -40,6 +40,7 @@ export function createSarvamTranscriber(
           method: 'POST',
           headers: { 'api-subscription-key': apiKey },
           body: form,
+          signal,
         });
       } catch {
         throw new TranscriptionFailure('network', 'Could not reach Sarvam. Check your network connection.');

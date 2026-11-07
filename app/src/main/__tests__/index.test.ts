@@ -3,6 +3,11 @@ import { electronMock, installElectronMock, resetElectronMock } from '../../test
 import type { DictationTargetSnapshot } from '../../types/ipc';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
+const originalSessionType = process.env.XDG_SESSION_TYPE;
+const originalWaylandDisplay = process.env.WAYLAND_DISPLAY;
+const nativePlatform = process.platform;
+// Wayland policy is gated on the platform too; spoofing it keeps these contracts running on Windows CI.
+const setPlatform = (platform: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: platform });
 
 const ipcHandlers = new Map<string, (...args: any[]) => unknown>();
 const ipcListeners = new Map<string, (...args: any[]) => unknown>();
@@ -48,6 +53,7 @@ const getConfig = vi.fn(() => ({
 const simulatePaste = vi.fn(() => ({ acceptedEvents: 4 }));
 const getClipboardSequenceNumber = vi.fn(() => 1);
 const defaultTargetSnapshot: DictationTargetSnapshot = {
+  kind: 'win32',
   hwnd: 12345,
   processId: 67890,
   processCreationTime: '2026-01-01T00:00:00.000Z',
@@ -83,6 +89,7 @@ const getSettingsWindow = vi.fn(() => ({
 
 const keyboardStart = vi.fn();
 const keyboardStop = vi.fn();
+const keyboardWaitForRelease = vi.fn(async () => true);
 const agentStartRun = vi.fn();
 const agentStart = vi.fn();
 const agentStop = vi.fn();
@@ -117,6 +124,7 @@ const applyDictationFormatter = vi.fn();
 // Mock RecordingSession
 const recordingSessionStart = vi.fn();
 const recordingSessionStop = vi.fn();
+const recordingSessionIsBusy = vi.fn(() => false);
 const recordingSessionBegin = vi.fn();
 const recordingSessionEnd = vi.fn(() => Promise.resolve({ text: 'transcribed text', intent: 'dictation', targetSnapshot: null }));
 const recordingSessionCancel = vi.fn(() => Promise.resolve());
@@ -138,13 +146,33 @@ mock.module('../native/keyboard', () => ({
     setPaused: keyboardSetPaused,
     isPaused: keyboardIsPaused,
     setCaptureSuspended: keyboardSetCaptureSuspended,
+    waitForKeysReleased: keyboardWaitForRelease,
+    waitForShortcutDeactivation: vi.fn(async () => true),
+    refreshShortcuts: vi.fn(),
+    setLinuxShortcutStatusListener: vi.fn(),
   },
 }));
+const kdeFocus = { windowId: 'kwin-1', epoch: 3, appId: 'org.kde.kate' };
+const kdeTracker = {
+  capture: vi.fn(() => kdeFocus),
+  validate: vi.fn((snapshot: typeof kdeFocus) => snapshot.windowId === kdeFocus.windowId && snapshot.epoch === kdeFocus.epoch),
+  isAlive: () => true,
+  close: vi.fn(async () => {}),
+};
+const remoteKeyboard = {
+  setup: vi.fn(async () => {}),
+  isReady: vi.fn(() => true),
+  paste: vi.fn(async () => ({ acceptedEvents: 4 }) as { acceptedEvents: number; error?: string }),
+  close: vi.fn(async () => {}),
+};
+mock.module('../desktop/kde-focus', () => ({ createKdeFocusTracker: async () => kdeTracker }));
+mock.module('../desktop/remote-desktop-keyboard', () => ({ createRemoteDesktopKeyboard: () => remoteKeyboard }));
 mock.module('../native/clipboard', () => ({
   simulatePaste,
   getClipboardSequenceNumber,
 }));
 mock.module('../native/target', () => ({ captureForegroundTarget }));
+mock.module('../desktop/dev-identity', () => ({ prepareDevelopmentIdentity: () => () => {} }));
 mock.module('../settings-window', () => ({ getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler }));
 mock.module('../tray', () => ({
   createTray: vi.fn((handlers: typeof trayHandlers) => {
@@ -211,10 +239,20 @@ mock.module('../dictation-formatter-credential', () => ({
 mock.module('../recording-session', () => ({
   RecordingSession: class {
     constructor(options: any) {
-      sessionOptions = options;
+      const route = options.onResult;
+      sessionOptions = {
+        ...options,
+        onResult: (result: any) => route(result ? {
+          dictation: options.getDictationContext(),
+          signal: new AbortController().signal,
+          outcome: { kind: 'completed' },
+          ...result,
+        } : null),
+      };
     }
     start = recordingSessionStart;
     stop = recordingSessionStop;
+    isBusy = recordingSessionIsBusy;
     begin = recordingSessionBegin;
     end = recordingSessionEnd;
     cancel = recordingSessionCancel;
@@ -264,9 +302,17 @@ describe('main process IPC orchestration', () => {
 
   afterAll(() => {
     mock.restore();
+    setPlatform(nativePlatform);
+    if (originalSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
+    else process.env.XDG_SESSION_TYPE = originalSessionType;
+    if (originalWaylandDisplay === undefined) delete process.env.WAYLAND_DISPLAY;
+    else process.env.WAYLAND_DISPLAY = originalWaylandDisplay;
   });
 
   beforeEach(async () => {
+    setPlatform(nativePlatform);
+    process.env.XDG_SESSION_TYPE = 'x11';
+    delete process.env.WAYLAND_DISPLAY;
     ipcHandlers.clear();
     ipcListeners.clear();
     appListeners.clear();
@@ -323,6 +369,8 @@ describe('main process IPC orchestration', () => {
     getSettingsWindow.mockClear();
     keyboardStart.mockClear();
     keyboardStop.mockClear();
+    keyboardWaitForRelease.mockReset();
+    keyboardWaitForRelease.mockResolvedValue(true);
     keyboardSetPaused.mockClear();
     keyboardIsPaused.mockClear();
     keyboardIsPaused.mockReturnValue(false);
@@ -359,6 +407,7 @@ describe('main process IPC orchestration', () => {
     getConfig.mockReturnValue(baseConfig);
 
     recordingSessionStart.mockClear();
+    recordingSessionIsBusy.mockReturnValue(false);
     recordingSessionStop.mockClear();
     recordingSessionBegin.mockClear();
     recordingSessionEnd.mockClear();
@@ -458,13 +507,16 @@ describe('main process IPC orchestration', () => {
   });
 
   it('shows transcription failures through a sanitized runtime shell failure card', () => {
-    sessionOptions.onError(new Error('token=super-secret'));
-
-    expect(runtimeShellShowFailure).toHaveBeenCalledWith(
-      null,
-      'Transcription failed unexpectedly. Check provider settings and try again.',
-    );
-    expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
+    const log = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      sessionOptions.onError(new Error('token=super-secret'));
+      expect(runtimeShellShowFailure).toHaveBeenCalledWith(
+        null,
+        'Transcription failed unexpectedly. Check provider settings and try again.',
+      );
+      expect(JSON.stringify(log.mock.calls)).not.toContain('super-secret');
+      expect(electronMock.dialog.showErrorBox).not.toHaveBeenCalled();
+    } finally { log.mockRestore(); }
   });
 
   it('checks the configured local endpoint without audio', async () => {
@@ -519,7 +571,7 @@ describe('main process IPC orchestration', () => {
 
     expect(simulatePaste).toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
-    expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('original');
+    expect(electronMock.clipboard.write).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'original' }));
   });
 
   it('completes onboarding only after a real Dictation is inserted', async () => {
@@ -565,6 +617,8 @@ describe('main process IPC orchestration', () => {
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined,
       { memory: null, skillsDirectory: expect.stringContaining('skills') });
     expect(simulatePaste).not.toHaveBeenCalled();
+    // A lingering "Transcribing…" pill outranks and hides every Agent card for the whole run.
+    expect(runtimeShellFinish).toHaveBeenCalled();
   });
 
   it('routes a WhisperLiveKit Batch transcript to Agent Mode without changing the provider path', async () => {
@@ -614,58 +668,123 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('transcribed text');
   });
 
-  it('does not treat an equal-length Batch fallback as already inserted live text', async () => {
-    await import(`../index?test=${Date.now()}-live-content-mismatch`);
-
+  it('keeps the transcript copyable without changing the clipboard or sending input on Wayland', async () => {
+    setPlatform('linux');
+    process.env.XDG_SESSION_TYPE = 'wayland';
     await sessionOptions.onResult({
-      text: 'batch',
-      intent: 'dictation' as const,
-      targetSnapshot: defaultTargetSnapshot,
-      recordingSessionId: 'live-content-mismatch',
-      outcome: { kind: 'completed' as const },
-      liveDictation: {
-        halted: true,
-        uncertain: false,
-        hasAcceptedEvents: true,
-        dispatchedProjectedLength: 'wrong'.length,
-        rawCommitted: 'wrong',
-      },
+      text: 'safe transcript', intent: 'dictation', recordingSessionId: 'wayland',
+      targetSnapshot: null,
     });
-
-    expect(runtimeShellShowFailure).toHaveBeenCalledWith(
-      'live-content-mismatch',
-      'Live Dictation stopped before the full transcript was inserted.',
-      ['copy-full-transcript'],
-    );
     expect(simulatePaste).not.toHaveBeenCalled();
+    expect(electronMock.clipboard.writeText).not.toHaveBeenCalled();
+    expect(runtimeShellShowFailure).toHaveBeenCalledWith('wayland',
+      expect.stringContaining('original input context cannot be verified'), ['copy-full-transcript']);
+    await trayHandlers.onCopyLastTranscript?.();
+    expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('safe transcript');
   });
 
-  it('blocks Paste Last Transcript after Live Dictation accepted input', async () => {
-    await sessionOptions.onResult({
-      text: 'already inserted',
-      intent: 'dictation' as const,
-      targetSnapshot: defaultTargetSnapshot,
-      recordingSessionId: 'live-inserted',
-      outcome: { kind: 'completed' as const },
-      liveDictation: {
-        halted: false,
-        uncertain: false,
-        hasAcceptedEvents: true,
-        dispatchedProjectedLength: 'already inserted'.length,
-        rawCommitted: 'already inserted',
-      },
+  describe('KDE Wayland best-effort test mode', () => {
+    const originalDesktop = process.env.XDG_CURRENT_DESKTOP;
+    beforeEach(async () => {
+      setPlatform('linux');
+      process.env.XDG_SESSION_TYPE = 'wayland';
+      process.env.XDG_CURRENT_DESKTOP = 'KDE';
+      captureForegroundTarget.mockReturnValue(null); // the real capture has no Wayland target
+      remoteKeyboard.setup.mockReset();
+      remoteKeyboard.setup.mockResolvedValue(undefined);
+      remoteKeyboard.paste.mockClear();
+      await import(`../index?test=${Date.now()}-kde-wayland`);
+    });
+    afterAll(() => {
+      if (originalDesktop === undefined) delete process.env.XDG_CURRENT_DESKTOP;
+      else process.env.XDG_CURRENT_DESKTOP = originalDesktop;
     });
 
-    await trayHandlers.onPasteLastTranscript?.();
+    it('stays copy-only until setup runs, then pastes once into the window pinned at record start', async () => {
+      expect(sessionOptions.captureTarget()).toBeNull();
+      const status = await ipcHandlers.get('desktop:set-wayland-insertion')!({}, true) as import('../../shared/desktop-status').DesktopStatus;
+      expect(setConfig).toHaveBeenCalledWith('waylandBestEffortInsertion', true);
+      expect(status.delivery.available).toBe(true);
+      expect(status.waylandInsertion?.state).toBe('ready');
 
+      const targetSnapshot = sessionOptions.captureTarget();
+      expect(targetSnapshot).toMatchObject({ kind: 'kde-wayland', windowId: 'kwin-1', epoch: 3 });
+      await sessionOptions.onResult({
+        text: 'kde words', intent: 'dictation', recordingSessionId: 'kde', targetSnapshot,
+        signal: new AbortController().signal, outcome: { kind: 'completed' },
+        dictation: { config: { mode: 'batch', formatter: null }, language: 'auto', protectedTerms: [], formatterApiKey: null },
+      });
+
+      expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('kde words');
+      expect(remoteKeyboard.paste).toHaveBeenCalledTimes(1);
+      expect(simulatePaste).not.toHaveBeenCalled();
+      expect(runtimeShellShowFailure).not.toHaveBeenCalled();
+    });
+
+    it('keeps Wayland blocked and the setting off when keyboard control is declined', async () => {
+      remoteKeyboard.setup.mockRejectedValue(new Error('Request cancelled.'));
+      const status = await ipcHandlers.get('desktop:set-wayland-insertion')!({}, true) as import('../../shared/desktop-status').DesktopStatus;
+
+      expect(setConfig).toHaveBeenCalledWith('waylandBestEffortInsertion', false);
+      expect(status.delivery.available).toBe(false);
+      expect(status.waylandInsertion).toMatchObject({ state: 'unavailable', message: expect.stringContaining('Keyboard control was not granted') });
+      expect(sessionOptions.captureTarget()).toBeNull();
+    });
+  });
+
+  it('does not turn an unknown original destination into the window focused at completion', async () => {
+    await sessionOptions.onResult({
+      text: 'keep this text', intent: 'dictation', recordingSessionId: 'unknown-destination', targetSnapshot: null,
+    });
     expect(simulatePaste).not.toHaveBeenCalled();
-    expect(electronMock.Notification).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Paste last transcript unavailable',
-      body: expect.stringContaining('Use “Copy last transcript”'),
+    expect(electronMock.clipboard.writeText).not.toHaveBeenCalled();
+    expect(runtimeShellShowFailure).toHaveBeenCalledWith('unknown-destination',
+      expect.stringContaining('original destination could not be identified'), ['copy-full-transcript']);
+  });
+
+  it('offers explicit recovery without pasting if the recording chord remains held', async () => {
+    keyboardWaitForRelease.mockResolvedValueOnce(false);
+    await sessionOptions.onResult({
+      text: 'waiting words', intent: 'dictation', recordingSessionId: 'held-chord',
+      targetSnapshot: defaultTargetSnapshot,
+    });
+    expect(simulatePaste).not.toHaveBeenCalled();
+    expect(electronMock.clipboard.writeText).not.toHaveBeenCalled();
+    expect(runtimeShellShowFailure).toHaveBeenCalledWith('held-chord',
+      expect.stringContaining('Release the recording shortcut'), ['retry-paste', 'copy-full-transcript']);
+  });
+
+  it('does not insert a formatter result after its recording was cancelled', async () => {
+    const controller = new AbortController();
+    let finish!: (outcome: { kind: 'success'; text: string }) => void;
+    let started!: () => void;
+    const formatting = new Promise<void>(resolve => { started = resolve; });
+    applyDictationFormatter.mockImplementation(() => {
+      started();
+      return new Promise(resolve => { finish = resolve; });
+    });
+    const routing = sessionOptions.onResult({
+      text: 'raw words', intent: 'dictation', recordingSessionId: 'cancelled-formatter',
+      targetSnapshot: defaultTargetSnapshot, signal: controller.signal,
+      dictation: {
+        config: { mode: 'corrected', formatter: { baseUrl: 'http://localhost:11434/v1',
+          model: 'original-model', apiKeyEnvVar: '', apiKeySource: 'environment', processingConsent: true } },
+        language: 'mr', protectedTerms: ['Shuddhalekhan'], formatterApiKey: 'original-secret',
+      },
+    });
+    await formatting;
+    expect(applyDictationFormatter).toHaveBeenCalledWith(expect.objectContaining({
+      profile: expect.objectContaining({ model: 'original-model' }),
+      language: 'mr', protectedTerms: ['Shuddhalekhan'], apiKey: 'original-secret', signal: controller.signal,
     }));
+    controller.abort();
+    finish({ kind: 'success', text: 'late words' });
+    await routing;
+    expect(simulatePaste).not.toHaveBeenCalled();
+    expect(electronMock.clipboard.writeText).not.toHaveBeenCalled();
   });
 
-  it('stores Recognized So Far and shows recovery after terminal Live failure', async () => {
+  it('keeps partial recognition copy-only and never inserts it after final recognition fails', async () => {
     await import(`../index?test=${Date.now()}-recognized-so-far`);
 
     await sessionOptions.onResult({
@@ -674,19 +793,12 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
       recordingSessionId: 'recognized-so-far',
       outcome: { kind: 'failed' as const, message: 'Batch fallback failed' },
-      liveDictation: {
-        halted: true,
-        uncertain: false,
-        hasAcceptedEvents: false,
-        dispatchedProjectedLength: 0,
-        rawCommitted: 'recognized so far',
-      },
     });
 
     expect(runtimeShellShowFailure).toHaveBeenCalledWith(
       'recognized-so-far',
-      'Live Dictation could not complete. Last Transcript contains Recognized So Far.',
-      ['retry-paste', 'copy-full-transcript'],
+      'Transcription could not complete. Last Transcript contains the text recognized so far.',
+      ['copy-full-transcript'],
     );
     expect(simulatePaste).not.toHaveBeenCalled();
 
@@ -709,6 +821,8 @@ describe('main process IPC orchestration', () => {
       recordingSessionId: 'session-1',
     });
     expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
+
+    runtimeShellFinish.mockClear();
 
     let markPasteStarted: () => void = () => undefined;
     const pasteStarted = new Promise<void>((resolve) => { markPasteStarted = resolve; });
@@ -743,6 +857,7 @@ describe('main process IPC orchestration', () => {
     });
     expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
 
+    runtimeShellFinish.mockClear();
     let releasePaste: () => void = () => undefined;
     const pasteGate = new Promise<void>((resolve) => { releasePaste = resolve; });
     let markPasteStarted: () => void = () => undefined;
@@ -1118,6 +1233,12 @@ describe('main process IPC orchestration', () => {
     expect(agentStart).not.toHaveBeenCalled();
   });
 
+  it('refuses model deletion while capture or final transcription still owns a recording', () => {
+    recordingSessionIsBusy.mockReturnValue(true);
+    expect(() => ipcHandlers.get('managed-local:delete-model')?.({}, { model: 'parakeet', backend: 'cpu' }))
+      .toThrow('Finish the current recording before deleting local model files.');
+  });
+
   it('preloads Managed Local after the runtime becomes operational', async () => {
     const { managedLocalTranscriber } = await import('../managed-local');
     const warmup = vi.spyOn(managedLocalTranscriber, 'warmup').mockResolvedValue();
@@ -1210,7 +1331,7 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
 
     expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
-    expect(runtimeShellShowFailure.mock.calls[0]?.[1]).toContain('Clipboard changed before Shuddhalekhan could paste the transcript.');
+    expect(runtimeShellShowFailure.mock.calls[0]?.[1]).toContain('Clipboard changed during Dictation.');
   });
 
   it('injects corrected formatter output on success', async () => {

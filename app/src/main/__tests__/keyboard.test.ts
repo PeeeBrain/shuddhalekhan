@@ -33,7 +33,19 @@ mock.module('koffi', () => ({
 // The state machine is platform-neutral; keep Linux test runs off real evdev.
 // Spread the real module: Bun module mocks leak into other test files.
 const linuxInput = await import('../native/linux-input');
-mock.module('../native/linux-input', () => ({ ...linuxInput, startEvdevKeyboardReader: () => () => undefined }));
+const startEvdevKeyboardReader = mock((_onKey: (vkCode: number, isDown: boolean) => void): () => void => () => undefined);
+mock.module('../native/linux-input', () => ({
+  ...linuxInput,
+  startEvdevKeyboardReader,
+  prepareVirtualKeyboard: () => undefined,
+}));
+// Desktop shortcuts are unavailable unless a test hands the hook a fake backend.
+type ShortcutHandler = (intent: 'dictation' | 'agent', isDown: boolean) => void;
+const connectLinuxShortcuts = mock(
+  (_events: { onShortcut: ShortcutHandler; onLost: () => void }): Promise<unknown> =>
+    Promise.reject(new Error('no desktop shortcuts')),
+);
+mock.module('../desktop/linux-shortcuts', () => ({ connectLinuxShortcuts }));
 
 type HookModule = typeof import('../native/keyboard');
 
@@ -97,6 +109,33 @@ describe('KeyboardHook mode detection', () => {
   beforeEach(() => {
     user32Functions.clear();
     kernel32Functions.clear();
+  });
+
+  it('waits for the entire physical recording chord to release before final paste', async () => {
+    const { hook, keys } = createHarness(await importHook('final-paste-release'));
+    hook.handleKeyForTest(keys.leftControl, true);
+    hook.handleKeyForTest(keys.leftWin, true);
+    const waiting = hook.waitForKeysReleased(new AbortController().signal);
+    let released = false;
+    void waiting.then(value => { released = value; });
+    hook.handleKeyForTest(keys.leftControl, false);
+    await Promise.resolve();
+    expect(released).toBe(false);
+    hook.handleKeyForTest(keys.leftWin, false);
+    expect(await waiting).toBe(true);
+    hook.stop();
+  });
+
+  it('cancels a pending release wait without reviving it when the keys later release', async () => {
+    const { hook, keys } = createHarness(await importHook('cancel-final-paste-release'));
+    const controller = new AbortController();
+    hook.handleKeyForTest(keys.leftWin, true);
+    const waiting = hook.waitForKeysReleased(controller.signal);
+    controller.abort();
+    expect(await waiting).toBe(false);
+    hook.handleKeyForTest(keys.leftWin, false);
+    expect(await hook.waitForKeysReleased(new AbortController().signal)).toBe(true);
+    hook.stop();
   });
 
   it('starts dictation for Ctrl+Win and stops when the chord is released', async () => {
@@ -672,5 +711,155 @@ describe('KeyboardHook pause and capture suspension', () => {
     hook.handleKeyForTest(keys.leftWin, false);
     hook.handleKeyForTest(keys.leftAlt, false);
     expect(stopped).not.toHaveBeenCalled();
+  });
+});
+
+describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortcuts', () => {
+  function fakeDesktop(kind: 'portal' | 'x11' = 'portal') {
+    const desktop = {
+      kind,
+      bind: mock(async (bindings: Record<string, unknown>) =>
+        Object.fromEntries(Object.keys(bindings).map((intent) => [intent, `${intent} chord`]))),
+      keysHeld: mock(async (): Promise<boolean | null> => false),
+      close: mock(),
+      shortcut: (() => undefined) as ShortcutHandler,
+      lose: (() => undefined) as () => void,
+    };
+    connectLinuxShortcuts.mockImplementationOnce(async ({ onShortcut, onLost }: { onShortcut: ShortcutHandler; onLost: () => void }) => {
+      desktop.shortcut = onShortcut;
+      desktop.lose = onLost;
+      return desktop;
+    });
+    return desktop;
+  }
+
+  /** The next published status, skipping the replay of the current one on registration. */
+  function nextStatus(hook: HookHarness['hook']) {
+    return new Promise<unknown>((resolve) => {
+      let replaying = true;
+      hook.setLinuxShortcutStatusListener((status) => {
+        if (replaying) return;
+        hook.setLinuxShortcutStatusListener(null);
+        resolve(status);
+      });
+      replaying = false;
+    });
+  }
+
+  it('drives push-to-talk and toggle from desktop chord press/release, ignoring auto-repeat', async () => {
+    const desktop = fakeDesktop();
+    const { hook, started, stopped } = createHarness(await importHook('desktop-modes'), { agentMode: 'toggle' });
+    await nextStatus(hook);
+
+    desktop.shortcut('dictation', true);
+    desktop.shortcut('dictation', true);
+    expect(started).toHaveBeenCalledTimes(1);
+    desktop.shortcut('dictation', false);
+    expect(stopped).toHaveBeenCalledTimes(1);
+
+    desktop.shortcut('agent', true);
+    desktop.shortcut('agent', false);
+    expect(started).toHaveBeenLastCalledWith('agent');
+    expect(stopped).toHaveBeenCalledTimes(1);
+    desktop.shortcut('agent', true);
+    expect(stopped).toHaveBeenCalledTimes(2);
+    hook.stop();
+    expect(desktop.close).toHaveBeenCalled();
+  });
+
+  it('registers the Agent Mode chord only while Agent Mode is enabled and reports assigned triggers', async () => {
+    const desktop = fakeDesktop();
+    const harness = createHarness(await importHook('desktop-refresh'), { agentEnabled: false });
+    expect(await nextStatus(harness.hook)).toEqual({ backend: 'portal', triggers: { dictation: 'dictation chord' } });
+
+    harness.agentEnabled = true;
+    const refreshed = nextStatus(harness.hook);
+    harness.hook.refreshShortcuts();
+    expect(await refreshed).toEqual({
+      backend: 'portal',
+      triggers: { dictation: 'dictation chord', agent: 'agent chord' },
+    });
+    expect(desktop.bind).toHaveBeenLastCalledWith({
+      dictation: { keyCode: null, modifiers: ['ctrl', 'win'] },
+      agent: { keyCode: null, modifiers: ['alt', 'win'] },
+    });
+    harness.hook.stop();
+  });
+
+  it('releases X11 grabs while paused so the chord reaches other apps', async () => {
+    const desktop = fakeDesktop('x11');
+    const { hook } = createHarness(await importHook('desktop-x11-pause'));
+    await nextStatus(hook);
+    const paused = nextStatus(hook);
+    hook.setPaused(true);
+    expect(await paused).toEqual({ backend: 'x11', triggers: {} });
+    expect(desktop.bind).toHaveBeenLastCalledWith({});
+    hook.stop();
+  });
+
+  it('waits for the desktop chord release before the final paste', async () => {
+    const desktop = fakeDesktop();
+    const { hook } = createHarness(await importHook('desktop-release-wait'), { dictationMode: 'toggle' });
+    await nextStatus(hook);
+    desktop.shortcut('dictation', true);
+    const waiting = hook.waitForKeysReleased(new AbortController().signal);
+    desktop.shortcut('dictation', false);
+    expect(await waiting).toBe(true);
+    hook.stop();
+  });
+
+  it('fails the final paste closed when key state is unknown or never answers', async () => {
+    const desktop = fakeDesktop();
+    const { hook } = createHarness(await importHook('desktop-release-unknown'));
+    await nextStatus(hook);
+    desktop.keysHeld.mockImplementationOnce(async () => null);
+    expect(await hook.waitForKeysReleased(new AbortController().signal)).toBe(false);
+
+    desktop.keysHeld.mockImplementationOnce(() => new Promise(() => undefined));
+    const controller = new AbortController();
+    const waiting = hook.waitForKeysReleased(controller.signal);
+    controller.abort();
+    expect(await waiting).toBe(false);
+
+    desktop.lose();
+    expect(await hook.waitForKeysReleased(new AbortController().signal)).toBe(false);
+    hook.stop();
+  });
+
+  it('ends a held push-to-talk recording when the desktop connection drops', async () => {
+    const desktop = fakeDesktop();
+    const { hook, stopped } = createHarness(await importHook('desktop-lost'));
+    await nextStatus(hook);
+    desktop.shortcut('dictation', true);
+    const status = nextStatus(hook);
+    desktop.lose();
+    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(await status).toMatchObject({ backend: 'unavailable' });
+    hook.stop();
+  });
+
+  it('reconnects to the desktop on the next shortcut change after the service drops', async () => {
+    const lost = fakeDesktop();
+    const { hook } = createHarness(await importHook('desktop-reconnect'));
+    await nextStatus(hook);
+    const unavailable = nextStatus(hook);
+    lost.lose();
+    await unavailable;
+    const restored = fakeDesktop();
+    const status = nextStatus(hook);
+    hook.refreshShortcuts();
+    expect(await status).toMatchObject({ backend: 'portal' });
+    expect(restored.bind).toHaveBeenCalled();
+    hook.stop();
+  });
+
+  it('falls back to evdev when the desktop has no shortcut API', async () => {
+    startEvdevKeyboardReader.mockClear();
+    const { hook } = createHarness(await importHook('desktop-fallback'));
+    expect(await nextStatus(hook)).toEqual({ backend: 'evdev' });
+    expect(startEvdevKeyboardReader).toHaveBeenCalledTimes(1);
+    // KDE best-effort paste waits on this; evdev has no portal backend but does see key release.
+    expect(await hook.waitForShortcutDeactivation(new AbortController().signal, 0)).toBe(true);
+    hook.stop();
   });
 });
