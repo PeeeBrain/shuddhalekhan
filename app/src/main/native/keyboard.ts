@@ -223,6 +223,8 @@ export class KeyboardHook {
    * residual risk. Windows and X11 keep waitForKeysReleased.
    */
   async waitForShortcutDeactivation(signal: AbortSignal, settleMs = 250): Promise<boolean> {
+    // The evdev fallback sees physical keys, so it can wait for real release.
+    if (this.stopLinuxReader) return this.waitForKeysReleased(signal);
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const backend = this.linuxBackend;
     const deadline = Date.now() + 1000;

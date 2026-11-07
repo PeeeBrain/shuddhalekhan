@@ -107,10 +107,23 @@ async function openTracker() {
 describe('KDE focus tracker', () => {
   it('loads a private transient script and captures the initial active window', async () => {
     const { tracker, kwin } = await openTracker();
-    expect(kwin.scriptMode).toBe(0o600);
+    // Windows has no POSIX mode bits; the Linux CI job owns this check.
+    if (process.platform !== 'win32') expect(kwin.scriptMode).toBe(0o600);
     expect(kwin.script).toContain(JSON.stringify(CLIENT));
     expect(existsSync(dirname(kwin.scriptFile))).toBe(false);
-    expect(tracker.capture()).toEqual({ windowId: '{original}', epoch: 1, appId: 'org.kde.konsole' });
+    expect(tracker.capture()).toEqual({ windowId: '{original}', epoch: expect.any(Number), appId: 'org.kde.konsole' });
+    await tracker.close();
+  });
+
+  it('never validates a snapshot from an earlier tracker, even on the same window', async () => {
+    const first = await openTracker();
+    const snapshot = first.tracker.capture()!;
+    await first.tracker.close();
+    first.server.close();
+    // Re-enabling insertion starts a new tracker on the same active window.
+    const { tracker } = await openTracker();
+    expect(tracker.validate(snapshot)).toBe(false);
+    expect(tracker.validate(tracker.capture()!)).toBe(true);
     await tracker.close();
   });
 

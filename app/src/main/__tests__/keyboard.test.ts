@@ -858,6 +858,8 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
     const { hook } = createHarness(await importHook('desktop-fallback'));
     expect(await nextStatus(hook)).toEqual({ backend: 'evdev' });
     expect(startEvdevKeyboardReader).toHaveBeenCalledTimes(1);
+    // KDE best-effort paste waits on this; evdev has no portal backend but does see key release.
+    expect(await hook.waitForShortcutDeactivation(new AbortController().signal, 0)).toBe(true);
     hook.stop();
   });
 });

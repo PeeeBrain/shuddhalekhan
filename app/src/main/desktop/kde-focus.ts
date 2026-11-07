@@ -11,6 +11,8 @@ const IFACE = 'dev.shuddhalekhan.KdeFocus';
 const READY_TIMEOUT_MS = 5000;
 // Fixed so the next setup unloads a script a crashed run left behind (the single-instance lock keeps it unique).
 const PLUGIN_NAME = 'shuddhalekhan-focus';
+// Process-wide so a snapshot from a closed tracker never matches a later tracker's epoch.
+let epoch = 0;
 
 /** The window that was active at `capture`; `epoch` counts every activation KWin reported. */
 export interface KdeFocusSnapshot {
@@ -60,7 +62,6 @@ export async function createKdeFocusTracker(onLost?: () => void): Promise<KdeFoc
   const pluginName = PLUGIN_NAME;
   let tracking = false;
   let owner = '';
-  let epoch = 0;
   let windowId = '';
   let appId = '';
   let alive = true;
