@@ -249,6 +249,8 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   }
 
   if (result.intent === 'agent') {
+    // Processing outranks every Agent card, so it must end before the run starts reporting.
+    runtimeShell.finish();
     handleAgentTranscript(result.text);
     return;
   }

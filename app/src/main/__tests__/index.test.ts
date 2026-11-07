@@ -5,6 +5,9 @@ import type { DictationTargetSnapshot } from '../../types/ipc';
 const vi = { fn: mock, mock: mock.module, spyOn };
 const originalSessionType = process.env.XDG_SESSION_TYPE;
 const originalWaylandDisplay = process.env.WAYLAND_DISPLAY;
+const nativePlatform = process.platform;
+// Wayland policy is gated on the platform too; spoofing it keeps these contracts running on Windows CI.
+const setPlatform = (platform: NodeJS.Platform) => Object.defineProperty(process, 'platform', { value: platform });
 
 const ipcHandlers = new Map<string, (...args: any[]) => unknown>();
 const ipcListeners = new Map<string, (...args: any[]) => unknown>();
@@ -299,6 +302,7 @@ describe('main process IPC orchestration', () => {
 
   afterAll(() => {
     mock.restore();
+    setPlatform(nativePlatform);
     if (originalSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
     else process.env.XDG_SESSION_TYPE = originalSessionType;
     if (originalWaylandDisplay === undefined) delete process.env.WAYLAND_DISPLAY;
@@ -306,6 +310,7 @@ describe('main process IPC orchestration', () => {
   });
 
   beforeEach(async () => {
+    setPlatform(nativePlatform);
     process.env.XDG_SESSION_TYPE = 'x11';
     delete process.env.WAYLAND_DISPLAY;
     ipcHandlers.clear();
@@ -612,6 +617,8 @@ describe('main process IPC orchestration', () => {
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined,
       { memory: null, skillsDirectory: expect.stringContaining('skills') });
     expect(simulatePaste).not.toHaveBeenCalled();
+    // A lingering "Transcribing…" pill outranks and hides every Agent card for the whole run.
+    expect(runtimeShellFinish).toHaveBeenCalled();
   });
 
   it('routes a WhisperLiveKit Batch transcript to Agent Mode without changing the provider path', async () => {
@@ -662,6 +669,7 @@ describe('main process IPC orchestration', () => {
   });
 
   it('keeps the transcript copyable without changing the clipboard or sending input on Wayland', async () => {
+    setPlatform('linux');
     process.env.XDG_SESSION_TYPE = 'wayland';
     await sessionOptions.onResult({
       text: 'safe transcript', intent: 'dictation', recordingSessionId: 'wayland',
@@ -678,6 +686,7 @@ describe('main process IPC orchestration', () => {
   describe('KDE Wayland best-effort test mode', () => {
     const originalDesktop = process.env.XDG_CURRENT_DESKTOP;
     beforeEach(async () => {
+      setPlatform('linux');
       process.env.XDG_SESSION_TYPE = 'wayland';
       process.env.XDG_CURRENT_DESKTOP = 'KDE';
       captureForegroundTarget.mockReturnValue(null); // the real capture has no Wayland target
