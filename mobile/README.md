@@ -28,7 +28,7 @@ When on-device transcription is selected and the model is installed, the app sta
 
 ## Dictate in another app with the keyboard
 
-iOS does not let keyboards use the microphone or open their app. So the app records during a **keyboard session** that you start, and the keyboard tells it when to start and stop.
+iOS does not let keyboards use the microphone. So the app records during a **keyboard session**, and the keyboard tells it when to start and stop. If you tap **Dictate** or **Ask the agent** with no session running, the keyboard opens Shuddhalekhan, which starts the session. Return with the **◀** link at the top left; the keyboard then starts the recording you tapped, if you return within a minute.
 
 1. Install the IPA with its keyboard extension retained.
 2. On the phone, open **Settings → General → Keyboard → Keyboards → Add New Keyboard → Shuddhalekhan**. Tap that keyboard and enable **Allow Full Access**. The keyboard uses it only to exchange start, stop, and the finished text with the app. The keyboard connects only to the app on this iPhone and cannot use the microphone.
@@ -41,7 +41,7 @@ What happens to audio and text during a session:
 - When the timer runs out, the app finishes any utterance already started, then releases the microphone. The session also ends visibly on a call, Siri, a microphone change, or an iOS audio reset. The keyboard shows the reason.
 - Music pauses while a session runs. Recording in the app itself is disabled until the session stops.
 - Sessions use on-device Parakeet only. Remote transcription remains available from Home. **Ask the agent** is available when Agent Mode and its credentials are configured at session start. A busy agent or a failed handoff shows an error in the keyboard; "Sent to the agent" means the controller admitted the run.
-- Keyboard commands use the same agent, tool approvals, saved result, and notification path as Home. Allow notifications when starting the session. iOS cannot create a Live Activity or request continued processing from the background, so a background-started run uses notifications and the open microphone session for execution time. If that session ends while the run is backgrounded without another execution grant, the run stops visibly. Open the app to review or approve tools. Starting a new session refreshes Agent Mode availability after settings changes.
+- Keyboard commands use the same agent, tool approvals, saved result, and notification path as Home. Allow notifications when starting the session. iOS cannot create a Live Activity or request continued processing from the background, so the app creates a keyboard-session Live Activity while it is still open. It shows the session countdown, and each keyboard command takes it over to show status, approvals, and the answer. It ends with the session, or with the last command still running when the session ends. Background-started runs use the open microphone session for execution time. If that session ends while the run is backgrounded without another execution grant, the run stops visibly. Open the app to review or approve tools. Starting a new session refreshes Agent Mode availability after settings changes.
 
 Cancelling an utterance discards its result and requests native cancellation. If an inference step cannot stop immediately, subsequent transcription and model preparation wait for it to release the engine. Changing languages cannot load a second encoder during inference.
 
@@ -230,14 +230,14 @@ If saved settings or keys cannot be read, the app keeps them intact and blocks r
 - Without a keyboard session, record, background the app, and lock the device. In-app recording should stop when the app leaves the foreground.
 - Install a refreshed IPA using the same Apple ID and confirm SecureStore can still read saved keys.
 - Download Parakeet, restart the app, select On this iPhone, then transcribe a short recording in airplane mode. Measure cold load, repeated transcription time and memory on the tested phone before making performance claims.
-- Add the keyboard and enable Full Access. Start a keyboard session, switch to Notes, then Dictate and Stop. Confirm the text is inserted once, with no paste prompt. Then check these cases: Dictate with no session ("Open Shuddhalekhan…"), cancel with ×, hide the keyboard mid-utterance, let the session expire mid-utterance, start a call during a session, and use a second app after inserting in the first.
+- Add the keyboard and enable Full Access. Start a keyboard session, switch to Notes, then Dictate and Stop. Confirm the text is inserted once, with no paste prompt. Then check these cases: Dictate with no session (the app opens and starts a session; return with ◀ and recording starts by itself), cancel with ×, hide the keyboard mid-utterance, let the session expire mid-utterance, start a call during a session, and use a second app after inserting in the first.
 - During a session, leave the app in the background for the full 10 minutes with Parakeet loaded. Confirm iOS does not kill it and that the recording indicator disappears when the session ends.
 - Verify normal letters, shift, symbols, delete, return, and the globe menu in the custom keyboard. Check keyboard appearance with larger text and landscape.
 
 ## iOS limits
 
 - iOS does not give the app a global hotkey or access to another app's focused text field. Use the keyboard during a session, or copy or share text.
-- The custom keyboard cannot record or launch Shuddhalekhan. A keyboard session must be started in the app first; the keyboard says so if none is running.
+- The custom keyboard cannot record. Without a session it opens Shuddhalekhan to start one, which needs Full Access. iOS gives no public way back to the previous app, so you return with ◀ or a swipe.
 - In-app recording stops when the app backgrounds or the device locks. Only a keyboard session keeps the microphone open in the background (the `audio` background mode), and only until its timer ends or you stop it.
 - Keyboard commands and results use authenticated loopback TCP because iOS denies background pasteboard reads. Background recording, transcription, and insertion in Notes were confirmed on an iPhone with build 2; session persistence and interruption recovery need separate device checks.
 - Recording is capped at five minutes. iOS records mono 16 kHz PCM WAV for Whisper compatibility. Temporary audio is deleted after completion or cancellation. Transcripts stay in memory; the last agent answer is also saved locally until cleared or replaced.

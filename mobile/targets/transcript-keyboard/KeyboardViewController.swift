@@ -7,11 +7,12 @@ import OSLog
 /// hands it to Agent Mode (Ask the agent). See KeyboardSessionProtocol.swift.
 ///
 /// Home shows the two actions as the desktop recording pills: Dictate round and blue, Agent square and vermilion.
-/// Tapping one grows that row into a full-tray shutter (big stop button, cancel, delete, live levels), and the
+/// Tapping one grows that row into an inset shutter (big stop button, cancel, delete, live levels), and the
 /// shutter collapses back into the same row when the request settles.
 final class KeyboardViewController: UIInputViewController {
   private static let ackTimeout: TimeInterval = 3
   private static let sentHold: TimeInterval = 1.6
+  private static let startIntentKey = "keyboardSessionStartIntent"
 
   private enum Screen: Equatable { case home, live(KeyboardSession.Mode) }
 
@@ -24,7 +25,7 @@ final class KeyboardViewController: UIInputViewController {
   private let agentRow = ActionRow(mode: .agent)
   private let globeKey = PressControl()
 
-  // Live: the surface is the tapped row growing to fill the tray; live holds the shutter controls above it.
+  // Live: the tapped row grows into an inset card; live holds the shutter controls above it.
   private let surface = UIView()
   private let live = UIStackView()
   private let liveTop = UIStackView()
@@ -60,12 +61,14 @@ final class KeyboardViewController: UIInputViewController {
   private var channel: KeyboardSessionChannel?
   private var bridge: KeyboardSession.Bridge?
   private var receivedState = false
+  private var openingSession = false
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
 
   override func viewDidLoad() {
     super.viewDidLoad()
     view.overrideUserInterfaceStyle = .dark
-    view.backgroundColor = Palette.soot
+    view.backgroundColor = .clear
+    view.isOpaque = false
     view.maximumContentSizeCategory = .extraLarge
     // Below required so it never fights the system's own keyboard height constraint while appearing.
     let height = view.heightAnchor.constraint(equalToConstant: 262)
@@ -89,8 +92,8 @@ final class KeyboardViewController: UIInputViewController {
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
-    // Rotation or a height change while live: keep the surface filling the tray, unless it is mid-morph.
-    if case .live = screen, surface.layer.animationKeys() == nil { surface.frame = view.bounds }
+    // Rotation or a height change while live: keep the card inset, unless it is mid-morph.
+    if case .live = screen, surface.layer.animationKeys() == nil { surface.frame = liveFrame }
   }
 
   override func viewWillAppear(_ animated: Bool) {
@@ -163,7 +166,7 @@ final class KeyboardViewController: UIInputViewController {
   private func buildLive() {
     live.axis = .vertical
     live.isLayoutMarginsRelativeArrangement = true
-    live.layoutMargins = UIEdgeInsets(top: 8, left: 14, bottom: 14, right: 14)
+    live.layoutMargins = UIEdgeInsets(top: 16, left: 24, bottom: 22, right: 24)
     live.isHidden = true
     pin(live)
 
@@ -186,7 +189,7 @@ final class KeyboardViewController: UIInputViewController {
     sentText.numberOfLines = 2
     sentText.textAlignment = .center
     let sentHint = UILabel()
-    sentHint.text = "The answer will be in Shuddhalekhan."
+    sentHint.text = "Follow it in the Live Activity."
     sentHint.font = scaledFont(12, .regular, .footnote)
     sentHint.adjustsFontForContentSizeCategory = true
     sentHint.textColor = Palette.faded
@@ -337,6 +340,7 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   private func refresh() {
+    resumePendingStart()
     guard hasFullAccess else {
       disconnect()
       session = nil
@@ -349,7 +353,7 @@ final class KeyboardViewController: UIInputViewController {
       let bridge = KeyboardSession.decodeBridge(data, now: KeyboardSession.nowMs()),
       let port = NWEndpoint.Port(rawValue: bridge.port) else {
       session = nil
-      render(message: "Open Shuddhalekhan and tap Start keyboard session.")
+      render(message: "Tap Dictate or Ask the agent to open Shuddhalekhan and start a session.")
       return
     }
     self.bridge = bridge
@@ -375,7 +379,10 @@ final class KeyboardViewController: UIInputViewController {
       self.bridge = nil
       self.pendingId = nil
       self.session = nil
-      if endedNormally { self.render() } else {
+      if !self.receivedState {
+        self.render(message: "Tap Dictate or Ask the agent to open Shuddhalekhan and start a session.")
+        if let intent = self.pendingStartIntent() { self.openSession(for: intent.mode) }
+      } else if endedNormally { self.render() } else {
         self.log.error("KeyboardBridge connection lost")
         self.render(message: "Keyboard connection lost. Open Shuddhalekhan and start a new session.")
       }
@@ -402,6 +409,7 @@ final class KeyboardViewController: UIInputViewController {
     guard let pendingId, state.requestId == pendingId else {
       if session == nil { pendingId = nil }
       render(message: session == nil ? state.error.map { "Session ended. \($0)" } : nil)
+      resumePendingStart()
       return
     }
     if let text = KeyboardSession.insertion(state, pendingId: pendingId, inserted: insertedIds) {
@@ -437,7 +445,7 @@ final class KeyboardViewController: UIInputViewController {
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.sentHold) { [weak self] in
       guard let self, self.sent?.id == id else { return }
       self.sent = nil
-      self.render(message: "Sent to the agent. The answer will be in Shuddhalekhan.")
+      self.render(message: "Sent to the agent. Follow it in the Live Activity.")
     }
   }
 
@@ -445,8 +453,16 @@ final class KeyboardViewController: UIInputViewController {
   @objc private func agentTapped() { start(.agent) }
 
   private func start(_ mode: KeyboardSession.Mode) {
-    guard hasFullAccess, let session else { return refresh() }
+    guard hasFullAccess else { return refresh() }
     guard pendingId == nil, sent == nil else { return }
+    guard let session, session.isLive(now: KeyboardSession.nowMs()) else {
+      if channel != nil, !receivedState {
+        _ = persistStartIntent(for: mode)
+        return
+      }
+      disconnect()
+      return openSession(for: mode)
+    }
     if mode == .agent, !session.agentReady {
       return render(message: "Set up Agent Mode in Shuddhalekhan to ask the agent from here.")
     }
@@ -466,10 +482,64 @@ final class KeyboardViewController: UIInputViewController {
     }
   }
 
+  private func persistStartIntent(for mode: KeyboardSession.Mode) -> Data? {
+    let intent = KeyboardSession.StartIntent(mode: mode, createdAt: KeyboardSession.nowMs())
+    guard let data = KeyboardSession.encode(intent) else { return nil }
+    UserDefaults.standard.set(data, forKey: Self.startIntentKey)
+    return data
+  }
+
+  private func openSession(for mode: KeyboardSession.Mode) {
+    guard !openingSession, let url = URL(string: "shuddhalekhan://keyboard-session"),
+      let data = persistStartIntent(for: mode) else { return }
+    var responder: UIResponder? = self
+    while let current = responder {
+      if let application = current as? UIApplication {
+        openingSession = true
+        application.open(url, options: [:]) { [weak self] opened in
+          MainActor.assumeIsolated {
+            self?.openingSession = false
+            if !opened { self?.sessionOpenFailed(intent: data) }
+          }
+        }
+        return
+      }
+      responder = current.next
+    }
+    sessionOpenFailed(intent: data)
+  }
+
+  private func sessionOpenFailed(intent: Data) {
+    if UserDefaults.standard.data(forKey: Self.startIntentKey) == intent {
+      UserDefaults.standard.removeObject(forKey: Self.startIntentKey)
+    }
+    render(message: "Open Shuddhalekhan and tap Start keyboard session.")
+  }
+
+  private func pendingStartIntent() -> KeyboardSession.StartIntent? {
+    let defaults = UserDefaults.standard
+    guard let data = defaults.data(forKey: Self.startIntentKey) else { return nil }
+    guard let intent = try? JSONDecoder().decode(KeyboardSession.StartIntent.self, from: data),
+      intent.isFresh(now: KeyboardSession.nowMs()) else {
+      defaults.removeObject(forKey: Self.startIntentKey)
+      return nil
+    }
+    return intent
+  }
+
+  private func resumePendingStart() {
+    guard let intent = pendingStartIntent() else { return }
+    guard hasFullAccess, let session, session.isLive(now: KeyboardSession.nowMs()),
+      !session.isBusy, pendingId == nil, sent == nil else { return }
+    // Consume before start: reconnects and appearance callbacks cannot replay this intent twice.
+    UserDefaults.standard.removeObject(forKey: Self.startIntentKey)
+    start(intent.mode)
+  }
+
   @objc private func shutterTapped() {
     if sent != nil {
       sent = nil
-      return render(message: "Sent to the agent. The answer will be in Shuddhalekhan.")
+      return render(message: "Sent to the agent. Follow it in the Live Activity.")
     }
     guard let pendingId, activePhase == .recording else { return }
     tapFeedback.impactOccurred()
@@ -509,11 +579,11 @@ final class KeyboardViewController: UIInputViewController {
     if target != screen { show(target) }
 
     let agentReady = session?.agentReady ?? false
-    dictateRow.isAvailable = session != nil
-    agentRow.isAvailable = agentReady
+    dictateRow.isAvailable = hasFullAccess
+    agentRow.isAvailable = hasFullAccess && (session == nil || agentReady)
     agentRow.subtitle = session == nil || agentReady
-      ? "One-off command · answer in the app" : "Set up Agent Mode in the app first"
-    announce(message ?? (session == nil ? "No active keyboard session." : "Keyboard session"), in: statusLabel)
+      ? "One-off command · follow the Live Activity" : "Set up Agent Mode in the app first"
+    announce(message ?? (session == nil ? "Tap an action to open Shuddhalekhan and start a session." : "Keyboard session"), in: statusLabel)
 
     if case .live(let mode) = screen { renderLive(mode) }
     tick()
@@ -608,6 +678,8 @@ final class KeyboardViewController: UIInputViewController {
     mode == .agent ? Palette.soot.mixed(with: Palette.vermilion, 0.05) : Palette.soot
   }
 
+  private var liveFrame: CGRect { view.bounds.insetBy(dx: 10, dy: 8) }
+
   /// The row's resting frame in tray coordinates, ignoring any press scale still settling on it.
   private func restingFrame(of row: ActionRow) -> CGRect {
     CGRect(x: row.center.x - row.bounds.width / 2, y: row.center.y - row.bounds.height / 2,
@@ -660,8 +732,8 @@ final class KeyboardViewController: UIInputViewController {
           surface.alpha = 0
           live.alpha = 0
         }
-        surface.frame = view.bounds
-        surface.layer.cornerRadius = 0
+        surface.frame = liveFrame
+        surface.layer.cornerRadius = 14
         surface.backgroundColor = liveBackground(mode)
         shutterHost.transform = .identity
         shutterHost.alpha = 1
@@ -686,8 +758,8 @@ final class KeyboardViewController: UIInputViewController {
         setChrome(visible: false)
       }
       spring(0.42) {
-        self.surface.frame = self.view.bounds
-        self.surface.layer.cornerRadius = 0
+        self.surface.frame = self.liveFrame
+        self.surface.layer.cornerRadius = 14
         self.surface.backgroundColor = self.liveBackground(mode)
       }
       fade(0.16) { self.home.alpha = 0 }
@@ -952,7 +1024,7 @@ private final class ActionRow: PressControl {
     isAccessibilityElement = true
     accessibilityTraits = .button
     accessibilityLabel = title.text
-    subtitle = agent ? "One-off command · answer in the app" : "Types at the cursor"
+    subtitle = agent ? "One-off command · follow the Live Activity" : "Types at the cursor"
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

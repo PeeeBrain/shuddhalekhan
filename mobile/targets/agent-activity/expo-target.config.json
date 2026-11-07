@@ -4,5 +4,8 @@
   "displayName": "Shuddhalekhan Agent",
   "bundleIdentifier": ".agent-activity",
   "deploymentTarget": "17.0",
-  "exportJs": false
+  "exportJs": false,
+  "images": {
+    "AppMark": "../../assets/icon.png"
+  }
 }
