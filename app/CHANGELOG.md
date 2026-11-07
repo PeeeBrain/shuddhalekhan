@@ -16,6 +16,7 @@ tags and commit history, not from this file. Keep new entries under
 - Linux shortcuts use desktop portals or X11 grabs and show the actual assigned trigger in Settings. X11 paste checks the original window, respects the server's keymap, and tracks clipboard ownership. The uinput paste device and packaged udev rule are removed; input-device shortcut observation remains a reported fallback.
 
 ### Transcription
+- A selected microphone that is no longer available (unplugged, or chosen in a development build) no longer fails every recording; capture uses another available microphone and the tray device list returns so you can pick again.
 - Empty recognition results now report that no speech was recognized instead of silently dismissing the recording, and say whether the input was nearly silent or clipping.
 - Dictation shows previews automatically with streaming providers and inserts the final transcript once after stopping. Existing Live settings migrate to Dictation without changing shortcuts or provider choices; Push to Talk and Toggle both work. Corrected Dictation keeps its final formatter step.
 - Microphone capture uses an AudioWorklet, bounded write credits and a private temporary spool. Finalization verifies the complete audio boundary. Cancelling aborts pending provider requests and delivery; provider settings, credentials and formatter choices stay fixed for each recording.

@@ -444,7 +444,7 @@ describe('recording lifecycle', () => {
     const boundary = await mod.stopRecording();
 
     expect(audio.getUserMedia).toHaveBeenCalledWith({
-      audio: expect.objectContaining({ deviceId: { exact: 'mic-123' } }) as MediaTrackConstraints,
+      audio: expect.objectContaining({ advanced: [{ deviceId: { exact: 'mic-123' } }] }) as MediaTrackConstraints,
     });
     expect(chunks).toEqual([[0, 640], [1, 640], [2, 200]]);
     expect(boundary).toEqual({ chunkCount: 2, sampleCount: 740 });
@@ -520,7 +520,7 @@ describe('recording lifecycle', () => {
 
     expect(await mod.stopRecording()).toEqual({ chunkCount: 2, sampleCount: 3 });
     expect(audio.getUserMedia).toHaveBeenLastCalledWith({
-      audio: expect.objectContaining({ deviceId: { exact: 'mic-2' } }) as MediaTrackConstraints,
+      audio: expect.objectContaining({ advanced: [{ deviceId: { exact: 'mic-2' } }] }) as MediaTrackConstraints,
     });
   });
 
@@ -659,7 +659,7 @@ describe('warm audio stream', () => {
     expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
     expect(audio.getUserMedia).toHaveBeenNthCalledWith(2, {
       audio: expect.objectContaining({
-        deviceId: { exact: 'mic-2' },
+        advanced: [{ deviceId: { exact: 'mic-2' } }],
         sampleRate: 16000,
       }) as MediaTrackConstraints,
     });

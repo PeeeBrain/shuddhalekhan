@@ -201,7 +201,10 @@ function buildConstraints(): MediaStreamConstraints {
     autoGainControl: false,
   };
   const deviceId = getDeviceId();
-  if (deviceId) audio.deviceId = { exact: deviceId };
+  // Device IDs are per-origin hashes that go stale (dev server vs file://, unplugged or
+  // renamed mics). An advanced `exact` set always picks the device when present and is
+  // dropped when it is not, so a stale ID records from another mic instead of failing.
+  if (deviceId) audio.advanced = [{ deviceId: { exact: deviceId } }];
   return { audio };
 }
 
