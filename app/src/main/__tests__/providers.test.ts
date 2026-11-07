@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
   buildOpenAiEndpoint,
   validateOpenAiModel,
@@ -581,9 +581,11 @@ describe('Microsoft Azure Speech provider', () => {
 });
 
 describe('getTranscriber pins one recording to its starting settings', () => {
+  const realFetch = globalThis.fetch;
   beforeEach(() => {
     globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ text: 'ok' }) }) as Response) as unknown as typeof fetch;
   });
+  afterEach(() => { globalThis.fetch = realFetch; });
   const recognition = { language: 'auto', task: 'transcribe' as const, dictionary: [], removeFillerWords: false };
 
   it('keeps the credential resolved at start when the saved key changes mid-recording', async () => {

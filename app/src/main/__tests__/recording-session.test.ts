@@ -1410,6 +1410,7 @@ describe('RecordingSession', () => {
   });
 
   it('releases the preview provider when cancelling a recording', async () => {
+    const cancelStream = vi.fn();
     const runtimeShell = {
       prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
       setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
@@ -1425,7 +1426,7 @@ describe('RecordingSession', () => {
       startStreaming: vi.fn(() => ({
         send: vi.fn(async () => undefined),
         finish: vi.fn(async () => 'cancelled transcript'),
-        cancel: vi.fn(),
+        cancel: cancelStream,
       })),
     };
     session = new RecordingSessionCtor({
@@ -1442,6 +1443,7 @@ describe('RecordingSession', () => {
 
     session.begin('dictation', 'live-cancel');
     await session.cancel();
+    expect(cancelStream).toHaveBeenCalled();
   });
 
   it('carries WhisperLiveKit mandatory Batch capability into the ordinary Batch presentation', async () => {
