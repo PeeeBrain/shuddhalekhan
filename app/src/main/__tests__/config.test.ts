@@ -700,6 +700,21 @@ describe('config store', () => {
     expect(getConfig().shortcuts.agent).toEqual({ binding: null, activationMode: 'toggle' });
   });
 
+  it('unassigns a stored paste-chord shortcut so it is not grabbed and other settings still save', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('shortcutsMigrated', true);
+    storeData.set('shortcuts', {
+      dictation: { binding: { keyCode: 0x56, modifiers: ['ctrl'] }, activationMode: 'toggle' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    });
+
+    const { getConfig, patchTranscriptionConfig } = await import(`../config?test=${Date.now()}-shortcut-paste-upgrade`);
+
+    expect(getConfig().shortcuts.dictation).toEqual({ binding: null, activationMode: 'toggle' });
+    expect(getConfig().shortcuts.agent.binding).toEqual({ keyCode: null, modifiers: ['alt', 'win'] });
+    expect(() => patchTranscriptionConfig({ removeFillerWords: true })).not.toThrow();
+  });
+
   it('rejects identical Dictation and Agent Mode bindings as ambiguous', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-shortcut-conflict`);

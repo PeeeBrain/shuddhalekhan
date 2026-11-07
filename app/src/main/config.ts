@@ -187,6 +187,19 @@ function normalizeShortcutsConfig(stored: ShortcutsConfig | undefined): Shortcut
   };
 }
 
+/**
+ * A stored binding the current rules refuse (e.g. one saved before paste chords
+ * were reserved) reads as unassigned, so it is never grabbed and never blocks
+ * saving other settings. The user rebinds it in Settings.
+ */
+function withoutRefusedBindings(shortcuts: ShortcutsConfig): ShortcutsConfig {
+  const keep = ({ binding, activationMode }: IntentShortcutConfig): IntentShortcutConfig => ({
+    binding: assessBinding(binding, null).status === 'error' ? null : binding,
+    activationMode,
+  });
+  return { dictation: keep(shortcuts.dictation), agent: keep(shortcuts.agent) };
+}
+
 function maybeMigrateShortcutsConfig(): void {
   if (store.get('shortcutsMigrated')) return;
 
@@ -276,7 +289,7 @@ export function getConfig(): AppConfig {
     onboarding: store.get('onboarding')?.status === 'pending'
       ? { status: 'pending' }
       : { status: 'complete' },
-    shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
+    shortcuts: withoutRefusedBindings(normalizeShortcutsConfig(store.get('shortcuts'))),
     dictation: normalizeDictationConfig(store.get('dictation')),
     agent: {
       enabled: agent?.enabled ?? false,
