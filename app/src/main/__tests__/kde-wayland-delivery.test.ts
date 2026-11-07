@@ -99,6 +99,17 @@ describe('KDE Wayland best-effort delivery', () => {
     expect(delivery.isReady()).toBe(false);
   });
 
+  it('lets a disable that arrives while re-setup is closing the old session win', async () => {
+    const { delivery, calls } = await readyHarness();
+
+    const pending = delivery.enable();
+    await delivery.disable();
+
+    expect(await pending).toBe('superseded');
+    expect(calls).not.toContain('tracker');
+    expect(delivery.status().state).toBe('off');
+  });
+
   it('reports a lost keyboard-control session and stops capturing targets', async () => {
     const { delivery, loseSession, target } = await readyHarness();
     loseSession();

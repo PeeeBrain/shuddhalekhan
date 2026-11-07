@@ -57,6 +57,13 @@ export function formatBinding(binding: ShortcutBinding | null): string {
   return parts.length > 0 ? parts.join(' + ') : 'Not assigned';
 }
 
+/** Chords simulatePaste sends: Ctrl+V, Shift+Insert, Ctrl+Shift+V (see main/paste-strategy). */
+const PASTE_CHORDS: ShortcutBinding[] = [
+  { keyCode: 0x56, modifiers: ['ctrl'] },
+  { keyCode: 0x2d, modifiers: ['shift'] },
+  { keyCode: 0x56, modifiers: ['ctrl', 'shift'] },
+];
+
 export type BindingVerdict =
   | { status: 'ok' }
   | { status: 'warning'; message: string }
@@ -103,6 +110,17 @@ export function assessBinding(
     return {
       status: 'error',
       message: 'Ctrl + Alt + Delete is reserved by the system and cannot be hooked reliably.',
+    };
+  }
+
+  // Our own synthetic paste would trigger the shortcut instead of reaching the app (X11 grabs, Windows hook).
+  const pasteChord = PASTE_CHORDS.find((chord) => binding.keyCode === null
+    ? binding.modifiers.every((modifier) => chord.modifiers.includes(modifier))
+    : bindingsEqual(binding, chord));
+  if (pasteChord) {
+    return {
+      status: 'error',
+      message: `${formatBinding(binding)} overlaps ${formatBinding(pasteChord)}, which Shuddhalekhan sends to paste transcripts.`,
     };
   }
 

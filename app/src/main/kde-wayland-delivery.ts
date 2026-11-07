@@ -40,8 +40,10 @@ export class KdeWaylandDelivery {
    * means a later enable()/disable() owns the state now.
    */
   async enable(): Promise<'ready' | 'failed' | 'superseded'> {
-    await this.disable();
-    const generation = this.generation;
+    // Reserved before cleanup so a disable() or enable() arriving meanwhile wins.
+    const generation = ++this.generation;
+    await this.release();
+    if (generation !== this.generation) return 'superseded';
     this.phase = 'setting-up';
     this.options.onChange();
     let step = 'Window tracking could not start';
@@ -75,6 +77,10 @@ export class KdeWaylandDelivery {
 
   async disable(): Promise<void> {
     this.generation += 1;
+    await this.release();
+  }
+
+  private async release(): Promise<void> {
     const { tracker, keyboard } = this;
     const changed = this.phase !== 'off';
     this.tracker = null;
