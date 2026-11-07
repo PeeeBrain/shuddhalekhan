@@ -24,13 +24,8 @@ const PASTE_KEYS: Record<PasteStrategy, number[]> = {
   'ctrl-shift-v': [XK_CONTROL_L, XK_SHIFT_L, XK_V],
 };
 
-export type RemoteDesktopFailure = 'denied' | 'unavailable' | 'session-lost';
-
-export class RemoteDesktopError extends Error {
-  constructor(readonly reason: RemoteDesktopFailure, message: string) {
-    super(message);
-  }
-}
+/** Already user-readable; setup() rethrows it as-is instead of wrapping it. */
+class RemoteDesktopError extends Error {}
 
 export interface PasteResult {
   /** Notify calls the portal accepted, releases included. Says nothing about what the target app did. */
@@ -55,12 +50,12 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
   let setupRun: Promise<void> | null = null;
   const responses = new Map<string, { resolve: (response: [number, Record<string, unknown>]) => void; reject: (error: Error) => void }>();
 
-  /** Drops the session and connection; pending requests reject with `reason`. */
-  const teardown = (reason: RemoteDesktopFailure, message: string) => {
+  /** Drops the session and connection; pending requests reject with `message`. */
+  const teardown = (message: string) => {
     const wasReady = ready;
     ready = false;
     session = null;
-    for (const { reject } of responses.values()) reject(new RemoteDesktopError(reason, message));
+    for (const { reject } of responses.values()) reject(new RemoteDesktopError(message));
     responses.clear();
     bus?.close();
     bus = null;
@@ -70,7 +65,7 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
   const onSignal = (connection: DBusConnection) => (message: DBusMessage) => {
     if (connection !== bus) return;
     if (message.sender === BUS && message.member === 'NameOwnerChanged') {
-      if (message.body[0] === PORTAL && message.body[2] !== owner) teardown('session-lost', 'The desktop portal went away');
+      if (message.body[0] === PORTAL && message.body[2] !== owner) teardown('The desktop portal went away');
       return;
     }
     // Unicast signals reach us whatever the match rules say; only the portal's unique name may speak for it.
@@ -80,7 +75,7 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
       responses.delete(message.path);
       waiter?.resolve([Number(message.body[0]), (message.body[1] ?? {}) as Record<string, unknown>]);
     } else if (message.interface === 'org.freedesktop.portal.Session' && message.member === 'Closed' && session && message.path === session) {
-      teardown('session-lost', 'The desktop closed the remote desktop session');
+      teardown('The desktop closed the remote desktop session');
     }
   };
 
@@ -98,8 +93,8 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
       throw error;
     }
     const [code, results] = await response;
-    if (code === 1) throw new RemoteDesktopError('denied', `${method} was cancelled by the user`);
-    if (code !== 0) throw new RemoteDesktopError('unavailable', `${method} failed`);
+    if (code === 1) throw new RemoteDesktopError(`${method} was cancelled by the user`);
+    if (code !== 0) throw new RemoteDesktopError(`${method} failed`);
     return results;
   }
 
@@ -108,24 +103,24 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
     try {
       connection = await DBusConnection.openSession();
     } catch (error) {
-      throw new RemoteDesktopError('unavailable', `Session bus is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      throw new RemoteDesktopError(`Session bus is unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
     if (closed) {
       connection.close();
-      throw new RemoteDesktopError('session-lost', 'Remote desktop keyboard was closed during setup');
+      throw new RemoteDesktopError('Remote desktop keyboard was closed during setup');
     }
     bus = connection;
     owner = '';
     connection.onSignal(onSignal(connection));
     connection.onClose(() => {
-      if (connection === bus) teardown('session-lost', 'The session bus connection closed');
+      if (connection === bus) teardown('The session bus connection closed');
     });
     try {
       // Host apps must name themselves before their first portal call; older portals lack the registry.
       await connection.call(PORTAL, PORTAL_PATH, 'org.freedesktop.host.portal.Registry', 'Register', 'sa{sv}', [APP_ID, {}])
         .catch(() => undefined);
       const [types] = await connection.call(PORTAL, PORTAL_PATH, 'org.freedesktop.DBus.Properties', 'Get', 'ss', [REMOTE_DESKTOP, 'AvailableDeviceTypes']);
-      if (typeof types !== 'number' || !(types & KEYBOARD)) throw new RemoteDesktopError('unavailable', 'The desktop offers no remote keyboard');
+      if (typeof types !== 'number' || !(types & KEYBOARD)) throw new RemoteDesktopError('The desktop offers no remote keyboard');
       await connection.call(BUS, BUS_PATH, BUS, 'AddMatch', 's', [`type='signal',sender='${PORTAL}'`]);
       await connection.call(BUS, BUS_PATH, BUS, 'AddMatch', 's', [
         `type='signal',sender='${BUS}',interface='${BUS}',member='NameOwnerChanged',arg0='${PORTAL}'`,
@@ -133,26 +128,26 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
       owner = String((await connection.call(BUS, BUS_PATH, BUS, 'GetNameOwner', 's', [PORTAL]))[0]);
 
       const created = await request(connection, 'CreateSession', 'a{sv}', [], { session_handle_token: ['s', `shuddhalekhan_rd_session${tokens}`] });
-      if (typeof created.session_handle !== 'string') throw new RemoteDesktopError('unavailable', 'CreateSession returned no session');
+      if (typeof created.session_handle !== 'string') throw new RemoteDesktopError('CreateSession returned no session');
       session = created.session_handle;
       await request(connection, 'SelectDevices', 'oa{sv}', [session], { types: ['u', KEYBOARD] });
       const started = await request(connection, 'Start', 'osa{sv}', [session, ''], {});
-      if (!(Number(started.devices) & KEYBOARD)) throw new RemoteDesktopError('denied', 'The keyboard was not granted');
+      if (!(Number(started.devices) & KEYBOARD)) throw new RemoteDesktopError('The keyboard was not granted');
       ready = true;
     } catch (error) {
       if (connection === bus) {
         if (session) void connection.call(PORTAL, session, 'org.freedesktop.portal.Session', 'Close').catch(() => undefined);
-        teardown('session-lost', 'Remote desktop setup failed');
+        teardown('Remote desktop setup failed');
       }
       if (error instanceof RemoteDesktopError) throw error;
-      throw new RemoteDesktopError(closed ? 'session-lost' : 'unavailable', `RemoteDesktop portal is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      throw new RemoteDesktopError(`RemoteDesktop portal is unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   return {
     /** Opens the consent dialog when no session is live. Call only from an explicit user action. */
     setup(): Promise<void> {
-      if (closed) return Promise.reject(new RemoteDesktopError('unavailable', 'Remote desktop keyboard is closed'));
+      if (closed) return Promise.reject(new RemoteDesktopError('Remote desktop keyboard is closed'));
       if (ready) return Promise.resolve();
       setupRun ??= start().finally(() => { setupRun = null; });
       return setupRun;
@@ -213,7 +208,7 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
       closed = true;
       // Dropping the connection also ends the session: the portal closes sessions whose peer leaves the bus.
       if (bus && session) void bus.call(PORTAL, session, 'org.freedesktop.portal.Session', 'Close').catch(() => undefined);
-      teardown('session-lost', 'Remote desktop keyboard was closed');
+      teardown('Remote desktop keyboard was closed');
     },
   };
 }

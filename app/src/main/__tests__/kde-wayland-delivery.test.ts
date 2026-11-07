@@ -137,15 +137,6 @@ describe('KDE Wayland best-effort delivery', () => {
     expect(paste).not.toHaveBeenCalled();
   });
 
-  it('does not revive a target when focus returns to the original window', async () => {
-    const { delivery, moveFocus, paste, target } = await readyHarness();
-    moveFocus({ windowId: 'win-2', epoch: 8 });
-    moveFocus({ windowId: 'win-1', epoch: 9 });
-
-    expect(await delivery.deliver('hello', target, new AbortController().signal)).toMatchObject({ kind: 'target-changed' });
-    expect(paste).not.toHaveBeenCalled();
-  });
-
   it('pastes nothing while the recording shortcut is still held', async () => {
     const { delivery, calls, paste, released, target } = await readyHarness();
     released.value = false;

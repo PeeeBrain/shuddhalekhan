@@ -1,13 +1,10 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { mkdtempSync } from 'fs';
-import { createServer, type Server, type Socket } from 'net';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { decodeMessage, encodeMessage, METHOD_CALL, SIGNAL, type DBusMessage, type OutgoingMessage } from '../dbus';
+import type { Server } from 'net';
+import { decodeMessage, encodeMessage, METHOD_CALL, SIGNAL, type DBusMessage } from '../dbus';
 import { openGlobalShortcutsPortal, preferredTrigger } from '../global-shortcuts-portal';
 import { x11Grabs, xauthCookie, type X11Keymap } from '../x11-shortcuts';
+import { fakeSessionBus, METHOD_RETURN } from './fake-session-bus';
 
-const METHOD_RETURN = 2;
 const PORTAL_OWNER = ':1.2';
 const SESSION = '/org/freedesktop/portal/desktop/session/1_7/s';
 
@@ -16,23 +13,21 @@ const SESSION = '/org/freedesktop/portal/desktop/session/1_7/s';
  * BindShortcuts answers only when `answerBinds` is set, like a pending user dialog.
  */
 async function fakePortalBus() {
-  const path = join(mkdtempSync(join(tmpdir(), 'fake-bus-')), 'bus');
   const calls: DBusMessage[] = [];
   const waiters: Array<{ member: string; times: number; resolve: () => void }> = [];
   const count = (member: string) => calls.filter((call) => call.member === member).length;
-  let client: Socket | undefined;
-  let serial = 100;
+  const { server, send } = await fakeSessionBus((call) => handle(call));
   const bus = {
     answerBinds: true,
-    send: (message: Omit<OutgoingMessage, 'serial'>) => client?.write(encodeMessage({ serial: ++serial, ...message })),
+    send,
     signal: (sender: string, path: string, iface: string, member: string, signature: string, body: unknown[]) =>
-      bus.send({ type: SIGNAL, sender, path, interface: iface, member, signature, body }),
+      send({ type: SIGNAL, sender, path, interface: iface, member, signature, body }),
     /** Resolves once the client has called `member` `times` times. */
     called: (member: string, times = 1) => new Promise<void>((resolve) => {
       if (count(member) >= times) resolve();
       else waiters.push({ member, times, resolve });
     }),
-    server: undefined as Server | undefined,
+    server,
   };
   const respond = (call: DBusMessage, results: Record<string, unknown>) => {
     const options = call.body[call.body.length - 1] as { handle_token: string };
@@ -40,7 +35,7 @@ async function fakePortalBus() {
     bus.send({ type: METHOD_RETURN, replySerial: call.serial, sender: PORTAL_OWNER, signature: 'o', body: [request] });
     return () => bus.signal(PORTAL_OWNER, request, 'org.freedesktop.portal.Request', 'Response', 'ua{sv}', [0, results]);
   };
-  const handle = (call: DBusMessage) => {
+  function handle(call: DBusMessage) {
     calls.push(call);
     const reply = (signature = '', body: unknown[] = []) =>
       bus.send({ type: METHOD_RETURN, replySerial: call.serial, sender: 'org.freedesktop.DBus', signature, body });
@@ -55,36 +50,7 @@ async function fakePortalBus() {
       if (bus.answerBinds) answer();
     } else reply();
     for (const waiter of waiters) if (count(waiter.member) >= waiter.times) waiter.resolve();
-  };
-  bus.server = createServer((socket) => {
-    client = socket;
-    socket.on('error', () => undefined); // the client may hang up before our last reply
-    let inbox = Buffer.alloc(0);
-    let authenticated = false;
-    socket.on('data', (chunk: Buffer) => {
-      inbox = Buffer.concat([inbox, chunk]);
-      if (!authenticated) {
-        const text = inbox.toString('latin1');
-        if (text.includes('AUTH') && !text.includes('BEGIN\r\n')) {
-          if (text.endsWith('\r\n')) socket.write('OK 0123456789abcdef\r\n');
-          return;
-        }
-        if (!text.includes('BEGIN\r\n')) return;
-        inbox = inbox.subarray(text.indexOf('BEGIN\r\n') + 7);
-        authenticated = true;
-      }
-      while (inbox.length >= 16) {
-        const headerEnd = 16 + inbox.readUInt32LE(12);
-        const length = headerEnd + ((8 - (headerEnd % 8)) % 8) + inbox.readUInt32LE(4);
-        if (inbox.length < length) break;
-        const message = decodeMessage(inbox.subarray(0, length));
-        inbox = inbox.subarray(length);
-        handle(message);
-      }
-    });
-  });
-  await new Promise<void>((resolve) => bus.server!.listen(path, resolve));
-  process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${path}`;
+  }
   return { bus, calls };
 }
 

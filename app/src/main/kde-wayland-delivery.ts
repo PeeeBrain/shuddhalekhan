@@ -1,24 +1,11 @@
 import type { DictationTargetSnapshot, InjectResult, PasteStrategy } from '../types/ipc';
 import type { WaylandInsertionStatus } from '../shared/desktop-status';
-
-// Structural seams for desktop/kde-focus.ts and desktop/remote-desktop-keyboard.ts.
-interface FocusSnapshot { windowId: string; epoch: number; appId: string }
-interface FocusTracker {
-  capture(): FocusSnapshot | null;
-  validate(snapshot: FocusSnapshot): boolean;
-  isAlive(): boolean;
-  close(): Promise<void>;
-}
-interface PortalKeyboard {
-  setup(): Promise<void>;
-  isReady(): boolean;
-  paste(strategy: PasteStrategy, signal: AbortSignal, validateTarget: () => boolean): Promise<{ acceptedEvents: number; error?: string }>;
-  close(): Promise<void>;
-}
+import type { KdeFocusTracker } from './desktop/kde-focus';
+import type { RemoteDesktopKeyboard } from './desktop/remote-desktop-keyboard';
 
 export interface KdeWaylandDeliveryOptions {
-  createTracker: () => Promise<FocusTracker>;
-  createKeyboard: () => PortalKeyboard;
+  createTracker: () => Promise<KdeFocusTracker>;
+  createKeyboard: () => RemoteDesktopKeyboard;
   /** Portal chord deactivation plus a fixed settle; see KeyboardHook.waitForShortcutDeactivation. */
   waitForShortcutRelease: (signal: AbortSignal) => Promise<boolean>;
   /** Writes the transcript to the clipboard and leaves it there; nothing is restored. */
@@ -40,8 +27,8 @@ const blocked = (reason: string): InjectResult => ({ kind: 'input-blocked', acce
  * delivery is attempted once; partial or uncertain dispatch is never retried.
  */
 export class KdeWaylandDelivery {
-  private tracker: FocusTracker | null = null;
-  private keyboard: PortalKeyboard | null = null;
+  private tracker: KdeFocusTracker | null = null;
+  private keyboard: RemoteDesktopKeyboard | null = null;
   private phase: 'off' | 'setting-up' | 'ready' | 'failed' = 'off';
   private failure = '';
   private generation = 0;

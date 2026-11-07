@@ -1,37 +1,28 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, statSync } from 'fs';
-import { createServer, type Server, type Socket } from 'net';
-import { tmpdir } from 'os';
-import { dirname, join } from 'path';
-import { decodeMessage, encodeMessage, METHOD_CALL, SIGNAL, type DBusMessage, type OutgoingMessage } from '../dbus';
+import { existsSync, readFileSync, statSync } from 'fs';
+import type { Server } from 'net';
+import { dirname } from 'path';
+import { METHOD_CALL, SIGNAL, type DBusMessage } from '../dbus';
+import { fakeSessionBus, METHOD_RETURN, type Send } from './fake-session-bus';
 // Main's orchestration tests mock this module process-wide; load the real one.
 const { createKdeFocusTracker }: typeof import('../kde-focus') = await import(`../kde-focus?test=${Date.now()}`);
 
-const METHOD_RETURN = 2;
 const CLIENT = ':1.7';
 const KWIN_OWNER = ':1.2';
 
-/** A session bus with a scripted KWin behind it, on a private socket: nothing touches the host compositor. */
+/** A session bus with a scripted KWin behind it. */
 async function fakeKwinBus() {
-  const path = join(mkdtempSync(join(tmpdir(), 'fake-bus-')), 'bus');
   const calls: DBusMessage[] = [];
   const replies = new Map<number, (message: DBusMessage) => void>();
-  let client: Socket | undefined;
-  let serial = 100;
   const kwin = { scriptFile: '', scriptMode: 0, script: '' };
-  const send = (message: Omit<OutgoingMessage, 'serial'>) => {
-    const sent = ++serial;
-    client?.write(encodeMessage({ serial: sent, ...message }));
-    return sent;
-  };
   /** Delivers `Changed` from `sender`; resolves with the tracker's reply, so the update is applied. */
-  const report = (sender: string, windowId: string, appId = 'org.kde.konsole') => new Promise<DBusMessage>((resolve) => {
+  const report = (send: Send, sender: string, windowId: string, appId = 'org.kde.konsole') => new Promise<DBusMessage>((resolve) => {
     replies.set(send({
       type: METHOD_CALL, sender, destination: CLIENT, path: '/dev/shuddhalekhan/KdeFocus',
       interface: 'dev.shuddhalekhan.KdeFocus', member: 'Changed', signature: 'ss', body: [windowId, appId],
     }), resolve);
   });
-  const handle = (message: DBusMessage) => {
+  const { server, send, hungUp } = await fakeSessionBus((message, send) => {
     if (message.type !== METHOD_CALL) {
       replies.get(message.replySerial!)?.(message);
       return;
@@ -48,46 +39,15 @@ async function fakeKwinBus() {
       kwin.scriptMode = statSync(kwin.scriptFile).mode & 0o777;
       kwin.script = readFileSync(kwin.scriptFile, 'utf8');
       reply();
-      void report(KWIN_OWNER, '{original}');
+      void report(send, KWIN_OWNER, '{original}');
     } else if (message.member === 'unloadScript') reply('b', [true]);
     else reply();
-  };
-  let hangUp = () => undefined as void;
-  /** Resolves when the tracker drops its bus connection. */
-  const hungUp = new Promise<void>((resolve) => { hangUp = resolve; });
-  const server = createServer((socket) => {
-    client = socket;
-    socket.on('close', hangUp);
-    socket.on('error', () => undefined);
-    let inbox = Buffer.alloc(0);
-    let authenticated = false;
-    socket.on('data', (chunk: Buffer) => {
-      inbox = Buffer.concat([inbox, chunk]);
-      if (!authenticated) {
-        const text = inbox.toString('latin1');
-        if (!text.includes('BEGIN\r\n')) {
-          if (text.endsWith('\r\n')) socket.write('OK 0123456789abcdef\r\n');
-          return;
-        }
-        inbox = inbox.subarray(text.indexOf('BEGIN\r\n') + 7);
-        authenticated = true;
-      }
-      while (inbox.length >= 16) {
-        const headerEnd = 16 + inbox.readUInt32LE(12);
-        const length = headerEnd + ((8 - (headerEnd % 8)) % 8) + inbox.readUInt32LE(4);
-        if (inbox.length < length) break;
-        handle(decodeMessage(inbox.subarray(0, length)));
-        inbox = inbox.subarray(length);
-      }
-    });
   });
-  await new Promise<void>((resolve) => server.listen(path, resolve));
-  process.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${path}`;
   const signal = (body: unknown[]) => send({
     type: SIGNAL, sender: 'org.freedesktop.DBus', path: '/org/freedesktop/DBus',
     interface: 'org.freedesktop.DBus', member: 'NameOwnerChanged', signature: 'sss', body,
   });
-  return { server, calls, kwin, report, signal, hungUp };
+  return { server, calls, kwin, report: report.bind(null, send), signal, hungUp };
 }
 
 let openServer: Server | undefined;
