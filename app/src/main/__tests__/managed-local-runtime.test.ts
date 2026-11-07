@@ -213,12 +213,34 @@ describe('managed local runtime supervision', () => {
       await result;
       expect(child.sent.find(message => message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe'))
         .toMatchObject({ dictionary: ['Shuddhalekhan'] });
-      const incremental = transcriber.startIncremental({ recognition });
-      recognition.dictionary[0] = 'Changed again';
-      await incremental.send(new Uint8Array([0, 0]));
-      expect(child.sent.find(message => message && typeof message === 'object' && 'kind' in message && message.kind === 'incremental-start'))
-        .toMatchObject({ dictionary: ['Changed after recording'] });
-      incremental.cancel();
+    } finally { await transcriber.shutdown(); }
+  });
+
+  it('returns at once on abort, drains the running decode, and never sends queued aborted work', async () => {
+    const child = new FakeUtilityProcess();
+    child.respondToTranscription = false;
+    const transcriber = createManagedLocalTranscriber({ getModelPath: async () => 'model', startProcess: () => child });
+    const recognition = { language: 'en', task: 'transcribe' as const, dictionary: [], removeFillerWords: false };
+    const transcribes = () => child.sent.filter((message): message is { requestId: string } =>
+      !!message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe');
+    try {
+      const first = new AbortController();
+      const running = transcriber.transcribe({ audio: new Uint8Array([1]), recognition, signal: first.signal });
+      while (!transcribes().length) await Promise.resolve();
+      const queued = new AbortController();
+      const skipped = transcriber.transcribe({ audio: new Uint8Array([2]), recognition, signal: queued.signal });
+      const next = transcriber.transcribe({ audio: new Uint8Array([3]), recognition });
+      first.abort();
+      queued.abort();
+      await expect(running).rejects.toThrow();
+      await expect(skipped).rejects.toThrow();
+      expect(transcribes()).toHaveLength(1);
+
+      child.emit('message', { kind: 'result', requestId: transcribes()[0].requestId, text: 'late' });
+      while (transcribes().length < 2) await Promise.resolve();
+      child.emit('message', { kind: 'result', requestId: transcribes()[1].requestId, text: 'next' });
+      expect(await next).toBe('next');
+      expect(transcribes()).toHaveLength(2);
     } finally { await transcriber.shutdown(); }
   });
 

@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { render, screen, cleanup, waitFor, act } from '@testing-library/react';
+import { render, screen, cleanup, act } from '@testing-library/react';
 import { RecordingPopup } from '../RecordingPopup';
 
 type Listener = (...args: unknown[]) => void;
 
 const listeners: Record<string, Listener[]> = {};
-let dateSpy: ReturnType<typeof spyOn> | null = null;
-let intervalSpy: ReturnType<typeof spyOn> | null = null;
-let rafSpy: ReturnType<typeof spyOn> | null = null;
+const spies: Array<{ mockRestore(): void }> = [];
 
 function mockElectronAPI() {
   for (const key of Object.keys(listeners)) delete listeners[key];
@@ -29,115 +27,59 @@ function emit(channel: string, ...args: unknown[]) {
   (listeners[channel] ?? []).forEach((l) => l(...args));
 }
 
-describe('RecordingPopup timer reset', () => {
+/** Controls Date.now and collects interval ticks so the clock moves only when a test says so. */
+function fakeClock(start: number) {
+  const clock = { now: start, ticks: [] as Array<() => void> };
+  spies.push(
+    spyOn(Date, 'now').mockImplementation(() => clock.now),
+    spyOn(window, 'setInterval').mockImplementation(((callback: () => void) => {
+      clock.ticks.push(callback);
+      return clock.ticks.length;
+    }) as typeof setInterval),
+    spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0),
+  );
+  return {
+    advance(ms: number) {
+      clock.now += ms;
+      act(() => clock.ticks.forEach((tick) => tick()));
+    },
+  };
+}
+
+describe('RecordingPopup', () => {
   afterEach(() => {
     cleanup();
-    dateSpy?.mockRestore();
-    dateSpy = null;
-    intervalSpy?.mockRestore();
-    intervalSpy = null;
-    rafSpy?.mockRestore();
-    rafSpy = null;
+    spies.splice(0).forEach((spy) => spy.mockRestore());
   });
 
   it('shows an accessible restrained duration warning from provider orchestration', async () => {
-    rafSpy = spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0 as unknown as number);
+    fakeClock(1_000_000);
     mockElectronAPI();
-    render(<RecordingPopup initialMode="dictation" />);
+    render(<RecordingPopup intent="dictation" captureStartedAt={1_000_000} />);
 
-    act(() => {
-      emit('recording:pill-show');
-      emit('recording:duration-warning', 10);
-    });
+    act(() => emit('recording:duration-warning', 10));
 
     expect(await screen.findByText('10s left')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAttribute('aria-label', expect.stringContaining('Recording stops in 10 seconds'));
   });
 
-  it('resets the elapsed timer to 00:00 each time recording:pill-show fires', async () => {
-    let currentTime = 1000000;
-    const intervalCallbacks: Array<() => void> = [];
-
-    dateSpy = spyOn(Date, 'now').mockImplementation(() => currentTime);
-    intervalSpy = spyOn(window, 'setInterval').mockImplementation((callback: () => void) => {
-      intervalCallbacks.push(callback);
-      return 0 as unknown as number;
-    });
-    rafSpy = spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0 as unknown as number);
-
+  it('shows preparing without a running timer until capture starts', () => {
+    const clock = fakeClock(1_000_000);
     mockElectronAPI();
-    render(<RecordingPopup initialMode="dictation" />);
+    const { rerender } = render(<RecordingPopup intent="dictation" captureStartedAt={null} />);
 
-    act(() => {
-      emit('recording:pill-show');
-    });
+    clock.advance(4000);
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-label', 'Preparing microphone');
+    expect(status).toHaveTextContent('Preparing mic…');
+    expect(status).not.toHaveTextContent(/\d\d:\d\d/);
 
-    await waitFor(() => {
-      expect(screen.getByText('00:00')).toBeInTheDocument();
-    });
+    // Audio-ready arrives 4s after the pill appeared; the clock starts there, not at show.
+    rerender(<RecordingPopup intent="dictation" captureStartedAt={1_004_000} />);
+    expect(status).toHaveAttribute('aria-label', 'Dictation recording in progress');
+    expect(status).toHaveTextContent('00:00');
 
-    currentTime += 3000;
-    act(() => {
-      intervalCallbacks.forEach((cb) => cb());
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('00:03')).toBeInTheDocument();
-    });
-
-    act(() => {
-      emit('recording:pill-show');
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('00:00')).toBeInTheDocument();
-    });
-  });
-
-  it('stops elapsed timer and clears recording start on recording:pill-hide', async () => {
-    let currentTime = 1000000;
-    const intervalCallbacks: Array<() => void> = [];
-
-    dateSpy = spyOn(Date, 'now').mockImplementation(() => currentTime);
-    intervalSpy = spyOn(window, 'setInterval').mockImplementation((callback: () => void) => {
-      intervalCallbacks.push(callback);
-      return 0 as unknown as number;
-    });
-    rafSpy = spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0 as unknown as number);
-
-    mockElectronAPI();
-    render(<RecordingPopup initialMode="dictation" />);
-
-    act(() => {
-      emit('recording:pill-show');
-    });
-
-    currentTime += 2000;
-    act(() => {
-      intervalCallbacks.forEach((cb) => cb());
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('00:02')).toBeInTheDocument();
-    });
-
-    act(() => {
-      emit('recording:pill-hide');
-    });
-
-    // Subsequent interval ticks after pill-hide should not advance time or throw
-    currentTime += 5000;
-    act(() => {
-      intervalCallbacks.forEach((cb) => cb());
-    });
-
-    // Upon fresh show, timer resets to 00:00
-    act(() => {
-      emit('recording:pill-show');
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText('00:00')).toBeInTheDocument();
-    });
+    clock.advance(2000);
+    expect(status).toHaveTextContent('00:02');
   });
 });

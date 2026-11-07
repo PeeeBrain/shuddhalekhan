@@ -17,7 +17,7 @@ type RuntimeStatus = ManagedLocalModelSnapshot['runtime'];
 type EngineSettings = { selection: ManagedLocalSelection; numThreads: number; revision: number; contextual: boolean };
 type RuntimePlan = { settings: EngineSettings; candidates: LocalRuntime[] | null };
 
-/** Holds a worker for the whole recording, including pause decoding and cancellation. */
+/** Keeps one local worker warm across recordings and decodes each completed recording once, with its pinned settings. */
 export function createManagedLocalEngine({
   getSettings,
   getCandidates,
@@ -36,19 +36,7 @@ export function createManagedLocalEngine({
   let generation = 0;
   let failedGpuKey: string | null = null;
   let loadingWorker: Worker | null = null;
-  const recordings = new Set<object>();
-
-  const reserve = () => {
-    const token = {};
-    recordings.add(token);
-    return () => { recordings.delete(token); };
-  };
-
-  const recordingPlan = (recognition: TranscriptionRequest['recognition']): RuntimePlan => {
-    const settings = structuredClone(getSettings());
-    settings.contextual = settings.selection.model === 'parakeet' && recognition.dictionary.length > 0;
-    return { settings, candidates: null };
-  };
+  let transcribing = 0;
 
   const key = () => JSON.stringify(getSettings());
   const release = () => {
@@ -128,104 +116,65 @@ export function createManagedLocalEngine({
         : 'Local CPU inference failed. Retry Dictation to restart it.' }, selected.settings);
   };
 
-  const transcribePinned = async (request: TranscriptionRequest, pinned: RuntimePlan) => {
-    const releaseRecording = reserve();
+  const transcribePinned = async (request: TranscriptionRequest, settings: EngineSettings) => {
+    transcribing++;
     const operationGeneration = generation;
+    // Cancellation and shutdown end this recording: no fallback worker is started for it afterwards.
+    const stopped = () => operationGeneration !== generation || request.signal?.aborted === true;
     try {
-      const selected = await acquire(pinned);
+      const selected = await acquire({ settings, candidates: null });
       try {
-        if (operationGeneration !== generation) throw new Error('Local speech recognition stopped.');
+        if (stopped()) throw new TranscriptionFailure('model', 'Local speech recognition stopped.');
         return await selected.worker.transcribe(request);
       }
       catch (error) {
-        if (operationGeneration !== generation) throw error;
+        if (stopped()) throw error;
         await failed(selected);
         selected.release();
         if (selected.runtime.backend !== 'cuda'
-          || selected.settings.selection.devices[selected.runtime.model] !== 'auto') throw error;
+          || selected.settings.selection.devices[selected.runtime.model] !== 'auto' || stopped()) throw error;
         const fallback = await acquire({ settings: selected.settings,
           candidates: selected.candidates.filter(candidate => candidate.backend === 'cpu') });
         try {
-          if (operationGeneration !== generation) throw error;
+          if (stopped()) throw error;
           return await fallback.worker.transcribe(request);
         } finally { fallback.release(); }
       } finally { selected.release(); }
-    } finally { releaseRecording(); }
+    } finally { transcribing--; }
   };
 
-  const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void>; isBusy(): boolean } = {
-    id: 'managed-local',
-    isBusy: () => recordings.size > 0 || leases > 0,
-    get capabilities() { return { translation: false, automaticLanguageDetection: false,
-      dictionaryHints: getSettings().selection.model === 'parakeet', authentication: 'none' as const, maxDurationSeconds: null }; },
+  const engine = {
+    isBusy: () => transcribing > 0 || leases > 0,
     async warmup() {
-      // Settings can be edited during recording; never wait on or replace its worker here.
-      if (recordings.size || leases) return;
+      // Never wait on or replace a worker that is decoding a recording.
+      if (transcribing || leases) return;
       await ensure();
     },
-    transcribe(request) {
-      const pinned = { ...request, recognition: structuredClone(request.recognition) };
-      return transcribePinned(pinned, recordingPlan(pinned.recognition));
-    },
-    startIncremental(request) {
-      const releaseRecording = reserve();
-      const recognition = structuredClone(request.recognition);
-      const pinned = recordingPlan(recognition);
-      const recordingGeneration = generation;
-      let cancelled = false;
-      const started = acquire(pinned).then(selected => {
-        if (cancelled) { selected.release(); throw new Error('Recording cancelled.'); }
-        const session = selected.worker.startIncremental({ recognition });
-        return { selected, session };
-      });
-      started.catch(() => {});
+    /**
+     * Pins the model, device policy, threads and model revision when a recording begins and starts loading
+     * them; Settings edits apply to the next recording. Stop decodes the whole recording once.
+     */
+    forRecording(): Transcriber {
+      const settings = structuredClone(getSettings());
+      if (!transcribing && !leases) void ensure({ settings, candidates: null }).catch(() => undefined);
       return {
-        async retryCompletedAudio(audio) {
-          try {
-            const original = await started.catch(() => null);
-            if (cancelled || generation !== recordingGeneration) throw new Error('Recording cancelled.');
-            if (original) {
-              original.session.cancel();
-              original.selected.release();
-              if (current?.worker === original.selected.worker) {
-                current = null;
-                await original.selected.worker.shutdown();
-              }
-            }
-            if (cancelled || generation !== recordingGeneration) throw new Error('Recording cancelled.');
-            return await transcribePinned({ audio, recognition }, original?.selected ?? pinned);
-          } finally { releaseRecording(); }
-        },
-        async send(audio) {
-          const { selected, session } = await started;
-          try { await session.send(audio); }
-          catch (error) { await failed(selected); selected.release(); throw error; }
-        },
-        async finish() {
-          const { selected, session } = await started;
-          try {
-            const text = await session.finish();
-            releaseRecording();
-            return text;
-          }
-          catch (error) { await failed(selected); throw error; }
-          finally { selected.release(); }
-        },
-        cancel() {
-          cancelled = true;
-          releaseRecording();
-          void started.then(({ selected, session }) => { session.cancel(); selected.release(); }).catch(() => {});
+        id: 'managed-local',
+        capabilities: { translation: false, automaticLanguageDetection: false,
+          dictionaryHints: settings.selection.model === 'parakeet', authentication: 'none', maxDurationSeconds: null },
+        transcribe(request) {
+          const recognition = structuredClone(request.recognition);
+          return transcribePinned({ ...request, recognition }, { ...settings,
+            contextual: settings.selection.model === 'parakeet' && recognition.dictionary.length > 0 });
         },
       };
     },
     async shutdown() {
       generation++;
-      recordings.clear();
       await loadingWorker?.shutdown();
       await current?.worker.shutdown();
       current = null;
       onStatus({ status: 'idle', backend: null, message: 'Local speech recognition is stopped.' }, getSettings());
     },
   };
-  return transcriber;
+  return engine;
 }

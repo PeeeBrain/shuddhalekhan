@@ -14,7 +14,6 @@ type RuntimeProcess = {
 type PendingRequest = {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
-  finished: Promise<void>;
   timeout: ReturnType<typeof setTimeout>;
 };
 
@@ -41,6 +40,7 @@ export function createManagedLocalTranscriber({
   let loadTimeout: ReturnType<typeof setTimeout> | null = null;
   let activeStartup: object | null = null;
   const pending = new Map<string, PendingRequest>();
+  let queue: Promise<unknown> = Promise.resolve();
 
   const rejectPending = (error: Error): void => {
     rejectReady?.(error);
@@ -158,8 +158,6 @@ export function createManagedLocalTranscriber({
   };
 
   const awaitResult = (requestId: string): Promise<string> => {
-    let finishRequest!: () => void;
-    const finished = new Promise<void>(resolve => { finishRequest = resolve; });
     return new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
         const process = child;
@@ -167,17 +165,11 @@ export function createManagedLocalTranscriber({
         if (process) reset(process, error, true);
         else reject(error);
       }, transcriptionTimeoutMs);
-      pending.set(requestId, {
-        resolve: text => { finishRequest(); resolve(text); },
-        reject: error => { finishRequest(); reject(error); },
-        finished,
-        timeout,
-      });
+      pending.set(requestId, { resolve, reject, timeout });
     });
   };
 
-  const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void>;
-    startIncremental: NonNullable<Transcriber['startIncremental']> } = {
+  const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void> } = {
     id: 'managed-local',
     capabilities: {
       translation: false,
@@ -186,52 +178,28 @@ export function createManagedLocalTranscriber({
       authentication: 'none',
       maxDurationSeconds: null,
     },
-    async transcribe({ audio, recognition }) {
-      recognition = structuredClone(recognition);
-      // A cancelled recording can leave its decode running. Drain it before changing threads.
-      if (pending.size > 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads())) {
-        await Promise.all([...pending.values()].map(request => request.finished));
-      }
-      await ensureReady();
-      if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
-      const requestId = randomUUID();
-      const result = awaitResult(requestId);
-      child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer, dictionary: recognition.dictionary,
-        removeFillerWords: recognition.removeFillerWords });
-      return (await result).trim();
-    },
-    // Streams the recording to the worker, which decodes at speech pauses so stopping waits for little or nothing.
-    startIncremental({ recognition }) {
-      recognition = structuredClone(recognition);
-      const requestId = randomUUID();
-      let process: RuntimeProcess | null = null;
-      const started = ensureReady().then(() => {
+    transcribe({ audio, recognition, signal }) {
+      const { dictionary, removeFillerWords } = structuredClone(recognition);
+      // Native decodes cannot be interrupted, so the worker gets one at a time. An aborted caller returns at
+      // once; its decode drains here before the next one is sent, and work still queued behind it is skipped.
+      const job = queue.then(async () => {
+        signal?.throwIfAborted();
+        await ensureReady();
+        signal?.throwIfAborted();
         if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
-        process = child;
-        process.postMessage({ kind: 'incremental-start', requestId, dictionary: recognition.dictionary,
-          removeFillerWords: recognition.removeFillerWords });
-        return process;
+        const requestId = randomUUID();
+        const result = awaitResult(requestId);
+        child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer, dictionary, removeFillerWords });
+        return (await result).trim();
       });
-      started.catch(() => {});
-      const current = async () => {
-        const startedProcess = await started;
-        if (child !== startedProcess) throw new TranscriptionFailure('model', 'Local speech recognition restarted.');
-        return startedProcess;
-      };
-      return {
-        async send(pcm) {
-          (await current()).postMessage({ kind: 'incremental-push', requestId, audio: pcm.slice().buffer });
-        },
-        async finish() {
-          const startedProcess = await current();
-          const result = awaitResult(requestId);
-          startedProcess.postMessage({ kind: 'incremental-finish', requestId });
-          return (await result).trim();
-        },
-        cancel() {
-          if (process && child === process) process.postMessage({ kind: 'incremental-cancel', requestId });
-        },
-      };
+      queue = job.catch(() => undefined);
+      if (!signal) return job;
+      return new Promise<string>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        if (signal.aborted) onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+        job.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+      });
     },
     warmup: ensureReady,
     async shutdown() {

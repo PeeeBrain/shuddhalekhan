@@ -37,24 +37,20 @@ function drawWaveform(canvas: HTMLCanvasElement, level: number, phase: number): 
 }
 
 interface RecordingPopupProps {
-  initialMode?: RecordingIntent;
-  recordingSessionId?: string;
+  intent: RecordingIntent;
+  /** Main's timestamp for the session's audio-ready; null while the mic is still opening. */
+  captureStartedAt: number | null;
 }
 
-export function RecordingPopup({
-  initialMode = 'dictation',
-  recordingSessionId,
-}: RecordingPopupProps) {
-  const [mode, setMode] = useState<RecordingIntent>(initialMode);
-  const [elapsed, setElapsed] = useState(0);
+/** Mounted once per recording session (keyed by the shell); all timing comes from the runtime snapshot. */
+export function RecordingPopup({ intent: mode, captureStartedAt }: RecordingPopupProps) {
+  const ready = captureStartedAt !== null;
+  const [now, setNow] = useState(Date.now);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
-  const recordingStartRef = useRef<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
-  const [pillState, setPillState] = useState<'hidden' | 'entering' | 'visible' | 'exiting'>(
-    recordingSessionId ? 'visible' : 'hidden'
-  );
+  const [pillState, setPillState] = useState<'hidden' | 'entering' | 'visible' | 'exiting'>('visible');
   const targetLevelRef = useRef(0);
   // The waveform is painted straight to a canvas from refs: a level change must
   // not re-render React, and a silent mic must not repaint at all.
@@ -66,11 +62,6 @@ export function RecordingPopup({
   const attachCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     canvasRef.current = canvas;
     if (canvas) drawWaveform(canvas, levelRef.current, phaseRef.current);
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = window.electronAPI.subscribe('recording:mode-changed', setMode);
-    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -110,22 +101,13 @@ export function RecordingPopup({
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('recording:pill-show', () => {
-      recordingStartRef.current = Date.now();
-      setElapsed(0);
-      setRemainingSeconds(null);
       setPillState(reducedMotion ? 'visible' : 'entering');
     });
     return unsubscribe;
   }, [reducedMotion]);
 
   useEffect(() => {
-    if (!recordingSessionId) return;
-    recordingStartRef.current = Date.now();
-  }, [recordingSessionId]);
-
-  useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('recording:pill-hide', () => {
-      recordingStartRef.current = null;
       setPillState(reducedMotion ? 'hidden' : 'exiting');
     });
     return unsubscribe;
@@ -179,18 +161,16 @@ export function RecordingPopup({
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', wake);
     };
-  }, [reducedMotion, pillState, mode]);
+  }, [reducedMotion, pillState, mode, ready]);
 
+  // No ticking while preparing: the clock starts at audio-ready, never at pill show.
   useEffect(() => {
-    if (pillState === 'hidden') return;
-    const id = setInterval(() => {
-      if (recordingStartRef.current !== null) {
-        setElapsed(Math.floor((Date.now() - recordingStartRef.current) / 1000));
-      }
-    }, 1000);
+    if (pillState === 'hidden' || !ready) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [pillState]);
+  }, [pillState, ready]);
 
+  const elapsed = ready ? Math.max(0, Math.floor((now - captureStartedAt) / 1000)) : 0;
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;
   const formatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
@@ -206,23 +186,32 @@ export function RecordingPopup({
           pillState === 'hidden' ? '' : pillState
         }`}
         role="status"
-        aria-label={`${isAgent ? 'Agent mode' : 'Dictation'} recording in progress${remainingSeconds === null ? '' : `. Recording stops in ${remainingSeconds} seconds`}`}
+        aria-label={ready
+          ? `${isAgent ? 'Agent mode' : 'Dictation'} recording in progress${remainingSeconds === null ? '' : `. Recording stops in ${remainingSeconds} seconds`}`
+          : 'Preparing microphone'}
       >
         <span aria-hidden="true" className="recording-glyph flex size-7 shrink-0 items-center justify-center">
           <Glyph className="size-3.5" />
         </span>
-        <div className={`h-8 flex-1 items-center justify-center ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
-          <canvas ref={attachCanvas} />
-
-        </div>
-        {remainingSeconds !== null ? (
-          <span className="flex-1 whitespace-nowrap text-[11px] font-medium tabular-nums text-warning">
-            {remainingSeconds}s left
+        {ready ? (
+          <>
+            <div className={`h-8 flex-1 items-center justify-center ${remainingSeconds === null ? 'flex' : 'hidden'}`} aria-hidden={remainingSeconds !== null}>
+              <canvas ref={attachCanvas} />
+            </div>
+            {remainingSeconds !== null ? (
+              <span className="flex-1 whitespace-nowrap text-[11px] font-medium tabular-nums text-warning">
+                {remainingSeconds}s left
+              </span>
+            ) : null}
+            <span className="text-[11px] tabular-nums text-muted-foreground select-none">
+              {formatted}
+            </span>
+          </>
+        ) : (
+          <span className="flex-1 whitespace-nowrap text-[11px] font-medium text-muted-foreground select-none">
+            Preparing mic…
           </span>
-        ) : null}
-        <span className="text-[11px] tabular-nums text-muted-foreground select-none">
-          {formatted}
-        </span>
+        )}
       </div>
     </div>
   );

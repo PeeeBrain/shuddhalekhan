@@ -6,7 +6,7 @@ import { existsSync, readFileSync, unlinkSync } from 'fs';
 import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, RecordingActivationMode, ShortcutsConfig, TranscriptionConfig, TranscriptionProviderId } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
-import { getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
+import { getDictationConfigError, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
 import { preparePersistentStoreDirectory } from './store-path';
 import { isManagedLocalThreadCount } from './managed-local-threads';
 import { DEFAULT_MANAGED_LOCAL, managedLocalSelectionSchema, resolveManagedLocalSelection } from '../shared/managed-local-selection';
@@ -79,6 +79,7 @@ const store = new Store<StoreConfig>({
       default: 'ctrl-v',
       overrides: {},
     },
+    waylandBestEffortInsertion: false,
     setupChecklistDismissed: false,
     onboarding: { status: existingInstallationExisted ? 'complete' : 'pending' },
     shortcuts: {
@@ -270,6 +271,7 @@ export function getConfig(): AppConfig {
     task: store.get('task') ?? 'transcribe',
     dictionary: store.get('dictionary') ?? [],
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
+    waylandBestEffortInsertion: store.get('waylandBestEffortInsertion') === true,
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
     onboarding: store.get('onboarding')?.status === 'pending'
       ? { status: 'pending' }
@@ -305,7 +307,7 @@ export function patchTranscriptionConfig(value: unknown): AppConfig {
     const verdict = assessBinding(next.shortcuts[intent].binding, next.shortcuts[other].binding);
     if (verdict.status === 'error') throw new Error(verdict.message);
   }
-  assertDictationCombination(next);
+  assertDictationConfig(next.dictation);
   // electron-store's object overload commits the validated transition in one write.
   store.set({
     transcription: next.transcription, managedLocal: next.managedLocal,
@@ -357,39 +359,19 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
         throw new Error(verdict.message);
       }
     }
-    const previousShortcuts = normalizeShortcutsConfig(store.get('shortcuts'));
-    if (shortcuts.dictation.activationMode !== previousShortcuts.dictation.activationMode) {
-      assertDictationCombination({
-        dictation: normalizeDictationConfig(store.get('dictation')),
-        shortcuts,
-        transcription: store.get('transcription') ?? DEFAULT_TRANSCRIPTION,
-      });
-    }
     store.set(key, shortcuts as AppConfig[K]);
     return;
   }
 
   if (key === 'dictation') {
     const dictation = normalizeDictationConfig(value);
-    assertDictationCombination({
-      dictation,
-      shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
-      transcription: store.get('transcription') ?? DEFAULT_TRANSCRIPTION,
-    });
+    assertDictationConfig(dictation);
     store.set(key, dictation as AppConfig[K]);
     return;
   }
 
   if (key === 'transcription') {
-    const transcription = value as TranscriptionConfig;
-    sarvamConfigSchema.parse(transcription.providers.sarvam);
-    if (transcription.activeProvider !== store.get('transcription')?.activeProvider) {
-      assertDictationCombination({
-        dictation: normalizeDictationConfig(store.get('dictation')),
-        shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
-        transcription,
-      });
-    }
+    sarvamConfigSchema.parse((value as TranscriptionConfig).providers.sarvam);
   }
 
   store.set(key, value);
@@ -426,17 +408,8 @@ function isTranscriptionProviderId(value: unknown): value is TranscriptionProvid
     || value === 'whisper-live-kit';
 }
 
-function assertDictationCombination(input: {
-  dictation: DictationConfig;
-  shortcuts: ShortcutsConfig;
-  transcription: TranscriptionConfig;
-}): void {
-  const error = getDictationCombinationError({
-    mode: input.dictation.mode,
-    activationMode: input.shortcuts.dictation.activationMode,
-    capabilities: getTranscriptionTransportCapabilities(input.transcription.activeProvider),
-    formatter: input.dictation.formatter,
-  });
+function assertDictationConfig(dictation: DictationConfig): void {
+  const error = getDictationConfigError(dictation);
   if (error) throw new Error(error);
 }
 

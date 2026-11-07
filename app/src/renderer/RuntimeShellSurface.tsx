@@ -141,33 +141,33 @@ function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnap
   const tentativeSuffix = tentative.startsWith(committed)
     ? tentative.slice(committed.length)
     : tentative;
-  const hasPreview = committed.length > 0 || tentativeSuffix.length > 0 || snapshot.insertionHalted;
+  const hasPreview = committed.length > 0 || tentativeSuffix.length > 0;
 
   return (
     <main className="flex h-screen w-screen flex-col items-center justify-center gap-3 overflow-hidden bg-transparent">
       <div className="h-[52px] w-[172px] shrink-0">
         <RecordingPopup
           key={snapshot.recordingSessionId}
-          initialMode={snapshot.intent}
-          recordingSessionId={snapshot.recordingSessionId}
+          intent={snapshot.intent}
+          captureStartedAt={snapshot.captureStartedAt}
         />
       </div>
+      {/* Provisional only: nothing is typed until the recording stops. Static text, no motion. */}
       {hasPreview ? (
         <p
           data-testid="streaming-preview"
           aria-live="off"
-          className="m-0 max-h-12 w-[488px] overflow-hidden rounded-[14px] border border-border bg-card px-3.5 py-2.5 text-sm leading-5 text-foreground"
+          className="m-0 flex max-h-12 w-[488px] flex-col justify-end overflow-hidden rounded-[14px] border border-dashed border-border bg-card px-3.5 py-2.5 text-sm leading-5 text-foreground"
         >
-          {snapshot.insertionHalted ? (
-            <span data-testid="insertion-halted" className="mb-1 block text-xs font-semibold text-warning">
-              Insertion stopped — recording continues
+          {/* justify-end keeps the newest words visible; older lines clip off the top. */}
+          <span>
+            <span className="mr-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Preview</span>
+            <span data-testid="streaming-committed" className="text-foreground">
+              {committed}
             </span>
-          ) : null}
-          <span data-testid="streaming-committed" className="text-foreground">
-            {committed}
-          </span>
-          <span data-testid="streaming-tentative" className="text-muted-foreground">
-            {tentativeSuffix}
+            <span data-testid="streaming-tentative" className="text-muted-foreground">
+              {tentativeSuffix}
+            </span>
           </span>
         </p>
       ) : null}

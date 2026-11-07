@@ -68,10 +68,11 @@ export function createGoogleCloudSpeechTranscriber(
   config: GoogleCloudSpeechProviderConfig,
   savedCredential: string | null,
 ): Transcriber {
+  const adc = config.credentialSource === 'adc' ? loadApplicationDefaultCredential() : null;
   return {
     id: 'google-cloud-speech-v2',
     capabilities: GOOGLE_CLOUD_SPEECH_CAPABILITIES,
-    async transcribe({ audio, recognition }) {
+    async transcribe({ audio, recognition, signal }) {
       if (recognition.task === 'translate') {
         throw new TranscriptionFailure('model', 'Google Cloud Speech-to-Text v2 synchronous recognition does not translate audio.');
       }
@@ -80,14 +81,14 @@ export function createGoogleCloudSpeechTranscriber(
       }
       const credential = config.credentialSource === 'service-account'
         ? (savedCredential ? parseGoogleServiceAccount(savedCredential) : null)
-        : loadApplicationDefaultCredential();
+        : adc;
       if (!credential) {
         throw new TranscriptionFailure('authentication', config.credentialSource === 'service-account'
           ? 'Google service-account credentials are not configured. Import them in Settings.'
           : 'Application Default Credentials could not be found. Configure ADC before recording.');
       }
-      const accessToken = await obtainAccessToken(credential);
-      return recognize(audio, recognition, config, accessToken);
+      const accessToken = await obtainAccessToken(credential, signal);
+      return recognize(audio, recognition, config, accessToken, signal);
     },
   };
 }
@@ -105,7 +106,10 @@ function loadApplicationDefaultCredential(): GoogleServiceAccount | AuthorizedUs
   return null;
 }
 
-async function obtainAccessToken(credential: GoogleServiceAccount | AuthorizedUser): Promise<string> {
+async function obtainAccessToken(
+  credential: GoogleServiceAccount | AuthorizedUser,
+  signal?: AbortSignal,
+): Promise<string> {
   const form = new URLSearchParams();
   let tokenUri: string;
   if (credential.type === 'service_account') {
@@ -134,7 +138,7 @@ async function obtainAccessToken(credential: GoogleServiceAccount | AuthorizedUs
 
   let response: Response;
   try {
-    response = await fetch(tokenUri, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form });
+    response = await fetch(tokenUri, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form, signal });
   } catch {
     throw new TranscriptionFailure('network', 'Could not reach Google authentication services. Check the network connection.');
   }
@@ -153,6 +157,7 @@ async function recognize(
   recognition: RecognitionSettings,
   config: GoogleCloudSpeechProviderConfig,
   accessToken: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const requestConfig: Record<string, unknown> = {
     // Shuddhalekhan sends a complete 16 kHz, mono, PCM16 WAV container. Google's
@@ -172,12 +177,13 @@ async function recognize(
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ config: requestConfig, content: Buffer.from(audio).toString('base64') }),
+    signal,
   });
   let response: Response;
   try {
     response = await send();
     // Punctuation support varies by model and language. Preserve previously valid requests.
-    if (response.status === 400) {
+    if (response.status === 400 && !signal?.aborted) {
       delete requestConfig.features;
       response = await send();
     }

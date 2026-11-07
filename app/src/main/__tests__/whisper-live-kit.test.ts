@@ -161,6 +161,26 @@ describe('WhisperLiveKit endpoint contract', () => {
     });
   });
 
+  it('aborts an in-flight batch request when the recording is cancelled', async () => {
+    const fetchMock = mock((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+    const transcriber = createWhisperLiveKitTranscriber(
+      { baseUrl: 'http://127.0.0.1:8000', auth: 'none' },
+      null,
+      fetchMock as unknown as typeof fetch,
+    );
+    const controller = new AbortController();
+    const pending = transcriber.transcribe({
+      audio: new Uint8Array([1]),
+      recognition: { language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false },
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ category: 'network' });
+  });
+
   it('bounds batch transcription requests that never complete', async () => {
     const fetchMock = mock((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));

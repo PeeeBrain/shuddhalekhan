@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   createRecordingPresentationEnvelope,
-  getDictationCombinationError,
+  getDictationConfigError,
   getFormatterProfileError,
   getFormatterCredentialError,
   getTranscriptionTransportCapabilities,
@@ -98,19 +98,9 @@ describe('Dictation config normalization', () => {
       apiKeySource: 'environment' as const,
       processingConsent: false,
     };
-    expect(getDictationCombinationError({
-      mode: 'corrected',
-      activationMode: 'push-to-talk',
-      capabilities: { batch: true, streaming: false },
-      formatter,
-    })).toBe('Corrected Dictation requires explicit processing consent.');
+    expect(getDictationConfigError({ mode: 'corrected', formatter })).toBe('Corrected Dictation requires explicit processing consent.');
 
-    expect(getDictationCombinationError({
-      mode: 'corrected',
-      activationMode: 'push-to-talk',
-      capabilities: { batch: true, streaming: false },
-      formatter: { ...formatter, processingConsent: true },
-    })).toBe('Remote Corrected Dictation requires an API key environment variable.');
+    expect(getDictationConfigError({ mode: 'corrected', formatter: { ...formatter, processingConsent: true } })).toBe('Remote Corrected Dictation requires an API key environment variable.');
 
     expect(getFormatterCredentialError({
       baseUrl: 'http://127.0.0.1:11434/v1',

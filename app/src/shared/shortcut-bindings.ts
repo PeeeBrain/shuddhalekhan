@@ -116,9 +116,8 @@ export function assessBinding(
   if (binding.keyCode !== null && binding.modifiers.length === 0) {
     return {
       status: 'warning',
-      // Linux observes keys without consuming them (evdev), so the key also reaches the focused app.
       message: IS_LINUX
-        ? `${formatBinding(binding)} will start recording everywhere and still reach the app you are typing in.`
+        ? `${formatBinding(binding)} will start recording everywhere. With the input-device fallback it also reaches the app you are typing in.`
         : `${formatBinding(binding)} will be consumed everywhere while assigned and cannot be typed in other apps.`,
     };
   }

@@ -14,18 +14,29 @@ export const LOCAL_WHISPER_CPP_CAPABILITIES = {
   maxDurationSeconds: null,
 } as const;
 
+/** Reads the endpoint from config on every call; recordings use createLocalWhisperCppTranscriber. */
 export const localWhisperCppTranscriber: Transcriber = {
   id: 'local-whisper-cpp',
   capabilities: LOCAL_WHISPER_CPP_CAPABILITIES,
-  async transcribe({ audio, recognition }) {
+  async transcribe({ audio, recognition, signal }) {
     const config = await loadRuntimeConfig();
     return transcribeLocalWhisper(
       audio,
       config.transcription.providers.localWhisperCpp.endpoint,
       recognition,
+      signal,
     );
   },
 };
+
+/** A transcriber pinned to one endpoint, so settings edits never redirect an in-flight recording. */
+export function createLocalWhisperCppTranscriber(endpoint: string): Transcriber {
+  return {
+    id: 'local-whisper-cpp',
+    capabilities: LOCAL_WHISPER_CPP_CAPABILITIES,
+    transcribe: ({ audio, recognition, signal }) => transcribeLocalWhisper(audio, endpoint, recognition, signal),
+  };
+}
 
 export async function transcribe(audioData: Uint8Array<ArrayBuffer>, config?: AppConfig): Promise<string> {
   const runtimeConfig = config ?? await loadRuntimeConfig();
@@ -41,6 +52,7 @@ async function transcribeLocalWhisper(
   audioData: Uint8Array<ArrayBuffer>,
   whisperUrl: string,
   recognition: RecognitionSettings,
+  signal?: AbortSignal,
 ): Promise<string> {
   const { removeFillerWords, language, task, dictionary } = recognition;
 
@@ -71,6 +83,7 @@ async function transcribeLocalWhisper(
     response = await fetch(whisperUrl, {
       method: 'POST',
       body: form as unknown as BodyInit,
+      signal,
     });
   } catch {
     throw new TranscriptionFailure(

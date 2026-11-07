@@ -24,6 +24,7 @@ import type {
   TranscriptionSettingsPatch,
 } from '../../../types/ipc';
 import { normalizeTranscriptionTransition } from '../../../shared/transcription-features';
+import type { DesktopStatus } from '../../../shared/desktop-status';
 import { SettingsWindow } from '../../SettingsWindow';
 
 afterEach(cleanup);
@@ -89,6 +90,11 @@ const UPDATE_STATUS: UpdateStatus = {
   checkedAt: '2026-07-20T00:00:00.000Z',
 };
 
+const WINDOWS_STATUS: DesktopStatus = {
+  shortcuts: { backend: 'windows' },
+  delivery: { available: true, message: 'Text is typed into the focused app.' },
+};
+
 interface MockSettingsIpcOptions {
   config?: AppConfig;
   failSetConfig?: boolean;
@@ -104,6 +110,8 @@ interface MockSettingsIpcOptions {
   managedLocalSnapshot?: () => ManagedLocalModelSnapshot;
   registerManagedLocalStateChanged?: (callback: () => void) => void;
   registerOnboardingCompleted?: (callback: () => void) => void;
+  desktopStatus?: DesktopStatus;
+  registerDesktopStatusChanged?: (callback: (status: DesktopStatus) => void) => void;
 }
 
 function createMockSettingsIpc(
@@ -137,7 +145,7 @@ function createMockSettingsIpc(
     checkTranscriptionReadiness: mock(() => Promise.resolve(options.transcriptionReadiness ?? {
       providerId: 'whisper-live-kit' as const,
       state: 'ready' as const,
-      message: 'WhisperLiveKit is ready for Batch Dictation.',
+      message: 'WhisperLiveKit is ready.',
       checkedAt: null,
     })),
     getShortcutsPaused: mock(() => Promise.resolve(false)),
@@ -145,6 +153,12 @@ function createMockSettingsIpc(
     beginShortcutCapture: mock(() => Promise.resolve()),
     endShortcutCapture: mock(() => Promise.resolve()),
     onShortcutsPausedChanged: mock(() => undefined),
+    getDesktopStatus: mock(() => Promise.resolve(options.desktopStatus ?? WINDOWS_STATUS)),
+    setWaylandInsertion: mock(() => Promise.resolve(options.desktopStatus ?? WINDOWS_STATUS)),
+    onDesktopStatusChanged: mock((callback: (status: DesktopStatus) => void) => {
+      options.registerDesktopStatusChanged?.(callback);
+      return undefined;
+    }),
     onUpdateStatusChanged: mock(() => undefined),
     onNavigateRequested: mock(() => undefined),
     onMcpStatusSnapshot: mock(() => undefined),
@@ -296,6 +310,26 @@ describe('Settings navigation', () => {
       model: 'granite',
       devices: { parakeet: 'auto', granite: 'auto' },
     } }));
+  });
+
+  it('offers no GPU processor or GPU install where the platform has no GPU build', async () => {
+    renderSettings({
+      config: baseConfig({ transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' } }),
+      managedLocalSnapshot: () => ({
+        inference: { maxThreads: 16, defaultThreads: 4 },
+        model: { id: 'parakeet', name: 'Parakeet', downloadBytes: 1, installedBytes: 1, languages: ['English'] },
+        state: { kind: 'ready', modelId: 'parakeet', path: '/models/parakeet' },
+        catalog: [{ key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+          cpu: { downloadBytes: 1, installedBytes: 1, state: { kind: 'ready', modelId: 'parakeet', path: '/models/parakeet' } } }],
+        runtime: { status: 'ready', backend: 'cpu', message: '' },
+        gpu: { name: null, message: 'GPU acceleration is available on Windows only.' },
+      }),
+    });
+    await waitForLoaded();
+
+    expect(await screen.findByText('Running on CPU')).toBeInTheDocument();
+    expect(screen.queryByText('Processor')).toBeNull();
+    expect(screen.queryByText('GPU files')).toBeNull();
   });
 
   it.each(['settings', 'onboarding'] as const)('keeps previous Parakeet files usable in %s until an explicit update', async (screenMode: 'settings' | 'onboarding') => {
@@ -562,7 +596,6 @@ describe('Settings section reachability', () => {
     await waitForLoaded();
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Dictation mode' }));
-    expect(screen.queryByRole('option', { name: /Live Dictation/ })).toBeNull();
     fireEvent.click(await screen.findByRole('option', { name: /Corrected Dictation/ }));
 
     const turnOn = await screen.findByRole('button', { name: 'Turn on Corrected Dictation' });
@@ -577,7 +610,7 @@ describe('Settings section reachability', () => {
     fireEvent.blur(model);
     fireEvent.click(screen.getByRole('switch', { name: 'Allow transcript processing' }));
     await waitFor(() => expect(turnOn).toBeEnabled());
-    expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent('Batch Dictation');
+    expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent(/^Dictation$/);
 
     fireEvent.click(turnOn);
     await waitFor(() => expect(settingsIpc.patchTranscriptionConfig).toHaveBeenLastCalledWith({ dictation: {
@@ -604,7 +637,7 @@ describe('Settings section reachability', () => {
     await waitFor(() => expect(url).toHaveValue('http://127.0.0.1:11434/v1'));
   });
 
-  it('turns on Live with Toggle in one save and hides Push to Talk while Live is on', async () => {
+  it('keeps a streaming provider on the same two modes, explains its preview, and allows Push to Talk', async () => {
     const current = baseConfig();
     const { settingsIpc } = renderSettings({ config: {
       ...current,
@@ -612,25 +645,16 @@ describe('Settings section reachability', () => {
     } });
     await waitForLoaded();
 
+    expect(screen.getByText(/shows a preview while you speak; it replaces the former Live Dictation mode/)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Clean transcription' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('combobox', { name: 'Dictation mode' }));
-    fireEvent.click(await screen.findByRole('option', { name: /Live Dictation/ }));
-    expect(settingsIpc.patchTranscriptionConfig).not.toHaveBeenCalled();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Switch to Toggle and turn on Live' }));
-    await waitFor(() => expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledWith({
-      dictation: { mode: 'live', formatter: null },
-      shortcuts: expect.objectContaining({
-        dictation: expect.objectContaining({ activationMode: 'toggle' }),
-        agent: expect.objectContaining({ activationMode: 'push-to-talk' }),
-      }),
-    }));
-    expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledTimes(1);
+    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['Dictation', 'Corrected Dictation']);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
     fireEvent.click(tabByLabel('Shortcuts'));
-    expect(screen.getByText(/Live Dictation uses Toggle/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('combobox', { name: 'Dictation activation mode' }));
-    expect(await screen.findByRole('option', { name: 'Toggle' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Push to Talk' })).toBeNull();
+    expect(await screen.findByRole('option', { name: 'Push to Talk' })).toBeInTheDocument();
+    expect(settingsIpc.patchTranscriptionConfig).not.toHaveBeenCalled();
   });
 
   it('switches provider in one save and explains what main changed', async () => {
@@ -923,6 +947,80 @@ describe('Settings section reachability', () => {
     expect(panel.querySelectorAll('kbd')).toHaveLength(4);
   });
 
+  it('shows the shortcut the Linux desktop actually assigned once main finishes checking', async () => {
+    let push!: (status: DesktopStatus) => void;
+    renderSettings({
+      config: baseConfig({ agent: { ...baseConfig().agent, enabled: true } }),
+      desktopStatus: { shortcuts: { backend: 'initializing' }, delivery: WINDOWS_STATUS.delivery },
+      registerDesktopStatusChanged: (callback) => { push = callback; },
+    });
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+    expect(await screen.findAllByText('Checking whether the shortcut is active…')).toHaveLength(2);
+
+    act(() => push({
+      shortcuts: { backend: 'portal', triggers: { dictation: 'Super+D', agent: null } },
+      delivery: WINDOWS_STATUS.delivery,
+    }));
+
+    expect(await screen.findByLabelText('Dictation shortcut: Super+D')).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent Mode shortcut: Not assigned')).toBeInTheDocument();
+    expect(screen.getByText(/Your desktop has not assigned Alt \+ /)).toBeInTheDocument();
+    expect(screen.queryByText(/input group access/)).toBeNull();
+  });
+
+  it('explains that evdev shortcuts still reach the focused app', async () => {
+    renderSettings({ desktopStatus: { shortcuts: { backend: 'evdev' }, delivery: WINDOWS_STATUS.delivery } });
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    expect(await screen.findByText(/input group access/)).toBeInTheDocument();
+  });
+
+  it('warns on Home before recording when Wayland cannot insert text, without blocking Agent Mode', async () => {
+    renderSettings({
+      config: baseConfig({ agent: { ...baseConfig().agent, enabled: true } }),
+      desktopStatus: {
+        shortcuts: { backend: 'portal', triggers: { dictation: 'Super+D', agent: 'Super+A' } },
+        delivery: { available: false, message: 'This Wayland desktop does not allow typing into other apps.' },
+      },
+    });
+
+    const insertion = await screen.findByRole('button', { name: /Text insertion/ }, { timeout: SLOW_CI_TIMEOUT });
+    await waitFor(() => expect(insertion).toHaveTextContent('This Wayland desktop does not allow typing into other apps.'));
+    expect(insertion).toHaveTextContent('Unavailable');
+    expect(screen.getByRole('button', { name: /Speech engine/ })).toHaveTextContent('Ready');
+    expect(screen.getByRole('button', { name: /Agent Mode/ })).toHaveTextContent('On');
+    expect(screen.getByLabelText('Super+A')).toBeInTheDocument();
+  });
+
+  it('turns on KDE Wayland best-effort insertion through main setup and shows its limits once ready', async () => {
+    let push: ((status: DesktopStatus) => void) | undefined;
+    const shortcuts = { backend: 'portal', triggers: { dictation: 'Super+D' } } as const;
+    const { settingsIpc } = renderSettings({
+      desktopStatus: {
+        shortcuts,
+        delivery: { available: false, message: 'Automatic insertion is unavailable on Wayland.' },
+        waylandInsertion: { state: 'off', message: 'Off.' },
+      },
+      registerDesktopStatusChanged: (callback) => { push = callback; },
+    });
+    await waitForLoaded();
+
+    const toggle = await screen.findByRole('switch', { name: 'Best-effort insertion (test mode)' }, { timeout: SLOW_CI_TIMEOUT });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(toggle);
+    expect(settingsIpc.setWaylandInsertion).toHaveBeenCalledWith(true);
+
+    act(() => push?.({
+      shortcuts,
+      delivery: { available: true, message: 'Best-effort test mode.' },
+      waylandInsertion: { state: 'ready', message: 'Best-effort test mode: a change to another field inside that same window is not detected.' },
+    }));
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.getByText(/another field inside that same window is not detected/)).toBeInTheDocument();
+  });
+
   it('captures and saves a normalized shortcut inline on release', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
@@ -1137,7 +1235,7 @@ describe('Settings section reachability', () => {
     expect(screen.getByText(`Try a dictation (Ctrl + ${process.platform === 'linux' ? 'Super' : 'Win'})`)).toBeInTheDocument();
   });
 
-  it('points fresh Live Dictation setups at WhisperLiveKit readiness in the checklist', async () => {
+  it('points fresh WhisperLiveKit setups at its readiness in the checklist', async () => {
     const config = baseConfig({ setupChecklistDismissed: false });
     renderSettings({
       config: {

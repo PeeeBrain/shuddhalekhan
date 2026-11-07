@@ -7,13 +7,13 @@ import { resolveManagedLocalSelection } from '../../shared/managed-local-selecti
 class Process extends EventEmitter {
   killed = false;
   readonly received: unknown[] = [];
-  constructor(readonly runtime: LocalRuntime, readonly failLoad = false, readonly crashDecode = false) { super(); }
+  constructor(readonly runtime: LocalRuntime, readonly numThreads: number, readonly failLoad = false, readonly crashDecode = false) { super(); }
   postMessage(message: unknown) {
     this.received.push(structuredClone(message));
     if (!message || typeof message !== 'object' || !('kind' in message)) return;
     if (message.kind === 'load') queueMicrotask(() => this.emit('message', this.failLoad
       ? { kind: 'load-error', message: 'CUDA initialization failed' } : { kind: 'ready' }));
-    if (message.kind === 'transcribe' || message.kind === 'incremental-finish') {
+    if (message.kind === 'transcribe') {
       if (!('requestId' in message)) throw new Error('Missing correlation id');
       this.emit('decode');
       queueMicrotask(() => this.crashDecode ? this.emit('exit', 1) : this.emit('message', {
@@ -42,7 +42,7 @@ function rig({ failLoad = false, crashDecode = false, startup }: { failLoad?: bo
     createWorker(runtime, numThreads) {
       return createManagedLocalTranscriber({ getModelPath: async () => runtime.modelPath,
         getNumThreads: () => numThreads, startProcess() {
-          const child = new Process(runtime, runtime.backend === 'cuda' && failLoad, runtime.backend === 'cuda' && crashDecode);
+          const child = new Process(runtime, numThreads, runtime.backend === 'cuda' && failLoad, runtime.backend === 'cuda' && crashDecode);
           processes.push(child);
           return child;
         } });
@@ -52,75 +52,44 @@ function rig({ failLoad = false, crashDecode = false, startup }: { failLoad?: bo
   return { engine, settings, processes };
 }
 
-describe('local model and device lifecycle', () => {
-  it('protects model files as soon as recording startup begins, and releases them when cancelled', async () => {
-    let allowStartup!: () => void;
-    const startup = new Promise<void>(resolve => { allowStartup = resolve; });
-    const { engine } = rig({ startup });
-    const recording = engine.startIncremental!(request);
+describe('Managed Local recording decode', () => {
+  it('decodes with the model, device and threads the recording began with, and reuses the warm worker', async () => {
+    const { engine, settings, processes } = rig();
+    settings.selection.devices.parakeet = 'cpu';
+    settings.selection.devices.granite = 'cpu';
     try {
-      expect(engine.isBusy()).toBe(true);
-      recording.cancel();
-      expect(engine.isBusy()).toBe(false);
-    } finally {
-      recording.cancel();
-      allowStartup();
-      await recording.finish().catch(() => {});
-      await engine.shutdown();
-    }
-  });
-
-  it.each(['auto', 'cuda'] as const)('keeps the original %s policy and model through a failed recording retry', async (preference: 'auto' | 'cuda') => {
-    const { engine, settings } = rig({ crashDecode: true });
-    settings.selection.devices.parakeet = preference;
-    const recording = engine.startIncremental!(request);
-    try {
-      await recording.send(new Uint8Array([1, 2]));
+      const recording = engine.forRecording();
       settings.selection.model = 'granite';
-      settings.selection.devices.parakeet = preference === 'auto' ? 'cuda' : 'auto';
-      await expect(recording.finish()).rejects.toThrow('stopped unexpectedly');
-      expect(engine.isBusy()).toBe(true);
-      const retry = recording.retryCompletedAudio!(request.audio);
-      if (preference === 'auto') expect(await retry).toBe('parakeet:cpu');
-      else await expect(retry).rejects.toThrow();
-      expect(engine.isBusy()).toBe(false);
-    } finally { recording.cancel(); await engine.shutdown(); }
+      settings.numThreads = 2;
+      expect(recording.capabilities.dictionaryHints).toBe(true);
+      expect(await recording.transcribe(request)).toBe('parakeet:cpu');
+      expect(await engine.forRecording().transcribe(request)).toBe('granite:cpu');
+      expect(await engine.forRecording().transcribe(request)).toBe('granite:cpu');
+      expect(processes.map(p => [p.runtime.model, p.numThreads])).toEqual([['parakeet', 1], ['granite', 2]]);
+    } finally { await engine.shutdown(); }
   });
 
-  it('keeps a stream that failed during recording busy until its completed audio is retried or discarded', async () => {
-    const { engine, processes } = rig();
-    const recording = engine.startIncremental!(request);
-    try {
-      await recording.send(new Uint8Array([1, 2]));
-      processes[0].emit('exit', 1);
-      await expect(recording.send(new Uint8Array([3, 4]))).rejects.toThrow();
-      expect(engine.isBusy()).toBe(true);
-      recording.cancel();
-      expect(engine.isBusy()).toBe(false);
-      await expect(recording.retryCompletedAudio!(request.audio)).rejects.toThrow('cancelled');
-      expect(processes).toHaveLength(1);
-    } finally { recording.cancel(); await engine.shutdown(); }
-  });
-
-  it.each(['auto', 'cuda'] as const)('keeps the original %s policy during a batch GPU failure even if Settings changes', async (preference: 'auto' | 'cuda') => {
+  it.each(['auto', 'cuda'] as const)('keeps the original %s policy during a GPU decode failure even if Settings changes', async (preference: 'auto' | 'cuda') => {
     const { engine, settings, processes } = rig({ crashDecode: true });
     settings.selection.devices.parakeet = preference;
     try {
-      await engine.warmup();
-      const decoding = new Promise<void>(resolve => processes[0].once('decode', resolve));
-      const text = engine.transcribe(request);
+      const recording = engine.forRecording();
+      const decoding = new Promise<void>(resolve => engine.warmup().then(() => processes[0].once('decode', resolve)));
+      const text = recording.transcribe(request);
       await decoding;
       settings.selection.model = 'granite';
       settings.selection.devices.parakeet = preference === 'auto' ? 'cuda' : 'auto';
       if (preference === 'auto') expect(await text).toBe('parakeet:cpu');
       else await expect(text).rejects.toThrow();
+      expect(engine.isBusy()).toBe(false);
     } finally { await engine.shutdown(); }
   });
+
   it('falls back after GPU initialization failure and does not retry the broken GPU every recording', async () => {
     const { engine, processes } = rig({ failLoad: true });
     try {
-      expect(await engine.transcribe(request)).toBe('parakeet:cpu');
-      expect(await engine.transcribe(request)).toBe('parakeet:cpu');
+      expect(await engine.forRecording().transcribe(request)).toBe('parakeet:cpu');
+      expect(await engine.forRecording().transcribe(request)).toBe('parakeet:cpu');
       expect(processes.map(p => p.runtime.backend)).toEqual(['cuda', 'cpu']);
       expect(processes[0].killed).toBe(true);
     } finally { await engine.shutdown(); }
@@ -130,55 +99,41 @@ describe('local model and device lifecycle', () => {
     const { engine, settings, processes } = rig({ failLoad: true });
     settings.selection.devices.parakeet = 'cuda';
     try {
-      await expect(engine.transcribe(request)).rejects.toThrow('could not load');
+      await expect(engine.forRecording().transcribe(request)).rejects.toThrow('could not load');
       expect(processes).toHaveLength(1);
       expect(processes[0].killed).toBe(true);
     } finally { await engine.shutdown(); }
   });
 
-  it('retries completed audio on CPU after a GPU worker crash in Auto', async () => {
-    const { engine, processes } = rig({ crashDecode: true });
+  it('retries the recording on CPU with its pinned vocabulary after a GPU worker crash in Auto', async () => {
+    let allowStartup!: () => void;
+    const startup = new Promise<void>(resolve => { allowStartup = resolve; });
+    const { engine, processes } = rig({ crashDecode: true, startup });
+    const dictionary = ['Shuddhalekhan'];
     try {
-      expect(await engine.transcribe({ ...request, recognition: { ...request.recognition, dictionary: ['Shuddhalekhan'] } })).toBe('parakeet:cpu');
-      expect(processes.map(p => p.runtime.backend)).toEqual(['cuda', 'cpu']);
-      for (const process of processes) {
+      const text = engine.forRecording().transcribe({ ...request, recognition: { ...request.recognition, dictionary } });
+      dictionary.length = 0;
+      allowStartup();
+      expect(await text).toBe('parakeet:cpu');
+      expect(processes.map(p => p.runtime.backend)).toEqual(['cuda', 'cuda', 'cpu']);
+      for (const process of processes.slice(1)) {
         expect(process.runtime.contextual).toBe(true);
         expect(process.received).toContainEqual(expect.objectContaining({ kind: 'transcribe', dictionary: ['Shuddhalekhan'] }));
       }
     } finally { await engine.shutdown(); }
   });
 
-  it('chooses contextual decoding from the incremental recording snapshot before async startup', async () => {
-    let allowStartup!: () => void;
-    const startup = new Promise<void>(resolve => { allowStartup = resolve; });
-    const { engine, processes } = rig({ startup });
-    const dictionary = ['Shuddhalekhan'];
-    const recording = engine.startIncremental!({ recognition: { ...request.recognition, dictionary } });
-    dictionary.length = 0;
-    allowStartup();
+  it('starts no CPU retry when the recording is cancelled during GPU inference', async () => {
+    const { engine, processes } = rig({ crashDecode: true });
     try {
-      await recording.send(new Uint8Array([1, 2]));
-      expect(processes[0].runtime.contextual).toBe(true);
-      expect(processes[0].received).toContainEqual(expect.objectContaining({ kind: 'incremental-start', dictionary: ['Shuddhalekhan'] }));
-      await recording.finish();
-    } finally { recording.cancel(); await engine.shutdown(); }
-  });
-
-  it('keeps the recording on its original model while a new selection waits for finish', async () => {
-    const { engine, settings, processes } = rig();
-    settings.selection.devices.parakeet = 'cpu';
-    settings.selection.devices.granite = 'cpu';
-    try {
-      const recording = engine.startIncremental!(request);
-      await recording.send(new Uint8Array([1, 2]));
-      settings.selection.model = 'granite';
+      const recording = engine.forRecording();
       await engine.warmup();
-      expect(processes[0].killed).toBe(false);
-      const next = engine.transcribe(request);
-      expect(await recording.finish()).toBe('parakeet:cpu');
-      expect(await next).toBe('granite:cpu');
-      expect(processes[0].killed).toBe(true);
-      expect(processes).toHaveLength(2);
+      const abort = new AbortController();
+      processes[0].once('decode', () => abort.abort());
+      await expect(recording.transcribe({ ...request, signal: abort.signal })).rejects.toThrow();
+      await Promise.resolve();
+      expect(processes.map(p => p.runtime.backend)).toEqual(['cuda']);
+      expect(engine.isBusy()).toBe(false);
     } finally { await engine.shutdown(); }
   });
 });

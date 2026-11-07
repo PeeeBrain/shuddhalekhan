@@ -1,7 +1,7 @@
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import * as fs from 'fs';
 import { join, normalize } from 'path';
 import { installElectronMock, resetElectronMock } from '../../test/electron-mock';
-import { validateProviderReadiness } from '../transcription';
 
 /**
  * Promotion fixtures for Managed Local becoming the out-of-the-box default.
@@ -38,13 +38,7 @@ class MockStore {
 
 mock.module('electron-store', () => ({ default: MockStore }));
 installElectronMock();
-mock.module('fs', () => ({
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-}));
+let filesystemSpies: Array<{ mockRestore(): void }> = [];
 
 const STABLE_CONFIG_PATH = normalize(
   join('/home/tester', 'Shuddhalekhan', 'shuddhalekhan-config.json'),
@@ -67,6 +61,13 @@ describe('Managed local Dictation promotion', () => {
   });
 
   beforeEach(() => {
+    filesystemSpies = [
+      spyOn(fs, 'copyFileSync').mockImplementation(copyFileSync),
+      spyOn(fs, 'existsSync').mockImplementation(existsSync),
+      spyOn(fs, 'mkdirSync').mockImplementation(mkdirSync),
+      spyOn(fs, 'readFileSync').mockImplementation(readFileSync),
+      spyOn(fs, 'unlinkSync').mockImplementation(unlinkSync),
+    ];
     storeData.clear();
     resetElectronMock();
     existsSync.mockReset();
@@ -75,6 +76,7 @@ describe('Managed local Dictation promotion', () => {
     copyFileSync.mockReset();
     mkdirSync.mockReset();
   });
+  afterEach(() => { for (const spy of filesystemSpies) spy.mockRestore(); });
 
   describe('fresh installations', () => {
     it('defaults to Batch Dictation, Toggle activation, and Managed Local', async () => {
@@ -179,10 +181,9 @@ describe('Managed local Dictation promotion', () => {
 
     it.each([
       ['batch'],
-      ['live'],
       ['corrected'],
     ])('preserves an explicit %s selection across restarts', async (...args: unknown[]) => {
-      const mode = args[0] as 'batch' | 'live' | 'corrected';
+      const mode = args[0] as 'batch' | 'corrected';
       givenStoreFileOnDisk(true);
       storeData.set('dictation', { mode, formatter: null });
       storeData.set('shortcutsMigrated', true);
@@ -205,47 +206,6 @@ describe('Managed local Dictation promotion', () => {
       expect(second.getConfig().dictation.mode).toBe(mode);
       expect(second.getConfig().shortcuts.dictation.activationMode).toBe('toggle');
       expect(second.getConfig().transcription.activeProvider).toBe('whisper-live-kit');
-    });
-  });
-
-  describe('missing streaming configuration guides setup instead of flipping modes', () => {
-    it('reports actionable WhisperLiveKit guidance while keeping the stored Live mode', async () => {
-      givenStoreFileOnDisk(false);
-      const first = await bootConfig('guidance-fresh');
-      first.setConfig('transcription', {
-        ...first.getConfig().transcription,
-        activeProvider: 'whisper-live-kit',
-      });
-      first.setConfig('dictation', { mode: 'live', formatter: null });
-
-      // Simulate an unreachable/unconfigured WhisperLiveKit deployment.
-      storeData.set('task', 'translate');
-      const config = first.getConfig();
-      const errors = validateProviderReadiness('whisper-live-kit', config, { read: () => null });
-
-      expect(errors.length).toBeGreaterThan(0);
-      expect(errors.join(' ')).toContain('WhisperLiveKit');
-      // The failed readiness check never rewrites the persisted dictation mode.
-      expect(first.getConfig().dictation.mode).toBe('live');
-    });
-
-    it('rejects switching away from the streaming provider while Live mode is selected', async () => {
-      givenStoreFileOnDisk(false);
-      const { getConfig, setConfig } = await bootConfig('guidance-provider-guard');
-      setConfig('transcription', {
-        ...getConfig().transcription,
-        activeProvider: 'whisper-live-kit',
-      });
-      setConfig('dictation', { mode: 'live', formatter: null });
-
-      expect(() =>
-        setConfig('transcription', {
-          ...getConfig().transcription,
-          activeProvider: 'local-whisper-cpp',
-        }),
-      ).toThrow('Live Dictation requires a streaming-capable provider.');
-      expect(getConfig().transcription.activeProvider).toBe('whisper-live-kit');
-      expect(getConfig().dictation.mode).toBe('live');
     });
   });
 });

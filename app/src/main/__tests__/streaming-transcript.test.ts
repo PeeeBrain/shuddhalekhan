@@ -2,57 +2,37 @@ import { describe, expect, it } from 'bun:test';
 import { createStreamingTranscriptLedger } from '../streaming-transcript';
 
 describe('streaming transcript ledger', () => {
-  it('accepts repeated and raw-prefix-extending commits without normalizing provider text', () => {
+  it('accepts provider revisions of earlier recognition, including shrinkage', () => {
     const ledger = createStreamingTranscriptLedger();
 
-    expect(ledger.apply({ sequence: 0, committed: 'hello ', tentative: 'hello w' })).toEqual({
+    ledger.apply({ sequence: 0, committed: 'hello world', tentative: 'hello world and' });
+    expect(ledger.apply({ sequence: 1, committed: 'hello there', tentative: 'hello there' })).toEqual({
       kind: 'accepted',
-      committed: 'hello ',
-      tentative: 'hello w',
+      committed: 'hello there',
+      tentative: 'hello there',
     });
-    expect(ledger.apply({ sequence: 1, committed: 'hello ', tentative: 'hello wo' })).toEqual({
+    expect(ledger.apply({ sequence: 2, committed: 'hello', tentative: 'hello th' })).toEqual({
       kind: 'accepted',
-      committed: 'hello ',
-      tentative: 'hello wo',
+      committed: 'hello',
+      tentative: 'hello th',
     });
-    expect(ledger.apply({ sequence: 2, committed: 'hello world', tentative: 'hello world' })).toEqual({
-      kind: 'accepted',
-      committed: 'hello world',
-      tentative: 'hello world',
-    });
+    expect(ledger.current()).toEqual({ committed: 'hello', tentative: 'hello th' });
   });
 
-  it('fails closed on out-of-order snapshots, shrinkage, or revision', () => {
-    const outOfOrder = createStreamingTranscriptLedger();
-    outOfOrder.apply({ sequence: 1, committed: 'first', tentative: 'first' });
-    expect(outOfOrder.apply({ sequence: 1, committed: 'first again', tentative: 'first again' }))
-      .toEqual({ kind: 'protocol-failure' });
-
-    const shrink = createStreamingTranscriptLedger();
-    shrink.apply({ sequence: 0, committed: 'complete', tentative: 'complete' });
-    expect(shrink.apply({ sequence: 1, committed: 'complet', tentative: 'complet' }))
-      .toEqual({ kind: 'protocol-failure' });
-
-    const revision = createStreamingTranscriptLedger();
-    revision.apply({ sequence: 0, committed: 'hello world', tentative: 'hello world' });
-    expect(revision.apply({ sequence: 1, committed: 'hello there', tentative: 'hello there' }))
-      .toEqual({ kind: 'protocol-failure' });
-  });
-
-  it('treats the protocol-failure latch as terminal', () => {
-    const ledger = createStreamingTranscriptLedger();
-    ledger.apply({ sequence: 0, committed: 'first', tentative: 'first' });
-    expect(ledger.apply({ sequence: 0, committed: 'first again', tentative: 'first again' }))
-      .toEqual({ kind: 'protocol-failure' });
-    expect(ledger.apply({ sequence: 1, committed: 'first', tentative: 'first' }))
-      .toEqual({ kind: 'protocol-failure' });
-  });
-
-  it('discards tentative text at the finalization barrier', () => {
-    const ledger = createStreamingTranscriptLedger();
-    ledger.apply({ sequence: 0, committed: 'stable', tentative: 'stable maybe' });
-
-    expect(ledger.finalize()).toBe('stable');
-    expect(ledger.current()).toEqual({ committed: 'stable', tentative: '' });
+  it('fails closed, terminally, on out-of-order or malformed snapshots', () => {
+    const malformed = [
+      { sequence: 1, committed: 'again', tentative: 'again' },
+      { sequence: 2.5, committed: 'x', tentative: 'x' },
+      { sequence: 3, committed: 'abc', tentative: 'xyz' },
+      { sequence: 4, committed: undefined as unknown as string, tentative: '' },
+    ];
+    for (const snapshot of malformed) {
+      const ledger = createStreamingTranscriptLedger();
+      ledger.apply({ sequence: 1, committed: 'first', tentative: 'first' });
+      expect(ledger.apply(snapshot)).toEqual({ kind: 'protocol-failure' });
+      expect(ledger.apply({ sequence: 10, committed: 'later', tentative: 'later' }))
+        .toEqual({ kind: 'protocol-failure' });
+      expect(ledger.current()).toEqual({ committed: 'first', tentative: 'first' });
+    }
   });
 });

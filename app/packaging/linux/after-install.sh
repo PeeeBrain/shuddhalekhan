@@ -55,11 +55,3 @@ if apparmor_status --enabled > /dev/null 2>&1; then
     echo "Skipping the installation of the AppArmor profile as this version of AppArmor does not seem to support the bundled profile"
   fi
 fi
-
-# --- Shuddhalekhan ---
-# Hotkeys read /dev/input and paste writes /dev/uinput; both are granted to
-# the `input` group. Apply the packaged rule to the existing uinput node now.
-if hash udevadm 2>/dev/null; then
-    udevadm control --reload-rules || true
-    udevadm trigger --subsystem-match=misc --sysname-match=uinput || true
-fi

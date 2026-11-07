@@ -53,7 +53,8 @@ export function resolveInstallDefaults(configStoreExists: boolean): InstallDicta
   return configStoreExists ? LEGACY_INSTALL_DEFAULTS : PROMOTED_INSTALL_DEFAULTS;
 }
 
-const DICTATION_MODES = new Set<DictationMode>(['batch', 'live', 'corrected']);
+// Legacy stored 'live' falls through to 'batch': previews now follow the provider, not the mode.
+const DICTATION_MODES = new Set<DictationMode>(['batch', 'corrected']);
 const TRANSCRIPTION_TRANSPORT_CAPABILITIES = {
   'managed-local': { batch: true, streaming: false },
   'local-whisper-cpp': { batch: true, streaming: false },
@@ -179,48 +180,18 @@ export function getFormatterProfileError(
   return null;
 }
 
-export interface DictationCombinationInput {
-  mode: DictationMode;
-  activationMode: RecordingActivationMode;
-  capabilities: TranscriptionTransportCapabilities;
-  formatter: DictationFormatterProfile | null;
-}
-
-export function getAppConfigDictationError(
-  config: {
-    dictation: DictationConfig;
-    shortcuts: { dictation: { activationMode: RecordingActivationMode } };
-    transcription: { activeProvider: TranscriptionProviderId };
-  },
-): string | null {
-  return getDictationCombinationError({
-    mode: config.dictation.mode,
-    activationMode: config.shortcuts.dictation.activationMode,
-    capabilities: getTranscriptionTransportCapabilities(config.transcription.activeProvider),
-    formatter: config.dictation.formatter,
-  });
-}
-
-export function getDictationCombinationError(input: DictationCombinationInput): string | null {
-  if (input.mode === 'live') {
-    if (input.activationMode !== 'toggle') {
-      return 'Live Dictation requires Toggle activation.';
-    }
-    if (!input.capabilities.streaming) {
-      return 'Live Dictation requires a streaming-capable provider.';
-    }
+/**
+ * Every mode works with any activation and provider: streaming providers add
+ * previews, never a different delivery. Only Corrected needs a usable formatter.
+ */
+export function getDictationConfigError(dictation: DictationConfig): string | null {
+  if (dictation.mode !== 'corrected') return null;
+  const profileError = getFormatterProfileError(dictation.formatter);
+  if (profileError) return profileError;
+  if (!dictation.formatter?.processingConsent) {
+    return 'Corrected Dictation requires explicit processing consent.';
   }
-
-  if (input.mode === 'corrected') {
-    const profileError = getFormatterProfileError(input.formatter);
-    if (profileError) return profileError;
-    if (!input.formatter?.processingConsent) {
-      return 'Corrected Dictation requires explicit processing consent.';
-    }
-    return getFormatterCredentialError(input.formatter);
-  }
-
-  return null;
+  return getFormatterCredentialError(dictation.formatter);
 }
 
 export function createRecordingPresentationEnvelope(input: {

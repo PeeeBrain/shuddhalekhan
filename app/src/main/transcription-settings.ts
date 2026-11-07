@@ -40,7 +40,7 @@ export const transcriptionSettingsPatchSchema = z.object({
   dictionary: z.array(z.string().min(1).max(512).refine(term => !hasDictionaryControlCharacters(term),
     'Dictionary terms cannot contain control characters.')).max(1000).optional(),
   removeFillerWords: z.boolean().optional(),
-  dictation: z.object({ mode: z.enum(['batch', 'live', 'corrected']), formatter: z.object({
+  dictation: z.object({ mode: z.enum(['batch', 'corrected']), formatter: z.object({
     baseUrl: text, model: text, apiKeyEnvVar: text, apiKeySource: z.enum(['stored', 'environment']).default('environment'),
     processingConsent: z.boolean(),
   }).nullable() }).optional(),

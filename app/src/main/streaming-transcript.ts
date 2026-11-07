@@ -7,9 +7,13 @@ export type StreamingTranscriptUpdate =
 export interface StreamingTranscriptLedger {
   apply(snapshot: StreamingTranscriptSnapshot): StreamingTranscriptUpdate;
   current(): { committed: string; tentative: string };
-  finalize(): string;
 }
 
+/**
+ * Tracks the latest preview snapshot. Providers may revise earlier recognition,
+ * so each snapshot replaces the last; only ordering and shape are enforced.
+ * Previews are never the final transcript: the provider's finish() is.
+ */
 export function createStreamingTranscriptLedger(): StreamingTranscriptLedger {
   let committed = '';
   let tentative = '';
@@ -20,8 +24,10 @@ export function createStreamingTranscriptLedger(): StreamingTranscriptLedger {
     apply(snapshot) {
       if (
         failed
+        || !Number.isSafeInteger(snapshot.sequence)
         || snapshot.sequence <= lastSequence
-        || !snapshot.committed.startsWith(committed)
+        || typeof snapshot.committed !== 'string'
+        || typeof snapshot.tentative !== 'string'
         || !snapshot.tentative.startsWith(snapshot.committed)
       ) {
         failed = true;
@@ -34,10 +40,6 @@ export function createStreamingTranscriptLedger(): StreamingTranscriptLedger {
     },
     current() {
       return { committed, tentative };
-    },
-    finalize() {
-      tentative = '';
-      return committed;
     },
   };
 }

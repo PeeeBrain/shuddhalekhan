@@ -16,7 +16,7 @@ import type { DictationTargetSnapshot, PasteStrategy } from '../types/ipc';
 
 const PLAIN_TEXT_FORMAT = 'text/plain';
 const HTML_FORMAT = 'text/html';
-const RTF_FORMAT = 'Rich Text Format';
+const RTF_FORMATS = new Set(['text/rtf', 'Rich Text Format']);
 const PNG_FORMAT = 'image/png';
 const BOOKMARK_FORMATS = new Set([
   'text/uri-list',
@@ -28,7 +28,7 @@ const BOOKMARK_SKIP_LABEL = 'URL Bookmark';
 const SUPPORTED_FORMATS = new Set([
   PLAIN_TEXT_FORMAT,
   HTML_FORMAT,
-  RTF_FORMAT,
+  ...RTF_FORMATS,
   PNG_FORMAT,
   ...BOOKMARK_FORMATS,
 ]);
@@ -59,9 +59,14 @@ export class ElectronClipboardAdapter implements ClipboardIO {
     if (formats.includes(PLAIN_TEXT_FORMAT)) {
       const text = clipboard.readText();
       if (text) {
-        snapshot.wasEmpty = false;
-        snapshot.text = text;
-        usedSize += stringByteLength(text);
+        const size = stringByteLength(text);
+        if (size <= this.maxSize) {
+          snapshot.wasEmpty = false;
+          snapshot.text = text;
+          usedSize += size;
+        } else {
+          skippedFormats.add(PLAIN_TEXT_FORMAT);
+        }
       }
     }
 
@@ -79,7 +84,7 @@ export class ElectronClipboardAdapter implements ClipboardIO {
       }
     }
 
-    if (formats.includes(RTF_FORMAT)) {
+    if (hasAnyFormat(formats, RTF_FORMATS)) {
       const rtf = clipboard.readRTF();
       if (rtf) {
         const size = stringByteLength(rtf);
@@ -88,7 +93,7 @@ export class ElectronClipboardAdapter implements ClipboardIO {
           snapshot.rtf = rtf;
           usedSize += size;
         } else {
-          skippedFormats.add(RTF_FORMAT);
+          skippedFormats.add('text/rtf');
         }
       }
     }
@@ -97,7 +102,8 @@ export class ElectronClipboardAdapter implements ClipboardIO {
       const bookmark = clipboard.readBookmark();
       if (bookmark && (bookmark.title || bookmark.url)) {
         const size = stringByteLength(bookmark.title) + stringByteLength(bookmark.url);
-        if (usedSize + size <= this.maxSize) {
+        if (usedSize + size <= this.maxSize
+          && (snapshot.text === undefined || snapshot.text === bookmark.url)) {
           snapshot.wasEmpty = false;
           snapshot.bookmark = bookmark;
           usedSize += size;
@@ -130,21 +136,14 @@ export class ElectronClipboardAdapter implements ClipboardIO {
       return;
     }
 
-    if (snapshot.text !== undefined) {
-      clipboard.writeText(snapshot.text);
-    }
-    if (snapshot.html !== undefined) {
-      clipboard.writeHTML(snapshot.html);
-    }
-    if (snapshot.rtf !== undefined) {
-      clipboard.writeRTF(snapshot.rtf);
-    }
-    if (snapshot.imagePng !== undefined) {
-      clipboard.writeImage(nativeImage.createFromBuffer(snapshot.imagePng));
-    }
-    if (snapshot.bookmark !== undefined) {
-      clipboard.writeBookmark(snapshot.bookmark.title, snapshot.bookmark.url);
-    }
+    // Each write replaces the clipboard; restore all representations together.
+    clipboard.write({
+      text: snapshot.text ?? snapshot.bookmark?.url,
+      html: snapshot.html,
+      rtf: snapshot.rtf,
+      image: snapshot.imagePng === undefined ? undefined : nativeImage.createFromBuffer(snapshot.imagePng),
+      bookmark: snapshot.bookmark?.title,
+    });
   }
 
   public writeText(text: string): void {
@@ -152,19 +151,19 @@ export class ElectronClipboardAdapter implements ClipboardIO {
   }
 }
 
-export class Win32InputSimulator implements InputSimulator {
+export class NativeInputSimulator implements InputSimulator {
   public simulatePaste(strategy: PasteStrategy): PasteDispatchResult {
     return simulatePaste(strategy);
   }
 }
 
-export class Win32ForegroundInspector implements ForegroundInspector {
+export class NativeForegroundInspector implements ForegroundInspector {
   public captureTarget(): DictationTargetSnapshot | null {
     return captureForegroundTarget();
   }
 }
 
-export class Win32ClipboardMonitor implements ClipboardMonitor {
+export class NativeClipboardMonitor implements ClipboardMonitor {
   public getSequenceNumber(): number {
     return getClipboardSequenceNumber();
   }
