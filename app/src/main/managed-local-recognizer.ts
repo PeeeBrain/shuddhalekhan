@@ -24,12 +24,14 @@ export async function createLocalRecognizer(runtime: LocalRuntime, numThreads: n
     // Import only after the worker's DLL search path has been set, never in Electron main.
     const require = createRequire(join(__dirname, 'local-stt.cjs'));
     if (runtime.backend === 'cuda') {
-      // Windows binds a DLL import to an already loaded module of the same name, so loading sherpa-onnx's
-      // CUDA build first makes the app's own addon use it instead of the CPU build bundled beside it.
+      // Windows and glibc bind an import to an already loaded module of the same name (soname on Linux), so
+      // loading sherpa-onnx's CUDA build first makes the app's own addon use it instead of the CPU build beside it.
       const koffi: typeof import('koffi') = require('koffi');
       const directory = libraryDirectory(runtime);
-      koffi.load(join(directory, 'onnxruntime.dll'));
-      koffi.load(join(directory, 'sherpa-onnx-c-api.dll'));
+      const [onnxruntime, sherpaApi] = process.platform === 'win32'
+        ? ['onnxruntime.dll', 'sherpa-onnx-c-api.dll'] : ['libonnxruntime.so', 'libsherpa-onnx-c-api.so'];
+      koffi.load(join(directory, onnxruntime));
+      koffi.load(join(directory, sherpaApi));
     }
     const sherpa: typeof import('sherpa-onnx-node') = require('sherpa-onnx-node');
     const recognizer = await sherpa.OfflineRecognizer.createAsync(
@@ -43,8 +45,10 @@ export async function createLocalRecognizer(runtime: LocalRuntime, numThreads: n
       decodeAsync: stream => recognizer.decodeAsync(stream),
     };
   }
+  const library = process.platform === 'win32' ? 'transcribe.dll'
+    : process.platform === 'darwin' ? 'libtranscribe.dylib' : 'libtranscribe.so';
   if (runtime.backend === 'cuda') {
-    process.env.TRANSCRIBE_LIBRARY = join(libraryDirectory(runtime), 'transcribe.dll');
+    process.env.TRANSCRIBE_LIBRARY = join(libraryDirectory(runtime), library);
   } else {
     // Ignore inherited developer overrides; CPU preference must not load a CUDA provider.
     delete process.env.TRANSCRIBE_LIBRARY;
@@ -53,8 +57,6 @@ export async function createLocalRecognizer(runtime: LocalRuntime, numThreads: n
   if (runtime.backend === 'cpu') {
     // FFI uses the OS loader, which cannot read DLLs through Electron's virtual ASAR paths.
     const directory = native.artifactDir().replace(/\.asar([\\/])/, '.asar.unpacked$1');
-    const library = process.platform === 'win32' ? 'transcribe.dll'
-      : process.platform === 'darwin' ? 'libtranscribe.dylib' : 'libtranscribe.so';
     process.env.TRANSCRIBE_LIBRARY = join(directory, library);
   }
   native.setLogHandler(null);

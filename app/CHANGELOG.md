@@ -27,7 +27,7 @@ tags and commit history, not from this file. Keep new entries under
 - KDE Plasma Wayland test builds can opt into best-effort insertion (Settings → Transcription, off by default). Setup asks KDE to allow keyboard control before it reports insertion available. Dictation pastes once into the window that was active when recording began and cancels if another window was activated. It cannot detect a change between fields in the same window. The transcript is placed on the clipboard and left there. If KWin window tracking stops, Settings stops claiming insertion is ready. GNOME and other Wayland desktops remain copy-only.
 - Linux terminals (Konsole, GNOME Terminal, Ptyxis, kitty, Alacritty, foot, WezTerm, Ghostty, Tilix and others) paste with Ctrl+Shift+V by default instead of sending Ctrl+V to the shell. Per-app overrides still win.
 - Upgrading the `.rpm` keeps the `shuddhalekhan` command; uninstalling no longer leaves an empty `/opt/Shuddhalekhan` tree.
-- Managed Local no longer offers a GPU processor or GPU downloads on Linux, where no GPU build exists.
+- Managed Local offers NVIDIA GPU inference on Linux x64, using the upstream Linux CUDA builds of sherpa-onnx, transcribe.cpp, and NVIDIA's libraries. GPU setup needs the `unzip` command.
 - Linux shortcuts use desktop portals or X11 grabs and show the actual assigned trigger in Settings. X11 paste checks the original window, respects the server's keymap, and tracks clipboard ownership. The uinput paste device and packaged udev rule are removed; input-device shortcut observation remains a reported fallback.
 
 ### Transcription

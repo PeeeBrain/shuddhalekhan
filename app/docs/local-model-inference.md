@@ -19,10 +19,12 @@ The engine reserves a recording before worker startup, so deleting model files i
 
 We host no model or runtime files. A GPU setup is a list of parts, each one pinned upstream artifact with a version and SHA-256 in `src/main/managed-local-catalog.ts`:
 
-- Parakeet: FP32 model files, the sherpa-onnx v2.0.1 CUDA release (its `lib/*.dll` only), and NVIDIA's cuDNN, cuBLAS, CUDA runtime, and NVRTC wheels from PyPI (their `bin/*.dll` only).
+- Parakeet: FP32 model files, the sherpa-onnx v2.0.1 CUDA release (its `lib/*.dll` or `lib/*.so` only), and NVIDIA's cuDNN, cuBLAS, CUDA runtime, and NVRTC wheels from PyPI (their `bin/*.dll` or `lib/*.so*` only). Linux also needs cuRAND, which its ONNX Runtime CUDA provider links.
 - Granite: the CPU GGUF, the transcribe.cpp v0.4.1 CUDA release, and NVIDIA's cuBLAS and CUDA runtime wheels.
 
-Parts are installed in place by ID, so cuBLAS and the CUDA runtime download once for both models, and Granite GPU reuses the CPU GGUF. Deleting GPU files keeps CPU model files and anything another installed GPU setup still uses. Every part after the model goes on the worker's PATH. For Parakeet, the worker loads sherpa-onnx's CUDA `onnxruntime.dll` and `sherpa-onnx-c-api.dll` before requiring the app's own `sherpa-onnx-node`. Windows binds the addon's imports to those already-loaded modules, and the CUDA node-placement check fails loudly if that ever stops being true.
+Windows and Linux x64 each pin their own upstream builds of the same versions; other platforms offer CPU only. Windows' bsdtar reads the wheels, which are zip files. GNU tar cannot, so Linux extracts them with the system `unzip` and applies the same member and link checks.
+
+Parts are installed in place by ID, so cuBLAS and the CUDA runtime download once for both models, and Granite GPU reuses the CPU GGUF. Deleting GPU files keeps CPU model files and anything another installed GPU setup still uses. Every part after the model goes on the worker's library search path: `PATH` on Windows, `LD_LIBRARY_PATH` on Linux, set in the worker's spawn environment because the loader reads it only at startup. For Parakeet, the worker loads sherpa-onnx's CUDA `onnxruntime` and `sherpa-onnx-c-api` libraries before requiring the app's own `sherpa-onnx-node`. Windows (by module name) and glibc (by soname) bind the addon's imports to those already-loaded modules, and the CUDA node-placement check fails loudly if that ever stops being true.
 
 Bumping `sherpa-onnx-node` or `transcribe-cpp` means bumping the matching CUDA release in the catalog, which needs a new version, size and SHA-256. Nothing is uploaded on our side.
 

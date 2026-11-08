@@ -2,42 +2,82 @@ import type { ManagedLocalTarget } from '../types/ipc';
 import { MANAGED_LOCAL_MODEL, type ManagedLocalLegacyModel, type ManagedLocalModelManifest } from './managed-local-model';
 
 // GPU files come straight from their upstream releases, pinned by version and SHA-256; we host nothing.
-// A GPU setup is a list of these parts: [model files, native library, ...CUDA libraries], all put on the worker's PATH.
+// A GPU setup is a list of these parts: [model files, native library, ...CUDA libraries], all put on the worker's
+// library search path. Upstream publishes x64 CUDA builds for Windows and Linux only.
+export const CUDA_SUPPORTED = process.arch === 'x64' && (process.platform === 'win32' || process.platform === 'linux');
+const linux = process.platform === 'linux';
 
-/** NVIDIA's official CUDA redistributables, as published to PyPI; only `nvidia/<family>/bin/*.dll` is extracted. */
+/** NVIDIA's official CUDA redistributables, as published to PyPI; only the wheel's native libraries are extracted. */
 const nvidiaWheel = (family: string, version: string, path: string, downloadBytes: number, sha256: string,
   installedBytes: number, requiredFiles: string[]): ManagedLocalModelManifest => ({
   id: `nvidia-${family}`, version, name: `NVIDIA ${family}`, languages: [], downloadBytes, installedBytes,
   artifactUrl: `https://files.pythonhosted.org/packages/${path}`, sha256,
-  archiveRoot: `nvidia/${family}/bin`, include: [`nvidia/${family}/bin/*.dll`], requiredFiles,
+  ...linux
+    ? { archiveRoot: `nvidia/${family}/lib`, include: [`nvidia/${family}/lib/*.so*`] }
+    : { archiveRoot: `nvidia/${family}/bin`, include: [`nvidia/${family}/bin/*.dll`] },
+  requiredFiles,
 });
-const CUDART = nvidiaWheel('cuda_runtime', '12.8.90', '30/a5/a515b7600ad361ea14bfa13fb4d6687abf500adc270f19e89849c0590492/nvidia_cuda_runtime_cu12-12.8.90-py3-none-win_amd64.whl',
-  944_318, 'c0c6027f01505bfed6c3b21ec546f69c687689aad5f1a377554bc6ca4aa993a8', 573_952, ['cudart64_12.dll']);
-const CUBLAS = nvidiaWheel('cublas', '12.8.4.1', '70/61/7d7b3c70186fb651d0fbd35b01dbfc8e755f69fd58f817f3d0f642df20c3/nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.whl',
-  567_544_208, '47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af', 788_719_104, ['cublas64_12.dll', 'cublasLt64_12.dll']);
-const NVRTC = nvidiaWheel('cuda_nvrtc', '12.8.93', '45/51/52a3d84baa2136cc8df15500ad731d74d3a1114d4c123e043cb608d4a32b/nvidia_cuda_nvrtc_cu12-12.8.93-py3-none-win_amd64.whl',
-  73_586_838, '7a4b6b2904850fe78e0bd179c4b655c404d4bb799ef03ddc60804247099ae909', 179_878_912, ['nvrtc64_120_0.dll', 'nvrtc-builtins64_128.dll']);
-const CUDNN = nvidiaWheel('cudnn', '9.10.2.21', '3d/90/0bd6e586701b3a890fd38aa71c387dab4883d619d6e5ad912ccbd05bfd67/nvidia_cudnn_cu12-9.10.2.21-py3-none-win_amd64.whl',
-  692_992_268, 'c6288de7d63e6cf62988f0923f96dc339cea362decb1bf5b3141883392a7d65e', 1_007_210_288, ['cudnn64_9.dll', 'cudnn_ops64_9.dll']);
+const CUDART = linux
+  ? nvidiaWheel('cuda_runtime', '12.8.90', '0d/9b/a997b638fcd068ad6e4d53b8551a7d30fe8b404d6f1804abf1df69838932/nvidia_cuda_runtime_cu12-12.8.90-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl',
+    954_765, 'adade8dcbd0edf427b7204d480d6066d33902cab2a4707dcfc48a2d0fd44ab90', 728_800, ['libcudart.so.12'])
+  : nvidiaWheel('cuda_runtime', '12.8.90', '30/a5/a515b7600ad361ea14bfa13fb4d6687abf500adc270f19e89849c0590492/nvidia_cuda_runtime_cu12-12.8.90-py3-none-win_amd64.whl',
+    944_318, 'c0c6027f01505bfed6c3b21ec546f69c687689aad5f1a377554bc6ca4aa993a8', 573_952, ['cudart64_12.dll']);
+const CUBLAS = linux
+  ? nvidiaWheel('cublas', '12.8.4.1', 'dc/61/e24b560ab2e2eaeb3c839129175fb330dfcfc29e5203196e5541a4c44682/nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_x86_64.whl',
+    594_346_921, '8ac4e771d5a348c551b2a426eda6193c19aa630236b418086020df5ba9667142', 868_914_192, ['libcublas.so.12', 'libcublasLt.so.12'])
+  : nvidiaWheel('cublas', '12.8.4.1', '70/61/7d7b3c70186fb651d0fbd35b01dbfc8e755f69fd58f817f3d0f642df20c3/nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.whl',
+    567_544_208, '47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af', 788_719_104, ['cublas64_12.dll', 'cublasLt64_12.dll']);
+const NVRTC = linux
+  ? nvidiaWheel('cuda_nvrtc', '12.8.93', '05/6b/32f747947df2da6994e999492ab306a903659555dddc0fbdeb9d71f75e52/nvidia_cuda_nvrtc_cu12-12.8.93-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl',
+    88_040_029, 'a7756528852ef889772a84c6cd89d41dfa74667e24cca16bb31f8f061e3e9994', 222_102_104, ['libnvrtc.so.12', 'libnvrtc-builtins.so.12.8'])
+  : nvidiaWheel('cuda_nvrtc', '12.8.93', '45/51/52a3d84baa2136cc8df15500ad731d74d3a1114d4c123e043cb608d4a32b/nvidia_cuda_nvrtc_cu12-12.8.93-py3-none-win_amd64.whl',
+    73_586_838, '7a4b6b2904850fe78e0bd179c4b655c404d4bb799ef03ddc60804247099ae909', 179_878_912, ['nvrtc64_120_0.dll', 'nvrtc-builtins64_128.dll']);
+const CUDNN = linux
+  ? nvidiaWheel('cudnn', '9.10.2.21', 'ba/51/e123d997aa098c61d029f76663dedbfb9bc8dcf8c60cbd6adbe42f76d049/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_x86_64.whl',
+    706_758_467, '949452be657fa16687d0930933f032835951ef0892b37d2d53824d1a84dc97a8', 1_053_232_960, ['libcudnn.so.9', 'libcudnn_ops.so.9'])
+  : nvidiaWheel('cudnn', '9.10.2.21', '3d/90/0bd6e586701b3a890fd38aa71c387dab4883d619d6e5ad912ccbd05bfd67/nvidia_cudnn_cu12-9.10.2.21-py3-none-win_amd64.whl',
+    692_992_268, 'c6288de7d63e6cf62988f0923f96dc339cea362decb1bf5b3141883392a7d65e', 1_007_210_288, ['cudnn64_9.dll', 'cudnn_ops64_9.dll']);
+/** Linux's ONNX Runtime CUDA provider links cuRAND; the Windows build does not. */
+const CURAND = nvidiaWheel('curand', '10.3.9.90', 'fb/aa/6584b56dc84ebe9cf93226a5cde4d99080c8e90ab40f0c27bda7a0f29aa1/nvidia_curand_cu12-10.3.9.90-py3-none-manylinux_2_27_x86_64.whl',
+  63_619_976, 'b32331d4f4df5d6eefa0554c565b626c7216f87a06a4f56fab27c3b68a830ec9', 136_749_240, ['libcurand.so.10']);
 
 /** sherpa-onnx's CUDA build of the same version as the app's sherpa-onnx-node; supplies the CUDA ONNX Runtime. */
-const SHERPA_CUDA_ROOT = 'sherpa-onnx-v2.0.1-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-win-x64-cuda';
+const SHERPA_CUDA_ROOT = linux
+  ? 'sherpa-onnx-v2.0.1-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-linux-x64-gpu'
+  : 'sherpa-onnx-v2.0.1-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-win-x64-cuda';
 const SHERPA_CUDA: ManagedLocalModelManifest = {
   id: 'sherpa-onnx-cuda', version: '2.0.1', name: 'sherpa-onnx CUDA runtime', languages: [],
-  downloadBytes: 597_231_017, installedBytes: 518_450_400,
   artifactUrl: `https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/${SHERPA_CUDA_ROOT}.tar.bz2`,
-  sha256: 'cd983fa95431a8a08555b15005e1effd0b771f161d30f7f3bd52d518da48f6b6',
-  archiveRoot: `${SHERPA_CUDA_ROOT}/lib`, include: [`${SHERPA_CUDA_ROOT}/lib/*.dll`],
-  requiredFiles: ['onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll', 'sherpa-onnx-c-api.dll'],
+  archiveRoot: `${SHERPA_CUDA_ROOT}/lib`,
+  ...linux ? {
+    downloadBytes: 393_636_488, installedBytes: 655_113_001,
+    sha256: '2aa541a65c1e7d921a053283419b70b30c1f6ae0a0f52f64b947ebe88c5f2a77',
+    include: [`${SHERPA_CUDA_ROOT}/lib/*.so`],
+    requiredFiles: ['libonnxruntime.so', 'libonnxruntime_providers_shared.so', 'libonnxruntime_providers_cuda.so', 'libsherpa-onnx-c-api.so'],
+  } : {
+    downloadBytes: 597_231_017, installedBytes: 518_450_400,
+    sha256: 'cd983fa95431a8a08555b15005e1effd0b771f161d30f7f3bd52d518da48f6b6',
+    include: [`${SHERPA_CUDA_ROOT}/lib/*.dll`],
+    requiredFiles: ['onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'onnxruntime_providers_cuda.dll', 'sherpa-onnx-c-api.dll'],
+  },
 };
 
 /** transcribe.cpp's CUDA build of the same version as the app's transcribe-cpp. */
+const TRANSCRIBE_CUDA_ROOT = linux ? 'transcribe-native-linux-x86_64-cuda' : 'transcribe-native-windows-x86_64-cuda';
 const TRANSCRIBE_CUDA: ManagedLocalModelManifest = {
   id: 'transcribe-cpp-cuda', version: '0.4.1', name: 'transcribe.cpp CUDA runtime', languages: [],
-  downloadBytes: 202_587_464, installedBytes: 248_930_815,
-  artifactUrl: 'https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/transcribe-native-0.4.1-windows-x86_64-cuda.tar.gz',
-  sha256: 'ba43fb21a3fe0ab2630e0614fbd742e039c389c68ad10fe23aca903f986adc5b',
-  archiveRoot: 'transcribe-native-windows-x86_64-cuda', requiredFiles: ['transcribe.dll', 'ggml-cuda.dll'],
+  archiveRoot: TRANSCRIBE_CUDA_ROOT,
+  ...linux ? {
+    artifactUrl: 'https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/transcribe-native-0.4.1-linux-x86_64-cuda.tar.gz',
+    downloadBytes: 203_199_021, installedBytes: 256_330_765,
+    sha256: 'c4bdf9c4798bac1868ecdcaa04f27eb7712fb43125268313ce14d508c70d247d',
+    requiredFiles: ['libtranscribe.so', 'libggml-cuda.so'],
+  } : {
+    artifactUrl: 'https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/transcribe-native-0.4.1-windows-x86_64-cuda.tar.gz',
+    downloadBytes: 202_587_464, installedBytes: 248_930_815,
+    sha256: 'ba43fb21a3fe0ab2630e0614fbd742e039c389c68ad10fe23aca903f986adc5b',
+    requiredFiles: ['transcribe.dll', 'ggml-cuda.dll'],
+  },
 };
 
 /** Full-precision Parakeet published by the sherpa-onnx author; the int8 CPU model runs poorly on CUDA. */
@@ -77,7 +117,7 @@ export const LOCAL_MODELS = [
   { key: 'parakeet', name: 'Parakeet', languages: ['English'],
     description: 'Best accuracy and formatting.',
     cpu: { ...MANAGED_LOCAL_MODEL, name: 'Parakeet unified English' },
-    cuda: [PARAKEET_FP32, SHERPA_CUDA, CUDNN, CUBLAS, CUDART, NVRTC],
+    cuda: [PARAKEET_FP32, SHERPA_CUDA, CUDNN, CUBLAS, CUDART, NVRTC, ...linux ? [CURAND] : []],
   },
   { key: 'granite', name: 'Granite', languages: ['English'],
     description: 'Smaller and faster, with local punctuation and capitalization.',

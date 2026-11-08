@@ -283,6 +283,8 @@ export function validateArchiveEntries(entries: string[]): void {
     const normalized = normalize(entry.replace(/\\/g, '/'));
     if (
       !entry
+      // Member names are passed to tar/unzip as arguments; neither would treat a leading "-" as a name.
+      || entry.startsWith('-')
       || isAbsolute(entry)
       || normalized === '..'
       || normalized.startsWith(`..${sep}`)
@@ -307,31 +309,49 @@ export function selectArchiveMembers(listing: string[], include: string[]): stri
   return listing.filter((_, index) => patterns.some((pattern) => pattern.test(names[index])));
 }
 
-/** Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. */
+/**
+ * Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. GNU tar cannot read zip,
+ * so Linux extracts wheels with unzip, whose `-Z` listing uses the same `ls -l` style as `tar -tv`.
+ */
 async function extractTar(archivePath: string, stagingPath: string, include: string[] = []): Promise<void> {
-  const listing = (await runTar(['-tf', archivePath])).split(/\r?\n/).filter(Boolean);
+  const zip = process.platform !== 'win32' && await isZip(archivePath);
+  const run = (args: string[]) => runArchiver(zip ? 'unzip' : 'tar', args);
+  const listing = (await run(zip ? ['-Z1', archivePath] : ['-tf', archivePath])).split(/\r?\n/).filter(Boolean);
   const members = selectArchiveMembers(listing, include);
   validateArchiveEntries(listing);
-  const verbose = (await runTar(['-tvf', archivePath, ...members])).split(/\r?\n/).filter(Boolean);
+  const verbose = (await run([zip ? '-Z' : '-tvf', archivePath, ...members])).split(/\r?\n/).filter(Boolean);
   if (verbose.some((line) => line[0] !== '-' && line[0] !== 'd')) {
     throw new Error('The model archive contains unsupported links or device entries.');
   }
-  await runTar(['-xf', archivePath, '-C', stagingPath, ...members]);
+  await run(zip ? ['-qo', archivePath, ...members, '-d', stagingPath] : ['-xf', archivePath, '-C', stagingPath, ...members]);
 }
 
-function runTar(args: string[]): Promise<string> {
+async function isZip(path: string): Promise<boolean> {
+  const file = await open(path, 'r');
+  try {
+    const { buffer } = await file.read(Buffer.alloc(4), 0, 4, 0);
+    return buffer.toString('latin1') === 'PK\x03\x04';
+  } finally {
+    await file.close();
+  }
+}
+
+function runArchiver(command: 'tar' | 'unzip', args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     // Windows' own bsdtar; a GNU tar earlier on PATH (Git for Windows) cannot read zip or drive-letter paths.
-    // Elsewhere the system tar is fine: zip archives (CUDA wheels) are Windows-only.
     const tar = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-    const child = spawn(tar, args, { windowsHide: true });
+    // GNU tar and Info-ZIP read default options from these; the listing checks and extraction need ours only.
+    const env = { ...process.env };
+    for (const name of ['TAR_OPTIONS', 'UNZIP', 'UNZIPOPT', 'ZIPINFO', 'ZIPINFOOPT']) delete env[name];
+    const child = spawn(command === 'tar' ? tar : command, args, { windowsHide: true, env });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => { stdout += chunk; });
     child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-    child.on('error', reject);
+    child.on('error', (error: NodeJS.ErrnoException) => reject(command === 'unzip' && error.code === 'ENOENT'
+      ? new Error('GPU setup needs the unzip command. Install unzip, then retry.') : error));
     child.on('exit', (code) => {
       if (code === 0) resolve(stdout);
       else reject(new Error(stderr.trim() || 'Could not extract the model archive.'));
