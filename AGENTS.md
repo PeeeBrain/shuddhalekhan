@@ -71,7 +71,7 @@ We need to be on the same page with terminology. When communicating, use this la
 ### Mobile verification
 
 - For mobile changes, follow [mobile verification](mobile/README.md#verification), including the USB logging commands when debugging a phone. Use focused mobile Bun tests; run the mobile typecheck and lint when the change warrants them. Windows checks cannot verify native background execution.
-- Native Swift, Expo module, or keyboard-extension changes need a new Release IPA from the EAS `sideloadly` profile. Share the completed build's direct IPA download link; the maintainer installs it with iLoader or Sideloadly using the same Apple ID and retaining the keyboard extension. Verify the installed app build number before interpreting its logs. Metro or a JavaScript update cannot replace native code.
+- Distribution is free only: no paid Apple Developer Program, TestFlight, or paid Expo features. Native Swift, Expo module, keyboard-extension, or native dependency changes need a new unsigned Release IPA from the manual **Mobile iOS** GitHub workflow. Share the run URL; the maintainer installs it with iLoader using the same Apple ID and retaining the keyboard extension. Verify the installed app build number before interpreting its logs. JavaScript-only changes ship with `eas update --channel production` from `mobile/`; an OTA update cannot replace native code.
 - For a device bug, connect the unlocked, trusted iPhone over USB and start a filtered `pymobiledevice3 syslog live` capture before asking the maintainer to reproduce. Record the capture PID, device/build, reproduction steps, and timestamps. Keep logs in ignored `.cache/`, redact shared excerpts, and stop only the capture PID you started. Capture historical archives separately because collection can disconnect the live stream.
 - For keyboard dictation, start a session in the foreground app, switch to Notes, select the Shuddhalekhan keyboard with Full Access, Dictate, speak, then Stop and insert. Success means the recording acknowledgement arrives, native transcription completes, and text appears exactly once at the cursor while the app stays backgrounded. A countdown alone is not proof. Check a second utterance and a second host app for session changes.
 - For changes to session lifetime or audio, check cancellation, hiding/reopening the keyboard, expiry, and interruptions. Verify in-app Dictation separately; test Agent Mode only when affected. Distinguish maintainer-confirmed phone results from automated checks and cases not yet exercised.
@@ -131,7 +131,7 @@ Deeper product/architecture language lives in `app/CONTEXT.md` and `app/docs/adr
 - `app/CONTEXT.md` — durable product/architecture decisions and domain language. Update when behavior or boundaries change meaningfully.
 - `app/docs/adr/` — architecture decision records for larger choices.
 - `web/` — React/Vite marketing/landing site. Keep product behavior changes out of here unless the task is explicitly about the site.
-- `mobile/` — Expo iOS app, local speech module, UIKit dictation keyboard, native protocol checks, and EAS build setup. See `mobile/README.md` for device verification and USB debugging.
+- `mobile/` — Expo iOS app, local speech module, UIKit dictation keyboard, native protocol checks, the IPA build script, and EAS Update config. See `mobile/README.md` for device verification and USB debugging.
 - Root `package.json` — Bun workspaces (`app`, `web`, `mobile`) and monorepo scripts.
 
 ## Taste

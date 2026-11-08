@@ -62,6 +62,15 @@
       ],
       "@bacons/apple-targets"
     ],
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6c292dda-4e19-40cb-9d00-1a0900fd0775",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
     "extra": {
       "eas": {
         "projectId": "6c292dda-4e19-40cb-9d00-1a0900fd0775"

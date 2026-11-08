@@ -80,15 +80,13 @@ bun run --cwd mobile export:ios
 
 Start Metro with `bun run --cwd mobile start`. A Release IPA does not connect to Metro. Use an SDK 58 compatible Expo Go or development client for live reload.
 
-Windows can run the mobile checks and upload the project to Expo EAS Build. Expo's cloud Mac compiles the IPA; no local Xcode, Bash, or GitHub push is needed.
-
-For a small logic change, run the relevant test file from `mobile/`, for example `bun test src/__tests__/controller.test.ts`. The native Swift checks run as part of the cloud Mac build. Neither those checks nor a successful JavaScript export verifies background execution on an iPhone.
+For a small logic change, run the relevant test file from `mobile/`, for example `bun test src/__tests__/controller.test.ts`. The native Swift checks run as part of the GitHub Mac build. Neither those checks nor a successful JavaScript export verifies background execution on an iPhone.
 
 ### Release build and phone reproduction
 
-1. For Swift, native module, or keyboard changes, [build a new unsigned Release IPA](#build-an-ipa-from-windows-with-expo). Record its EAS build ID and iOS build number. Native changes require an IPA; Metro and JavaScript updates cannot replace the native module or keyboard extension.
-2. From `mobile/`, run `npx --yes eas-cli@latest build:list --platform ios --limit 1 --json --non-interactive`. After the intended build is `FINISHED`, share its `artifacts.applicationArchiveUrl` or `artifacts.buildUrl` with the maintainer. Check the ID matches the build being tested rather than an older successful build.
-3. Install the IPA through iLoader or Sideloadly using the same Apple ID, preserving the keyboard extension and existing app data. Confirm the installed build number with USB app metadata before debugging. Sideloading can rewrite the bundle identifier with a signing-team suffix.
+1. For Swift, native module, or keyboard changes, [build a new unsigned Release IPA](#build-an-ipa). Record its workflow run URL and iOS build number. Native changes require an IPA; Metro and OTA updates cannot replace the native module or keyboard extension.
+2. After the intended run succeeds, share its run URL with the maintainer (`gh run list --workflow mobile-ios.yml --limit 1`). Check it matches the build being tested rather than an older successful run.
+3. Install the IPA through iLoader using the same Apple ID, preserving the keyboard extension and existing app data. Confirm the installed build number with USB app metadata before debugging. Sideloading can rewrite the bundle identifier with a signing-team suffix.
 4. Start the USB capture below, then ask the maintainer to reproduce on the phone and report when finished and what appeared. Record timestamps and screenshots. Stop the capture by its tracked PID after the attempt.
 5. For keyboard dictation, download Parakeet, enable the keyboard and Full Access, start a session in the foreground app, switch to Notes, Dictate, speak, and Stop and insert. Confirm recording acknowledgement, transcription, and exactly one insertion at the cursor while the app is backgrounded. Try another utterance without restarting the session, then another host app. Report session loss separately from transcription success.
 
@@ -100,7 +98,7 @@ Build 10 fixes cancellation and speech-operation admission, listener startup lif
 
 Build 11 retries a failed startup scan before admitting keyboard audio. Its new controlled listener check delivers a stale callback during replacement startup. EAS build `a825ca0f-de7b-4be9-bf12-706cc561454e` passed all six native checks and the Release archive. Both new regressions were verified to fail against the historical broken source and pass after the fixes. Phone validation remains pending.
 
-Build 12 added agent Live Activities and iOS 26 continued background processing; [GitHub's Mac build](https://github.com/PeeeBrain/shuddhalekhan/actions/runs/40545987344) compiled and packaged its Release IPA. Build 13 removes the duplicate custom card on iOS 26, adds actionable approval notifications, and renders final answers as Markdown. The 27 focused agent/controller tests, mobile typecheck/lint/export, Swift state/storage self-check, and Swift syntax parsing pass locally. Build 13's Release archive and device verification are pending. EAS's monthly iOS quota is exhausted; use the GitHub Mac workflow. Local checks do not establish that React Native keeps executing on a locked phone.
+Build 12 added agent Live Activities and iOS 26 continued background processing; [GitHub's Mac build](https://github.com/PeeeBrain/shuddhalekhan/actions/runs/40545987344) compiled and packaged its Release IPA. Build 13 removes the duplicate custom card on iOS 26, adds actionable approval notifications, and renders final answers as Markdown. The 27 focused agent/controller tests, mobile typecheck/lint/export, Swift state/storage self-check, and Swift syntax parsing pass locally. Build 13's Release archive and device verification are pending. Local checks do not establish that React Native keeps executing on a locked phone.
 
 ### Agent Live Activity checks
 
@@ -172,52 +170,51 @@ The countdown proves only that a microphone session was published. The original 
 
 If historical logs are needed, use `pymobiledevice3 syslog collect` separately from live capture. Collection can terminate the live stream, so restart capture before another reproduction. A collected archive may require macOS Console to decode; do not infer events from unreadable Windows parser output.
 
-## Build an IPA from Windows with Expo
+## Distribution
 
-From PowerShell in the repository root:
+Everything here is free: no paid Apple Developer Program and no paid Expo plan. Native code ships as an unsigned IPA that each person signs with their own free Apple ID. JavaScript ships over the air with EAS Update.
 
-```powershell
-bun install --frozen-lockfile --ignore-scripts
-cd mobile
-npx --yes eas-cli@latest login
-npx --yes eas-cli@latest build --platform ios --profile sideloadly
-```
+| Change | How it reaches the phone |
+| --- | --- |
+| Swift, native module, keyboard or widget extension, native dependency, `app.json` | New IPA: [build](#build-an-ipa), then [install](#install-with-iloader) |
+| JavaScript or assets only | [`eas update`](#ship-javascript-over-the-air) |
 
-Skip `login` if `npx --yes eas-cli@latest whoami` already shows your Expo account. The project is linked to `@parthashirolkar/shuddhalekhan-mobile`. A fork using another Expo account should run `npx --yes eas-cli@latest init` to link its own project first.
+A `vX.Y.Z` release tag ships iOS with the desktop builds: `release.yml` attaches the unsigned IPA to the GitHub release and publishes the same commit as an OTA update. That job needs an `EXPO_TOKEN` repository secret (an Expo access token); without it the release stays a draft. Between releases, use the manual workflow and `eas update` below.
 
-The command uploads your current local files, including uncommitted mobile changes, to Expo and prints a build page URL. After it finishes, open that page and select **Download** to save the unsigned `.ipa` on Windows. Open that IPA in iLoader or Sideloadly to sign and install it, retaining the keyboard extension. This Release build includes its JavaScript bundle and runs without Metro.
+## Build an IPA
 
-The `sideloadly` profile uses a custom EAS build with `withoutCredentials: true`. It creates a physical iPhone build, skips Apple signing on Expo, and uploads the IPA as the application archive. No Apple Developer membership or Apple credentials are needed for this build. Your Expo account's build quota applies. The Bash build script runs only on Expo's cloud Mac.
+In GitHub Actions, open **Mobile iOS** and select **Run workflow**. The workflow runs the mobile checks, then uses `macos-latest` to generate the iOS project, install CocoaPods, run the native Swift self-checks, and build a Release app with code signing disabled. The script requires Xcode 26.4 or newer. Download the `Shuddhalekhan-unsigned-ipa` artifact from that run. macOS runners are free for this public repository. The PR and `main` push checks run on Ubuntu only.
 
-References: [EAS custom builds](https://docs.expo.dev/custom-builds/get-started/), [withoutCredentials](https://docs.expo.dev/eas/json/), [monorepo setup](https://docs.expo.dev/build-reference/build-with-monorepos/).
-
-## Alternative builds on GitHub or a Mac
-
-In GitHub Actions, open **Mobile iOS** and select **Run workflow**. The workflow runs the mobile checks, then uses `macos-latest` to generate the iOS project, install CocoaPods, and build a Release app with code signing disabled. The script requires Xcode 26.4 or newer. It packages the app as:
-
-```text
-mobile/build/ipa/Shuddhalekhan-unsigned.ipa
-```
-
-Download the `Shuddhalekhan-unsigned-ipa` artifact from that workflow run. The PR and `main` push checks run on Ubuntu and do not use macOS minutes. The manual build needs no Expo account or paid Apple Developer membership. GitHub Actions usage may count against the repository's GitHub plan.
-
-The workflow verifies the unsigned app archive and IPA contents. It does not sign or install the app. Test the downloaded IPA with Sideloadly on the target iPhone before relying on the signing path.
-
-The build script can also run on a Mac with Xcode, CocoaPods, Bun, and Node 24 installed:
+The same script runs on a Mac with Xcode, CocoaPods, Bun, and Node 24:
 
 ```sh
 bash mobile/scripts/build-ios.sh
 ```
 
-The script runs the native keyboard-session and agent-state self-checks and checks the app bundle identifier, embedded JavaScript, permissions, Live Activity configuration, and both extensions before packaging the IPA. The IPA is unsigned and cannot install until iLoader or Sideloadly signs it.
+It checks the bundle identifier, embedded JavaScript, permissions, Live Activity configuration, and both extensions before packaging `mobile/build/ipa/Shuddhalekhan-unsigned.ipa`. The IPA is unsigned and cannot install until iLoader or Sideloadly signs it.
 
-## Install with Sideloadly
+## Install with iLoader
 
-1. Download the IPA artifact and connect the iPhone to the Windows PC.
-2. Open Sideloadly, select the IPA, sign in with an Apple ID, and install it.
+1. Download the IPA artifact and connect the iPhone.
+2. Open iLoader, sign in with your Apple ID, select the IPA, and install it with the keyboard and agent extensions retained.
 3. Enable iOS Developer Mode if the device asks for it.
 
-A free Apple ID signature expires after seven days. Keep Sideloadly's auto-refresh enabled. SecureStore items are tied to the signing team, so use the same Apple ID when refreshing or reinstalling if you want saved API keys to remain accessible. Signing with another team may require entering the keys again.
+Sideloadly works the same way. A free Apple ID signature expires after seven days; re-sign before then. One install uses three of the Apple ID's ten weekly App IDs (app, keyboard, agent activity). SecureStore items are tied to the signing team, so use the same Apple ID when refreshing or reinstalling if you want saved API keys to remain accessible. Signing with another team may require entering the keys again. Sideloading can add a signing-team suffix to the bundle identifier; OTA updates do not depend on it.
+
+## Ship JavaScript over the air
+
+The app checks EAS Update's `production` channel on every launch, downloads a matching update in the background, and runs it on the next cold start. `runtimeVersion` uses the `fingerprint` policy, so an update reaches only installs whose native code matches the project that published it. After a native change, ship a new IPA first; older installs keep their last compatible update.
+
+From `mobile/`, with the native code unchanged since the installed IPA:
+
+```sh
+npx --yes eas-cli@latest login
+npx --yes eas-cli@latest update --channel production --environment production --message "Describe the fix"
+```
+
+The project is linked to `@parthashirolkar/shuddhalekhan-mobile`; a fork runs `npx --yes eas-cli@latest init` and `eas update:configure` to link its own. EAS Update's free tier covers 1,000 monthly active users. Updates are not code-signed, which needs a paid plan, so keep two-factor login on the Expo account that publishes them.
+
+To check a published update against an installed IPA, compare the runtime version `eas update` prints with `npx expo-updates fingerprint:generate --platform ios` run on the commit the IPA was built from.
 
 If saved settings or keys cannot be read, the app keeps them intact and blocks recording. Reopen the app first. The explicit **Reset saved settings** action clears the saved configuration so you can enter your endpoints and keys again.
 
@@ -229,6 +226,7 @@ If saved settings or keys cannot be read, the app keeps them intact and blocks r
 - Cancel an agent run while it waits for the model or a tool approval. Cancellation stops the app's request; an MCP server may already have completed an accepted operation.
 - Without a keyboard session, record, background the app, and lock the device. In-app recording should stop when the app leaves the foreground.
 - Install a refreshed IPA using the same Apple ID and confirm SecureStore can still read saved keys.
+- Publish a visible JavaScript change with `eas update`, cold-start the app twice, and confirm it appears. Re-sign with iLoader and confirm the update is still running.
 - Download Parakeet, restart the app, select On this iPhone, then transcribe a short recording in airplane mode. Measure cold load, repeated transcription time and memory on the tested phone before making performance claims.
 - Add the keyboard and enable Full Access. Start a keyboard session, switch to Notes, then Dictate and Stop. Confirm the text is inserted once, with no paste prompt. Then check these cases: Dictate with no session (the app opens and starts a session; return with ◀ and recording starts by itself), cancel with ×, hide the keyboard mid-utterance, let the session expire mid-utterance, start a call during a session, and use a second app after inserting in the first.
 - During a session, leave the app in the background for the full 10 minutes with Parakeet loaded. Confirm iOS does not kill it and that the recording indicator disappears when the session ends.

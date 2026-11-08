@@ -68,6 +68,6 @@ See [`app/README.md`](app/README.md) for desktop application details.
 
 ## Mobile verification
 
-Run focused mobile tests and the mobile typecheck/lint commands in [the mobile verification guide](mobile/README.md#verification). For native or keyboard changes, build a Release IPA with Expo EAS, share its download link, and install it on the USB-connected iPhone with iLoader or Sideloadly, retaining the keyboard extension.
+Run focused mobile tests and the mobile typecheck/lint commands in [the mobile verification guide](mobile/README.md#verification). For native or keyboard changes, build a Release IPA with the manual **Mobile iOS** GitHub workflow and install it on the USB-connected iPhone with iLoader, retaining the keyboard extension. JavaScript-only changes ship over the air with EAS Update; see [distribution](mobile/README.md#distribution).
 
 Verify the installed build number, capture filtered device logs, and reproduce the change on the phone. For keyboard dictation, start a session in the app, switch to Notes, Dictate, speak, then Stop and insert. Confirm text appears exactly once, then try another utterance and another app. The guide includes the PowerShell USB capture commands, expected connection/recording/transcription events, and startup timing checks. Local JavaScript checks alone cannot verify iOS background recording.

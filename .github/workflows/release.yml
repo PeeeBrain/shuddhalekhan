@@ -168,8 +168,54 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Attaches the unsigned IPA (signed later with iLoader) and publishes the same JS as an OTA update.
+  # Installs whose native fingerprint differs ignore the update until they install this IPA.
+  release-ios:
+    needs: release
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # Expo's fingerprint ignores the version, so this does not split the OTA runtime.
+      - name: Derive mobile version from release tag
+        run: |
+          jq --arg v "${GITHUB_REF_NAME#v}" '.expo.version = $v' mobile/app.json > "$RUNNER_TEMP/app.json"
+          mv "$RUNNER_TEMP/app.json" mobile/app.json
+
+      - name: Build unsigned IPA
+        run: bash mobile/scripts/build-ios.sh
+
+      - name: Attach IPA to draft release
+        run: gh release upload "$GITHUB_REF_NAME" mobile/build/ipa/Shuddhalekhan-unsigned.ipa --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish OTA update
+        working-directory: mobile
+        run: npx --yes eas-cli@latest update --channel production --environment production --message "$GITHUB_REF_NAME" --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
   finalize:
-    needs: [release, release-linux]
+    needs: [release, release-linux, release-ios]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
