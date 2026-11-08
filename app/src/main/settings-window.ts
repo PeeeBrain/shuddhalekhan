@@ -1,7 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { createSingletonWindow } from './window-factory';
 import { loadAppIcon } from './app-icon';
-import { emitPerformanceMarker } from './performance/marker-collector';
 
 let closedHandler: (() => void) | null = null;
 
@@ -21,9 +20,14 @@ const settingsWindow = createSingletonWindow({
     show: false,
     title: 'Shuddhalekhan Settings',
     icon: loadAppIcon(),
-    backgroundColor: '#0f1115',
+    backgroundColor: '#12100f', // --color-background
     // The default File/Edit/View menu clashes with the custom UI; Alt still reveals it.
     autoHideMenuBar: true,
+    // The app paints its own top strip; the OS keeps native caption buttons on
+    // Windows and Electron draws matching ones on Linux. The renderer marks the
+    // strip draggable (.title-bar-drag), so this height is shared with CSS.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#12100f', symbolColor: '#9c958b', height: 36 },
   },
   onCreated: (window) => {
     window.once('ready-to-show', () => {
@@ -41,14 +45,9 @@ export function getSettingsWindow(): BrowserWindow | null {
 
 export function openSettingsWindow(section?: 'about'): BrowserWindow {
   const existingWindow = settingsWindow.get();
-  emitPerformanceMarker('surface.requested', {
-    surface: 'settings',
-    transition: existingWindow && !existingWindow.isDestroyed() ? 'warm-show' : 'cold-create',
-  });
   if (existingWindow && !existingWindow.isDestroyed()) {
     existingWindow.show();
     existingWindow.focus();
-    existingWindow.webContents.send('surface:request-paint-proxy', 'settings');
     if (section) {
       existingWindow.webContents.send('settings:navigate', section);
     }

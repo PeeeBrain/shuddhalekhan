@@ -19,7 +19,12 @@ import type {
   CredentialStatus,
   CredentialKind,
   TranscriptionReadiness,
+  ManagedLocalModelSnapshot,
+  ManagedLocalModelState,
+  TranscriptionSettingsPatch,
 } from '../../../types/ipc';
+import { normalizeTranscriptionTransition } from '../../../shared/transcription-features';
+import type { DesktopStatus } from '../../../shared/desktop-status';
 import { SettingsWindow } from '../../SettingsWindow';
 
 afterEach(cleanup);
@@ -85,9 +90,16 @@ const UPDATE_STATUS: UpdateStatus = {
   checkedAt: '2026-07-20T00:00:00.000Z',
 };
 
+const WINDOWS_STATUS: DesktopStatus = {
+  shortcuts: { backend: 'windows' },
+  delivery: { available: true, message: 'Text is typed into the focused app.' },
+};
+
 interface MockSettingsIpcOptions {
   config?: AppConfig;
   failSetConfig?: boolean;
+  /** Main's rejection message for every transcription transition. */
+  failPatch?: string;
   auditRuns?: AuditRunSummary[];
   auditRunDetail?: AuditEventDetail[];
   credentialStatus?: CredentialStatus;
@@ -95,7 +107,11 @@ interface MockSettingsIpcOptions {
   mcpStatusSnapshot?: import('../../../types/ipc').McpStatusSnapshot;
   transcriptionReadiness?: TranscriptionReadiness;
   managedLocalModelReady?: boolean;
+  managedLocalSnapshot?: () => ManagedLocalModelSnapshot;
+  registerManagedLocalStateChanged?: (callback: () => void) => void;
   registerOnboardingCompleted?: (callback: () => void) => void;
+  desktopStatus?: DesktopStatus;
+  registerDesktopStatusChanged?: (callback: (status: DesktopStatus) => void) => void;
 }
 
 function createMockSettingsIpc(
@@ -105,14 +121,20 @@ function createMockSettingsIpc(
 
   const setConfigMock = mock(
     async (key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
-      config = { ...config, [key]: value };
       if (options.failSetConfig) throw new Error('storage unavailable');
+      config = { ...config, [key]: value };
     },
   );
 
   return {
     getConfig: mock(() => Promise.resolve(config)),
     setConfig: setConfigMock as SettingsIpc['setConfig'],
+    // Main's own normalizer, so provider switches come back canonical as they would from main.
+    patchTranscriptionConfig: mock(async (patch: TranscriptionSettingsPatch) => {
+      if (options.failPatch) throw new Error(`Error invoking remote method 'config:patch-transcription': Error: ${options.failPatch}`);
+      config = normalizeTranscriptionTransition(config, patch);
+      return config;
+    }),
     getAppInfo: mock(() => Promise.resolve(APP_INFO)),
     getReleaseNotes: mock(() => Promise.resolve(options.releaseNotes ?? null)),
     getUpdateStatus: mock(() => Promise.resolve(UPDATE_STATUS)),
@@ -123,7 +145,7 @@ function createMockSettingsIpc(
     checkTranscriptionReadiness: mock(() => Promise.resolve(options.transcriptionReadiness ?? {
       providerId: 'whisper-live-kit' as const,
       state: 'ready' as const,
-      message: 'WhisperLiveKit is ready for Batch Dictation.',
+      message: 'WhisperLiveKit is ready.',
       checkedAt: null,
     })),
     getShortcutsPaused: mock(() => Promise.resolve(false)),
@@ -131,18 +153,24 @@ function createMockSettingsIpc(
     beginShortcutCapture: mock(() => Promise.resolve()),
     endShortcutCapture: mock(() => Promise.resolve()),
     onShortcutsPausedChanged: mock(() => undefined),
+    getDesktopStatus: mock(() => Promise.resolve(options.desktopStatus ?? WINDOWS_STATUS)),
+    setWaylandInsertion: mock(() => Promise.resolve(options.desktopStatus ?? WINDOWS_STATUS)),
+    onDesktopStatusChanged: mock((callback: (status: DesktopStatus) => void) => {
+      options.registerDesktopStatusChanged?.(callback);
+      return undefined;
+    }),
     onUpdateStatusChanged: mock(() => undefined),
     onNavigateRequested: mock(() => undefined),
     onMcpStatusSnapshot: mock(() => undefined),
     onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
-    getManagedLocalModel: mock(() => Promise.resolve({
+    getManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? {
       inference: { maxThreads: 16, defaultThreads: 4 },
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: options.managedLocalModelReady
         ? { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' }
         : { kind: 'missing' as const, modelId: 'test' },
     })),
-    installManagedLocalModel: mock(() => Promise.resolve({
+    installManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? {
       inference: { maxThreads: 16, defaultThreads: 4 },
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' },
@@ -152,7 +180,10 @@ function createMockSettingsIpc(
       model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
       state: { kind: 'missing' as const, modelId: 'test' },
     })),
-    onManagedLocalModelStateChanged: mock(() => undefined),
+    onManagedLocalModelStateChanged: mock((callback: () => void) => {
+      options.registerManagedLocalStateChanged?.(callback);
+      return undefined;
+    }),
     onOnboardingCompleted: mock((callback: () => void) => {
       options.registerOnboardingCompleted?.(callback);
       return undefined;
@@ -168,6 +199,11 @@ function createMockSettingsIpc(
     testAgentProvider: mock(() => Promise.reject(new Error('not used'))),
     cancelAgentProviderTest: mock(() => Promise.resolve()),
     onAgentProviderInvalidated: mock(() => undefined),
+    getChatGptStatus: mock(() => Promise.resolve({ state: 'signed-out' as const })),
+    signInChatGpt: mock(() => Promise.reject(new Error('unused'))),
+    signOutChatGpt: mock(() => Promise.resolve({ state: 'signed-out' as const })),
+    listChatGptModels: mock(() => Promise.resolve([])),
+    onChatGptChanged: mock(() => undefined),
     listSkills: mock(() => Promise.resolve([])),
     readSkill: mock(() => Promise.reject(new Error('not used'))),
     saveSkill: mock(() => Promise.reject(new Error('not used'))),
@@ -228,6 +264,135 @@ describe('Settings navigation', () => {
     expect(screen.getByRole('button', { name: 'Use default' }).hasAttribute('disabled')).toBe(true);
     expect(slider).toHaveValue('4');
   });
+  it('refreshes every local model artifact on state events and sets up GPU files only on request', async () => {
+    let gpuState: ManagedLocalModelState = { kind: 'missing', modelId: 'parakeet-cuda' };
+    let notify!: () => void;
+    const catalogSnapshot = (): ManagedLocalModelSnapshot => ({
+      inference: { maxThreads: 16, defaultThreads: 4 },
+      model: { id: 'parakeet', name: 'Parakeet', downloadBytes: 600_000_000, installedBytes: 700_000_000, languages: ['English'] },
+      state: { kind: 'ready', modelId: 'parakeet', path: 'C:\\parakeet' },
+      catalog: [
+        {
+          key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+          cpu: { downloadBytes: 600_000_000, installedBytes: 700_000_000, state: { kind: 'ready', modelId: 'parakeet', path: 'C:\\parakeet' } },
+          cuda: { downloadBytes: 900_000_000, installedBytes: 1_000_000_000, state: gpuState },
+        },
+        {
+          key: 'granite', name: 'Granite', description: 'Compact.', languages: ['English'],
+          cpu: { downloadBytes: 300_000_000, installedBytes: 300_000_000, state: { kind: 'missing', modelId: 'granite' } },
+          cuda: { downloadBytes: 500_000_000, installedBytes: 500_000_000, state: { kind: 'missing', modelId: 'granite-cuda' } },
+        },
+      ],
+      runtime: { status: 'ready', backend: 'cpu', message: 'GPU files are not installed.' },
+      gpu: { name: 'NVIDIA RTX', message: '' },
+    });
+    const { settingsIpc } = renderSettings({
+      config: baseConfig({ transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' } }),
+      managedLocalSnapshot: catalogSnapshot,
+      registerManagedLocalStateChanged: (callback) => { notify = callback; },
+    });
+    await waitForLoaded();
+
+    const setupGpu = await screen.findByRole('button', { name: 'Install' });
+    expect(settingsIpc.installManagedLocalModel).not.toHaveBeenCalled();
+    expect(screen.getByText('Running on CPU')).toBeInTheDocument();
+    fireEvent.click(setupGpu);
+    expect(settingsIpc.installManagedLocalModel).toHaveBeenCalledWith({ model: 'parakeet', backend: 'cuda' });
+
+    // A GPU progress event must not be mistaken for the selected CPU install's state.
+    gpuState = { kind: 'downloading', modelId: 'parakeet-cuda', downloadedBytes: 450_000_000, totalBytes: 900_000_000 };
+    act(() => notify());
+    expect(await screen.findByText(/Downloading… 50%/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete CPU files' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Granite/ }));
+    await waitFor(() => expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledWith({ managedLocal: {
+      model: 'granite',
+      devices: { parakeet: 'auto', granite: 'auto' },
+    } }));
+  });
+
+  it('offers no GPU processor or GPU install where the platform has no GPU build', async () => {
+    renderSettings({
+      config: baseConfig({ transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' } }),
+      managedLocalSnapshot: () => ({
+        inference: { maxThreads: 16, defaultThreads: 4 },
+        model: { id: 'parakeet', name: 'Parakeet', downloadBytes: 1, installedBytes: 1, languages: ['English'] },
+        state: { kind: 'ready', modelId: 'parakeet', path: '/models/parakeet' },
+        catalog: [{ key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+          cpu: { downloadBytes: 1, installedBytes: 1, state: { kind: 'ready', modelId: 'parakeet', path: '/models/parakeet' } } }],
+        runtime: { status: 'ready', backend: 'cpu', message: '' },
+        gpu: { name: null, message: 'GPU acceleration is available on Windows only.' },
+      }),
+    });
+    await waitForLoaded();
+
+    expect(await screen.findByText('Running on CPU')).toBeInTheDocument();
+    expect(screen.queryByText('Processor')).toBeNull();
+    expect(screen.queryByText('GPU files')).toBeNull();
+  });
+
+  it.each(['settings', 'onboarding'] as const)('keeps previous Parakeet files usable in %s until an explicit update', async (screenMode: 'settings' | 'onboarding') => {
+    const { settingsIpc } = renderSettings({
+      config: baseConfig({ transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+        onboarding: { status: screenMode === 'onboarding' ? 'pending' : 'complete' } }),
+      managedLocalSnapshot: () => ({
+        inference: { maxThreads: 16, defaultThreads: 4 },
+        model: { id: 'old', name: 'Old Parakeet', downloadBytes: 1, installedBytes: 1, languages: ['English'] },
+        state: { kind: 'ready', modelId: 'old', path: 'C:\\old' },
+        catalog: [
+          { key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+            cpu: { downloadBytes: 500_000_000, installedBytes: 600_000_000, state: { kind: 'missing', modelId: 'parakeet' },
+              legacy: { name: 'Old Parakeet', installedBytes: 640_000_000, inUse: true } },
+            cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'parakeet-cuda' } } },
+          { key: 'granite', name: 'Granite', description: 'Compact.', languages: ['English'],
+            cpu: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'granite' } },
+            cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'granite-cuda' } } },
+        ],
+        runtime: { status: 'idle', backend: null, message: '' },
+        gpu: { name: null, message: '' },
+      }),
+    });
+    if (screenMode === 'onboarding') {
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Start microphone check' }).hasAttribute('disabled')).toBe(false));
+      expect(screen.getByText('Old Parakeet')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Download model' })).toBeNull();
+      return;
+    }
+    await waitForLoaded();
+
+    expect(await screen.findByText('In use')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Install update' }));
+    await waitFor(() => expect(settingsIpc.installManagedLocalModel).toHaveBeenCalledWith({ model: 'parakeet', backend: 'cpu' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete previous files' }));
+    await waitFor(() => expect(settingsIpc.deleteManagedLocalModel)
+      .toHaveBeenCalledWith({ model: 'parakeet', backend: 'cpu', legacy: true }));
+  });
+
+  it('counts usable speech files as installed while optional formatting files are missing', async () => {
+    const config = baseConfig({ setupChecklistDismissed: false });
+    renderSettings({
+      config: { ...config, transcription: { ...config.transcription, activeProvider: 'managed-local' } },
+      managedLocalSnapshot: () => ({
+        model: { id: 'parakeet', name: 'Parakeet', downloadBytes: 1, installedBytes: 1, languages: ['English'] },
+        state: { kind: 'ready', modelId: 'parakeet', path: 'C:\\parakeet' },
+        inference: { maxThreads: 16, defaultThreads: 4 },
+        catalog: [{
+          key: 'parakeet', name: 'Parakeet', description: 'Default.', languages: ['English'],
+          cpu: { downloadBytes: 30_667_839, installedBytes: 1, state: { kind: 'missing', modelId: 'parakeet' } },
+          cuda: { downloadBytes: 1, installedBytes: 1, state: { kind: 'missing', modelId: 'parakeet-cuda' } },
+        }],
+        runtime: { status: 'idle', backend: null, message: '' },
+        gpu: { name: null, message: '' },
+      }),
+    });
+    await waitForLoaded();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Install the local speech model Done' })).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Use a different provider'));
+    expect(await screen.findByText('Installed')).toBeInTheDocument();
+    expect(screen.getByText('31 MB download')).toBeInTheDocument();
+  });
+
   it('guides fresh installs through local model setup before normal settings', async () => {
     renderSettings({ config: baseConfig({
       onboarding: { status: 'pending' },
@@ -426,50 +591,94 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeInTheDocument();
   });
 
-  it('represents Batch Dictation and rejects unsupported Live or Corrected combinations', async () => {
+  it('sets up the Corrected formatter from Batch without saving an incomplete profile', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-
-    const dictationMode = screen.getByRole('combobox', { name: 'Dictation mode' });
-    expect(dictationMode).toHaveTextContent('Batch Dictation');
-
-    fireEvent.click(dictationMode);
-    fireEvent.click(await screen.findByRole('option', { name: /Live Dictation/ }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Live Dictation requires Toggle activation.');
-    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
-    expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent('Batch Dictation');
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Dictation mode' }));
     fireEvent.click(await screen.findByRole('option', { name: /Corrected Dictation/ }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Corrected Dictation requires a formatter profile.');
-    expect(settingsIpc.setConfig).not.toHaveBeenCalled();
-    expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent('Batch Dictation');
+    const turnOn = await screen.findByRole('button', { name: 'Turn on Corrected Dictation' });
+    expect(turnOn).toBeDisabled();
+    const url = screen.getByRole('textbox', { name: 'Formatter base URL' });
+    fireEvent.change(url, { target: { value: 'http://127.0.0.1:11434/v1' } });
+    fireEvent.blur(url);
+    expect(settingsIpc.patchTranscriptionConfig).not.toHaveBeenCalled();
+
+    const model = screen.getByRole('textbox', { name: 'Formatter model' });
+    fireEvent.change(model, { target: { value: 'formatter' } });
+    fireEvent.blur(model);
+    fireEvent.click(screen.getByRole('switch', { name: 'Allow transcript processing' }));
+    await waitFor(() => expect(turnOn).toBeEnabled());
+    expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent(/^Dictation$/);
+
+    fireEvent.click(turnOn);
+    await waitFor(() => expect(settingsIpc.patchTranscriptionConfig).toHaveBeenLastCalledWith({ dictation: {
+      mode: 'corrected',
+      formatter: expect.objectContaining({ baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter', processingConsent: true }),
+    } }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Dictation mode' })).toHaveTextContent('Corrected Dictation'));
+    expect(screen.queryByRole('button', { name: 'Turn on Corrected Dictation' })).toBeNull();
   });
 
-  it('explains rejected activation changes instead of silently ignoring them', async () => {
-    const config = baseConfig({
-      dictation: { mode: 'live', formatter: null },
-      shortcuts: {
-        dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
-        agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
-      },
+  it('restores the active formatter endpoint when main rejects an edit', async () => {
+    renderSettings({
+      failPatch: 'Formatter changes could not be saved.',
+      config: baseConfig({ dictation: { mode: 'corrected', formatter: {
+        baseUrl: 'http://127.0.0.1:11434/v1', model: 'formatter', apiKeyEnvVar: '',
+        apiKeySource: 'environment', processingConsent: true,
+      } } }),
     });
-    const { settingsIpc } = renderSettings({ config });
     await waitForLoaded();
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Live Dictation requires a streaming-capable provider.',
-    );
+    const url = screen.getByRole('textbox', { name: 'Formatter base URL' });
+    fireEvent.change(url, { target: { value: 'http://127.0.0.1:1234/v1' } });
+    fireEvent.blur(url);
+    expect(await screen.findByText('Formatter changes could not be saved.')).toBeInTheDocument();
+    await waitFor(() => expect(url).toHaveValue('http://127.0.0.1:11434/v1'));
+  });
+
+  it('keeps a streaming provider on the same two modes, explains its preview, and allows Push to Talk', async () => {
+    const current = baseConfig();
+    const { settingsIpc } = renderSettings({ config: {
+      ...current,
+      transcription: { ...current.transcription, activeProvider: 'whisper-live-kit' },
+    } });
+    await waitForLoaded();
+
+    expect(screen.getByText(/shows a preview while you speak; it replaces the former Live Dictation mode/)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Clean transcription' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Dictation mode' }));
+    expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['Dictation', 'Corrected Dictation']);
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
     fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Dictation activation mode' }));
+    expect(await screen.findByRole('option', { name: 'Push to Talk' })).toBeInTheDocument();
+    expect(settingsIpc.patchTranscriptionConfig).not.toHaveBeenCalled();
+  });
 
-    fireEvent.click(screen.getByRole('combobox', {
-      name: 'Dictation activation mode',
-    }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Push to Talk' }));
+  it('switches provider in one save and explains what main changed', async () => {
+    const { settingsIpc } = renderSettings({ config: baseConfig({ task: 'translate' }) });
+    await waitForLoaded();
 
-    expect(await screen.findByText('Live Dictation requires Toggle activation.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
+    fireEvent.click(await screen.findByRole('option', { name: /^Microsoft Azure Speech/ }));
+
+    expect(await screen.findByText(/Task is now Transcribe because .+ doesn't translate\./)).toBeInTheDocument();
+    expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledTimes(1);
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    expect(screen.queryByRole('combobox', { name: 'Task' })).toBeNull();
+  });
+
+  it('restores the saved provider and shows main\'s reason when a switch is rejected', async () => {
+    renderSettings({ failPatch: 'Transcription settings are locked.' });
+    await waitForLoaded();
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
+    fireEvent.click(await screen.findByRole('option', { name: /^OpenAI/ }));
+
+    expect(await screen.findByText('Transcription settings are locked.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('Local whisper.cpp'));
   });
 
   it('groups all provider choices with descriptions and readiness', async () => {
@@ -525,9 +734,7 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Microsoft Azure');
     expect(screen.getByText(/does not send test audio or make a billable Azure request/i)).toBeInTheDocument();
 
-    const mode = screen.getByRole('combobox', { name: 'Task' });
-    fireEvent.click(mode);
-    expect(await screen.findByRole('option', { name: /Translate speech to English/ })).toHaveAttribute('data-disabled');
+    expect(screen.queryByRole('combobox', { name: 'Task' })).toBeNull();
     expect(settingsIpc.checkTranscriptionServer).not.toHaveBeenCalled();
   });
 
@@ -555,8 +762,10 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Google Cloud');
     fireEvent.click(screen.getByText('Advanced'));
     expect(screen.getByRole('combobox', { name: 'Credential source' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('combobox', { name: 'Task' }));
-    expect(await screen.findByRole('option', { name: /not supported by Google/ })).toHaveAttribute('data-disabled');
+    expect(screen.queryByRole('combobox', { name: 'Task' })).toBeNull();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Spoken language' }));
+    expect(await screen.findByRole('option', { name: 'English' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Auto-detect/ })).toBeNull();
   });
 
   it('shows self-hosted NVIDIA Speech NIM fields and an unauthenticated connectivity check', async () => {
@@ -604,8 +813,8 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('button', { name: 'Check readiness' })).toBeInTheDocument();
     expect(await screen.findByText('Ready')).toBeInTheDocument();
     expect(screen.getByText(/keeps no idle ASR connection/i)).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeDisabled();
-    expect(screen.getByText(/Saved words stay available for other providers/i)).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Add dictionary word' })).toBeNull();
+    expect(screen.getByText(/Your 1 saved word stays available for other providers/i)).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Base URL' }), {
       target: { value: 'http://127.0.0.1:8001' },
@@ -643,19 +852,46 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('combobox', { name: 'Spoken language' })).toHaveTextContent('Hindi');
     expect(screen.getByText(/stop automatically at Sarvam.s 30-second/i)).toBeInTheDocument();
     expect(screen.getByRole('note', { name: 'Transcription privacy note' })).toHaveTextContent('Sarvam AI');
-    expect(screen.getByRole('switch', { name: 'Clean transcription' })).toBeDisabled();
+    expect(screen.queryByRole('switch', { name: 'Clean transcription' })).toBeNull();
+    expect(screen.getByText(/Clean transcription is off while Sarvam verbatim mode is selected/)).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeEnabled();
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Model' }));
     fireEvent.click(await screen.findByRole('option', { name: 'Saaras v3' }));
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeDisabled());
-    expect(screen.getByText(/Saaras v3 does not support key terms/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove Shuddhalekhan' })).toBeDisabled();
-    expect(settingsIpc.setConfig).toHaveBeenCalledWith('transcription', expect.objectContaining({
+    // Saved words go dormant rather than being deleted, so switching back restores them.
+    expect(await screen.findByText('Saaras v3 does not use dictionary hints. Your 1 saved word stays available for other providers.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Add dictionary word' })).toBeNull();
+    expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledWith({ transcription: expect.objectContaining({
       providers: expect.objectContaining({ sarvam: { model: 'saaras:v3', mode: 'verbatim' } }),
-    }));
+    }) });
     expect(settingsIpc.setConfig).not.toHaveBeenCalledWith('dictionary', expect.anything());
+    expect((await settingsIpc.getConfig()).dictionary).toEqual(['Shuddhalekhan']);
+  });
+
+  it('holds Saaras v4 dictionary additions to its limits while an oversized list can still shrink', async () => {
+    const imported = Array.from({ length: 51 }, (_, index) => `term${index}`);
+    const { settingsIpc } = renderSettings({ config: sarvamConfig({ dictionary: imported }) });
+    await waitForLoaded();
+    const tooMany = 'This model supports at most 50 distinct dictionary terms.';
+    expect(screen.getByText(tooMany)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove term50' }));
+    await waitFor(() => expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledWith({ dictionary: imported.slice(0, 50) }));
+    await waitFor(() => expect(screen.queryByText(tooMany)).toBeNull());
+
+    const input = screen.getByRole('textbox', { name: 'Add dictionary word' });
+    fireEvent.change(input, { target: { value: 'one-too-many' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByText(tooMany)).toBeInTheDocument();
+    expect(input).toHaveValue('one-too-many');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove term0' }));
+    await waitFor(() => expect(screen.queryByText(tooMany)).toBeNull());
+    fireEvent.change(input, { target: { value: 'x'.repeat(65) } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByText('Dictionary terms must be 64 characters or fewer for this model.')).toBeInTheDocument();
+    expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledTimes(2);
   });
 
   for (const [language, code] of [['Hindi', 'hi'], ['Nepali', 'ne'], ['Sindhi', 'sd'], ['Sanskrit', 'sa'], ['Assamese', 'as']] as const) {
@@ -664,7 +900,7 @@ describe('Settings section reachability', () => {
       await waitForLoaded();
       fireEvent.click(screen.getByRole('combobox', { name: 'Spoken language' }));
       fireEvent.click(await screen.findByRole('option', { name: language }));
-      await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('language', code));
+      await waitFor(() => expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledWith({ language: code }));
 
       for (const provider of ['OpenAI', 'Local whisper.cpp']) {
         fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
@@ -682,8 +918,9 @@ describe('Settings section reachability', () => {
 
     expect(screen.queryByRole('combobox', { name: 'Output mode' })).toBeNull();
     expect(screen.getByText(/Sarvam returns English text/)).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('is not supported by Sarvam AI. Choose a supported language or Auto-detect.');
+    expect(screen.getByRole('alert')).toHaveTextContent('is not supported by Saaras v4. Choose a supported language.');
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
+    expect(settingsIpc.patchTranscriptionConfig).not.toHaveBeenCalled();
   });
 
   it('shows the microphone on the Shortcuts section without a shared activation setting', async () => {
@@ -708,6 +945,80 @@ describe('Settings section reachability', () => {
     expect(within(panel).getByText('Ctrl').closest('kbd')).toBeInTheDocument();
     expect(within(panel).getByText('Alt').closest('kbd')).toBeInTheDocument();
     expect(panel.querySelectorAll('kbd')).toHaveLength(4);
+  });
+
+  it('shows the shortcut the Linux desktop actually assigned once main finishes checking', async () => {
+    let push!: (status: DesktopStatus) => void;
+    renderSettings({
+      config: baseConfig({ agent: { ...baseConfig().agent, enabled: true } }),
+      desktopStatus: { shortcuts: { backend: 'initializing' }, delivery: WINDOWS_STATUS.delivery },
+      registerDesktopStatusChanged: (callback) => { push = callback; },
+    });
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+    expect(await screen.findAllByText('Checking whether the shortcut is active…')).toHaveLength(2);
+
+    act(() => push({
+      shortcuts: { backend: 'portal', triggers: { dictation: 'Super+D', agent: null } },
+      delivery: WINDOWS_STATUS.delivery,
+    }));
+
+    expect(await screen.findByLabelText('Dictation shortcut: Super+D')).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent Mode shortcut: Not assigned')).toBeInTheDocument();
+    expect(screen.getByText(/Your desktop has not assigned Alt \+ /)).toBeInTheDocument();
+    expect(screen.queryByText(/input group access/)).toBeNull();
+  });
+
+  it('explains that evdev shortcuts still reach the focused app', async () => {
+    renderSettings({ desktopStatus: { shortcuts: { backend: 'evdev' }, delivery: WINDOWS_STATUS.delivery } });
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    expect(await screen.findByText(/input group access/)).toBeInTheDocument();
+  });
+
+  it('warns on Home before recording when Wayland cannot insert text, without blocking Agent Mode', async () => {
+    renderSettings({
+      config: baseConfig({ agent: { ...baseConfig().agent, enabled: true } }),
+      desktopStatus: {
+        shortcuts: { backend: 'portal', triggers: { dictation: 'Super+D', agent: 'Super+A' } },
+        delivery: { available: false, message: 'This Wayland desktop does not allow typing into other apps.' },
+      },
+    });
+
+    const insertion = await screen.findByRole('button', { name: /Text insertion/ }, { timeout: SLOW_CI_TIMEOUT });
+    await waitFor(() => expect(insertion).toHaveTextContent('This Wayland desktop does not allow typing into other apps.'));
+    expect(insertion).toHaveTextContent('Unavailable');
+    expect(screen.getByRole('button', { name: /Speech engine/ })).toHaveTextContent('Ready');
+    expect(screen.getByRole('button', { name: /Agent Mode/ })).toHaveTextContent('On');
+    expect(screen.getByLabelText('Super+A')).toBeInTheDocument();
+  });
+
+  it('turns on KDE Wayland best-effort insertion through main setup and shows its limits once ready', async () => {
+    let push: ((status: DesktopStatus) => void) | undefined;
+    const shortcuts = { backend: 'portal', triggers: { dictation: 'Super+D' } } as const;
+    const { settingsIpc } = renderSettings({
+      desktopStatus: {
+        shortcuts,
+        delivery: { available: false, message: 'Automatic insertion is unavailable on Wayland.' },
+        waylandInsertion: { state: 'off', message: 'Off.' },
+      },
+      registerDesktopStatusChanged: (callback) => { push = callback; },
+    });
+    await waitForLoaded();
+
+    const toggle = await screen.findByRole('switch', { name: 'Best-effort insertion (test mode)' }, { timeout: SLOW_CI_TIMEOUT });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(toggle);
+    expect(settingsIpc.setWaylandInsertion).toHaveBeenCalledWith(true);
+
+    act(() => push?.({
+      shortcuts,
+      delivery: { available: true, message: 'Best-effort test mode.' },
+      waylandInsertion: { state: 'ready', message: 'Best-effort test mode: a change to another field inside that same window is not detected.' },
+    }));
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.getByText(/another field inside that same window is not detected/)).toBeInTheDocument();
   });
 
   it('captures and saves a normalized shortcut inline on release', async () => {
@@ -920,13 +1231,11 @@ describe('Settings section reachability', () => {
     await waitForLoaded();
 
     expect(screen.getByRole('region', { name: 'First-run setup' })).toBeInTheDocument();
-    expect(
-      screen.getByText('Set Whisper endpoint'),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Try a dictation (Ctrl + Win)')).toBeInTheDocument();
+    expect(screen.getByText('Set the whisper.cpp endpoint')).toBeInTheDocument();
+    expect(screen.getByText(`Try a dictation (Ctrl + ${process.platform === 'linux' ? 'Super' : 'Win'})`)).toBeInTheDocument();
   });
 
-  it('points fresh Live Dictation setups at WhisperLiveKit readiness in the checklist', async () => {
+  it('points fresh WhisperLiveKit setups at its readiness in the checklist', async () => {
     const config = baseConfig({ setupChecklistDismissed: false });
     renderSettings({
       config: {
@@ -942,7 +1251,7 @@ describe('Settings section reachability', () => {
     expect(
       screen.getByText('Start WhisperLiveKit and check readiness'),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Set Whisper endpoint')).toBeNull();
+    expect(screen.queryByText('Set the whisper.cpp endpoint')).toBeNull();
   });
 
   it('marks the streaming checklist item Done only when WhisperLiveKit readiness is ready', async () => {
@@ -1035,10 +1344,7 @@ describe('Settings persistence timing', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Clean transcription' }));
 
     await waitFor(() => {
-      expect(settingsIpc.setConfig).toHaveBeenCalledWith(
-        'removeFillerWords',
-        false,
-      );
+      expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledWith({ removeFillerWords: false });
     });
   });
 
@@ -1053,13 +1359,12 @@ describe('Settings persistence timing', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Toggle' }));
 
     await waitFor(() => {
-      expect(settingsIpc.setConfig).toHaveBeenCalledWith(
-        'shortcuts',
-        expect.objectContaining({
+      expect(settingsIpc.patchTranscriptionConfig).toHaveBeenCalledWith({
+        shortcuts: expect.objectContaining({
           dictation: expect.objectContaining({ activationMode: 'toggle' }),
           agent: expect.objectContaining({ activationMode: 'push-to-talk' }),
         }),
-      );
+      });
     });
   });
 
@@ -1143,7 +1448,7 @@ describe('Settings save feedback', () => {
   });
 
   it('keeps save failures visible beside the affected control', async () => {
-    renderSettings({ failSetConfig: true });
+    renderSettings({ failPatch: 'Could not save this setting.' });
     await waitForLoaded();
 
     const cleanToggle = screen.getByRole('switch', {
@@ -1160,8 +1465,8 @@ describe('Settings save feedback', () => {
   it('shows the main process validation message without the Electron IPC prefix', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    spyOn(settingsIpc, 'setConfig').mockRejectedValueOnce(
-      new Error("Error invoking remote method 'config:set': Error: Enter a valid base URL."),
+    spyOn(settingsIpc, 'patchTranscriptionConfig').mockRejectedValueOnce(
+      new Error("Error invoking remote method 'config:patch-transcription': Error: Enter a valid base URL."),
     );
 
     fireEvent.click(screen.getByRole('switch', { name: 'Clean transcription' }));

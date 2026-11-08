@@ -6,12 +6,13 @@ const errorSchema = z.object({
   message: z.string().optional(), statusCode: z.number().optional(), status: z.number().optional(),
   responseBody: z.unknown().optional(), data: z.unknown().optional(), cause: z.unknown().optional(),
   responseHeaders: z.record(z.string(), z.string()).optional(), name: z.string().optional(),
+  code: z.string().optional(), detail: z.string().optional(), response: z.unknown().optional(),
 });
 
 export function redactProviderText(text: string, apiKey?: string): string {
   const redacted = apiKey ? text.split(apiKey).join('[redacted]') : text;
   return redacted.replace(/\bsk-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+/g, '[redacted]')
-    .replace(/("?(?:api[-_]?key|authorization|access[-_]?token|password|secret)"?\s*[:=]\s*")([^"\r\n]*)(")/gi, '$1[redacted]$3')
+    .replace(/("?(?:api[-_]?key|authorization|(?:access|refresh|id)[-_]?token|password|secret)"?\s*[:=]\s*")([^"\r\n]*)(")/gi, '$1[redacted]$3')
     .slice(0, 4000);
 }
 
@@ -28,10 +29,12 @@ export function providerDiagnostic(error: unknown, apiKey?: string): AgentProvid
     if (!parsed.success) break;
     const record = parsed.data;
     if (record.message) messages.push(record.message);
+    if (record.code) messages.push(record.code);
+    if (record.detail) messages.push(record.detail);
     statusCode ??= record.statusCode ?? record.status;
     requestId ??= record.responseHeaders?.['x-request-id'] ?? record.responseHeaders?.['apim-request-id']
       ?? record.responseHeaders?.['x-ms-request-id'];
-    for (const body of [record.responseBody, record.data]) {
+    for (const body of [record.responseBody, record.data, record.response]) {
       if (body !== undefined) {
         try { messages.push(typeof body === 'string' ? body : JSON.stringify(body)); } catch { /* Ignore unserializable error data. */ }
       }
@@ -43,7 +46,28 @@ export function providerDiagnostic(error: unknown, apiKey?: string): AgentProvid
   let kind: AgentProviderDiagnostic['kind'] = 'provider';
   let message = 'The model provider could not complete the request.';
   let action = 'Check the technical details and test the configured model again.';
-  if (statusCode === 401) {
+  if (lower.includes('subscription_sharing_usage_limit_exceeded')) {
+    kind = 'quota'; message = 'Your ChatGPT plan usage limit was reached.';
+    action = 'Check your usage at https://chatgpt.com/settings/usage before retrying.';
+  } else if (lower.includes('subscription_sharing_user_not_eligible')) {
+    kind = 'permission'; message = 'This ChatGPT account is not eligible for plan usage.';
+    action = 'Check the account and plan in ChatGPT, then sign in again.';
+  } else if (/subscription_sharing_(?:usage|user)_unavailable/.test(lower)) {
+    kind = 'provider'; message = 'ChatGPT plan usage is temporarily unavailable.';
+    action = 'Try again later.';
+  } else if (lower.includes('subscription_sharing_unsupported_capability')) {
+    kind = 'unsupported'; message = 'ChatGPT plan usage does not support a requested capability.';
+    action = 'Review the rejected parameter in the technical details and adjust the model settings.';
+  } else if (lower.includes('subscription_sharing_route_not_supported')) {
+    kind = 'endpoint'; message = 'ChatGPT plan usage does not support this request route.';
+    action = 'Use the Responses API with streaming enabled in the ChatGPT provider.';
+  } else if (lower.includes('subscription_sharing_invalid_user')) {
+    kind = 'authentication'; message = 'The ChatGPT account authorization is no longer valid.';
+    action = 'Sign in with ChatGPT again in Settings.';
+  } else if (/chatpass_v2_(?:scope_not_authorized|invalid_authorization_context)/.test(lower)) {
+    kind = 'permission'; message = 'ChatGPT plan usage is not authorized for this session.';
+    action = 'Sign in with ChatGPT again and allow plan usage.';
+  } else if (statusCode === 401) {
     kind = 'authentication'; message = 'The provider rejected authentication.';
     action = 'Replace the key or check the authentication mode. Azure keys belong to the selected resource.';
   } else if (statusCode === 403) {

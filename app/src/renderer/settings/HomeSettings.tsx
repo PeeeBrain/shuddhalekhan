@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { AuditRunSummary, TranscriptionReadiness } from '../../types/ipc';
-import { formatBinding } from '../../shared/shortcut-bindings';
+import { activeTrigger, useDesktopStatus } from './use-desktop-status';
 import type { SettingsSectionProps } from './settings-section-props';
 import type { SettingsSectionId } from './settings-nav';
 import { Keycaps, Tag, type TagTone } from './ui/rows';
@@ -29,6 +29,7 @@ const READINESS_LABEL: Record<TranscriptionReadiness['state'], string> = {
 export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onOpenRun }: HomeSettingsProps) {
   const [readiness, setReadiness] = useState<TranscriptionReadiness | null>(null);
   const [runs, setRuns] = useState<AuditRunSummary[] | null>(null);
+  const desktopStatus = useDesktopStatus(settingsIpc);
 
   useEffect(() => {
     const off = settingsIpc.onTranscriptionReadinessChanged(setReadiness);
@@ -39,8 +40,10 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
 
   const servers = config.agent.mcpServers;
   const connected = servers.filter((server) => mcpStatuses[server.id]?.status === 'connected').length;
-  const { dictation, agent } = config.shortcuts;
   const hasChosenMic = Boolean(config.selectedDeviceId) && config.selectedDeviceId !== 'default';
+  const dictation = activeTrigger(desktopStatus, 'dictation', config.shortcuts.dictation.binding);
+  const agent = activeTrigger(desktopStatus, 'agent', config.shortcuts.agent.binding);
+  const delivery = desktopStatus?.delivery;
 
   return (
     <div className="space-y-8">
@@ -48,13 +51,17 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
         title="Home"
         description={(
           <>
-            {dictation.binding ? (
-              <>Press <InlineKeys binding={formatBinding(dictation.binding)} /> to dictate</>
+            {dictation.kind === 'active' ? (
+              <>Press <InlineKeys binding={dictation.text} /> to dictate</>
+            ) : dictation.kind === 'checking' ? (
+              <>Checking your shortcuts</>
             ) : (
-              <LinkButton onClick={() => onNavigate('shortcuts')}>Assign a Dictation shortcut</LinkButton>
+              <LinkButton onClick={() => onNavigate('shortcuts')}>
+                {config.shortcuts.dictation.binding ? 'Your Dictation shortcut is not active' : 'Assign a Dictation shortcut'}
+              </LinkButton>
             )}
-            {config.agent.enabled && agent.binding ? (
-              <> or <InlineKeys binding={formatBinding(agent.binding)} /> to ask the agent</>
+            {config.agent.enabled && agent.kind === 'active' ? (
+              <> or <InlineKeys binding={agent.text} /> to ask the agent</>
             ) : null}
             .
           </>
@@ -72,9 +79,19 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
             section="transcription"
             onNavigate={onNavigate}
           />
+          {/* Separate from the speech engine: a ready transcriber can still be unable to type into apps. */}
+          <StatusRow
+            label="Text insertion"
+            detail={delivery?.message ?? 'Checking…'}
+            tone={delivery ? (delivery.available ? 'success' : 'warning') : 'neutral'}
+            status={delivery ? (!delivery.available ? 'Unavailable'
+              : desktopStatus?.waylandInsertion?.state === 'ready' ? 'Best effort' : 'Automatic') : 'Checking'}
+            section="transcription"
+            onNavigate={onNavigate}
+          />
           <StatusRow
             label="Microphone"
-            detail={hasChosenMic ? 'Chosen device' : 'Follows the Windows default input'}
+            detail={hasChosenMic ? 'Chosen device' : 'Follows the system default input'}
             tone="success"
             status={hasChosenMic ? 'Selected' : 'System default'}
             section="shortcuts"

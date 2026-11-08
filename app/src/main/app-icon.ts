@@ -7,13 +7,15 @@ import { join } from 'path';
  * falling back to an inline mark when the packaged asset is missing.
  */
 export function loadAppIcon(): Electron.NativeImage {
+  // Electron reads .ico only on Windows.
+  const file = process.platform === 'win32' ? 'tray-icon.ico' : 'icon.png';
   const candidatePaths = app.isPackaged
     ? [
-        join(process.resourcesPath, 'icons', 'tray-icon.ico'),
-        join(app.getAppPath(), 'icons', 'tray-icon.ico'),
+        join(process.resourcesPath, 'icons', file),
+        join(app.getAppPath(), 'icons', file),
       ]
     : [
-        join(app.getAppPath(), 'icons', 'tray-icon.ico'),
+        join(app.getAppPath(), 'icons', file),
       ];
 
   for (const iconPath of candidatePaths) {

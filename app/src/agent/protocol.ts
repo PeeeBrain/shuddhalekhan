@@ -29,21 +29,6 @@ export type McpToolsDiscoveredEvent = {
   }>;
 };
 
-export type McpToolExecuteStartedEvent = {
-  type: 'mcp:tool-execute-started';
-  agentRunId: string;
-  serverId: string;
-  toolName: string;
-};
-
-export type McpToolExecuteResultEvent = {
-  type: 'mcp:tool-execute-result';
-  agentRunId: string;
-  serverId: string;
-  toolName: string;
-  outcome: 'success' | 'error';
-};
-
 export type OAuthOpenUrlEvent = {
   type: 'oauth:open-url';
   serverId: string;
@@ -54,11 +39,6 @@ export type AgentStatusEvent = {
   type: 'agent:status';
   agentRunId: string;
   status: string;
-};
-
-export type AgentProviderRequestStartedEvent = {
-  type: 'agent:provider-request-started';
-  agentRunId: string;
 };
 
 export type AgentResponseDeltaEvent = {
@@ -105,11 +85,8 @@ export type SidecarEvent =
   | SidecarShutdownCompleteEvent
   | McpServerStatusEvent
   | McpToolsDiscoveredEvent
-  | McpToolExecuteStartedEvent
-  | McpToolExecuteResultEvent
   | OAuthOpenUrlEvent
   | AgentStatusEvent
-  | AgentProviderRequestStartedEvent
   | AgentResponseDeltaEvent
   | ApprovalRequestedEvent
   | AgentCompletedEvent

@@ -43,7 +43,8 @@ import type {
   getClipboardSequenceNumber as GetClipboardSequenceNumber,
 } from '../../native/clipboard';
 
-describe('native clipboard paste dispatch', () => {
+// SendInput dispatch; native X11 dispatch has an isolated-server integration test.
+describe.skipIf(process.platform !== 'win32')('native clipboard paste dispatch', () => {
   let simulatePaste: typeof SimulatePaste;
   let getClipboardSequenceNumber: typeof GetClipboardSequenceNumber;
 

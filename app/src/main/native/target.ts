@@ -1,5 +1,6 @@
 import koffi from 'koffi';
 import type { DictationTargetSnapshot } from '../../types/ipc';
+import { captureX11Target } from './x11-target';
 
 export interface TargetCaptureDeps {
   getForegroundWindow: () => bigint;
@@ -73,6 +74,7 @@ export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTar
     if (!processCreationTime) return null;
 
     return {
+      kind: 'win32',
       hwnd,
       processId,
       processCreationTime,
@@ -84,40 +86,53 @@ export function createTargetCapture(deps: TargetCaptureDeps): () => DictationTar
   };
 }
 
-const user32 = koffi.load('user32.dll');
-const kernel32 = koffi.load('kernel32.dll');
+/** Loaded on first use so importing this module never touches user32.dll off Windows. */
+function loadWin32Deps(): TargetCaptureDeps {
+  const user32 = koffi.load('user32.dll');
+  const kernel32 = koffi.load('kernel32.dll');
 
-const GetForegroundWindow = user32.func('uintptr_t __stdcall GetForegroundWindow()');
-const GetWindowThreadProcessId = user32.func(
-  'uint32_t __stdcall GetWindowThreadProcessId(uintptr_t hWnd, uint32_t * lpdwProcessId)'
-);
-const GetClassNameW = user32.func(
-  'int32_t __stdcall GetClassNameW(uintptr_t hWnd, char16_t * lpClassName, int32_t nMaxCount)'
-);
-const OpenProcess = kernel32.func(
-  'uintptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, bool bInheritHandle, uint32_t dwProcessId)'
-);
-const QueryFullProcessImageNameW = kernel32.func(
-  'bool __stdcall QueryFullProcessImageNameW(uintptr_t hProcess, uint32_t dwFlags, char16_t * lpExeName, uint32_t * lpdwSize)'
-);
-const GetProcessTimes = kernel32.func(
-  'bool __stdcall GetProcessTimes(uintptr_t hProcess, void * lpCreationTime, void * lpExitTime, void * lpKernelTime, void * lpUserTime)'
-);
-const CloseHandle = kernel32.func('bool __stdcall CloseHandle(uintptr_t hObject)');
+  const GetForegroundWindow = user32.func('uintptr_t __stdcall GetForegroundWindow()');
+  const GetWindowThreadProcessId = user32.func(
+    'uint32_t __stdcall GetWindowThreadProcessId(uintptr_t hWnd, uint32_t * lpdwProcessId)'
+  );
+  const GetClassNameW = user32.func(
+    'int32_t __stdcall GetClassNameW(uintptr_t hWnd, char16_t * lpClassName, int32_t nMaxCount)'
+  );
+  const OpenProcess = kernel32.func(
+    'uintptr_t __stdcall OpenProcess(uint32_t dwDesiredAccess, bool bInheritHandle, uint32_t dwProcessId)'
+  );
+  const QueryFullProcessImageNameW = kernel32.func(
+    'bool __stdcall QueryFullProcessImageNameW(uintptr_t hProcess, uint32_t dwFlags, char16_t * lpExeName, uint32_t * lpdwSize)'
+  );
+  const GetProcessTimes = kernel32.func(
+    'bool __stdcall GetProcessTimes(uintptr_t hProcess, void * lpCreationTime, void * lpExitTime, void * lpKernelTime, void * lpUserTime)'
+  );
+  const CloseHandle = kernel32.func('bool __stdcall CloseHandle(uintptr_t hObject)');
 
-const realDeps: TargetCaptureDeps = {
-  getForegroundWindow: () => GetForegroundWindow() as bigint,
-  getWindowThreadProcessId: (hwnd, processIdBuf) =>
-    GetWindowThreadProcessId(hwnd, processIdBuf) as bigint,
-  getClassName: (hwnd, classNameBuf, maxCount) =>
-    Number(GetClassNameW(hwnd, classNameBuf, maxCount)),
-  openProcess: (desiredAccess, inheritHandle, processId) =>
-    OpenProcess(desiredAccess, inheritHandle, processId) as bigint,
-  queryFullProcessImageName: (handle, flags, exeNameBuf, sizeBuf) =>
-    QueryFullProcessImageNameW(handle, flags, exeNameBuf, sizeBuf) as boolean,
-  getProcessCreationTime: (handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) =>
-    GetProcessTimes(handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) as boolean,
-  closeHandle: (handle) => CloseHandle(handle) as boolean,
-};
+  return {
+    getForegroundWindow: () => GetForegroundWindow() as bigint,
+    getWindowThreadProcessId: (hwnd, processIdBuf) =>
+      GetWindowThreadProcessId(hwnd, processIdBuf) as bigint,
+    getClassName: (hwnd, classNameBuf, maxCount) =>
+      Number(GetClassNameW(hwnd, classNameBuf, maxCount)),
+    openProcess: (desiredAccess, inheritHandle, processId) =>
+      OpenProcess(desiredAccess, inheritHandle, processId) as bigint,
+    queryFullProcessImageName: (handle, flags, exeNameBuf, sizeBuf) =>
+      QueryFullProcessImageNameW(handle, flags, exeNameBuf, sizeBuf) as boolean,
+    getProcessCreationTime: (handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) =>
+      GetProcessTimes(handle, creationTimeBuf, exitTimeBuf, kernelTimeBuf, userTimeBuf) as boolean,
+    closeHandle: (handle) => CloseHandle(handle) as boolean,
+  };
+}
 
-export const captureForegroundTarget = createTargetCapture(realDeps);
+let captureWin32Target: (() => DictationTargetSnapshot | null) | null = null;
+
+export function captureForegroundTarget(): DictationTargetSnapshot | null {
+  if (process.platform === 'linux') {
+    if (process.env.XDG_SESSION_TYPE === 'wayland' || process.env.WAYLAND_DISPLAY || !process.env.DISPLAY) return null;
+    return captureX11Target();
+  }
+  if (process.platform !== 'win32') return null;
+  captureWin32Target ??= createTargetCapture(loadWin32Deps());
+  return captureWin32Target();
+}

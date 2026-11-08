@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import * as fs from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 
 const vi = { fn: mock };
@@ -70,6 +72,8 @@ describe('Batch Dictation runtime shell', () => {
     const shell = new RuntimeShell();
     shell.prepare();
     shell.markReady();
+    // A permission check for the new mic must not block commands to an already ready audio host.
+    shell.setSelectedDevice('mic-2');
 
     const envelope = {
       recordingSessionId: 'session-1', sequence: 1, revision: 1,
@@ -77,6 +81,9 @@ describe('Batch Dictation runtime shell', () => {
     };
     shell.beginCapture(envelope);
     shell.show('dictation', 'session-1', envelope);
+    shell.markCaptureReady('obsolete-session');
+    shell.markCaptureReady('session-1');
+    shell.markCaptureReady('session-1');
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showProcessing('session-1');
@@ -84,14 +91,18 @@ describe('Batch Dictation runtime shell', () => {
     expect(window.setFocusable).toHaveBeenLastCalledWith(false);
     expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
     shell.finish();
+    shell.markCaptureReady('session-1');
 
     const snapshots = (send.mock.calls as unknown[][])
       .filter((call: unknown[]) => call[0] === 'runtime:snapshot')
-      .map((call: unknown[]) => call[1] as { kind: string; revision: number });
+      .map((call: unknown[]) => call[1] as { kind: string; revision: number; captureStartedAt?: number | null });
     expect(snapshots.map((snapshot: { kind: string }) => snapshot.kind)).toEqual([
-      'recording', 'recording', 'processing', 'failure', 'idle',
+      'recording', 'recording', 'recording', 'processing', 'failure', 'idle',
     ]);
-    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4, 5]);
+    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(snapshots[0].captureStartedAt).toBeNull();
+    expect(snapshots[1].captureStartedAt).toEqual(expect.any(Number));
+    expect(snapshots[2].captureStartedAt).toBe(snapshots[1].captureStartedAt);
     expect(send).toHaveBeenCalledWith('runtime:audio-start', expect.objectContaining({
       recordingSessionId: 'session-1', sequence: 1,
     }));
@@ -131,7 +142,7 @@ describe('Batch Dictation runtime shell', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('preserves insertion-halted state across later streaming previews', async () => {
+  it('replaces provisional preview text while preserving the original recording identity', async () => {
     const send = vi.fn();
     const window = {
       webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
@@ -153,11 +164,13 @@ describe('Batch Dictation runtime shell', () => {
     };
     shell.beginCapture(envelope);
     shell.show('dictation', 'session-1', envelope);
-    shell.showInsertionHalted('session-1');
+    shell.showStreamingPreview('session-1', 'Old', 'Old words');
     shell.showStreamingPreview('session-1', 'Hello', 'Hello world');
 
     const snapshot = send.mock.calls.at(-1)?.[1];
-    expect(snapshot.insertionHalted).toBe(true);
+    expect(snapshot.recordingSessionId).toBe('session-1');
+    expect(snapshot.committed).toBe('Hello');
+    expect(snapshot.tentative).toBe('Hello world');
   });
 
   it('hides synchronously before insertion and can show a later failure', async () => {
@@ -211,9 +224,107 @@ describe('Batch Dictation runtime shell', () => {
     expect(shell.acceptsAudioEvent(command.generation, 'stale', 7)).toBe(false);
     expect(shell.acceptsAudioEvent(command.generation - 1, 'current', 7)).toBe(false);
     expect(shell.acceptsAudioEvent(command.generation, 'current', 6)).toBe(false);
+    shell.cancelCapture();
+    expect(send).toHaveBeenCalledWith('runtime:audio-cancel', expect.objectContaining({
+      generation: command.generation, recordingSessionId: 'current', sequence: 7,
+    }));
+    expect(shell.consumeAudioEvent(command.generation, 'current', 7)).toBe(false);
   });
 
-  it('recreates a crashed renderer in a new generation and publishes one recoverable failure', async () => {
+  it('delivers spooled audio only after the end boundary matches, and fails recoverably on a lost chunk', async () => {
+    const send = vi.fn();
+    const window = {
+      webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
+      loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
+      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+      setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+      hide: vi.fn(), destroy: vi.fn(),
+    };
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-spool`);
+    const { defaultSpoolDir } = await import('../audio-spool');
+    const shell = new RuntimeShell();
+    const handler = (calls: unknown[][], channel: string) => calls
+      .filter((call) => call[0] === channel).at(-1)?.[1] as (...args: unknown[]) => unknown;
+    const spool = handler(electronMock.ipcMain.handle.mock.calls as unknown[][], 'runtime:audio-spool');
+    const end = handler(electronMock.ipcMain.on.mock.calls as unknown[][], 'runtime:audio-end');
+    const ownSpools = () => {
+      try {
+        return readdirSync(defaultSpoolDir()).filter((name) => name.startsWith(`capture-${process.pid}-`));
+      } catch {
+        return [];
+      }
+    };
+    const event = { sender: window.webContents };
+    const pcm = (...samples: number[]) => Int16Array.from(samples).buffer;
+    shell.prepare();
+    shell.markReady();
+    const begin = (sequence: number) => {
+      shell.beginCapture({
+        recordingSessionId: 'take', sequence, revision: sequence,
+        capabilities: { batch: true, streaming: false },
+      });
+      const start = (send.mock.calls as unknown[][]).filter((call) => call[0] === 'runtime:audio-start').at(-1);
+      const command = start?.[1] as { generation: number };
+      return command.generation;
+    };
+
+    const generation = begin(1);
+    // The acknowledgement is what returns the renderer's write credit.
+    expect(spool(event, generation, 'take', 1, 0, pcm(1, 2))).toBe(true);
+    expect(spool({ sender: {} }, generation, 'take', 1, 1, pcm(9))).toBe(false); // foreign sender
+    expect(spool(event, generation, 'stale', 1, 1, pcm(9))).toBe(false); // stale identity
+    expect(spool(event, generation, 'take', 1, 1, pcm(3))).toBe(true);
+    expect(ownSpools()).toHaveLength(1);
+    end(event, generation, 'take', 1, 2, 3);
+
+    const delivered = (electronMock.ipcMain.emit.mock.calls as unknown[][])
+      .find((call) => call[0] === 'runtime:audio-data-ready');
+    expect(delivered?.slice(2, 5)).toEqual([generation, 'take', 1]);
+    const wav = delivered?.[5] as ArrayBuffer;
+    expect(Array.from(new Int16Array(wav.slice(44)))).toEqual([1, 2, 3]);
+    expect(shell.acceptsAudioEvent(generation, 'take', 1)).toBe(false);
+    expect(ownSpools()).toEqual([]);
+
+    // The final chunk never reached main: no WAV, mic released, one failure, no file left.
+    const second = begin(2);
+    spool(event, second, 'take', 2, 0, pcm(4));
+    end(event, second, 'take', 2, 2, 2);
+    expect(electronMock.ipcMain.emit).toHaveBeenCalledWith('runtime:audio-failed', event, second, 'take', 2);
+    expect(send).toHaveBeenCalledWith('runtime:audio-cancel', expect.objectContaining({ generation: second, sequence: 2 }));
+    expect((electronMock.ipcMain.emit.mock.calls as unknown[][])
+      .filter((call) => call[0] === 'runtime:audio-data-ready')).toHaveLength(1);
+    expect(ownSpools()).toEqual([]);
+
+    // Cancel discards a partially spooled recording without producing audio.
+    const third = begin(3);
+    spool(event, third, 'take', 3, 0, pcm(5));
+    shell.cancelCapture();
+    expect(ownSpools()).toEqual([]);
+    end(event, third, 'take', 3, 1, 1);
+    expect((electronMock.ipcMain.emit.mock.calls as unknown[][])
+      .filter((call) => call[0] === 'runtime:audio-data-ready')).toHaveLength(1);
+
+    // Disk full: the write is refused, the recording fails once, and nothing is left behind.
+    const fourth = begin(4);
+    expect(spool(event, fourth, 'take', 4, 0, pcm(6))).toBe(true);
+    const write = spyOn(fs, 'writeSync').mockImplementation(() => {
+      throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    });
+    try {
+      expect(spool(event, fourth, 'take', 4, 1, pcm(7))).toBe(false);
+    } finally {
+      write.mockRestore();
+    }
+    expect(electronMock.ipcMain.emit).toHaveBeenCalledWith('runtime:audio-failed', event, fourth, 'take', 4);
+    expect(send).toHaveBeenCalledWith('runtime:audio-cancel', expect.objectContaining({ generation: fourth, sequence: 4 }));
+    expect(ownSpools()).toEqual([]);
+    expect(spool(event, fourth, 'take', 4, 2, pcm(8))).toBe(false);
+    shell.destroy();
+  });
+
+  it.each(['render-process-gone', 'unresponsive'])('releases a %s renderer and recreates one recoverable generation', async (event: string) => {
     const onCrash = vi.fn();
     const windows: any[] = [];
     electronMock.BrowserWindow.mockImplementation(() => {
@@ -245,10 +356,14 @@ describe('Batch Dictation runtime shell', () => {
     const oldCommand = (windows[0].webContents.send.mock.calls as unknown[][])
       .find((call) => call[0] === 'runtime:audio-start')?.[1] as any;
 
-    windows[0].webHandlers.get('render-process-gone')?.({}, { reason: 'crashed' });
+    if (event === 'unresponsive') windows[0].handlers.get(event)?.();
+    else windows[0].webHandlers.get(event)?.({}, { reason: 'crashed' });
     expect(windows).toHaveLength(2);
+    expect(windows[0].destroy).toHaveBeenCalledTimes(1);
     expect(onCrash).toHaveBeenCalledTimes(1);
     expect(shell.acceptsAudioEvent(oldCommand.generation, 'doomed', 1)).toBe(false);
+    windows[0].webHandlers.get('render-process-gone')?.({}, { reason: 'killed' });
+    expect(onCrash).toHaveBeenCalledTimes(1);
 
     shell.showFailure('doomed', 'Recording renderer crashed.');
     windows[1].webHandlers.get('did-finish-load')?.();

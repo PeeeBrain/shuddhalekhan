@@ -58,6 +58,22 @@ function main(): void {
     crlfDelay: Infinity,
   });
 
+  // Electron gone (or stopping us): close MCP clients, then exit so no orphan
+  // outlives the app. On POSIX we lead our own process group (detached spawn)
+  // and Electron may not be alive to kill it, so the last step kills the group:
+  // any MCP server or tool process that ignored EOF dies with us.
+  const exitWithGroup = () => {
+    auditStore.close();
+    if (process.platform !== 'win32') {
+      try { process.kill(-process.pid, 'SIGKILL'); } catch { /* not a group leader */ }
+    }
+    process.exit(0);
+  };
+  input.on('close', () => {
+    setTimeout(exitWithGroup, 3000).unref();
+    void beginShutdown(false).finally(exitWithGroup);
+  });
+
   input.on('line', (line) => {
     try {
       handleLine(line);
@@ -165,15 +181,9 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     }
     const toolSnapshot = mcpRegistry.createRunSnapshot(
       (request) => requestToolApproval(agentRunId, request),
-      (eventType, payload) => recordAgentAudit(agentRunId, eventType, payload),
+      (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
       (tool) => {
         if (activeAgentRunId !== agentRunId) return;
-        writeJsonLine({
-          type: 'mcp:tool-execute-started',
-          agentRunId,
-          serverId: tool.serverId,
-          toolName: tool.toolName,
-        });
         const status = `Using tool: ${tool.serverId}.${tool.toolName}`;
         auditStore.record(agentRunId, 'status', { status });
         writeJsonLine({ type: 'agent:status', agentRunId, status });
@@ -186,10 +196,6 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
           if (activeAgentRunId !== agentRunId) return;
           auditStore.record(agentRunId, 'status', { status });
           writeJsonLine({ type: 'agent:status', agentRunId, status });
-        },
-        onProviderRequestStarted: () => {
-          if (activeAgentRunId !== agentRunId) return;
-          writeJsonLine({ type: 'agent:provider-request-started', agentRunId });
         },
         onResponseDelta: (delta, response) => {
           if (activeAgentRunId !== agentRunId) return;
@@ -217,7 +223,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
           activeAbortController = null;
         },
         requestToolApproval: (request) => requestToolApproval(agentRunId, request),
-        onAudit: (eventType, payload) => recordAgentAudit(agentRunId, eventType, payload),
+        onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
         commitMemory: (revision, updates) => memoryCommitter.request(agentRunId, revision, updates, runController.signal),
         shouldLearnMemory: () => config?.agent.memoryEnabled === true && activeAgentRunId === agentRunId,
         onMemoryStatus: status => {
@@ -239,25 +245,6 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     activeAgentRunId = null;
     activeAbortController = null;
   }
-}
-
-function recordAgentAudit(
-  agentRunId: string,
-  eventType: string,
-  payload?: Record<string, unknown>,
-): void {
-  auditStore.record(agentRunId, eventType, payload);
-  if (eventType !== 'mcp_tool_execute_result' && eventType !== 'mcp_tool_execute_error') return;
-  const serverId = typeof payload?.serverId === 'string' ? payload.serverId : '';
-  const toolName = typeof payload?.toolName === 'string' ? payload.toolName : '';
-  if (!serverId || !toolName) return;
-  writeJsonLine({
-    type: 'mcp:tool-execute-result',
-    agentRunId,
-    serverId,
-    toolName,
-    outcome: eventType === 'mcp_tool_execute_result' ? 'success' : 'error',
-  });
 }
 
 function handleAgentCancel(agentRunId: string): void {

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import {
   acknowledgeRealtimeChunk,
+  cancelRecording,
   enumerateDevices,
   MAX_IN_FLIGHT_PCM_CHUNKS,
   prepareStream,
@@ -18,13 +19,22 @@ async function sendAudioDevices(): Promise<void> {
   window.electronAPI?.send('audio-devices', devices);
 }
 
+function sameCommand(current: RuntimeAudioCommand | null, next: Pick<RuntimeAudioCommand, 'generation' | 'recordingSessionId' | 'sequence'>): boolean {
+  return current?.generation === next.generation
+    && current.recordingSessionId === next.recordingSessionId
+    && current.sequence === next.sequence;
+}
+
 export function AudioWindow() {
-  const startPromiseRef = useRef<Promise<void> | null>(null);
   const commandRef = useRef<RuntimeAudioCommand | null>(null);
+  const stoppingRef = useRef<RuntimeAudioCommand | null>(null);
+  const revisionRef = useRef(0);
 
   useEffect(() => {
     window.electronAPI?.invoke('config:get').then((config) => {
       setSelectedDeviceId(config.selectedDeviceId);
+      // Host readiness must not wait on a permission prompt: each capture owns its startup deadline.
+      window.electronAPI?.send('audio-stream-ready');
       return prepareStream();
     }).then(() => {
       void sendAudioDevices().catch((err) => {
@@ -37,46 +47,64 @@ export function AudioWindow() {
 
   useEffect(() => {
     const unsubscribeStart = window.electronAPI.subscribe('runtime:audio-start', (command) => {
+      // A start that was never stopped is superseded: drop it so it cannot
+      // start late or emit audio under the old identity.
+      cancelRecording();
+      revisionRef.current += 1;
+      stoppingRef.current = null;
       commandRef.current = command;
-      startPromiseRef.current = startRecording(command.streaming ? {
-        recordingSessionId: command.recordingSessionId,
-        maxInFlightChunks: MAX_IN_FLIGHT_PCM_CHUNKS,
-        onPcmChunk: (chunk) => {
-          window.electronAPI?.send(
-            'runtime:audio-chunk',
+      const reportProcessorFailure = () => {
+        if (!sameCommand(commandRef.current, command) && !sameCommand(stoppingRef.current, command)) return;
+        revisionRef.current += 1;
+        commandRef.current = null;
+        stoppingRef.current = null;
+        window.electronAPI?.send('runtime:audio-failed',
+          command.generation, command.recordingSessionId, command.sequence);
+      };
+      void startRecording({
+        onSpoolChunk: async (chunkSequence, pcm) => {
+          const written = await window.electronAPI.invoke(
+            'runtime:audio-spool',
             command.generation,
             command.recordingSessionId,
             command.sequence,
-            chunk.sequence,
-            chunk.pcm.buffer,
+            chunkSequence,
+            pcm.buffer,
           );
+          if (!written) throw new Error(`Main did not spool audio chunk ${chunkSequence}.`);
         },
-        onRealtimeDisabled: () => {
-          window.electronAPI?.send(
-            'runtime:audio-stream-disabled',
-            command.generation,
-            command.recordingSessionId,
-            command.sequence,
-          );
-        },
-      } : undefined, () => {
-        window.electronAPI?.send(
-          'runtime:audio-first-buffer',
-          command.generation,
-          command.recordingSessionId,
-          command.sequence,
-        );
+        streaming: command.streaming ? {
+          recordingSessionId: command.recordingSessionId,
+          maxInFlightChunks: MAX_IN_FLIGHT_PCM_CHUNKS,
+          onPcmChunk: (chunk) => {
+            window.electronAPI?.send(
+              'runtime:audio-chunk',
+              command.generation,
+              command.recordingSessionId,
+              command.sequence,
+              chunk.sequence,
+              chunk.pcm.buffer,
+            );
+          },
+          onRealtimeDisabled: () => {
+            window.electronAPI?.send(
+              'runtime:audio-stream-disabled',
+              command.generation,
+              command.recordingSessionId,
+              command.sequence,
+            );
+          },
+        } : undefined,
+        onFailure: reportProcessorFailure,
       })
-        .then((timing) => {
-          if (timing) window.electronAPI?.send(
-            'audio-capture-started',
-            command.generation,
-            command.recordingSessionId,
-            command.sequence,
-            timing,
-          );
+        .then(() => {
+          if (commandRef.current !== command) return;
+          window.electronAPI.send('runtime:audio-ready',
+            command.generation, command.recordingSessionId, command.sequence);
         })
         .catch((err) => {
+          // A stop already in flight owns the failure report.
+          if (commandRef.current !== command) return;
           commandRef.current = null;
           console.error('Failed to start runtime recording:', err);
           window.electronAPI?.send(
@@ -85,39 +113,36 @@ export function AudioWindow() {
             command.recordingSessionId,
             command.sequence,
           );
-        })
-        .finally(() => { startPromiseRef.current = null; });
+        });
     });
+    // Acks keep flowing to a capture that is still draining after stop.
     const unsubscribeAccepted = window.electronAPI.subscribe(
       'runtime:audio-chunk-accepted',
-      (generation, recordingSessionId, commandSequence, chunkSequence) => {
-        if (
-          commandRef.current?.generation !== generation
-          || commandRef.current.recordingSessionId !== recordingSessionId
-          || commandRef.current.sequence !== commandSequence
-        ) return;
-        acknowledgeRealtimeChunk(chunkSequence);
+      (generation, recordingSessionId, sequence, chunkSequence) => {
+        const command = { generation, recordingSessionId, sequence };
+        if (!sameCommand(commandRef.current, command) && !sameCommand(stoppingRef.current, command)) return;
+        acknowledgeRealtimeChunk(recordingSessionId, chunkSequence);
       },
     );
     const unsubscribeStop = window.electronAPI.subscribe('runtime:audio-stop', async (command) => {
-      if (
-        commandRef.current?.generation !== command.generation
-        || commandRef.current.recordingSessionId !== command.recordingSessionId
-        || commandRef.current.sequence !== command.sequence
-      ) return;
+      if (!sameCommand(commandRef.current, command)) return;
+      commandRef.current = null;
+      stoppingRef.current = command;
+      const revision = revisionRef.current;
       try {
-        await startPromiseRef.current;
-        const audioData = stopRecording();
-        commandRef.current = null;
+        const boundary = await stopRecording();
+        if (revisionRef.current !== revision) return;
+        if (!boundary) throw new Error('Audio capture ended without a final boundary.');
         window.electronAPI?.send(
-          'runtime:audio-data-ready',
+          'runtime:audio-end',
           command.generation,
           command.recordingSessionId,
           command.sequence,
-          audioData.buffer,
+          boundary.chunkCount,
+          boundary.sampleCount,
         );
       } catch (err) {
-        commandRef.current = null;
+        if (revisionRef.current !== revision) return;
         console.error('Failed to stop runtime recording:', err);
         window.electronAPI?.send(
           'runtime:audio-failed',
@@ -125,14 +150,26 @@ export function AudioWindow() {
           command.recordingSessionId,
           command.sequence,
         );
+      } finally {
+        if (stoppingRef.current === command) stoppingRef.current = null;
       }
+    });
+    const unsubscribeCancel = window.electronAPI.subscribe('runtime:audio-cancel', (command) => {
+      if (!sameCommand(commandRef.current, command) && !sameCommand(stoppingRef.current, command)) return;
+      revisionRef.current += 1;
+      commandRef.current = null;
+      stoppingRef.current = null;
+      cancelRecording();
     });
     return () => {
       unsubscribeStart();
       unsubscribeAccepted();
       unsubscribeStop();
-      if (commandRef.current) stopRecording();
+      unsubscribeCancel();
+      revisionRef.current += 1;
+      cancelRecording();
       commandRef.current = null;
+      stoppingRef.current = null;
     };
   }, []);
 
@@ -148,29 +185,18 @@ export function AudioWindow() {
   return null;
 }
 
+// Main gates Managed Local warmup on the first painted recording surface.
 function useSurfacePaintProxy(surface: string): void {
   useEffect(() => {
-    const reportPaintProxy = () => {
-      let firstFrame = 0;
-      let secondFrame = 0;
-      firstFrame = requestAnimationFrame(() => {
-        secondFrame = requestAnimationFrame(() => {
-          window.electronAPI?.send('surface-paint-proxy', surface);
-        });
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        window.electronAPI?.send('surface-paint-proxy', surface);
       });
-      return () => {
-        cancelAnimationFrame(firstFrame);
-        if (secondFrame) cancelAnimationFrame(secondFrame);
-      };
-    };
-
-    const cancelInitial = reportPaintProxy();
-    const unsubscribe = window.electronAPI?.subscribe('surface:request-paint-proxy', (requestedSurface) => {
-      if (requestedSurface === surface) reportPaintProxy();
     });
     return () => {
-      cancelInitial();
-      unsubscribe?.();
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
     };
   }, [surface]);
 }
@@ -192,7 +218,14 @@ function App() {
   }
 
   if (hash === 'settings') {
-    return <SettingsWindow />;
+    return (
+      <div className="flex h-screen flex-col">
+        <div className="title-bar-drag" aria-hidden="true" />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <SettingsWindow />
+        </div>
+      </div>
+    );
   }
 
   return null;

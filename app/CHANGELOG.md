@@ -19,7 +19,27 @@ tags and commit history, not from this file. Keep new entries under
 - Added on-device Parakeet v3 setup and a keyboard for dictation into other apps during a microphone session. Existing endpoint settings are preserved. Added LM Studio setup guidance for voice agents over Tailscale.
 - Added a standalone React Native/Expo iOS app for recording, OpenAI-compatible transcription, copy/share, and one-off voice agents with approval-gated HTTP MCP tools. Includes secure credential storage and a macOS workflow for building unsigned IPAs for Sideloadly.
 
+### Platforms
+- Linux builds: `.deb` for Ubuntu/Debian and `.rpm` for Fedora/RHEL, published with each release and updated in-app. On Wayland, Dictation preserves the final transcript for copying; automatic insertion stays unavailable until the original input context can be verified.
+- KDE Plasma Wayland test builds can opt into best-effort insertion (Settings → Transcription, off by default). Setup asks KDE to allow keyboard control before it reports insertion available. Dictation pastes once into the window that was active when recording began and cancels if another window was activated. It cannot detect a change between fields in the same window. The transcript is placed on the clipboard and left there. If KWin window tracking stops, Settings stops claiming insertion is ready. GNOME and other Wayland desktops remain copy-only.
+- Linux terminals (Konsole, GNOME Terminal, Ptyxis, kitty, Alacritty, foot, WezTerm, Ghostty, Tilix and others) paste with Ctrl+Shift+V by default instead of sending Ctrl+V to the shell. Per-app overrides still win.
+- Upgrading the `.rpm` keeps the `shuddhalekhan` command; uninstalling no longer leaves an empty `/opt/Shuddhalekhan` tree.
+- Managed Local no longer offers a GPU processor or GPU downloads on Linux, where no GPU build exists.
+- Linux shortcuts use desktop portals or X11 grabs and show the actual assigned trigger in Settings. X11 paste checks the original window, respects the server's keymap, and tracks clipboard ownership. The uinput paste device and packaged udev rule are removed; input-device shortcut observation remains a reported fallback.
+
 ### Transcription
+- A selected microphone that is no longer available (unplugged, or chosen in a development build) no longer fails every recording; capture uses another available microphone and the tray device list returns so you can pick again.
+- Empty recognition results now report that no speech was recognized instead of silently dismissing the recording, and say whether the input was nearly silent or clipping.
+- Dictation shows previews automatically with streaming providers and inserts the final transcript once after stopping. Existing Live settings migrate to Dictation without changing shortcuts or provider choices; Push to Talk and Toggle both work. Corrected Dictation keeps its final formatter step.
+- Microphone capture uses an AudioWorklet, bounded write credits and a private temporary spool. Finalization verifies the complete audio boundary. Cancelling aborts pending provider requests and delivery; provider settings, credentials and formatter choices stay fixed for each recording.
+- The recording pill distinguishes microphone preparation from recording, and its timer and provider duration limits start when capture is ready. A disconnected microphone or revoked access ends capture and releases the input device; renderer startup also has a deadline.
+- Managed Local setup includes on-device English punctuation and capitalization for CPU and NVIDIA GPU inference. Existing installations keep working and can explicitly install the remaining formatting files.
+- Parakeet supports personal dictionary hints, pinned to each recording and retained through CPU fallback. Granite TurboCTC vocabulary hints remain unavailable in its native runtime.
+- Transcription settings hide unsupported modes, translation, language detection, vocabulary, and cleanup controls. Provider transitions save together, and Corrected Dictation can be configured from Batch.
+- Google Cloud Speech requests automatic punctuation and sentence capitalization.
+- Managed Local now offers Parakeet unified English and compact Granite Speech 5 TurboCTC Q4. Each model remembers its Auto, CPU, or dedicated NVIDIA GPU preference. GPU setup is a separate download; Auto falls back to CPU when GPU startup or inference fails. Previous Parakeet CPU installs keep working until the replacement is ready, with explicit cleanup in Settings.
+- Managed Local now decodes each recording once after stopping, using its original model and processor choices. This removes repeated whole-prefix work and the worker's second recording buffer. Pause segmentation remains deferred after accuracy regressions in the evaluation fixtures.
+- On the dev set, the lean ONNX Runtime configuration used about 70% less CPU per transcription. Peak memory was about 120 MB lower. ONNX Runtime no longer spin-waits its worker threads or keeps decode scratch memory resident, and the local recognition runtime is updated to sherpa-onnx 2.0.1.
 - Provider setup status refreshes automatically when credentials are saved or removed.
 - Added Sarvam AI with Saaras v4/v3, English translation, verbatim, romanized and code-mixed output, supported language selection, and v4 dictionary hints. Recordings stop at the 30-second REST limit.
 
@@ -38,6 +58,8 @@ tags and commit history, not from this file. Keep new entries under
 - Removed the deprecated `recordingActivationMode` config alias from the public config surface; existing installs still seed per-intent activation modes from it once during migration.
 
 ### Agent Mode
+- Custom instructions: a free-text field in Agent settings adds your standing instructions to the agent's system prompt on every command, without breaking provider prompt caching.
+- Agent Mode can use your ChatGPT Plus or Pro plan. Choose "ChatGPT plan" as the provider, continue with ChatGPT in your browser, and pick a model. No API key is needed, and your plan's usage limits apply.
 - Added Skills settings to create, import, edit, enable, and remove local `skills/<name>/SKILL.md` workflows. Agent runs load relevant instructions and text references on demand while preserving MCP tool approvals.
 - Added optional automatic memory for useful user preferences and facts, stored locally as `agent-memory.md`. Memory settings supports editing, deleting, and clearing saved facts. Learning uses one extra bounded request to the configured model after a successful Agent run; Dictation does not read or write memory.
 - Agent runs now preserve stable prompt prefixes and tool ordering for provider caching, send OpenRouter cache markers and session routing, and record reported cache usage. OpenAI/Azure Settings offers a tested opt-in for supported cache breakpoints.
@@ -55,6 +77,7 @@ tags and commit history, not from this file. Keep new entries under
 - Settings surfaces share one visual vocabulary: consistent theme tokens for success and warning states, one disclosure pattern for advanced blocks, one select control in Shortcuts, less duplicated helper copy, a simpler device row in Audio, and visible feedback when an update check fails.
 
 ### Dictation Runtime
+- On Windows, Dictation rechecks the foreground process immediately before paste, so switching applications during clipboard staging cancels delivery and preserves Last Transcript for recovery.
 - Microphone capture now overlaps audio-context setup with device opening. The selected Managed Local model loads after app startup so the first Dictation can use it immediately once ready; an early recording shares the same in-progress load.
 - Fresh installations now use Managed Local Batch Dictation with Toggle activation. Shuddhalekhan downloads, verifies, installs, and loads a recommended local speech model without Docker, Python, CUDA, or a separate speech server; existing installations keep their provider, mode, shortcut, activation, and recognition settings.
 - First-run onboarding now guides model installation, a live default-microphone check, shortcut use, and one real Dictation. Setup completes only after the transcript is inserted into the original target application.

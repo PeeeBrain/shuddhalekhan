@@ -13,9 +13,10 @@ import {
 } from '@/components/ui/select';
 import { X } from 'lucide-react';
 import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
-import { Tag, ToggleRow, SelectRow, DraftTextRow } from './ui/rows';
+import { Tag, ToggleRow, SelectRow, DraftTextRow, ReadOnlyRow } from './ui/rows';
 import { Disclosure } from './ui/Disclosure';
 import { SetupChecklist } from './SetupChecklist';
+import { WaylandInsertionPanel } from './WaylandInsertionPanel';
 import { CredentialControl } from './ui/CredentialControl';
 import { WHISPER_LANGUAGES, isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
@@ -27,19 +28,26 @@ import type {
   FormatterApiKeySource,
   TranscriptionProviderId,
   TranscriptionReadiness,
+  ManagedLocalDevice,
   ManagedLocalModelSnapshot,
+  ManagedLocalTarget,
+  TranscriptionSettingsPatch,
 } from '../../types/ipc';
+import { cn } from '@/lib/utils';
+import { useManagedLocalSnapshot } from './use-managed-local-snapshot';
+import { ipcErrorMessage } from './use-settings-persistence';
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import {
-  getAppConfigDictationError,
+  getDictationConfigError,
   classifyFormatterEndpoint,
 } from '../../shared/dictation-runtime';
 import {
   SARVAM_LANGUAGES,
   SARVAM_MODELS,
   SARVAM_MODES,
-  getSarvamSettingsErrors,
   sarvamLanguageCode,
 } from '../../shared/sarvam';
+import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '../../shared/transcription-features';
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';
 
@@ -64,10 +72,14 @@ const FIELD_ID_NVIDIA_ENDPOINT = 'nvidia-endpoint';
 const FIELD_ID_NVIDIA_MODEL = 'nvidia-model';
 const FIELD_ID_PROVIDER = 'provider';
 const FIELD_ID_LOCAL_THREADS = 'managed-local-threads';
+const FIELD_ID_LOCAL_MODEL = 'managed-local-model';
+const FIELD_ID_LOCAL_DEVICE = 'managed-local-device';
 const FIELD_ID_DICTATION_MODE = 'dictation-mode';
 const FIELD_ID_FORMATTER_BASE_URL = 'formatter-base-url';
 const FIELD_ID_FORMATTER_MODEL = 'formatter-model';
 const FIELD_ID_FORMATTER_CONSENT = 'formatter-consent';
+const FIELD_ID_FORMATTER_KEY_SOURCE = 'formatter-key-source';
+const FIELD_ID_FORMATTER_KEY_ENV = 'formatter-key-env';
 
 interface ProviderOption {
   value: TranscriptionProviderId;
@@ -97,7 +109,7 @@ const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: Pro
     options: [
       { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM', description: 'Self-hosted NVIDIA offline transcription.' },
       { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible', description: 'A compatible private or local audio endpoint.' },
-      { value: 'whisper-live-kit', label: 'WhisperLiveKit', description: 'Self-hosted Batch Dictation with health and protocol readiness checks.' },
+      { value: 'whisper-live-kit', label: 'WhisperLiveKit', description: 'Self-hosted Dictation with live previews, health and protocol readiness checks.' },
     ],
   },
 ];
@@ -105,64 +117,20 @@ const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: Pro
 const PROVIDER_OPTIONS = PROVIDER_GROUPS.flatMap((group) => group.options);
 
 function ProviderSelector({
-  config,
   value,
-  settingsIpc,
+  status,
   error,
   onChange,
 }: {
-  config: AppConfig;
   value: TranscriptionProviderId;
-  settingsIpc: SettingsSectionProps['settingsIpc'];
+  status: ProviderStatus;
   error?: string;
   onChange: (value: string) => void;
 }) {
   const labelId = useId();
   const detailId = useId();
   const errorId = useId();
-  const credentialKind = providerCredentialKind(config, value);
-  const [credentialResult, setCredentialResult] = useState<{
-    kind: CredentialKind;
-    ready: boolean;
-  } | null>(null);
-
-  useEffect(() => {
-    let current = true;
-    const kind = providerCredentialKind(config, value);
-    if (!kind) return () => { current = false; };
-    let revision = 0;
-    const check = () => {
-      const request = ++revision;
-      settingsIpc.getCredentialStatus(kind)
-        .then((status) => {
-          if (current && request === revision) setCredentialResult({ kind, ready: status.available && status.exists });
-        })
-        .catch(() => {
-          if (current && request === revision) setCredentialResult({ kind, ready: false });
-        });
-    };
-    const off = settingsIpc.onCredentialChanged((credential) => {
-      if (credential === kind) check();
-    });
-    check();
-    return () => { current = false; off?.(); };
-  }, [config, settingsIpc, value]);
-
-  const credentialReady = credentialKind === null
-    ? true
-    : credentialResult?.kind === credentialKind
-      ? credentialResult.ready
-      : null;
-
   const selected = PROVIDER_OPTIONS.find((option) => option.value === value)!;
-  const fieldsReady = providerFieldsReady(config, value);
-  const readiness = !fieldsReady
-    ? { label: 'Setup required', tone: 'warning' as const }
-    : credentialReady === null
-      ? { label: 'Checking setup', tone: 'neutral' as const }
-      : credentialReady
-        ? { label: 'Configured', tone: 'success' as const }
-        : { label: 'Credential required', tone: 'warning' as const };
 
   return (
     <div className="border-b border-border/50 py-3.5 last:border-b-0 space-y-2">
@@ -193,7 +161,7 @@ function ProviderSelector({
         </SelectContent>
       </Select>
       <div id={detailId} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <Tag tone={readiness.tone}>{readiness.label}</Tag>
+        <Tag tone={status.tone}>{status.label}</Tag>
         <span>{selected.description}</span>
       </div>
       {error ? <p id={errorId} role="alert" className="text-xs text-destructive">{error}</p> : null}
@@ -406,13 +374,42 @@ export function TranscriptionSettings({
   onNavigate,
   settingsIpc,
 }: SettingsSectionProps) {
-  const { commit, fieldErrors } = persistence;
+  const { commitTranscription, fieldErrors } = persistence;
   const provider = config.transcription.activeProvider;
-  const [dictationModeError, setDictationModeError] = useState<string | undefined>();
+  const [transitionNotice, setTransitionNotice] = useState<string | null>(null);
+  const [formatterSetupOpen, setFormatterSetupOpen] = useState(false);
+  // Unsaved formatter edits; only a profile main can keep (URL + model) is saved while not Corrected.
+  const [formatterDraft, setFormatterDraft] = useState<DictationFormatterProfile | null>(null);
   // WhisperLiveKit readiness is owned here so the first-run checklist can only
   // mark the streaming step done from an actual readiness result.
   const [whisperLiveKitReadiness, setWhisperLiveKitReadiness] =
     useState<TranscriptionReadiness | null>(null);
+  const localSelection = config.managedLocal ?? DEFAULT_MANAGED_LOCAL;
+  const local = useManagedLocalSnapshot(
+    settingsIpc,
+    provider === 'managed-local' ? `${localSelection.model}:${localSelection.devices[localSelection.model]}` : null,
+  );
+  const localSnapshot = provider === 'managed-local' ? local.snapshot : null;
+  const features = resolveTranscriptionFeatures(config, localSnapshot?.model.languages);
+  const credentialReady = useCredentialReady(providerCredentialKind(config, provider), settingsIpc);
+  const status = providerStatus(config, credentialReady, localSnapshot ? localSnapshot.state.kind === 'ready' : null);
+  const engineLabel = provider === 'managed-local'
+    ? localSnapshot?.catalog?.find((item) => item.key === localSelection.model)?.name ?? localSnapshot?.model.name ?? 'Managed Local'
+    : provider === 'sarvam'
+      ? config.transcription.providers.sarvam.model === 'saaras:v3' ? 'Saaras v3' : 'Saaras v4'
+      : providerLabel(provider);
+
+  /** Every dependent transcription change goes through main in one step; main may normalize it. */
+  const transition: Transition = async (patch, fieldId) => {
+    setTransitionNotice(null);
+    const saved = await commitTranscription(patch, fieldId);
+    if (saved) setTransitionNotice(describeNormalization({ ...config, ...patch }, saved));
+    return saved;
+  };
+  const cleanupErrorId = useId();
+  const modeErrorId = useId();
+  const taskErrorId = useId();
+  const languageErrorId = useId();
 
   useEffect(() => {
     if (provider !== 'whisper-live-kit') return;
@@ -427,77 +424,74 @@ export function TranscriptionSettings({
     });
     return () => off?.();
   }, [settingsIpc, provider]);
-  const dictation = config.dictation ?? { mode: 'batch' as const, formatter: null };
-  const storedDictationModeError = getAppConfigDictationError({
-    ...config,
-    dictation,
-  });
+  const dictation = config.dictation;
+  const storedDictationModeError = getDictationConfigError(dictation) ?? undefined;
+  const formatter = formatterDraft ?? defaultFormatterProfile(dictation);
+  const correctedError = getDictationConfigError({ mode: 'corrected', formatter });
 
   const sarvam = config.transcription.providers.sarvam;
   const sarvamVerbatim = provider === 'sarvam' && sarvam.mode === 'verbatim' && config.task === 'transcribe';
-  const languageOptions = provider === 'managed-local'
-    ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
-      ? { ...option, label: 'Automatic language detection' }
-      : { ...option, disabled: true })
-    : provider === 'google-cloud-speech-v2'
-    ? WHISPER_LANGUAGES.map((option) => option.value === 'auto'
-      ? { ...option, label: 'Auto-detect (not supported by Google synchronous recognition)', disabled: true }
-      : option)
-    : provider === 'sarvam'
-    ? SARVAM_LANGUAGES
-    : WHISPER_LANGUAGES;
+  const { language: languageSupport } = features;
+  const languageOptions = languageSupport.kind === 'fixed'
+    ? []
+    : (provider === 'sarvam' ? SARVAM_LANGUAGES : WHISPER_LANGUAGES).filter((option) => option.value === 'auto'
+      ? features.automaticLanguageDetection
+      : languageSupport.codes?.includes(option.value) ?? true);
   // Sarvam accepts plain codes like `hi` as `hi-IN`; show the mapped option instead of a blank select.
   const languageValue = provider === 'sarvam'
     ? sarvamLanguageCode(config.language) ?? config.language
     : config.language;
-  const languageError = languageOptions.some((option) => option.value === languageValue)
-    ? undefined
-    : `${WHISPER_LANGUAGES.find((option) => option.value === config.language)?.label ?? config.language} is not supported by ${PROVIDER_OPTIONS.find((option) => option.value === provider)!.label}. Choose a supported language${provider === 'sarvam' ? ' or Auto-detect' : ''}.`;
-  const dictionaryError = provider === 'sarvam' && sarvam.model === 'saaras:v4'
-    ? getSarvamSettingsErrors(sarvam, 'auto', config.dictionary).join(' ') || undefined
+  const languageError = languageSupport.kind === 'select' && !languageOptions.some((option) => option.value === languageValue)
+    ? `${languageLabel(config.language)} is not supported by ${engineLabel}. Choose a supported language.`
     : undefined;
-
-  const handleProviderChange = async (value: string) => {
-    const nextProvider = value as TranscriptionProviderId;
-    const nextTranscription = {
-      ...config.transcription,
-      activeProvider: nextProvider,
+  const dictionaryError = features.dictionaryHints ? getTranscriptionDictionaryError(config) ?? undefined : undefined;
+  const modeOptions = [
+    { value: 'batch', label: MODE_LABELS.batch },
+    { value: 'corrected', label: MODE_LABELS.corrected },
+  ];
+  const transcriptionStep = provider === 'whisper-live-kit'
+    ? { label: 'Start WhisperLiveKit and check readiness', done: whisperLiveKitReadiness?.state === 'ready' }
+    : {
+      label: provider === 'managed-local'
+        ? 'Install the local speech model'
+        : provider === 'local-whisper-cpp' ? 'Set the whisper.cpp endpoint' : `Set up ${providerLabel(provider)}`,
+      done: status.tone === 'success',
     };
-    const combinationError = getAppConfigDictationError({
-      ...config,
-      dictation,
-      transcription: nextTranscription,
-    });
-    if (combinationError) {
-      setDictationModeError(combinationError);
-      return;
-    }
-    setDictationModeError(undefined);
-    await commit('transcription', nextTranscription, FIELD_ID_PROVIDER);
-    if ((nextProvider === 'managed-local'
-      || nextProvider === 'azure-speech'
-      || nextProvider === 'google-cloud-speech-v2'
-      || nextProvider === 'whisper-live-kit') && config.task === 'translate') {
-      await commit('task', 'transcribe', FIELD_ID_TASK);
-    }
-    if (nextProvider === 'google-cloud-speech-v2' && config.language === 'auto') {
-      await commit('language', 'en', FIELD_ID_LANGUAGE);
-    }
+
+  const handleProviderChange = (value: string) => {
+    void transition({
+      transcription: { ...config.transcription, activeProvider: value as TranscriptionProviderId },
+    }, FIELD_ID_PROVIDER);
+  };
+
+  const closeFormatterSetup = () => {
+    setFormatterSetupOpen(false);
+    setFormatterDraft(null);
+  };
+
+  const enableCorrected = async () => {
+    if (await transition({ dictation: { mode: 'corrected', formatter } }, FIELD_ID_DICTATION_MODE)) closeFormatterSetup();
   };
 
   const handleDictationModeChange = (value: string) => {
     const mode = value as DictationMode;
-    const next = { ...dictation, mode };
-    const error = getAppConfigDictationError({
-      ...config,
-      dictation: next,
-    });
-    if (error) {
-      setDictationModeError(error);
+    if (mode === 'corrected') {
+      // An incomplete formatter is set up in place instead of saving a broken Corrected mode.
+      if (correctedError) setFormatterSetupOpen(true);
+      else void enableCorrected();
       return;
     }
-    setDictationModeError(undefined);
-    void commit('dictation', next, FIELD_ID_DICTATION_MODE);
+    closeFormatterSetup();
+    void transition({ dictation: { ...dictation, mode } }, FIELD_ID_DICTATION_MODE);
+  };
+
+  /** Outside Corrected, only a profile main keeps (URL + model) is saved; anything less stays a draft. */
+  const saveFormatter = async (patch: Partial<DictationFormatterProfile>, fieldId: string) => {
+    const next = { ...formatter, ...patch };
+    setFormatterDraft(next);
+    if (dictation.mode !== 'corrected' && !(next.baseUrl.trim() && next.model.trim())) return;
+    const saved = await transition({ dictation: { ...dictation, formatter: next } }, fieldId);
+    if (saved || dictation.mode === 'corrected') setFormatterDraft(null);
   };
 
   return (
@@ -511,7 +505,7 @@ export function TranscriptionSettings({
           config={config}
           onNavigate={onNavigate}
           persistence={persistence}
-          whisperLiveKitReadiness={whisperLiveKitReadiness}
+          transcriptionStep={transcriptionStep}
         />
       ) : null}
       <SettingsPanel>
@@ -519,12 +513,17 @@ export function TranscriptionSettings({
         <SettingsCard>
         {provider === 'managed-local' ? (
           <>
-            <ManagedLocalSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+            <ManagedLocalSection
+              config={config}
+              persistence={persistence}
+              settingsIpc={settingsIpc}
+              local={local}
+              transition={transition}
+            />
             <Disclosure label="Use a different provider" className="border-b border-border/50 py-3.5 last:border-b-0">
               <ProviderSelector
-                config={config}
                 value={provider}
-                settingsIpc={settingsIpc}
+                status={status}
                 error={fieldErrors[FIELD_ID_PROVIDER]}
                 onChange={handleProviderChange}
               />
@@ -532,9 +531,8 @@ export function TranscriptionSettings({
           </>
         ) : (
           <ProviderSelector
-            config={config}
             value={provider}
-            settingsIpc={settingsIpc}
+            status={status}
             error={fieldErrors[FIELD_ID_PROVIDER]}
             onChange={handleProviderChange}
           />
@@ -545,11 +543,11 @@ export function TranscriptionSettings({
         ) : null}
 
         {provider === 'openai' ? (
-          <OpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+          <OpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} transition={transition} />
         ) : null}
 
         {provider === 'sarvam' ? (
-          <SarvamSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+          <SarvamSection config={config} persistence={persistence} settingsIpc={settingsIpc} transition={transition} />
         ) : null}
 
         {provider === 'azure-speech' ? (
@@ -561,11 +559,11 @@ export function TranscriptionSettings({
         ) : null}
 
         {provider === 'nvidia-speech-nim' ? (
-          <NvidiaSpeechNimSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+          <NvidiaSpeechNimSection config={config} persistence={persistence} settingsIpc={settingsIpc} transition={transition} />
         ) : null}
 
         {provider === 'custom-open-ai-compatible' ? (
-          <CustomOpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} />
+          <CustomOpenAiSection config={config} persistence={persistence} settingsIpc={settingsIpc} transition={transition} />
         ) : null}
 
         {provider === 'whisper-live-kit' ? (
@@ -579,118 +577,219 @@ export function TranscriptionSettings({
         ) : null}
         </SettingsCard>
       </SettingsPanel>
+      {transitionNotice ? (
+        <p role="status" className="-mt-4 px-1 text-xs leading-5 text-muted-foreground">{transitionNotice}</p>
+      ) : null}
 
       <SettingsPanel>
         <SettingsPanelHeader title="Output" />
         <SettingsCard>
-        <ToggleRow
-          title="Clean transcription"
-          description={sarvamVerbatim
-            ? 'Off while Sarvam verbatim mode is selected, so filler words stay exactly as spoken. Your saved choice applies to other modes.'
-            : 'Remove common filler words before dictation text is injected.'}
-          checked={config.removeFillerWords && !sarvamVerbatim}
-          disabled={sarvamVerbatim}
-          errorId={useId()}
-          error={fieldErrors[FIELD_ID_FILER]}
-          onChange={(checked) => commit('removeFillerWords', checked, FIELD_ID_FILER)}
-        />
+        {features.cleanup ? (
+          <ToggleRow
+            title="Clean transcription"
+            description="Remove common filler words before dictation text is injected."
+            checked={config.removeFillerWords}
+            errorId={cleanupErrorId}
+            error={fieldErrors[FIELD_ID_FILER]}
+            onChange={(checked) => void transition({ removeFillerWords: checked }, FIELD_ID_FILER)}
+          />
+        ) : (
+          <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
+            {sarvamVerbatim
+              ? 'Clean transcription is off while Sarvam verbatim mode is selected, so filler words stay exactly as spoken. Your saved choice applies to other modes.'
+              : `Clean transcription is not available with ${engineLabel}. Your saved choice applies to other providers.`}
+          </p>
+        )}
         <SelectRow
           label="Dictation mode"
           value={dictation.mode}
-          options={[
-            { value: 'batch', label: 'Batch Dictation' },
-            { value: 'live', label: 'Live Dictation (beta)' },
-            { value: 'corrected', label: 'Corrected Dictation' },
-          ]}
-          description="Batch inserts text once you stop. Live and Corrected need a supported provider."
-          errorId={useId()}
-          error={dictationModeError ?? storedDictationModeError ?? fieldErrors[FIELD_ID_DICTATION_MODE]}
+          options={modeOptions}
+          description={`Text is inserted once, after you stop. Corrected Dictation first sends the finished transcript to a formatter model you set up.${features.streaming
+            ? ` ${engineLabel} also shows a preview while you speak; it replaces the former Live Dictation mode.`
+            : ''}`}
+          errorId={modeErrorId}
+          error={storedDictationModeError ?? fieldErrors[FIELD_ID_DICTATION_MODE]}
           onChange={handleDictationModeChange}
         />
-        {dictation.mode === 'corrected' ? (
+        {dictation.mode === 'corrected' || formatterSetupOpen ? (
           <CorrectedDictationFormatterSection
-            dictation={dictation}
+            formatter={formatter}
             persistence={persistence}
             settingsIpc={settingsIpc}
-            onDictationCommit={(next) => commit('dictation', next, FIELD_ID_DICTATION_MODE)}
+            onChange={(patch, fieldId) => void saveFormatter(patch, fieldId)}
           />
         ) : null}
-        <SelectRow
-          label="Task"
-          value={config.task}
-          options={[
-            { value: 'transcribe', label: 'Transcribe spoken language' },
-            {
-              value: 'translate',
-              label: provider === 'whisper-live-kit'
-                ? 'Translate speech to English (not supported by WhisperLiveKit)'
-                : provider === 'azure-speech'
-                  ? 'Translate speech to English (not supported by Azure Fast Transcription)'
-                  : provider === 'google-cloud-speech-v2'
-                    ? 'Translate speech to English (not supported by Google synchronous recognition)'
-                    : provider === 'sarvam'
-                      ? 'Translate speech to English (Sarvam translate mode)'
-                      : 'Translate speech to English',
-              disabled: provider === 'managed-local' || provider === 'azure-speech' || provider === 'google-cloud-speech-v2' || provider === 'whisper-live-kit',
-            },
-          ]}
-          description={provider === 'managed-local'
-            ? 'Managed Local supports transcription. Corrected Dictation can format its finalized local transcript.'
-            : provider === 'whisper-live-kit'
-            ? 'WhisperLiveKit batch transcription supports transcription only. Shuddhalekhan does not send translation requests.'
-            : provider === 'azure-speech'
-              ? 'Azure Fast Transcription supports transcription only. Translation is not sent to another service.'
-              : provider === 'google-cloud-speech-v2'
-                ? 'Google synchronous recognition transcribes only. Shuddhalekhan does not invoke Google Translate.'
-                : provider === 'sarvam'
-                  ? 'Translate always returns English text and replaces the Sarvam output mode.'
-                  : undefined}
-          errorId={useId()}
-          error={fieldErrors[FIELD_ID_TASK]}
-          onChange={(value) => commit('task', value as AppConfig['task'], FIELD_ID_TASK)}
-        />
-        <SelectRow
-          label="Spoken language"
-          value={languageValue}
-          options={languageOptions}
-          description={provider === 'managed-local'
-            ? 'The installed model detects its supported European languages automatically.'
-            : provider === 'google-cloud-speech-v2'
-            ? 'Choose an explicit language. Shuddhalekhan does not substitute the Windows language.'
-            : provider === 'sarvam'
-            ? sarvam.model === 'saaras:v4'
-              ? 'Sarvam supports 22 Indian languages and English, including global English accents on Saaras v4.'
-              : 'Sarvam supports 22 Indian languages and Indian English.'
-            : undefined}
-          errorId={useId()}
-          error={fieldErrors[FIELD_ID_LANGUAGE] ?? languageError}
-          onChange={(value) => commit('language', provider === 'sarvam' ? value.split('-')[0] : value, FIELD_ID_LANGUAGE)}
-        />
-        <DictionaryRow
-          dictionary={config.dictionary}
-          disabled={provider === 'managed-local' || provider === 'whisper-live-kit' || (provider === 'sarvam' && sarvam.model === 'saaras:v3')}
-          description={provider === 'managed-local'
-            ? 'Managed Local does not support dictionary hints. Saved words stay available for other providers.'
-            : provider === 'whisper-live-kit'
-              ? 'WhisperLiveKit does not support dictionary hints. Saved words stay available for other providers.'
-            : provider === 'sarvam'
-              ? sarvam.model === 'saaras:v3'
-                ? 'Saaras v3 does not support key terms, so your dictionary is not sent. Saved words stay available for Saaras v4 and other providers.'
-                : 'Sent to Saaras v4 as key terms: up to 50 names, brands, or technical terms. Press Enter to add.'
-            : undefined}
-          error={fieldErrors[FIELD_ID_DICTIONARY] ?? dictionaryError}
-          onChange={(next) => commit('dictionary', next, FIELD_ID_DICTIONARY)}
-        />
+        {dictation.mode !== 'corrected' && formatterSetupOpen ? (
+          <div className="flex flex-wrap items-center gap-3 border-b border-border/50 py-3.5 last:border-b-0">
+            <Button size="sm" disabled={Boolean(correctedError)} onClick={() => void enableCorrected()}>
+              Turn on Corrected Dictation
+            </Button>
+            <Button size="sm" variant="ghost" onClick={closeFormatterSetup}>Cancel</Button>
+            {correctedError ? <span className="text-xs text-muted-foreground">{correctedError}</span> : null}
+          </div>
+        ) : null}
+        {features.translation ? (
+          <SelectRow
+            label="Task"
+            value={config.task}
+            options={[
+              { value: 'transcribe', label: 'Transcribe spoken language' },
+              { value: 'translate', label: 'Translate speech to English' },
+            ]}
+            description={provider === 'sarvam'
+              ? 'Translate always returns English text and replaces the Sarvam output mode.'
+              : undefined}
+            errorId={taskErrorId}
+            error={fieldErrors[FIELD_ID_TASK]}
+            onChange={(value) => void transition({ task: value as AppConfig['task'] }, FIELD_ID_TASK)}
+          />
+        ) : null}
+        {languageSupport.kind === 'fixed' ? (
+          <ReadOnlyRow
+            label="Spoken language"
+            value={languageLabel(languageSupport.value)}
+            description={languageSupport.value === 'auto'
+              ? `The installed model detects its supported languages automatically: ${localSnapshot?.model.languages.join(', ')}.`
+              : `${engineLabel} transcribes English only.`}
+          />
+        ) : (
+          <SelectRow
+            label="Spoken language"
+            value={languageValue}
+            options={languageOptions}
+            description={provider === 'sarvam'
+              ? sarvam.model === 'saaras:v4'
+                ? 'Sarvam supports 22 Indian languages and English, including global English accents on Saaras v4.'
+                : 'Sarvam supports 22 Indian languages and Indian English.'
+              : features.automaticLanguageDetection
+                ? undefined
+                : `${engineLabel} needs an explicit language. Shuddhalekhan does not substitute the system language.`}
+            errorId={languageErrorId}
+            error={fieldErrors[FIELD_ID_LANGUAGE] ?? languageError}
+            onChange={(value) => void transition({ language: provider === 'sarvam' ? value.split('-')[0] : value }, FIELD_ID_LANGUAGE)}
+          />
+        )}
+        {features.dictionaryHints ? (
+          <DictionaryRow
+            dictionary={config.dictionary}
+            description={features.dictionaryMaxTerms !== null
+              ? `Sent to ${engineLabel} as hints: up to ${features.dictionaryMaxTerms} names, brands, or technical terms. Press Enter to add.`
+              : undefined}
+            error={fieldErrors[FIELD_ID_DICTIONARY] ?? (dictionaryError && provider === 'managed-local'
+              ? `${dictionaryError} Local vocabulary is not applied until this list is compatible. Your saved words are unchanged.`
+              : dictionaryError)}
+            validateAddition={(next) => getTranscriptionDictionaryError({ ...config, dictionary: next })}
+            onChange={(next) => void transition({ dictionary: next }, FIELD_ID_DICTIONARY)}
+          />
+        ) : (
+          <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
+            {engineLabel} does not use dictionary hints
+            {config.dictionary.length > 0
+              ? `. Your ${config.dictionary.length} saved ${config.dictionary.length === 1 ? 'word stays' : 'words stay'} available for other providers.`
+              : '.'}
+          </p>
+        )}
         </SettingsCard>
       </SettingsPanel>
-      <PrivacyNote provider={provider} />
+      <WaylandInsertionPanel settingsIpc={settingsIpc} />
+      <PrivacyNote provider={provider} formatter={dictation.mode === 'corrected' ? dictation.formatter : null} />
     </div>
   );
 }
 
-function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<SettingsSectionProps, 'config' | 'persistence' | 'settingsIpc'>) {
-  const [snapshot, setSnapshot] = useState<ManagedLocalModelSnapshot | null>(null);
+type Transition = (patch: TranscriptionSettingsPatch, fieldId: string) => Promise<AppConfig | null>;
+
+const MODE_LABELS: Record<DictationMode, string> = {
+  batch: 'Dictation',
+  corrected: 'Corrected Dictation',
+};
+
+function providerLabel(provider: TranscriptionProviderId): string {
+  return PROVIDER_OPTIONS.find((option) => option.value === provider)!.label;
+}
+
+function languageLabel(code: string): string {
+  return WHISPER_LANGUAGES.find((option) => option.value === code)?.label
+    ?? SARVAM_LANGUAGES.find((option) => option.value === code)?.label
+    ?? code;
+}
+
+/** Explains what main changed while saving a transition, or null when it saved what was asked. */
+function describeNormalization(requested: AppConfig, saved: AppConfig): string | null {
+  const engine = providerLabel(saved.transcription.activeProvider);
+  const notes: string[] = [];
+  if (requested.task !== saved.task) notes.push(`Task is now Transcribe because ${engine} doesn't translate.`);
+  if (requested.language !== saved.language) {
+    notes.push(`Spoken language is now ${languageLabel(saved.language)} because ${engine} doesn't support ${languageLabel(requested.language)}.`);
+  }
+  return notes.join(' ') || null;
+}
+
+/** Re-checks when the provider's credential kind changes or the vault reports a change; null while checking. */
+function useCredentialReady(kind: CredentialKind | null, settingsIpc: SettingsSectionProps['settingsIpc']): boolean | null {
+  const [result, setResult] = useState<{ kind: CredentialKind; ready: boolean } | null>(null);
+  useEffect(() => {
+    if (!kind) return;
+    let current = true;
+    let revision = 0;
+    const check = () => {
+      const request = ++revision;
+      settingsIpc.getCredentialStatus(kind)
+        .then((status) => {
+          if (current && request === revision) setResult({ kind, ready: status.available && status.exists });
+        })
+        .catch(() => {
+          if (current && request === revision) setResult({ kind, ready: false });
+        });
+    };
+    const off = settingsIpc.onCredentialChanged((credential) => {
+      if (credential === kind) check();
+    });
+    check();
+    return () => { current = false; off?.(); };
+  }, [kind, settingsIpc]);
+  return kind === null ? true : result?.kind === kind ? result.ready : null;
+}
+
+type ProviderStatus = { label: string; tone: 'success' | 'warning' | 'neutral' };
+
+/** Setup badge for the active provider. "Configured" means saved settings, never live reachability. */
+function providerStatus(config: AppConfig, credentialReady: boolean | null, localInstalled: boolean | null): ProviderStatus {
+  const provider = config.transcription.activeProvider;
+  if (provider === 'managed-local') {
+    return localInstalled === null
+      ? { label: 'Checking setup', tone: 'neutral' }
+      : localInstalled ? { label: 'Installed', tone: 'success' } : { label: 'Download required', tone: 'warning' };
+  }
+  if (!providerFieldsReady(config, provider)) return { label: 'Setup required', tone: 'warning' };
+  if (provider === 'google-cloud-speech-v2' && config.transcription.providers.googleCloudSpeech.credentialSource === 'adc') {
+    return { label: 'Uses system credentials, not checked', tone: 'neutral' };
+  }
+  return credentialReady === null
+    ? { label: 'Checking setup', tone: 'neutral' }
+    : credentialReady ? { label: 'Configured', tone: 'success' } : { label: 'Credential required', tone: 'warning' };
+}
+
+// Only the non-obvious behavior gets words: Auto's fallback and the GPU option's lack of one.
+const DEVICE_DESCRIPTIONS: Record<ManagedLocalDevice, string> = {
+  auto: 'Uses the GPU once its files are installed, otherwise the CPU.',
+  cpu: '',
+  cuda: 'No CPU fallback. Recording fails if the GPU cannot start.',
+};
+
+type ManagedLocalArtifact = ManagedLocalModelSnapshot['catalog'][number]['cpu'];
+
+function ManagedLocalSection({ config, persistence, settingsIpc, local, transition }: Props & {
+  local: ReturnType<typeof useManagedLocalSnapshot>;
+  transition: Transition;
+}) {
+  const selection = config.managedLocal ?? DEFAULT_MANAGED_LOCAL;
+  const device = selection.devices[selection.model];
+  const { snapshot, loadError, refresh, accept } = local;
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const modelGroupName = useId();
+  const deviceErrorId = useId();
   const [draftThreads, setDraftThreads] = useState<number | null>(null);
   const threadsId = useId();
   const threadsDescriptionId = useId();
@@ -705,66 +804,170 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
     void persistence.commit('managedLocalThreads', next, FIELD_ID_LOCAL_THREADS);
   };
 
-  useEffect(() => {
-    void settingsIpc.getManagedLocalModel().then(setSnapshot).catch(() => {
-      setError('Could not check the local speech model.');
-    });
-    const off = settingsIpc.onManagedLocalModelStateChanged((state) => {
-      setSnapshot((current) => current ? { ...current, state } : current);
-    });
-    return () => off?.();
-  }, [settingsIpc]);
+  // Older snapshots have no catalog: fall back to the single primary model view.
+  const catalog = snapshot?.catalog;
+  const entry = catalog?.find((item) => item.key === selection.model);
+  const cpu: ManagedLocalArtifact | null = entry?.cpu
+    ?? (snapshot ? { downloadBytes: snapshot.model.downloadBytes, installedBytes: snapshot.model.installedBytes, state: snapshot.state } : null);
+  const gpu = entry?.cuda;
+  const runtime = snapshot?.runtime;
+  const showGpuFiles = device !== 'cpu' || (gpu !== undefined && gpu.state.kind !== 'missing');
+  const offerAlternatives = gpu !== undefined && device === 'cuda' && (gpu.state.kind !== 'ready' || runtime?.status === 'error');
 
-  const install = async () => {
-    setError('');
-    try {
-      setSnapshot(await settingsIpc.installManagedLocalModel());
-    } catch (installError) {
-      setError(installError instanceof Error ? installError.message : 'Model installation failed.');
-      void settingsIpc.getManagedLocalModel().then(setSnapshot);
-    }
-  };
+  const saveDevice = (next: ManagedLocalDevice) => void persistence.commit('managedLocal', {
+    ...selection,
+    devices: { ...selection.devices, [selection.model]: next },
+  }, FIELD_ID_LOCAL_DEVICE);
 
-  const remove = async () => {
+  // ponytail: one artifact action at a time; allow parallel CPU/GPU downloads if main supports it.
+  const runAction = async (backend: ManagedLocalTarget['backend'], action: 'install' | 'delete' | 'delete-legacy') => {
+    const target = entry ? { model: selection.model, backend } : undefined;
     setError('');
+    setBusy(true);
     try {
-      setSnapshot(await settingsIpc.deleteManagedLocalModel());
-    } catch {
-      setError('Could not delete the local speech model. Retry.');
+      accept(await (action === 'install'
+        ? settingsIpc.installManagedLocalModel(target)
+        : settingsIpc.deleteManagedLocalModel(target && action === 'delete-legacy' ? { ...target, legacy: true } : target)));
+    } catch (actionError) {
+      setError(ipcErrorMessage(actionError, action === 'install'
+        ? 'Installation failed. Retry.'
+        : 'Could not delete these files. Retry.'));
+      void refresh();
+    } finally {
+      setBusy(false);
     }
   };
 
   return (
     <div className="border-b border-border/50 py-3.5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-0.5">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            Local speech model
-            {snapshot?.state.kind === 'ready' ? <Tag tone="success">Ready offline</Tag> : null}
-          </p>
-          {snapshot ? (
-            <p className="text-xs text-muted-foreground">
-              {snapshot.model.name} · {Math.round(snapshot.model.downloadBytes / 1_000_000)} MB download · {snapshot.model.languages.length} languages
-            </p>
-          ) : <p className="text-xs text-muted-foreground">Checking status…</p>}
-        </div>
-        {snapshot?.state.kind === 'ready' ? (
-          <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" onClick={() => void remove()}>Delete model</Button>
-        ) : snapshot?.state.kind === 'downloading' || snapshot?.state.kind === 'installing' ? null : (
-          <Button size="sm" onClick={() => void install()}>
-            {snapshot?.state.kind === 'error'
-              ? snapshot.state.action === 'resume' ? 'Resume' : snapshot.state.action === 'repair' ? 'Repair' : 'Retry'
-              : 'Install'}
-          </Button>
-        )}
-      </div>
-      {snapshot?.state.kind === 'downloading' ? (
-        <p className="mt-3 text-xs" role="status">Downloading… {Math.round(snapshot.state.downloadedBytes / snapshot.state.totalBytes * 100)}%</p>
+      {catalog && catalog.length > 1 ? (
+        <fieldset className="space-y-2">
+          <legend className="mb-2 text-sm font-medium">Local speech model</legend>
+          {catalog.map((item) => {
+            const selected = item.key === selection.model;
+            return (
+              <label
+                key={item.key}
+                className={cn(
+                  'flex cursor-pointer items-start gap-3 rounded-lg border p-3',
+                  selected ? 'border-primary/60 bg-primary/5' : 'border-border/60 hover:bg-muted/40',
+                )}
+              >
+                <input
+                  type="radio"
+                  name={modelGroupName}
+                  value={item.key}
+                  checked={selected}
+                  className="mt-1 accent-primary"
+                  // The model decides language and dictionary support, so main normalizes the switch.
+                  onChange={() => void transition({ managedLocal: { ...selection, model: item.key } }, FIELD_ID_LOCAL_MODEL)}
+                />
+                <span className="min-w-0 space-y-0.5">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                    {item.name}
+                    {item.key === DEFAULT_MANAGED_LOCAL.model ? <Tag tone="info">Recommended</Tag> : null}
+                  </span>
+                  <span className="block text-xs leading-5 text-muted-foreground">{item.description}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {[
+                      item.languages.join(', '),
+                      item.cpu.state.kind === 'ready' || item.cpu.legacy?.inUse ? 'Installed' : null,
+                      item.cuda?.state.kind === 'ready' ? 'GPU ready' : null,
+                    ].filter(Boolean).join(' · ')}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+          {persistence.fieldErrors[FIELD_ID_LOCAL_MODEL] ? (
+            <p role="alert" className="text-xs text-destructive">{persistence.fieldErrors[FIELD_ID_LOCAL_MODEL]}</p>
+          ) : null}
+        </fieldset>
+      ) : (
+        <p className="text-sm font-medium">
+          Local speech model
+          {snapshot ? <span className="ml-2 text-xs font-normal text-muted-foreground">{entry?.name ?? snapshot.model.name}</span> : null}
+        </p>
+      )}
+      {!snapshot ? (
+        <p className="mt-1 text-xs text-muted-foreground">{loadError ? 'Could not check local speech models.' : 'Checking status…'}</p>
       ) : null}
-      {snapshot?.state.kind === 'installing' ? <p className="mt-3 text-xs" role="status">Verifying and installing…</p> : null}
-      {snapshot?.state.kind === 'error' ? <p className="mt-3 text-xs text-destructive" role="alert">{snapshot.state.message}</p> : null}
-      {error ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
-      {snapshot ? (
+
+      {entry ? (
+        <div className="mt-4 border-t border-border/50">
+          {gpu ? <SelectRow
+            label="Processor"
+            value={device}
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'cpu', label: 'CPU' },
+              { value: 'cuda', label: snapshot?.gpu?.name ?? 'NVIDIA GPU' },
+            ]}
+            description={[DEVICE_DESCRIPTIONS[device], device !== 'cpu' ? snapshot?.gpu?.message : ''].filter(Boolean).join(' ')}
+            errorId={deviceErrorId}
+            error={persistence.fieldErrors[FIELD_ID_LOCAL_DEVICE]}
+            onChange={(value) => saveDevice(value as ManagedLocalDevice)}
+          /> : null}
+          {runtime ? <RuntimeStatus runtime={runtime} /> : null}
+          {offerAlternatives ? (
+            <div className="flex flex-wrap items-center gap-2 pb-3 text-xs text-muted-foreground">
+              <span>
+                {gpu?.state.kind !== 'ready' ? 'Install GPU files below, or switch processor.' : 'The GPU could not start.'}
+              </span>
+              <Button variant="secondary" size="xs" onClick={() => saveDevice('auto')}>Use Auto</Button>
+              <Button variant="ghost" size="xs" onClick={() => saveDevice('cpu')}>Use CPU</Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {cpu ? (
+        <div className="mt-2 divide-y divide-border/50 border-t border-border/50">
+          <p className="py-3 text-xs leading-5 text-muted-foreground">
+            Setup includes local punctuation and capitalization for CPU and GPU. Existing installs keep working; install any remaining files to enable it.
+          </p>
+          <ArtifactRow
+            title={entry ? 'CPU files' : 'Model files'}
+            artifact={cpu}
+            installLabel={cpu.legacy?.inUse ? 'Install update' : 'Install'}
+            deleteLabel={entry ? 'Delete CPU files' : 'Delete model'}
+            busy={busy}
+            onInstall={() => void runAction('cpu', 'install')}
+            onDelete={() => void runAction('cpu', 'delete')}
+          />
+          {cpu.legacy ? (
+            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-3">
+              <div className="min-w-0 space-y-0.5">
+                <p className="flex items-center gap-2 text-sm">
+                  {cpu.legacy.name}
+                  {cpu.legacy.inUse ? <Tag tone="info">In use</Tag> : null}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatMegabytes(cpu.legacy.installedBytes)} · {cpu.legacy.inUse ? 'In use until the update is installed' : 'No longer used'}
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={busy}
+                onClick={() => void runAction('cpu', 'delete-legacy')}>Delete previous files</Button>
+            </div>
+          ) : null}
+          {gpu && showGpuFiles ? (
+            <ArtifactRow
+              title="GPU files"
+              artifact={gpu}
+              optional
+              installLabel="Install"
+              deleteLabel="Delete GPU files"
+              busy={busy}
+              onInstall={() => void runAction('cuda', 'install')}
+              onDelete={() => void runAction('cuda', 'delete')}
+            />
+          ) : null}
+        </div>
+      ) : null}
+      {/* A failed artifact already shows its error in its own row. */}
+      {error && cpu?.state.kind !== 'error' && gpu?.state.kind !== 'error'
+        ? <p className="mt-3 text-xs text-destructive" role="alert">{error}</p> : null}
+      {snapshot && device !== 'cuda' ? (
         <div className="mt-4 space-y-2 border-t border-border/50 pt-3.5">
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor={threadsId}>CPU threads</Label>
@@ -789,8 +992,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
           />
           <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
             <p id={threadsDescriptionId} className="max-w-md text-xs leading-5 text-muted-foreground">
-              More threads can finish sooner but use more CPU and battery. Quality is unchanged.
-              Default is {snapshot.inference.defaultThreads}; changes apply to the next transcription.
+              More threads finish sooner but use more battery.
             </p>
             <Button
               variant="ghost"
@@ -807,6 +1009,74 @@ function ManagedLocalSection({ config, persistence, settingsIpc }: Pick<Settings
       ) : null}
     </div>
   );
+}
+
+function RuntimeStatus({ runtime }: { runtime: ManagedLocalModelSnapshot['runtime'] }) {
+  const backend = runtime.backend === 'cuda' ? 'NVIDIA GPU' : 'CPU';
+  const tag = runtime.status === 'ready'
+    ? { tone: runtime.backend === 'cuda' ? 'success' as const : 'neutral' as const, label: `Running on ${backend}` }
+    : runtime.status === 'loading'
+      ? { tone: 'info' as const, label: 'Starting' }
+      : runtime.status === 'error'
+        ? { tone: 'error' as const, label: 'Could not start' }
+        : { tone: 'neutral' as const, label: 'Starts with the next recording' };
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pb-3 text-xs" role="status">
+      <Tag tone={tag.tone}>{tag.label}</Tag>
+      {runtime.message ? (
+        <span className={runtime.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}>{runtime.message}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function ArtifactRow({ title, artifact, optional = false, installLabel, deleteLabel, busy, onInstall, onDelete }: {
+  title: string;
+  artifact: ManagedLocalArtifact;
+  optional?: boolean;
+  installLabel: string;
+  deleteLabel: string;
+  busy: boolean;
+  onInstall: () => void;
+  onDelete: () => void;
+}) {
+  const { state } = artifact;
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 py-3">
+      <div className="min-w-0 space-y-0.5">
+        <p className="flex items-center gap-2 text-sm">
+          {title}
+          {state.kind === 'ready' ? <Tag tone="success">Installed</Tag> : null}
+        </p>
+        {state.kind === 'ready' || state.kind === 'missing' ? (
+          <p className="text-xs text-muted-foreground">
+            {state.kind === 'ready' ? formatMegabytes(artifact.installedBytes) : `${formatMegabytes(artifact.downloadBytes)} download`}
+          </p>
+        ) : null}
+        {state.kind === 'downloading' ? (
+          <p className="text-xs" role="status">
+            Downloading… {state.totalBytes > 0 ? Math.round(state.downloadedBytes / state.totalBytes * 100) : 0}%
+            {' '}({formatMegabytes(state.downloadedBytes)} of {formatMegabytes(state.totalBytes)})
+          </p>
+        ) : null}
+        {state.kind === 'installing' ? <p className="text-xs" role="status">Verifying and installing…</p> : null}
+        {state.kind === 'error' ? <p className="text-xs text-destructive" role="alert">{state.message}</p> : null}
+      </div>
+      {state.kind === 'ready' ? (
+        <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={busy} onClick={onDelete}>{deleteLabel}</Button>
+      ) : state.kind === 'downloading' || state.kind === 'installing' ? null : (
+        <Button size="sm" variant={optional && state.kind !== 'error' ? 'secondary' : 'default'} disabled={busy} onClick={onInstall}>
+          {state.kind === 'error'
+            ? state.action === 'resume' ? 'Resume' : state.action === 'repair' ? 'Repair' : 'Retry'
+            : installLabel}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${Math.round(bytes / 1_000_000)} MB`;
 }
 
 interface Props {
@@ -826,18 +1096,17 @@ function defaultFormatterProfile(dictation: AppConfig['dictation']): DictationFo
 }
 
 function CorrectedDictationFormatterSection({
-  dictation,
+  formatter,
   persistence,
   settingsIpc,
-  onDictationCommit,
+  onChange,
 }: {
-  dictation: AppConfig['dictation'];
+  formatter: DictationFormatterProfile;
   persistence: import('./use-settings-persistence').SettingsPersistence;
   settingsIpc: import('./settings-ipc').SettingsIpc;
-  onDictationCommit: (next: AppConfig['dictation']) => void;
+  onChange: (patch: Partial<DictationFormatterProfile>, fieldId: string) => void;
 }) {
   const { fieldErrors, clearFieldError } = persistence;
-  const formatter = defaultFormatterProfile(dictation);
   const endpointClass = classifyFormatterEndpoint(formatter.baseUrl);
   const apiKeySource = formatter.apiKeySource ?? 'environment';
   const formatterBaseUrlErrorId = useId();
@@ -850,11 +1119,6 @@ function CorrectedDictationFormatterSection({
     : isLocalProviderUrl(formatter.baseUrl)
       ? 'Local formatters can leave the API key reference empty.'
       : undefined;
-
-  const updateFormatter = (patch: Partial<DictationFormatterProfile>) => {
-    const nextFormatter = { ...formatter, ...patch };
-    onDictationCommit({ ...dictation, formatter: nextFormatter });
-  };
 
   return (
     <div className="border-b border-border/50 py-3.5 last:border-b-0 space-y-2">
@@ -876,7 +1140,7 @@ function CorrectedDictationFormatterSection({
         placeholder="http://127.0.0.1:11434/v1"
         errorId={formatterBaseUrlErrorId}
         error={fieldErrors[FIELD_ID_FORMATTER_BASE_URL]}
-        onCommit={(baseUrl) => updateFormatter({ baseUrl })}
+        onCommit={(baseUrl) => onChange({ baseUrl }, FIELD_ID_FORMATTER_BASE_URL)}
         clearError={() => clearFieldError(FIELD_ID_FORMATTER_BASE_URL)}
       />
       <DraftTextRow
@@ -885,7 +1149,7 @@ function CorrectedDictationFormatterSection({
         placeholder="formatter"
         errorId={formatterModelErrorId}
         error={fieldErrors[FIELD_ID_FORMATTER_MODEL]}
-        onCommit={(model) => updateFormatter({ model })}
+        onCommit={(model) => onChange({ model }, FIELD_ID_FORMATTER_MODEL)}
         clearError={() => clearFieldError(FIELD_ID_FORMATTER_MODEL)}
       />
       <SelectRow
@@ -896,10 +1160,11 @@ function CorrectedDictationFormatterSection({
           { value: 'stored', label: 'Saved in Shuddhalekhan' },
         ]}
         errorId={formatterApiKeySourceErrorId}
-        onChange={(value) => updateFormatter({
+        error={fieldErrors[FIELD_ID_FORMATTER_KEY_SOURCE]}
+        onChange={(value) => onChange({
           apiKeySource: value as FormatterApiKeySource,
           apiKeyEnvVar: value === 'stored' ? '' : formatter.apiKeyEnvVar,
-        })}
+        }, FIELD_ID_FORMATTER_KEY_SOURCE)}
       />
       {apiKeySource === 'environment' ? (
         <DraftTextRow
@@ -908,7 +1173,8 @@ function CorrectedDictationFormatterSection({
           placeholder="OPENAI_API_KEY"
           warning={apiKeyWarning}
           errorId={formatterApiKeyEnvVarErrorId}
-          onCommit={(apiKeyEnvVar) => updateFormatter({ apiKeyEnvVar })}
+          error={fieldErrors[FIELD_ID_FORMATTER_KEY_ENV]}
+          onCommit={(apiKeyEnvVar) => onChange({ apiKeyEnvVar }, FIELD_ID_FORMATTER_KEY_ENV)}
         />
       ) : (
         <CredentialControl
@@ -923,7 +1189,7 @@ function CorrectedDictationFormatterSection({
         checked={formatter.processingConsent}
         errorId={formatterConsentErrorId}
         error={fieldErrors[FIELD_ID_FORMATTER_CONSENT]}
-        onChange={(checked) => updateFormatter({ processingConsent: checked })}
+        onChange={(checked) => onChange({ processingConsent: checked }, FIELD_ID_FORMATTER_CONSENT)}
       />
     </div>
   );
@@ -1030,7 +1296,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
   );
 }
 
-function OpenAiSection({ config, persistence, settingsIpc }: Props) {
+function OpenAiSection({ config, persistence, settingsIpc, transition }: Props & { transition: Transition }) {
   const { commit, fieldErrors } = persistence;
   const openai = config.transcription.providers.openai;
 
@@ -1058,9 +1324,12 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
         errorId={useId()}
         error={fieldErrors[FIELD_ID_OPENAI_MODEL]}
         validate={validateModelName}
-        onCommit={(value) => commit('transcription', {
-          ...config.transcription,
-          providers: { ...config.transcription.providers, openai: { ...openai, model: value.trim() } },
+        // The model decides translation and dictionary support, so main normalizes the change.
+        onCommit={(value) => void transition({
+          transcription: {
+            ...config.transcription,
+            providers: { ...config.transcription.providers, openai: { ...openai, model: value.trim() } },
+          },
         }, FIELD_ID_OPENAI_MODEL)}
         clearError={() => persistence.clearFieldError(FIELD_ID_OPENAI_MODEL)}
       />
@@ -1075,13 +1344,12 @@ function OpenAiSection({ config, persistence, settingsIpc }: Props) {
   );
 }
 
-function SarvamSection({ config, persistence, settingsIpc }: Props) {
-  const { commit, fieldErrors } = persistence;
+function SarvamSection({ config, persistence, settingsIpc, transition }: Props & { transition: Transition }) {
+  const { fieldErrors } = persistence;
   const sarvam = config.transcription.providers.sarvam;
   const modeErrorId = useId();
-  const save = (next: SarvamConfig, field: string) => commit('transcription', {
-    ...config.transcription,
-    providers: { ...config.transcription.providers, sarvam: next },
+  const save = (next: SarvamConfig, field: string) => void transition({
+    transcription: { ...config.transcription, providers: { ...config.transcription.providers, sarvam: next } },
   }, field);
 
   return (
@@ -1120,7 +1388,7 @@ function SarvamSection({ config, persistence, settingsIpc }: Props) {
         />
       </div>
       <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
-        Recordings stop automatically at Sarvam's 30-second REST limit. Works with Batch and Corrected Dictation; Live Dictation is not available.
+        Recordings stop automatically at Sarvam's 30-second REST limit. Text appears once you stop; Sarvam doesn't show a preview while you speak.
       </p>
     </>
   );
@@ -1247,7 +1515,7 @@ function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
   );
 }
 
-function NvidiaSpeechNimSection({ config, persistence, settingsIpc }: Props) {
+function NvidiaSpeechNimSection({ config, persistence, settingsIpc, transition }: Props & { transition: Transition }) {
   const { commit, fieldErrors } = persistence;
   const nim = config.transcription.providers.nvidiaSpeechNim;
   const [testState, setTestState] = useState<TestState>('idle');
@@ -1282,13 +1550,16 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc }: Props) {
         </>
       ) : null}
       {nim.auth === 'none' ? <CheckServerTest provider="nvidia-speech-nim" settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} /> : null}
-      <Disclosure label="Advanced model capabilities" className="border-b border-border/50 py-3.5 last:border-b-0 text-sm">
-        <div className="mt-2">
-          <ToggleRow title="Automatic language detection" description="Enable only if the selected NIM model declares support." checked={nim.supportsAutomaticLanguageDetection} errorId={useId()} onChange={(checked) => save({ ...nim, supportsAutomaticLanguageDetection: checked }, 'nvidia-auto-language')} />
-          <ToggleRow title="Translation" description="Enable only if the selected NIM model and endpoint support translation." checked={nim.supportsTranslation} errorId={useId()} onChange={(checked) => save({ ...nim, supportsTranslation: checked }, 'nvidia-translation')} />
-          <ToggleRow title="Dictionary hints" description="Send personal dictionary terms as an OpenAI-compatible prompt." checked={nim.supportsDictionaryHints} errorId={useId()} onChange={(checked) => save({ ...nim, supportsDictionaryHints: checked }, 'nvidia-dictionary')} />
-        </div>
-      </Disclosure>
+      <ModelCapabilities
+        subject="NIM model"
+        capabilities={nim}
+        onChange={(key, checked) => void transition({
+          transcription: {
+            ...config.transcription,
+            providers: { ...config.transcription.providers, nvidiaSpeechNim: { ...nim, [key]: checked } },
+          },
+        }, `nvidia-${key}`)}
+      />
       <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
         This endpoint is user-hosted, not an NVIDIA managed cloud service. Speech NIM typically requires a supported GPU server or WSL2 deployment.
       </p>
@@ -1296,7 +1567,39 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc }: Props) {
   );
 }
 
-function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
+type ModelCapability = 'supportsAutomaticLanguageDetection' | 'supportsTranslation' | 'supportsDictionaryHints';
+
+/** Self-hosted endpoints declare what their model supports; the resolver treats a missing flag as supported. */
+function ModelCapabilities({ subject, capabilities, onChange }: {
+  subject: string;
+  capabilities: Partial<Record<ModelCapability, boolean>>;
+  onChange: (key: ModelCapability, checked: boolean) => void;
+}) {
+  const errorId = useId();
+  const rows: Array<{ key: ModelCapability; title: string; description: string }> = [
+    { key: 'supportsAutomaticLanguageDetection', title: 'Automatic language detection', description: `Enable only if the selected ${subject} declares support.` },
+    { key: 'supportsTranslation', title: 'Translation', description: `Enable only if the selected ${subject} and endpoint support translation.` },
+    { key: 'supportsDictionaryHints', title: 'Dictionary hints', description: 'Send personal dictionary terms as an OpenAI-compatible prompt.' },
+  ];
+  return (
+    <Disclosure label="Advanced model capabilities" className="border-b border-border/50 py-3.5 last:border-b-0 text-sm">
+      <div className="mt-2">
+        {rows.map((row) => (
+          <ToggleRow
+            key={row.key}
+            title={row.title}
+            description={row.description}
+            checked={capabilities[row.key] ?? true}
+            errorId={`${errorId}-${row.key}`}
+            onChange={(checked) => onChange(row.key, checked)}
+          />
+        ))}
+      </div>
+    </Disclosure>
+  );
+}
+
+function CustomOpenAiSection({ config, persistence, settingsIpc, transition }: Props & { transition: Transition }) {
   const { commit, fieldErrors } = persistence;
   const custom = config.transcription.providers.customOpenAiCompatible;
   const [testState, setTestState] = useState<TestState>('idle');
@@ -1388,6 +1691,16 @@ function CustomOpenAiSection({ config, persistence, settingsIpc }: Props) {
       {custom.auth === 'none' ? (
         <CheckServerTest provider="custom-open-ai-compatible" settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} />
       ) : null}
+      <ModelCapabilities
+        subject="model"
+        capabilities={custom}
+        onChange={(key, checked) => void transition({
+          transcription: {
+            ...config.transcription,
+            providers: { ...config.transcription.providers, customOpenAiCompatible: { ...custom, [key]: checked } },
+          },
+        }, `custom-${key}`)}
+      />
     </>
   );
 }
@@ -1459,7 +1772,7 @@ function WhisperLiveKitSection({
         {readiness ? <WhisperLiveKitReadinessTag readiness={readiness} /> : null}
       </div>
       <p role="note" className="border-b border-border/50 py-3.5 last:border-b-0 text-xs text-muted-foreground">
-        WhisperLiveKit is a user-hosted service. Batch Dictation sends audio to its REST endpoint; readiness opens a short-lived handshake socket and keeps no idle ASR connection.
+        WhisperLiveKit is a user-hosted service. Dictation streams audio while recording to show previews, then inserts the final transcript once after stopping. If streaming fails, the complete recording is sent to the same service. Readiness opens a short-lived handshake socket and keeps no idle ASR connection.
       </p>
     </>
   );
@@ -1531,7 +1844,19 @@ function CheckServerTest({ provider, settingsIpc, testState, setTestState }: Che
   );
 }
 
-function PrivacyNote({ provider }: { provider: TranscriptionProviderId }) {
+function formatterHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return 'the formatter endpoint';
+  }
+}
+
+function PrivacyNote({ provider, formatter }: {
+  provider: TranscriptionProviderId;
+  /** The active Corrected Dictation formatter, if any. */
+  formatter: DictationFormatterProfile | null;
+}) {
   return (
     <p
       role="note"
@@ -1539,36 +1864,51 @@ function PrivacyNote({ provider }: { provider: TranscriptionProviderId }) {
       className="-mt-4 px-1 text-xs leading-5 text-muted-foreground/80"
     >
       {PRIVACY_MESSAGES[provider]}
+      {formatter
+        ? classifyFormatterEndpoint(formatter.baseUrl) === 'remote'
+          ? ` Corrected Dictation also sends transcript text to ${formatterHost(formatter.baseUrl)} for formatting.`
+          : ' Corrected Dictation formats transcript text on this device.'
+        : null}
     </p>
   );
 }
 
 interface DictionaryRowProps {
   dictionary: string[];
-  disabled?: boolean;
   description?: string;
   error?: string;
+  /** Rejects an addition before it is saved; removals always go through so an oversized list can shrink. */
+  validateAddition: (next: string[]) => string | null;
   onChange: (next: string[]) => void;
 }
 
-function DictionaryRow({ dictionary, disabled = false, description, error, onChange }: DictionaryRowProps) {
+function DictionaryRow({ dictionary, description, error, validateAddition, onChange }: DictionaryRowProps) {
   const [inputValue, setInputValue] = useState('');
+  const [additionError, setAdditionError] = useState<string | null>(null);
   const errorId = useId();
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && inputValue.trim()) {
       e.preventDefault();
       const newWord = inputValue.trim();
-      if (!dictionary.includes(newWord)) {
-        onChange([...dictionary, newWord]);
+      if (dictionary.includes(newWord)) {
+        setInputValue('');
+        return;
       }
+      const next = [...dictionary, newWord];
+      const rejection = validateAddition(next);
+      setAdditionError(rejection);
+      if (rejection) return;
+      onChange(next);
       setInputValue('');
     }
   };
 
   const removeWord = (wordToRemove: string) => {
+    setAdditionError(null);
     onChange(dictionary.filter((word) => word !== wordToRemove));
   };
+  const shownError = additionError ?? error;
 
   return (
     <div className="space-y-3 border-b border-border/50 py-3.5 last:border-b-0">
@@ -1580,15 +1920,17 @@ function DictionaryRow({ dictionary, disabled = false, description, error, onCha
       </div>
       <Input
         value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
+        onChange={(e) => {
+          setInputValue(e.target.value);
+          setAdditionError(null);
+        }}
         onKeyDown={handleKeyDown}
         placeholder="Type a word and press Enter…"
         aria-label="Add dictionary word"
-        disabled={disabled}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-invalid={shownError ? true : undefined}
+        aria-describedby={shownError ? errorId : undefined}
       />
-      <FieldError id={errorId} error={error} />
+      <FieldError id={errorId} error={shownError} />
       <div className="flex flex-wrap gap-2">
         {dictionary.map((word) => (
           <span
@@ -1598,7 +1940,6 @@ function DictionaryRow({ dictionary, disabled = false, description, error, onCha
             {word}
             <button
               type="button"
-              disabled={disabled}
               onClick={() => removeWord(word)}
               aria-label={`Remove ${word}`}
               className="rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-destructive focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"

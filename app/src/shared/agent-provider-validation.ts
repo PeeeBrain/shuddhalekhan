@@ -7,7 +7,7 @@ export const agentProviderSchema = z.object({
   model: z.string().default(''),
   apiKeyEnvVar: z.string().default(''),
   apiKeySource: z.enum(['environment', 'stored']).default('environment'),
-  kind: z.enum(['openai', 'azure-openai', 'openrouter', 'openai-compatible']).optional(),
+  kind: z.enum(['openai', 'azure-openai', 'openrouter', 'openai-compatible', 'chatgpt']).optional(),
   apiMode: z.enum(['chat-completions', 'responses']).optional(),
   auth: z.enum(['none', 'bearer', 'api-key']).optional(),
   reasoning: z.enum(['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
@@ -73,7 +73,7 @@ export function resolveAgentProviderKey(
     issues.push({
       field: 'apiKeyEnvVar',
       message: provider.apiKeySource === 'stored'
-        ? 'The saved API key is unavailable. Replace it in Settings.'
+        ? provider.kind === 'chatgpt' ? 'Sign in with ChatGPT and enable plan usage in Settings.' : 'The saved API key is unavailable. Replace it in Settings.'
         : 'The API key environment variable is unavailable to the running app. Set it before starting the app, then restart it, or use a securely saved key.',
     });
   }

@@ -55,7 +55,8 @@ describe('formatBinding', () => {
   });
 
   it('formats modifier-only bindings', () => {
-    expect(formatBinding({ keyCode: null, modifiers: ['ctrl', 'win'] })).toBe('Ctrl + Win');
+    expect(formatBinding({ keyCode: null, modifiers: ['ctrl', 'win'] }))
+      .toBe(process.platform === 'linux' ? 'Ctrl + Super' : 'Ctrl + Win');
   });
 
   it('formats navigation and punctuation keys', () => {
@@ -115,8 +116,15 @@ describe('assessBinding', () => {
   });
 
   it('warns that modifier-only bindings interfere with normal typing', () => {
-    const verdict = assessBinding({ keyCode: null, modifiers: ['ctrl', 'shift'] }, other);
+    const verdict = assessBinding({ keyCode: null, modifiers: ['ctrl', 'alt'] }, other);
     expect(verdict.status).toBe('warning');
+  });
+
+  it('rejects chords that would intercept our own paste keystrokes', () => {
+    expect(assessBinding({ keyCode: 0x56, modifiers: ['ctrl'] }, other)).toMatchObject({ status: 'error', message: expect.stringContaining('paste') });
+    expect(assessBinding({ keyCode: 0x2d, modifiers: ['shift'] }, other).status).toBe('error');
+    expect(assessBinding({ keyCode: null, modifiers: ['shift', 'ctrl'] }, other).status).toBe('error');
+    expect(assessBinding({ keyCode: 0x56, modifiers: ['ctrl', 'alt'] }, other).status).toBe('ok');
   });
 
   it('rejects a binding with neither key nor modifiers', () => {

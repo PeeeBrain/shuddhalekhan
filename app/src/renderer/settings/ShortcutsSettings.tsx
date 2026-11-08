@@ -5,7 +5,6 @@ import type {
   ShortcutBinding,
   ShortcutsConfig,
 } from '../../types/ipc';
-import { getAppConfigDictationError } from '../../shared/dictation-runtime';
 import { assessBinding, formatBinding } from '../../shared/shortcut-bindings';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,9 +24,12 @@ import {
   type ShortcutCaptureResult,
   type ShortcutCaptureState,
 } from './shortcut-capture';
+import type { DesktopStatus } from '../../shared/desktop-status';
+import { activeTrigger, useDesktopStatus } from './use-desktop-status';
 
 export function ShortcutsSettings(props: SettingsSectionProps) {
   const { settingsIpc, config } = props;
+  const desktopStatus = useDesktopStatus(settingsIpc);
   const [paused, setPaused] = useState(false);
   const [pauseError, setPauseError] = useState<string | undefined>();
 
@@ -64,9 +66,19 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
       <SettingsPanel aria-label="Shortcut bindings">
         <SettingsPanelHeader title="Recording" />
         <SettingsCard>
-          <ShortcutRow intent="dictation" {...props} />
-          <ShortcutRow intent="agent" {...props} />
+          {desktopStatus?.shortcuts.backend === 'unavailable' ? (
+            <p className="border-b border-border/50 py-3.5 text-xs leading-5 text-destructive" role="alert">
+              <strong>Global shortcuts are unavailable.</strong> {desktopStatus.shortcuts.error}
+            </p>
+          ) : null}
+          <ShortcutRow intent="dictation" desktopStatus={desktopStatus} {...props} />
+          <ShortcutRow intent="agent" desktopStatus={desktopStatus} {...props} />
         </SettingsCard>
+        {desktopStatus?.shortcuts.backend === 'evdev' ? (
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            Shortcuts are read from your keyboard devices (input group access), so the keys you press still reach the app you are typing in.
+          </p>
+        ) : null}
       </SettingsPanel>
 
       <SettingsPanel aria-label="Global shortcut pause">
@@ -100,8 +112,21 @@ function ShortcutRow({
   config,
   settingsIpc,
   persistence,
-}: SettingsSectionProps & { intent: RecordingIntent }) {
+  desktopStatus,
+}: SettingsSectionProps & { intent: RecordingIntent; desktopStatus: DesktopStatus | null }) {
   const shortcut = config.shortcuts[intent];
+  const dormant = intent === 'agent' && !config.agent.enabled;
+  // Dormant shortcuts are not registered, so show what is saved rather than what is live.
+  const trigger = activeTrigger(dormant ? null : desktopStatus, intent, shortcut.binding);
+  const triggerText = trigger.kind === 'active'
+    ? trigger.text
+    : trigger.kind === 'checking' ? formatBinding(shortcut.binding) : 'Not assigned';
+  // The unavailable backend is explained once above both rows.
+  const triggerNote = trigger.kind === 'checking'
+    ? 'Checking whether the shortcut is active…'
+    : trigger.kind === 'inactive' && shortcut.binding && desktopStatus?.shortcuts.backend !== 'unavailable'
+      ? trigger.message
+      : null;
   const otherIntent = intent === 'dictation' ? 'agent' : 'dictation';
   const label = intent === 'dictation' ? 'Dictation' : 'Agent Mode';
   const fieldId = `shortcut-${intent}`;
@@ -237,19 +262,11 @@ function ShortcutRow({
       ...config.shortcuts,
       [intent]: { ...shortcut, activationMode },
     };
-    if (intent === 'dictation' && config.dictation) {
-      const error = getAppConfigDictationError({
-        ...config,
-        shortcuts: next,
-      });
-      if (error) {
-        setMessage({ text: error, tone: 'error' });
-        return;
-      }
-    }
     setMessage(null);
-    void persistence.commit('shortcuts', next, `${fieldId}-mode`);
+    if (intent === 'dictation') void persistence.commitTranscription({ shortcuts: next }, `${fieldId}-mode`);
+    else void persistence.commit('shortcuts', next, `${fieldId}-mode`);
   };
+  const statusError = persistence.fieldErrors[fieldId] ?? persistence.fieldErrors[`${fieldId}-mode`];
 
   const previewBinding: ShortcutBinding | null = captureState.started
     ? { keyCode: captureState.keyCode, modifiers: captureState.modifiers }
@@ -261,17 +278,22 @@ function ShortcutRow({
         <div className="min-w-0 space-y-0.5">
           <h3 className="text-sm font-medium">{label}</h3>
           <p className="text-xs leading-5 text-muted-foreground">
-            {intent === 'agent' && !config.agent.enabled
+            {dormant
               ? 'Saved but dormant while Agent Mode is disabled.'
               : shortcut.activationMode === 'toggle'
                 ? 'Press once to start and again to stop.'
                 : 'Hold the shortcut to record; release it to stop.'}
           </p>
+          {triggerNote ? (
+            <p className={`text-xs leading-5 ${trigger.kind === 'checking' ? 'text-muted-foreground' : 'text-warning'}`}>
+              {triggerNote}
+            </p>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Keycaps
-            value={formatBinding(shortcut.binding)}
-            label={`${label} shortcut: ${formatBinding(shortcut.binding)}`}
+            value={triggerText}
+            label={`${label} shortcut: ${triggerText}`}
           />
           <Select
             value={shortcut.activationMode}
@@ -347,9 +369,9 @@ function ShortcutRow({
         id={`${fieldId}-status`}
         role="status"
         aria-live="polite"
-        className={`text-xs empty:hidden [&:not(:empty)]:mt-3 ${message?.tone === 'error' || persistence.fieldErrors[fieldId] ? 'text-destructive' : 'text-muted-foreground'}`}
+        className={`text-xs empty:hidden [&:not(:empty)]:mt-3 ${message?.tone === 'error' || (!message && statusError) ? 'text-destructive' : 'text-muted-foreground'}`}
       >
-        {message?.text ?? persistence.fieldErrors[fieldId] ?? ''}
+        {message?.text ?? statusError ?? ''}
       </p>
     </div>
   );

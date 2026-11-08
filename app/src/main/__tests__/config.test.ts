@@ -1,4 +1,5 @@
-import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import * as fs from 'fs';
 import { join, normalize } from 'path';
 import { availableParallelism } from 'os';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
@@ -25,20 +26,15 @@ class MockStore {
     return storeData.get(key);
   }
 
-  set(key: string, value: unknown) {
-    storeData.set(key, value);
+  set(key: string | Record<string, unknown>, value?: unknown) {
+    if (typeof key === 'string') storeData.set(key, value);
+    else for (const [name, item] of Object.entries(key)) storeData.set(name, item);
   }
 }
 
 mock.module('electron-store', () => ({ default: MockStore }));
 installElectronMock();
-mock.module('fs', () => ({
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-}));
+let filesystemSpies: Array<{ mockRestore(): void }> = [];
 
 describe('config store', () => {
   afterAll(() => {
@@ -46,6 +42,13 @@ describe('config store', () => {
   });
 
   beforeEach(() => {
+    filesystemSpies = [
+      spyOn(fs, 'copyFileSync').mockImplementation(copyFileSync),
+      spyOn(fs, 'existsSync').mockImplementation(existsSync),
+      spyOn(fs, 'mkdirSync').mockImplementation(mkdirSync),
+      spyOn(fs, 'readFileSync').mockImplementation(readFileSync),
+      spyOn(fs, 'unlinkSync').mockImplementation(unlinkSync),
+    ];
     storeData.clear();
     resetElectronMock();
     existsSync.mockReset();
@@ -55,6 +58,7 @@ describe('config store', () => {
     mkdirSync.mockReset();
     storeOptions.length = 0;
   });
+  afterEach(() => { for (const spy of filesystemSpies) spy.mockRestore(); });
 
   /** Declare that a config store file already existed on disk before this boot. */
   function givenExistingStoreFile(): void {
@@ -62,6 +66,44 @@ describe('config store', () => {
       (path: unknown) => path === normalize(join('/home/tester', 'Shuddhalekhan', 'shuddhalekhan-config.json')),
     );
   }
+
+  it('saves provider transitions as a valid configuration without deleting dormant vocabulary', async () => {
+    const { getConfig, patchTranscriptionConfig } = await import(`../config?test=${Date.now()}-provider-transition`);
+    const original = getConfig();
+    const streaming = patchTranscriptionConfig({
+      transcription: { ...original.transcription, activeProvider: 'whisper-live-kit' },
+      dictionary: ['Shuddhalekhan'],
+    });
+    expect(streaming.transcription.activeProvider).toBe('whisper-live-kit');
+    const switched = patchTranscriptionConfig({
+      transcription: { ...streaming.transcription, activeProvider: 'google-cloud-speech-v2' },
+      task: 'translate', language: 'auto',
+    });
+    expect(switched.dictation.mode).toBe('batch');
+    expect(switched.task).toBe('transcribe');
+    expect(switched.language).toBe('en');
+    expect(switched.dictionary).toEqual(['Shuddhalekhan']);
+    expect(getConfig()).toEqual(switched);
+    const saved = new Map(storeData);
+    expect(() => patchTranscriptionConfig({
+      dictation: { mode: 'corrected', formatter: null },
+    })).toThrow('formatter profile');
+    expect(storeData).toEqual(saved);
+    expect(() => Reflect.apply(patchTranscriptionConfig, null, [{ dictation: { mode: 'live', formatter: null } }])).toThrow();
+    expect(() => Reflect.apply(patchTranscriptionConfig, null, [{ agent: { enabled: true } }])).toThrow();
+    expect(storeData).toEqual(saved);
+  });
+
+  it('allows an imported oversized dictionary to shrink without admitting additions or native hotword syntax', async () => {
+    const { getConfig, patchTranscriptionConfig } = await import(`../config?test=${Date.now()}-dictionary-repair`);
+    storeData.set('dictionary', Array.from({ length: 70 }, (_, i) => `term${i}`));
+    const original = getConfig();
+    const shorter = original.dictionary.slice(1);
+    expect(patchTranscriptionConfig({ dictionary: shorter }).dictionary).toEqual(shorter);
+    expect(() => patchTranscriptionConfig({ dictionary: [...shorter, 'another'] })).toThrow('64');
+    expect(() => patchTranscriptionConfig({ dictionary: ['term :100'] })).toThrow('colon');
+    expect(getConfig().dictionary).toEqual(shorter);
+  });
 
   it('uses a stable store directory instead of package-derived userData', async () => {
     existsSync.mockReturnValue(false);
@@ -77,11 +119,12 @@ describe('config store', () => {
   it('defaults legacy profiles to memory off and preserves validated feature settings on save', async () => {
     storeData.set('agent', { enabled: false, provider: { baseUrl: '', model: '', apiKeyEnvVar: '' }, mcpServers: [] });
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-agent-context`);
-    expect(getConfig().agent).toMatchObject({ memoryEnabled: false, disabledSkills: [] });
-    setConfig('agent', { ...getConfig().agent, memoryEnabled: true, disabledSkills: ['email-style'] });
-    expect(getConfig().agent).toMatchObject({ memoryEnabled: true, disabledSkills: ['email-style'] });
+    expect(getConfig().agent).toMatchObject({ memoryEnabled: false, disabledSkills: [], customInstructions: '' });
+    setConfig('agent', { ...getConfig().agent, memoryEnabled: true, disabledSkills: ['email-style'], customInstructions: 'Reply in French.' });
+    expect(getConfig().agent).toMatchObject({ memoryEnabled: true, disabledSkills: ['email-style'], customInstructions: 'Reply in French.' });
     const saved = storeData.get('agent');
     expect(() => Reflect.apply(setConfig, null, ['agent', { ...getConfig().agent, memoryEnabled: 'yes' }])).toThrow();
+    expect(() => setConfig('agent', { ...getConfig().agent, customInstructions: 'x'.repeat(4001) })).toThrow();
     expect(storeData.get('agent')).toEqual(saved);
   });
 
@@ -168,6 +211,17 @@ describe('config store', () => {
     expect('recordingActivationMode' in getConfig()).toBe(false);
   });
 
+  it('keeps Wayland best-effort insertion off until explicitly persisted', async () => {
+    existsSync.mockReturnValue(false);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-wayland-insertion`);
+
+    expect(getConfig().waylandBestEffortInsertion).toBe(false);
+    setConfig('waylandBestEffortInsertion', true);
+    expect(getConfig().waylandBestEffortInsertion).toBe(true);
+    storeData.set('waylandBestEffortInsertion', 'yes');
+    expect(getConfig().waylandBestEffortInsertion).toBe(false);
+  });
+
   it('sets typed config values', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-2`);
@@ -216,23 +270,28 @@ describe('config store', () => {
     expect(getConfig().managedLocalThreads).toBeNull();
   });
 
+  it('keeps processor preferences for both local models and rejects invalid IPC selections without replacing them', async () => {
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-local-devices`);
+    expect(getConfig().managedLocal).toEqual({ model: 'parakeet', devices: { parakeet: 'auto', granite: 'auto' } });
+    const selected = { model: 'granite', devices: { parakeet: 'cpu', granite: 'cuda' } } as const;
+    setConfig('managedLocal', selected);
+    expect(getConfig().managedLocal).toEqual(selected);
+    for (const value of [{ ...selected, model: '../outside' }, { ...selected, devices: { granite: 'cuda' } }, null]) {
+      expect(() => Reflect.apply(setConfig, null, ['managedLocal', value])).toThrow('supported local model');
+      expect(getConfig().managedLocal).toEqual(selected);
+    }
+  });
+
   it('migrates an existing whisperUrl into the active local provider without setup', async () => {
     givenExistingStoreFile();
     storeData.set('whisperUrl', 'http://existing.test/inference');
 
     const { getConfig } = await import(`../config?test=${Date.now()}-provider-migration`);
 
-    expect(getConfig().transcription).toEqual({
+    expect(getConfig().transcription).toMatchObject({
       activeProvider: 'local-whisper-cpp',
       providers: {
         localWhisperCpp: { endpoint: 'http://existing.test/inference' },
-        openai: { baseUrl: 'https://api.openai.com/v1', model: '' },
-        sarvam: { model: 'saaras:v4', mode: 'transcribe' },
-        azureSpeech: { endpoint: '', region: '' },
-        googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
-        nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-        customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
-        whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
       },
     });
   });
@@ -641,6 +700,21 @@ describe('config store', () => {
     expect(getConfig().shortcuts.agent).toEqual({ binding: null, activationMode: 'toggle' });
   });
 
+  it('unassigns a stored paste-chord shortcut so it is not grabbed and other settings still save', async () => {
+    existsSync.mockReturnValue(false);
+    storeData.set('shortcutsMigrated', true);
+    storeData.set('shortcuts', {
+      dictation: { binding: { keyCode: 0x56, modifiers: ['ctrl'] }, activationMode: 'toggle' },
+      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+    });
+
+    const { getConfig, patchTranscriptionConfig } = await import(`../config?test=${Date.now()}-shortcut-paste-upgrade`);
+
+    expect(getConfig().shortcuts.dictation).toEqual({ binding: null, activationMode: 'toggle' });
+    expect(getConfig().shortcuts.agent.binding).toEqual({ keyCode: null, modifiers: ['alt', 'win'] });
+    expect(() => patchTranscriptionConfig({ removeFillerWords: true })).not.toThrow();
+  });
+
   it('rejects identical Dictation and Agent Mode bindings as ambiguous', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-shortcut-conflict`);
@@ -768,39 +842,54 @@ describe('config store', () => {
     expect(storeData.get('dictation')).toEqual({ mode: 'batch', formatter: null });
   });
 
-  it('preserves an explicit Live Dictation mode instead of silently switching it', async () => {
+  it('migrates a stored Live Dictation choice to Dictation while keeping shortcuts, provider, and preferences', async () => {
     existsSync.mockReturnValue(false);
-    storeData.set('dictation', { mode: 'live', formatter: null });
-    storeData.set('shortcutsMigrated', true);
-    storeData.set('shortcuts', {
-      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
+    const shortcuts = {
+      dictation: { binding: { keyCode: 0x44, modifiers: ['ctrl', 'shift'] }, activationMode: 'toggle' },
       agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
-    });
+    };
+    const legacy: Record<string, unknown> = {
+      dictation: { mode: 'live', formatter: null },
+      shortcutsMigrated: true,
+      shortcuts,
+      transcription: {
+        activeProvider: 'whisper-live-kit',
+        providers: {
+          localWhisperCpp: { endpoint: 'http://localhost:8080/inference' },
+          whisperLiveKit: { baseUrl: 'http://127.0.0.1:8000', auth: 'bearer' },
+        },
+      },
+      removeFillerWords: true,
+      dictionary: ['Shuddhalekhan'],
+    };
+    for (const [key, value] of Object.entries(legacy)) storeData.set(key, value);
 
-    const { getConfig } = await import(`../config?test=${Date.now()}-dictation-preserve-live`);
+    const { getConfig } = await import(`../config?test=${Date.now()}-dictation-migrate-live`);
+    const config = getConfig();
 
-    expect(getConfig().dictation.mode).toBe('live');
-    expect(getConfig().shortcuts.dictation.activationMode).toBe('push-to-talk');
-    expect(storeData.get('dictation')).toEqual({ mode: 'live', formatter: null });
+    expect(config.dictation).toEqual({ mode: 'batch', formatter: null });
+    expect(storeData.get('dictation')).toEqual({ mode: 'batch', formatter: null });
+    expect(config.shortcuts).toEqual(shortcuts);
+    expect(config.transcription.activeProvider).toBe('whisper-live-kit');
+    expect(config.transcription.providers.whisperLiveKit).toEqual({ baseUrl: 'http://127.0.0.1:8000', auth: 'bearer' });
+    expect(config.removeFillerWords).toBe(true);
+    expect(config.dictionary).toEqual(['Shuddhalekhan']);
   });
 
-  it('rejects Live Dictation when the provider cannot stream or activation is not Toggle', async () => {
+  it('accepts Push-to-Talk Dictation on batch-only and streaming providers alike', async () => {
     givenExistingStoreFile();
-    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-live`);
-
-    expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
-      'Live Dictation requires Toggle activation.',
-    );
-    expect(getConfig().dictation.mode).toBe('batch');
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-any-activation`);
+    const config = getConfig();
 
     setConfig('shortcuts', {
-      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
-      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
+      ...config.shortcuts,
+      dictation: { ...config.shortcuts.dictation, activationMode: 'push-to-talk' },
     });
+    setConfig('transcription', { ...config.transcription, activeProvider: 'whisper-live-kit' });
+    setConfig('transcription', { ...config.transcription, activeProvider: 'openai' });
 
-    expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
-      'Live Dictation requires a streaming-capable provider.',
-    );
+    expect(getConfig().shortcuts.dictation.activationMode).toBe('push-to-talk');
+    expect(getConfig().transcription.activeProvider).toBe('openai');
     expect(getConfig().dictation.mode).toBe('batch');
   });
 
@@ -875,55 +964,6 @@ describe('config store', () => {
     expect(getConfig().dictation.mode).toBe('batch');
   });
 
-  it('rejects activation and provider changes that would silently break Live Dictation', async () => {
-    existsSync.mockReturnValue(false);
-    storeData.set('dictation', { mode: 'live', formatter: null });
-    storeData.set('shortcutsMigrated', true);
-    storeData.set('shortcuts', {
-      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
-      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
-    });
-
-    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-reject-combo-change`);
-
-    expect(() => setConfig('shortcuts', {
-      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
-      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
-    })).toThrow('Live Dictation requires Toggle activation.');
-    expect(getConfig().shortcuts.dictation.activationMode).toBe('toggle');
-    expect(getConfig().dictation.mode).toBe('live');
-  });
-
-  it('allows unrelated Agent and provider-detail edits when a preserved mode is unsupported', async () => {
-    existsSync.mockReturnValue(false);
-    storeData.set('dictation', { mode: 'live', formatter: null });
-    storeData.set('shortcutsMigrated', true);
-    storeData.set('shortcuts', {
-      dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },
-      agent: { binding: { keyCode: null, modifiers: ['alt', 'win'] }, activationMode: 'push-to-talk' },
-    });
-
-    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-dictation-unrelated-edits`);
-    const config = getConfig();
-    setConfig('shortcuts', {
-      ...config.shortcuts,
-      agent: { ...config.shortcuts.agent, activationMode: 'toggle' },
-    });
-    setConfig('transcription', {
-      ...config.transcription,
-      providers: {
-        ...config.transcription.providers,
-        localWhisperCpp: { endpoint: 'http://localhost:9090/inference' },
-      },
-    });
-
-    expect(getConfig().shortcuts.agent.activationMode).toBe('toggle');
-    expect(getConfig().transcription.providers.localWhisperCpp.endpoint).toBe(
-      'http://localhost:9090/inference',
-    );
-    expect(getConfig().dictation.mode).toBe('live');
-  });
-
   it('preserves Batch Dictation and Agent-only config from a legacy store', async () => {
     givenExistingStoreFile();
     const fixture = await import('./fixtures/config-stores/v4-pre-dictation-mode.json');
@@ -943,9 +983,6 @@ describe('config store', () => {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'toggle' },
       agent: config.shortcuts.agent,
     });
-    expect(() => setConfig('dictation', { mode: 'live', formatter: null })).toThrow(
-      'Live Dictation requires a streaming-capable provider.',
-    );
     expect(getConfig().dictation.mode).toBe('batch');
     expect(getConfig().agent.enabled).toBe(true);
   });

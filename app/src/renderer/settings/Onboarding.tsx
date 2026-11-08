@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Download, Mic, Keyboard, ArrowRight, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { AppConfig, ManagedLocalModelSnapshot, ManagedLocalModelState } from '../../types/ipc';
+import type { AppConfig, ManagedLocalModelState } from '../../types/ipc';
 import { formatBinding } from '../../shared/shortcut-bindings';
 import type { SettingsIpc } from './settings-ipc';
+import { useManagedLocalSnapshot } from './use-managed-local-snapshot';
+import { activeTrigger, useDesktopStatus } from './use-desktop-status';
+import { ipcErrorMessage } from './use-settings-persistence';
 
 export function Onboarding({
   config,
@@ -14,32 +17,33 @@ export function Onboarding({
   settingsIpc: SettingsIpc;
   onOpenAdvanced: () => void;
 }) {
-  const [snapshot, setSnapshot] = useState<ManagedLocalModelSnapshot | null>(null);
+  const modelId = config.managedLocal?.model ?? 'parakeet';
+  const { snapshot, loadError, refresh, accept } = useManagedLocalSnapshot(settingsIpc, modelId);
   const [micState, setMicState] = useState<'idle' | 'checking' | 'verified' | 'error'>('idle');
   const [micLevel, setMicLevel] = useState(0);
   const [installError, setInstallError] = useState('');
   const micCleanup = useRef<(() => void) | null>(null);
+  const desktopStatus = useDesktopStatus(settingsIpc);
 
-  useEffect(() => {
-    void settingsIpc.getManagedLocalModel().then(setSnapshot).catch(() => {
-      setInstallError('Could not check the local speech model. Retry.');
-    });
-    const offState = settingsIpc.onManagedLocalModelStateChanged((state) => {
-      setSnapshot((current) => current ? { ...current, state } : current);
-    });
-    return () => {
-      offState?.();
-      micCleanup.current?.();
-    };
-  }, [settingsIpc]);
+  useEffect(() => () => micCleanup.current?.(), []);
+
+  // Onboarding always sets up the CPU files: they work offline and are Auto's fallback.
+  // GPU setup stays an explicit choice in Settings.
+  const entry = snapshot?.catalog?.find((item) => item.key === modelId);
+  const legacy = entry?.cpu.legacy?.inUse ? entry.cpu.legacy : null;
+  const model = snapshot
+    ? entry
+      ? { name: entry.name, languages: entry.languages, ...entry.cpu }
+      : { ...snapshot.model, state: snapshot.state }
+    : null;
 
   const install = async () => {
     setInstallError('');
     try {
-      setSnapshot(await settingsIpc.installManagedLocalModel());
+      accept(await settingsIpc.installManagedLocalModel(entry ? { model: modelId, backend: 'cpu' } : undefined));
     } catch (error) {
-      setInstallError(error instanceof Error ? error.message : 'Model installation failed. Retry.');
-      void settingsIpc.getManagedLocalModel().then(setSnapshot);
+      setInstallError(ipcErrorMessage(error, 'Model installation failed. Retry.'));
+      void refresh();
     }
   };
 
@@ -81,11 +85,12 @@ export function Onboarding({
     setMicLevel(0);
   };
 
-  const modelReady = snapshot?.state.kind === 'ready';
-  const shortcut = formatBinding(config.shortcuts.dictation.binding);
+  const modelReady = !!legacy || model?.state.kind === 'ready';
+  const trigger = activeTrigger(desktopStatus, 'dictation', config.shortcuts.dictation.binding);
+  const shortcut = trigger.kind === 'active' ? trigger.text : formatBinding(config.shortcuts.dictation.binding);
 
   return (
-    <main className="min-h-screen bg-canvas px-6 py-10 text-foreground">
+    <main className="min-h-full bg-background px-6 py-10 text-foreground">
       <div className="mx-auto max-w-2xl">
         <header className="mb-8">
           <p className="mb-2 text-[13px] font-medium text-muted-foreground">Welcome to Shuddhalekhan</p>
@@ -95,25 +100,32 @@ export function Onboarding({
 
         <div className="space-y-4">
           <Step icon={Download} number="1" title="Install local speech recognition" done={modelReady}>
-            {snapshot ? (
+            {model ? (
               <>
-                <p className="font-medium">{snapshot.model.name}</p>
+                <p className="font-medium">{legacy?.name ?? model.name}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {formatBytes(snapshot.model.downloadBytes)} download · {formatBytes(snapshot.model.installedBytes)} installed · {snapshot.model.languages.length} European languages
+                  {legacy ? `${formatBytes(legacy.installedBytes)} installed`
+                    : `${formatBytes(model.downloadBytes)} download · ${formatBytes(model.installedBytes)} installed · ${model.languages.join(', ')}`}
                 </p>
-                <ModelState state={snapshot.state} />
-                {!modelReady && snapshot.state.kind !== 'downloading' && snapshot.state.kind !== 'installing' ? (
+                {legacy ? <p className="mt-3 text-sm text-success">Previous version installed and ready offline. You can update it later in Settings.</p>
+                  : <ModelState state={model.state} />}
+                {!modelReady && model.state.kind !== 'downloading' && model.state.kind !== 'installing' ? (
                   <Button className="mt-4" onClick={() => void install()}>
-                    {snapshot.state.kind === 'error' ? actionLabel(snapshot.state.action) : 'Download model'}
+                    {model.state.kind === 'error' ? actionLabel(model.state.action) : 'Download model'}
                   </Button>
                 ) : null}
+              </>
+            ) : loadError ? (
+              <>
+                <p role="alert" className="text-sm text-destructive">Could not check the local speech model.</p>
+                <Button className="mt-4" variant="secondary" onClick={() => void refresh()}>Check again</Button>
               </>
             ) : <p className="text-sm text-muted-foreground">Checking model status…</p>}
             {installError ? <p role="alert" className="mt-3 text-sm text-destructive">{installError}</p> : null}
           </Step>
 
           <Step icon={Mic} number="2" title="Check your microphone" done={micState === 'verified'} disabled={!modelReady}>
-            <p className="text-sm text-muted-foreground">Shuddhalekhan will use your default Windows input device.</p>
+            <p className="text-sm text-muted-foreground">Shuddhalekhan will use your default input device.</p>
             {micState === 'checking' ? (
               <div className="mt-4">
                 <div className="h-2 overflow-hidden rounded-full bg-muted" aria-label="Microphone level">
@@ -127,13 +139,17 @@ export function Onboarding({
             ) : (
               <>
                 <Button className="mt-4" disabled={!modelReady} onClick={() => void startMicrophoneCheck()}>Start microphone check</Button>
-                {micState === 'error' ? <p role="alert" className="mt-3 text-sm text-destructive">Microphone access failed. Check Windows microphone privacy settings, then retry.</p> : null}
+                {micState === 'error' ? <p role="alert" className="mt-3 text-sm text-destructive">Microphone access failed. Check your system microphone privacy settings, then retry.</p> : null}
               </>
             )}
           </Step>
 
           <Step icon={Keyboard} number="3" title="Complete one Dictation" done={false} disabled={micState !== 'verified'}>
             <p className="text-sm text-muted-foreground">Open any text field, then press <strong className="text-foreground">{shortcut}</strong> to start recording. Press it again to stop.</p>
+            {trigger.kind === 'inactive' ? <p className="mt-3 text-sm text-warning">{trigger.message}</p> : null}
+            {desktopStatus && !desktopStatus.delivery.available ? (
+              <p className="mt-3 text-sm text-warning">{desktopStatus.delivery.message}</p>
+            ) : null}
             {micState === 'verified' ? (
               <p className="mt-3 flex items-center gap-2 text-sm font-medium text-primary"><ArrowRight className="size-4" aria-hidden="true" />Waiting for a successful Dictation…</p>
             ) : null}

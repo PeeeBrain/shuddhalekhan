@@ -66,14 +66,6 @@ body,
     }
 }
 
-.bar {
-    width: 2px;
-    height: 16px;
-    border-radius: 1px;
-    background: currentColor;
-    transform-origin: center;
-}
-
 /* Dictation and Agent Mode differ by shape, glyph and tint, not only color. */
 .recording-island {
     border-radius: 14px;

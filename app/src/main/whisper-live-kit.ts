@@ -141,7 +141,7 @@ export async function checkWhisperLiveKitReadiness(
       return {
         providerId: 'whisper-live-kit',
         state: 'ready',
-        message: 'WhisperLiveKit is ready for Batch and Live Dictation.',
+        message: 'WhisperLiveKit is ready for Dictation with live previews.',
         checkedAt,
       };
     }
@@ -364,7 +364,7 @@ export function createWhisperLiveKitTranscriber(
     startStreaming(request) {
       return createWhisperLiveKitStreamingSession(config, savedBearerToken, request);
     },
-    async transcribe({ audio, recognition }) {
+    async transcribe({ audio, recognition, signal }) {
       const settingsErrors = validateWhisperLiveKitSettings(config);
       if (settingsErrors.length > 0) {
         throw new TranscriptionFailure('endpoint', settingsErrors[0]!);
@@ -395,6 +395,7 @@ export function createWhisperLiveKitTranscriber(
         headers,
         fetcher,
         batchTimeoutMs,
+        signal,
       );
     },
   };
@@ -602,6 +603,7 @@ async function transcribeWhisperLiveKit(
   headers: Record<string, string>,
   fetcher: typeof fetch,
   timeoutMs: number,
+  cancelSignal?: AbortSignal,
 ): Promise<string> {
   const form = new FormData();
   form.append(
@@ -620,7 +622,7 @@ async function transcribeWhisperLiveKit(
       method: 'POST',
       headers,
       body: form as unknown as BodyInit,
-      signal: abortController.signal,
+      signal: cancelSignal ? AbortSignal.any([abortController.signal, cancelSignal]) : abortController.signal,
     });
   } catch {
     clearTimeout(timeout);

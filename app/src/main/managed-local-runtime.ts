@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto';
 import { join } from 'path';
-import { cleanFillerWords, TranscriptionFailure, type Transcriber } from './transcription';
-import { emitPerformanceMarker } from './performance/marker-collector';
+import { TranscriptionFailure, type Transcriber } from './transcription';
 import { resolveManagedLocalThreads } from './managed-local-threads';
+import type { LocalRuntime } from './managed-local-engine';
 
 type RuntimeProcess = {
   postMessage(message: unknown): void;
@@ -14,7 +14,6 @@ type RuntimeProcess = {
 type PendingRequest = {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
-  finished: Promise<void>;
   timeout: ReturnType<typeof setTimeout>;
 };
 
@@ -24,12 +23,14 @@ export function createManagedLocalTranscriber({
   startProcess = defaultStartProcess,
   loadTimeoutMs = 120_000,
   transcriptionTimeoutMs = 120_000,
+  runtime,
 }: {
   getModelPath: () => Promise<string>;
   getNumThreads?: () => number;
   startProcess?: () => RuntimeProcess | Promise<RuntimeProcess>;
   loadTimeoutMs?: number;
   transcriptionTimeoutMs?: number;
+  runtime?: LocalRuntime;
 }) {
   let child: RuntimeProcess | null = null;
   let ready: Promise<void> | null = null;
@@ -39,6 +40,7 @@ export function createManagedLocalTranscriber({
   let loadTimeout: ReturnType<typeof setTimeout> | null = null;
   let activeStartup: object | null = null;
   const pending = new Map<string, PendingRequest>();
+  let queue: Promise<unknown> = Promise.resolve();
 
   const rejectPending = (error: Error): void => {
     rejectReady?.(error);
@@ -68,7 +70,6 @@ export function createManagedLocalTranscriber({
     if (message.kind === 'ready') {
       if (loadTimeout) clearTimeout(loadTimeout);
       loadTimeout = null;
-      emitPerformanceMarker('managed-local.model.loaded', { loadMilliseconds: message.loadMilliseconds });
       resolveReady?.();
       resolveReady = null;
       rejectReady = null;
@@ -77,7 +78,9 @@ export function createManagedLocalTranscriber({
     if (message.kind === 'load-error') {
       const error = new TranscriptionFailure(
         'model',
-        'Local speech recognition could not load. Delete and reinstall the model in Settings.',
+        runtime?.backend === 'cuda'
+          ? 'GPU speech recognition could not start. Check the NVIDIA driver and GPU setup, or choose CPU in Settings.'
+          : 'Local speech recognition could not load. Delete and reinstall the model in Settings.',
       );
       if (child) reset(child, error, true);
       return;
@@ -87,10 +90,6 @@ export function createManagedLocalTranscriber({
     clearTimeout(request.timeout);
     pending.delete(message.requestId);
     if (message.kind === 'result') {
-      emitPerformanceMarker('managed-local.transcription.completed', {
-        transcriptionMilliseconds: message.transcriptionMilliseconds,
-        audioDurationMilliseconds: message.audioDurationMilliseconds,
-      });
       request.resolve(message.text);
     }
     else request.reject(new TranscriptionFailure(
@@ -117,7 +116,12 @@ export function createManagedLocalTranscriber({
     const startup = (async () => {
       try {
         const modelPath = await getModelPath();
+        if (activeStartup !== startupToken) throw new TranscriptionFailure('model', 'Local speech recognition stopped.');
         const process = await startProcess();
+        if (activeStartup !== startupToken) {
+          process.kill();
+          throw new TranscriptionFailure('model', 'Local speech recognition stopped.');
+        }
         child = process;
         const loaded = new Promise<void>((resolve, reject) => {
           resolveReady = resolve;
@@ -126,7 +130,6 @@ export function createManagedLocalTranscriber({
         process.on('message', onMessage);
         process.on('exit', (code) => {
           if (child !== process) return;
-          emitPerformanceMarker('managed-local.runtime.exited', { code });
           reset(process, new TranscriptionFailure(
             'model',
             code === 0
@@ -140,7 +143,7 @@ export function createManagedLocalTranscriber({
             'Local speech recognition timed out while loading. Retry Dictation.',
           ), true);
         }, loadTimeoutMs);
-        process.postMessage({ kind: 'load', modelPath, numThreads });
+        process.postMessage({ kind: 'load', modelPath, numThreads, ...(runtime ? { runtime } : {}) });
         await loaded;
       } catch (error) {
         if (activeStartup === startupToken) {
@@ -154,47 +157,55 @@ export function createManagedLocalTranscriber({
     return startup.then(ensureReady);
   };
 
+  const awaitResult = (requestId: string): Promise<string> => {
+    return new Promise<string>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const process = child;
+        const error = new TranscriptionFailure('model', 'Local transcription timed out. Retry Dictation.');
+        if (process) reset(process, error, true);
+        else reject(error);
+      }, transcriptionTimeoutMs);
+      pending.set(requestId, { resolve, reject, timeout });
+    });
+  };
+
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void> } = {
     id: 'managed-local',
     capabilities: {
       translation: false,
-      automaticLanguageDetection: true,
-      dictionaryHints: false,
+      automaticLanguageDetection: false,
+      dictionaryHints: runtime?.model !== 'granite',
       authentication: 'none',
       maxDurationSeconds: null,
     },
-    async transcribe({ audio, recognition }) {
-      // A cancelled recording can leave its decode running. Drain it before changing threads.
-      if (pending.size > 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads())) {
-        await Promise.all([...pending.values()].map(request => request.finished));
-      }
-      await ensureReady();
-      if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
-      const requestId = randomUUID();
-      let finishRequest!: () => void;
-      const finished = new Promise<void>(resolve => { finishRequest = resolve; });
-      const result = new Promise<string>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          const process = child;
-          const error = new TranscriptionFailure('model', 'Local transcription timed out. Retry Dictation.');
-          if (process) reset(process, error, true);
-          else reject(error);
-        }, transcriptionTimeoutMs);
-        pending.set(requestId, {
-          resolve: text => { finishRequest(); resolve(text); },
-          reject: error => { finishRequest(); reject(error); },
-          finished,
-          timeout,
-        });
+    transcribe({ audio, recognition, signal }) {
+      const { dictionary, removeFillerWords } = structuredClone(recognition);
+      // Native decodes cannot be interrupted, so the worker gets one at a time. An aborted caller returns at
+      // once; its decode drains here before the next one is sent, and work still queued behind it is skipped.
+      const job = queue.then(async () => {
+        signal?.throwIfAborted();
+        await ensureReady();
+        signal?.throwIfAborted();
+        if (!child) throw new TranscriptionFailure('model', 'Local speech recognition is unavailable.');
+        const requestId = randomUUID();
+        const result = awaitResult(requestId);
+        child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer, dictionary, removeFillerWords });
+        return (await result).trim();
       });
-      child.postMessage({ kind: 'transcribe', requestId, audio: audio.slice().buffer });
-      const text = (await result).trim();
-      return recognition.removeFillerWords ? cleanFillerWords(text) : text;
+      queue = job.catch(() => undefined);
+      if (!signal) return job;
+      return new Promise<string>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        if (signal.aborted) onAbort();
+        signal.addEventListener('abort', onAbort, { once: true });
+        job.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+      });
     },
     warmup: ensureReady,
     async shutdown() {
       const process = child;
       if (process) reset(process, new TranscriptionFailure('model', 'Local speech recognition stopped.'), true);
+      else { activeStartup = null; ready = null; }
     },
   };
 
@@ -209,21 +220,19 @@ async function defaultStartProcess(): Promise<RuntimeProcess> {
 }
 
 type RuntimeResponse =
-  | { kind: 'ready'; loadMilliseconds: number }
+  | { kind: 'ready' }
   | { kind: 'load-error'; message: string }
-  | { kind: 'result'; requestId: string; text: string; transcriptionMilliseconds: number; audioDurationMilliseconds?: number }
+  | { kind: 'result'; requestId: string; text: string }
   | { kind: 'error'; requestId: string; message: string };
 
 function isRuntimeResponse(message: unknown): message is RuntimeResponse {
   if (!message || typeof message !== 'object' || !('kind' in message)) return false;
   const kind = message.kind;
-  if (kind === 'ready') return 'loadMilliseconds' in message && typeof message.loadMilliseconds === 'number';
+  if (kind === 'ready') return true;
   if (kind === 'load-error') return 'message' in message && typeof message.message === 'string';
   if (kind === 'result') {
     return 'requestId' in message && typeof message.requestId === 'string'
-      && 'text' in message && typeof message.text === 'string'
-      && 'transcriptionMilliseconds' in message && typeof message.transcriptionMilliseconds === 'number'
-      && (!('audioDurationMilliseconds' in message) || typeof message.audioDurationMilliseconds === 'number');
+      && 'text' in message && typeof message.text === 'string';
   }
   if (kind === 'error') {
     return 'requestId' in message && typeof message.requestId === 'string'

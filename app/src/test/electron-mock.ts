@@ -17,8 +17,10 @@ export const electronMock = {
   }),
   ipcMain: {
     handle: mock(),
+    removeHandler: mock(),
     on: mock(),
     off: mock(),
+    emit: mock(),
     removeListener: mock(),
   },
   clipboard: {
@@ -29,6 +31,7 @@ export const electronMock = {
     readImage: mock(() => ({ isEmpty: () => true, toPNG: () => Buffer.alloc(0) })),
     readBookmark: mock(() => ({ title: '', url: '' })),
     writeText: mock(),
+    write: mock(),
     writeHTML: mock(),
     writeRTF: mock(),
     writeImage: mock(),
@@ -106,8 +109,10 @@ export function resetElectronMock(): void {
   electronMock.BrowserWindow.getAllWindows.mockReset();
   electronMock.BrowserWindow.getAllWindows.mockReturnValue([]);
   electronMock.ipcMain.handle.mockReset();
+  electronMock.ipcMain.removeHandler.mockReset();
   electronMock.ipcMain.on.mockReset();
   electronMock.ipcMain.off.mockReset();
+  electronMock.ipcMain.emit.mockReset();
   electronMock.ipcMain.removeListener.mockReset();
   electronMock.clipboard.availableFormats.mockReset();
   electronMock.clipboard.availableFormats.mockReturnValue([]);
@@ -122,6 +127,7 @@ export function resetElectronMock(): void {
   electronMock.clipboard.readBookmark.mockReset();
   electronMock.clipboard.readBookmark.mockReturnValue({ title: '', url: '' });
   electronMock.clipboard.writeText.mockReset();
+  electronMock.clipboard.write.mockReset();
   electronMock.clipboard.writeHTML.mockReset();
   electronMock.clipboard.writeRTF.mockReset();
   electronMock.clipboard.writeImage.mockReset();

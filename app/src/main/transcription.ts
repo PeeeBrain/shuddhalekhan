@@ -3,6 +3,17 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import type { TranscriptionProviderId } from '../types/ipc';
+
+/** Where gcloud keeps Application Default Credentials, in lookup order. */
+export function applicationDefaultCredentialPaths(): string[] {
+  const configDir = process.env.APPDATA
+    || (process.platform === 'win32' ? join(homedir(), 'AppData', 'Roaming') : join(homedir(), '.config'));
+  return [
+    process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    join(configDir, 'gcloud', 'application_default_credentials.json'),
+  ].filter((value): value is string => Boolean(value));
+}
+import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '../shared/transcription-features';
 export type { TranscriptionProviderId } from '../types/ipc';
 
 export interface TranscriptionCapabilities {
@@ -23,6 +34,8 @@ export interface RecognitionSettings {
 export interface TranscriptionRequest {
   audio: Uint8Array<ArrayBuffer>;
   recognition: RecognitionSettings;
+  /** Aborts in-flight provider requests and prevents further ones (auth, retries). */
+  signal?: AbortSignal;
 }
 
 export interface StreamingTranscriptSnapshot {
@@ -211,6 +224,13 @@ export function validateProviderReadiness(
   vault: { read: (id: string) => string | null },
 ): string[] {
   const errors: string[] = [];
+  const features = resolveTranscriptionFeatures(config);
+  if (config.task === 'translate' && !features.translation) errors.push('Translation is not supported by the selected provider and model.');
+  if (features.language.kind === 'select' && config.language === 'auto' && !features.automaticLanguageDetection) {
+    errors.push('Choose an explicit spoken language for this provider.');
+  }
+  const dictionaryError = getTranscriptionDictionaryError(config);
+  if (dictionaryError && providerId !== 'managed-local') errors.push(dictionaryError);
 
   if (providerId === 'local-whisper-cpp') {
     const { endpoint } = config.transcription.providers.localWhisperCpp;
@@ -249,11 +269,7 @@ export function validateProviderReadiness(
       errors.push('Google service-account credentials are not configured. Import them in Settings.');
     }
     if (google.credentialSource === 'adc') {
-      const adcPaths = [
-        process.env.GOOGLE_APPLICATION_CREDENTIALS,
-        join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'gcloud', 'application_default_credentials.json'),
-      ].filter((value): value is string => Boolean(value));
-      if (!adcPaths.some((path) => existsSync(path))) {
+      if (!applicationDefaultCredentialPaths().some((path) => existsSync(path))) {
         errors.push('Application Default Credentials could not be found. Configure ADC before recording.');
       }
     }
@@ -269,7 +285,6 @@ export function validateProviderReadiness(
     if (nim.auth === 'header' && !isValidHttpFieldName(nim.headerName.trim())) errors.push('NVIDIA Speech NIM header name is invalid.');
     if (config.language === 'auto' && !nim.supportsAutomaticLanguageDetection) errors.push('Automatic language detection is not enabled for this NIM model.');
     if (config.task === 'translate' && !nim.supportsTranslation) errors.push('Translation is not enabled for this NIM model.');
-    if (config.dictionary.length && !nim.supportsDictionaryHints) errors.push('Dictionary hints are not enabled for this NIM model.');
   }
 
   if (providerId === 'custom-open-ai-compatible') {

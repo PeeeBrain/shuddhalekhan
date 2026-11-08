@@ -297,6 +297,7 @@ describe('RuntimeShellSurface agent cards', () => {
       intent: 'dictation',
       capabilities: { batch: true, streaming: false },
       durationWarningSeconds: null,
+      captureStartedAt: null,
     });
 
     // The approval resurfaces after capture ends; the draft survives.
@@ -313,5 +314,75 @@ describe('RuntimeShellSurface agent cards', () => {
     });
 
     expect(await screen.findByLabelText('Optional denial message')).toHaveValue('Use the other account');
+  });
+});
+
+describe('RuntimeShellSurface streaming preview', () => {
+  afterEach(cleanup);
+
+  it('labels the preview provisional and shows the tentative tail once after committed words', () => {
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+
+    showCard({
+      kind: 'recording',
+      recordingSessionId: 'session-1',
+      intent: 'agent',
+      capabilities: { batch: true, streaming: true },
+      durationWarningSeconds: null,
+      captureStartedAt: null,
+      committed: 'open the',
+      tentative: 'open the report',
+    });
+
+    const preview = screen.getByTestId('streaming-preview');
+    expect(preview).toHaveTextContent(/^Preview\s*open the report$/);
+    expect(screen.getByTestId('streaming-committed')).toHaveTextContent('open the');
+    expect(screen.getByTestId('streaming-tentative')).toHaveTextContent('report');
+  });
+
+  it('keeps the recording timer anchored to capture start across preview revisions', () => {
+    let now = 1_000_000;
+    const ticks: Array<() => void> = [];
+    const spies = [
+      spyOn(Date, 'now').mockImplementation(() => now),
+      spyOn(window, 'setInterval').mockImplementation(((callback: () => void) => {
+        ticks.push(callback);
+        return ticks.length;
+      }) as typeof setInterval),
+      spyOn(window, 'requestAnimationFrame').mockImplementation(() => 0),
+    ];
+    const advance = (ms: number) => {
+      now += ms;
+      act(() => ticks.forEach((tick) => tick()));
+    };
+    try {
+      mockElectronAPI();
+      render(<RuntimeShellSurface />);
+      const recording = {
+        kind: 'recording',
+        recordingSessionId: 'session-1',
+        intent: 'dictation',
+        capabilities: { batch: true, streaming: true },
+        durationWarningSeconds: null,
+      } as const;
+
+      showCard({ ...recording, captureStartedAt: null });
+      expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Preparing microphone');
+
+      advance(1000);
+      showCard({ ...recording, captureStartedAt: now, revision: 2 });
+      advance(3000);
+      expect(screen.getByRole('status')).toHaveTextContent('00:03');
+
+      // Each preview delta is a new revision of the same session; the clock keeps running.
+      showCard({ ...recording, captureStartedAt: 1_001_000, committed: 'hello', revision: 3 });
+      expect(screen.getByRole('status')).toHaveTextContent('00:03');
+      advance(2000);
+      showCard({ ...recording, captureStartedAt: 1_001_000, committed: 'hello there', revision: 4 });
+      expect(screen.getByRole('status')).toHaveTextContent('00:05');
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
   });
 });

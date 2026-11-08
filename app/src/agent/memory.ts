@@ -17,6 +17,8 @@ export async function learnAgentMemory(args: {
 }): Promise<string | undefined> {
   const { agentRunId, transcript, config, memory, storedApiKey, signal, callbacks } = args;
   if (!callbacks.commitMemory || signal.aborted) return;
+  // ponytail: SIWC requires streaming; keep automatic extraction off until it uses streaming.
+  if (config.agent.provider.kind === 'chatgpt') return 'Automatic memory learning is unavailable with ChatGPT plan usage.';
   let apiKey = storedApiKey;
   try {
     if (Buffer.byteLength(transcript) > MEMORY_BYTE_LIMIT) throw new Error('The command is too long for automatic memory learning.');

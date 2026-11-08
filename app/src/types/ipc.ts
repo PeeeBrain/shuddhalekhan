@@ -1,4 +1,5 @@
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
+import type { DesktopStatus } from '../shared/desktop-status';
 
 export type AudioDevice = {
   deviceId: string;
@@ -60,7 +61,13 @@ export type CredentialStatus =
 
 export type AgentApiKeySource = 'environment' | 'stored';
 export type AgentReasoningEffort = 'low' | 'medium' | 'high';
-export type AgentProviderKind = 'openai' | 'azure-openai' | 'openrouter' | 'openai-compatible';
+export type AgentProviderKind = 'openai' | 'azure-openai' | 'openrouter' | 'openai-compatible' | 'chatgpt';
+
+export type ChatGptAccountStatus =
+  | { state: 'signed-out' }
+  | { state: 'signed-in'; email: string; planUsage: boolean };
+
+export interface ChatGptModel { slug: string; displayName: string }
 export type AgentApiMode = 'chat-completions' | 'responses';
 export type AgentReasoning = 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
@@ -155,16 +162,10 @@ export interface McpServerConfig {
 
 export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
-  'audio-capture-started': (
-    generation: number,
-    recordingSessionId: string,
-    sequence: number,
-    timing: AudioCaptureStartupTiming,
-  ) => void;
-  'runtime:audio-first-buffer': (generation: number, recordingSessionId: string, sequence: number) => void;
-  'surface-paint-proxy': (surface: string, correlationId?: string) => void;
+  'surface-paint-proxy': (surface: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
   'audio-level-changed': (level: number) => void;
+  'runtime:audio-ready': (generation: number, recordingSessionId: string, commandSequence: number) => void;
   'runtime:audio-chunk': (
     generation: number,
     recordingSessionId: string,
@@ -177,11 +178,13 @@ export interface RendererToMainSendChannels {
     recordingSessionId: string,
     commandSequence: number,
   ) => void;
-  'runtime:audio-data-ready': (
+  /** Acknowledged end boundary: main verifies the spool holds exactly this much audio. */
+  'runtime:audio-end': (
     generation: number,
     recordingSessionId: string,
-    sequence: number,
-    audioData: ArrayBuffer,
+    commandSequence: number,
+    chunkCount: number,
+    sampleCount: number,
   ) => void;
   'runtime:audio-failed': (
     generation: number,
@@ -193,21 +196,7 @@ export interface RendererToMainSendChannels {
   'runtime:agent-dismiss': () => void;
 }
 
-export interface AudioCaptureStartupTiming {
-  micAcquisitionMs: number;
-  graphSetupMs: number;
-}
-
-export interface DictationTargetSnapshot {
-  hwnd: number;
-  processId: number;
-  /** UTC ISO timestamp for the original process; used to detect PID reuse. */
-  processCreationTime: string;
-  threadId: number;
-  windowClass: string;
-  executablePath: string | null;
-  capturedAt: string;
-}
+export type { DictationTargetSnapshot } from '../shared/dictation-target';
 
 export type PasteStrategy = 'ctrl-v' | 'shift-insert' | 'ctrl-shift-v';
 
@@ -219,6 +208,10 @@ export type InjectResult =
   | { kind: 'error'; message: string };
 
 export interface RendererToMainInvokeChannels {
+  'chatgpt:get-status': () => Promise<ChatGptAccountStatus>;
+  'chatgpt:sign-in': () => Promise<ChatGptAccountStatus>;
+  'chatgpt:sign-out': () => Promise<ChatGptAccountStatus>;
+  'chatgpt:list-models': () => Promise<ChatGptModel[]>;
   'skills:list': () => Promise<AgentSkillSummary[]>;
   'skills:read': (name: string) => Promise<AgentSkillDocument>;
   'skills:save': (document: AgentSkillDocument & { create: boolean }) => Promise<AgentSkillSummary[]>;
@@ -234,9 +227,22 @@ export interface RendererToMainInvokeChannels {
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
   'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
+  'config:patch-transcription': (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;
   'transcription:check-server': () => Promise<boolean>;
   'settings:open': () => void;
   'clipboard:inject-text': (text: string) => Promise<InjectResult>;
+  /**
+   * Canonical 16 kHz mono PCM16 batch, appended to main's per-recording spool
+   * in order. Resolves true once written; false means main dropped the
+   * recording (stale identity or failed write) and the capture must fail.
+   */
+  'runtime:audio-spool': (
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+    chunkSequence: number,
+    pcm: ArrayBuffer,
+  ) => Promise<boolean>;
   'agent:approval-decision': (
     agentRunId: string,
     approvalId: string,
@@ -255,6 +261,9 @@ export interface RendererToMainInvokeChannels {
   'audit:get-runs': () => Promise<AuditRunSummary[]>;
   'audit:get-run-detail': (agentRunId: string) => Promise<AuditEventDetail[]>;
   'shortcuts:get-paused': () => Promise<boolean>;
+  'desktop:get-status': () => Promise<DesktopStatus>;
+  /** Enabling runs KWin focus tracking and the RemoteDesktop consent prompt before it reports ready. */
+  'desktop:set-wayland-insertion': (enabled: boolean) => Promise<DesktopStatus>;
   'shortcuts:set-paused': (paused: boolean) => Promise<boolean>;
   'shortcuts:begin-capture': () => void;
   'shortcuts:end-capture': () => void;
@@ -263,11 +272,12 @@ export interface RendererToMainInvokeChannels {
   'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
   'transcription:check-readiness': () => Promise<TranscriptionReadiness>;
   'managed-local:get-model': () => Promise<ManagedLocalModelSnapshot>;
-  'managed-local:install-model': () => Promise<ManagedLocalModelSnapshot>;
-  'managed-local:delete-model': () => Promise<ManagedLocalModelSnapshot>;
+  'managed-local:install-model': (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
+  'managed-local:delete-model': (target?: ManagedLocalDeleteTarget) => Promise<ManagedLocalModelSnapshot>;
 }
 
 export interface MainToRendererChannels {
+  'chatgpt:changed': (status: ChatGptAccountStatus) => void;
   'memory:changed': (snapshot: AgentMemorySnapshot) => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
   'recording:mode-changed': (intent: RecordingIntent) => void;
@@ -282,9 +292,10 @@ export interface MainToRendererChannels {
   'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;
   'shortcuts:paused-changed': (paused: boolean) => void;
-  'surface:request-paint-proxy': (surface: string) => void;
+  'desktop:status-changed': (status: DesktopStatus) => void;
   'runtime:audio-start': (command: RuntimeAudioCommand) => void;
   'runtime:audio-stop': (command: RuntimeAudioCommand) => void;
+  'runtime:audio-cancel': (command: RuntimeAudioCommand) => void;
   'runtime:audio-chunk-accepted': (
     generation: number,
     recordingSessionId: string,
@@ -313,10 +324,10 @@ export type RuntimePresentationState =
       recordingSessionId: string;
       intent: RecordingIntent;
       capabilities: TranscriptionTransportCapabilities;
+      captureStartedAt: number | null;
       durationWarningSeconds: number | null;
       committed?: string;
       tentative?: string;
-      insertionHalted?: boolean;
     }
   | { kind: 'processing'; recordingSessionId: string }
   | {
@@ -387,6 +398,10 @@ export interface CustomOpenAiProviderConfig {
   model: string;
   auth: 'none' | 'bearer' | 'header';
   headerName: string;
+  /** Missing declarations preserve existing custom endpoint behavior. */
+  supportsAutomaticLanguageDetection?: boolean;
+  supportsTranslation?: boolean;
+  supportsDictionaryHints?: boolean;
 }
 
 export interface AzureSpeechProviderConfig {
@@ -460,9 +475,45 @@ export interface ManagedLocalModelSnapshot {
   model: ManagedLocalModelMetadata;
   state: ManagedLocalModelState;
   inference: { maxThreads: number; defaultThreads: number };
+  catalog: Array<{
+    key: ManagedLocalModelId;
+    name: string;
+    description: string;
+    languages: string[];
+    cpu: ManagedLocalVariant;
+    /** Absent where no GPU build exists (outside Windows). */
+    cuda?: ManagedLocalVariant;
+  }>;
+  runtime: {
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    backend: 'cpu' | 'cuda' | null;
+    message: string;
+  };
+  gpu: { name: string | null; message: string };
 }
 
-export type DictationMode = 'batch' | 'live' | 'corrected';
+export type ManagedLocalModelId = 'parakeet' | 'granite';
+export type ManagedLocalDevice = 'auto' | 'cpu' | 'cuda';
+export interface ManagedLocalSelection {
+  model: ManagedLocalModelId;
+  devices: Record<ManagedLocalModelId, ManagedLocalDevice>;
+}
+export interface ManagedLocalTarget {
+  model: ManagedLocalModelId;
+  backend: 'cpu' | 'cuda';
+}
+/** `legacy: true` deletes a previous release's files for this target instead of the current ones. */
+export type ManagedLocalDeleteTarget = ManagedLocalTarget & { legacy?: true };
+interface ManagedLocalVariant {
+  downloadBytes: number;
+  installedBytes: number;
+  /** This variant's current files; a legacy install never makes it `ready`. */
+  state: ManagedLocalModelState;
+  /** Previous release's files, kept until explicitly deleted. `inUse` while the current files are not ready. */
+  legacy?: { name: string; installedBytes: number; inUse: boolean } | null;
+}
+
+export type DictationMode = 'batch' | 'corrected';
 
 export interface DictationFormatterProfile {
   baseUrl: string;
@@ -497,18 +548,25 @@ export interface RecordingPresentationEnvelope {
   outcome?: RecordingTerminalOutcome;
 }
 
+export type TranscriptionSettingsPatch = Partial<Pick<AppConfig,
+  'transcription' | 'managedLocal' | 'language' | 'task' | 'dictionary' |
+  'removeFillerWords' | 'dictation' | 'shortcuts'>>;
+
 export interface AppConfig {
   /** @deprecated Read the local provider endpoint from transcription instead. */
   whisperUrl: string;
   transcription: TranscriptionConfig;
   /** Missing/null keeps the automatic Managed Local CPU thread default. */
   managedLocalThreads?: number | null;
+  managedLocal?: ManagedLocalSelection;
   selectedDeviceId: string | null;
   removeFillerWords: boolean;
   language: string;
   task: 'transcribe' | 'translate';
   dictionary: string[];
   pasteStrategy: PasteStrategyConfig;
+  /** KDE Wayland best-effort insertion test mode. Off by default; enabled only through Settings setup. */
+  waylandBestEffortInsertion?: boolean;
   setupChecklistDismissed: boolean;
   onboarding: { status: 'pending' | 'complete' };
   shortcuts: ShortcutsConfig;
@@ -519,6 +577,8 @@ export interface AppConfig {
     mcpServers: McpServerConfig[];
     disabledSkills?: string[];
     memoryEnabled?: boolean;
+    /** Appended to the agent system prompt; part of the cached prefix, so it never carries per-run data. */
+    customInstructions?: string;
   };
 }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppConfig } from '../../types/ipc';
+import type { AppConfig, TranscriptionSettingsPatch } from '../../types/ipc';
 import type { SettingsIpc } from './settings-ipc';
 
 export type FieldErrors = Record<string, string>;
@@ -16,9 +16,21 @@ export interface SettingsPersistence {
     value: AppConfig[K],
     fieldId: string,
   ) => Promise<void>;
+  /**
+   * Saves a dependent transcription change in one main-validated step and resolves
+   * main's canonical config. Resolves null after restoring the saved config, so
+   * callers must stop on null.
+   */
+  commitTranscription: (patch: TranscriptionSettingsPatch, fieldId: string) => Promise<AppConfig | null>;
   fieldErrors: FieldErrors;
   clearFieldError: (fieldId: string) => void;
   toast: SaveToastState | null;
+}
+
+/** Only the keys a transition owns, so unrelated in-flight edits are not clobbered. */
+function transcriptionSlice(config: AppConfig): TranscriptionSettingsPatch {
+  const { transcription, managedLocal, language, task, dictionary, removeFillerWords, dictation, shortcuts } = config;
+  return { transcription, managedLocal, language, task, dictionary, removeFillerWords, dictation, shortcuts };
 }
 
 export const SAVE_TOAST_DURATION_MS = 2500;
@@ -34,11 +46,13 @@ export function ipcErrorMessage(error: unknown, fallback: string): string {
 
 export function useSettingsPersistence(
   settingsIpc: SettingsIpc,
-  applyOptimistic: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void,
+  /** Merges into the rendered config; must not replace keys outside `patch`. */
+  applyConfig: (patch: Partial<AppConfig>) => void,
 ): SettingsPersistence {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [toast, setToast] = useState<SaveToastState | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transcriptionRevision = useRef(0);
 
   const dismissToast = useCallback((key: number) => {
     setToast((current) => (current && current.key === key ? null : current));
@@ -77,7 +91,7 @@ export function useSettingsPersistence(
       value: AppConfig[K],
       fieldId: string,
     ) => {
-      applyOptimistic(key, value);
+      applyConfig({ [key]: value });
       try {
         await settingsIpc.setConfig(key, value);
         clearFieldError(fieldId);
@@ -87,10 +101,40 @@ export function useSettingsPersistence(
           ...current,
           [fieldId]: ipcErrorMessage(error, 'Could not save this setting.'),
         }));
+        await settingsIpc.getConfig().then(saved => applyConfig({ [key]: saved[key] })).catch(() => undefined);
       }
     },
-    [applyOptimistic, clearFieldError, showToast, settingsIpc],
+    [applyConfig, clearFieldError, showToast, settingsIpc],
   );
 
-  return { commit, fieldErrors, clearFieldError, toast };
+  const commitTranscription = useCallback(
+    async (patch: TranscriptionSettingsPatch, fieldId: string) => {
+      const revision = ++transcriptionRevision.current;
+      applyConfig(patch);
+      try {
+        const saved = await settingsIpc.patchTranscriptionConfig(patch);
+        // A newer transition owns the rendered state; its own reply will land.
+        if (revision === transcriptionRevision.current) applyConfig(transcriptionSlice(saved));
+        clearFieldError(fieldId);
+        showToast('success', SAVE_TOAST_MESSAGE);
+        return saved;
+      } catch (error) {
+        setFieldErrors((current) => ({
+          ...current,
+          [fieldId]: ipcErrorMessage(error, 'Could not save this setting.'),
+        }));
+        if (revision === transcriptionRevision.current) {
+          await settingsIpc.getConfig()
+            .then((saved) => {
+              if (revision === transcriptionRevision.current) applyConfig(transcriptionSlice(saved));
+            })
+            .catch(() => undefined);
+        }
+        return null;
+      }
+    },
+    [applyConfig, clearFieldError, showToast, settingsIpc],
+  );
+
+  return { commit, commitTranscription, fieldErrors, clearFieldError, toast };
 }

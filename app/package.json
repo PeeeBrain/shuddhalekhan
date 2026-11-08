@@ -6,9 +6,11 @@
   "type": "module",
   "main": "./out/main/index.cjs",
   "author": "parthashirolkar",
+  "homepage": "https://github.com/PeeeBrain/shuddhalekhan",
+  "desktopName": "shuddhalekhan.desktop",
   "scripts": {
     "predev": "install-electron",
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev -- --ozone-platform=x11",
     "build": "electron-vite build && bun run build:agent",
     "build:agent": "vite build --config vite.agent.config.ts",
     "preview": "electron-vite preview",
@@ -19,7 +21,6 @@
     "test": "bun test --parallel=4",
     "test:watch": "bun test --watch",
     "verify:whisper": "bun scripts/verify-whisper-endpoint.ts",
-    "test:transcription-quality": "bun scripts/transcription-quality.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -34,18 +35,19 @@
     "clsx": "^2.1.1",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.3.0",
+    "js-yaml": "4.3.2",
     "koffi": "^2.9.0",
-    "js-yaml": "4.1.1",
     "lucide-react": "^1.14.0",
     "radix-ui": "^1.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "sherpa-onnx-node": "1.13.8",
+    "sherpa-onnx-node": "2.0.1",
     "tailwind-merge": "^3.5.0",
+    "transcribe-cpp": "0.4.1",
     "ws": "^8.21.0",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.6",
@@ -81,6 +83,12 @@
     ]
   },
   "build": {
+    "asarUnpack": [
+      "node_modules/**/transcribe-cpp/**/*",
+      "node_modules/**/@transcribe-cpp/**/*",
+      "node_modules/**/@koromix/**/*",
+      "node_modules/**/koffi/**/*"
+    ],
     "appId": "com.shuddhalekhan.app",
     "productName": "Shuddhalekhan",
     "directories": {
@@ -110,6 +118,33 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "rpm"
+      ],
+      "icon": "icons/icon.png",
+      "category": "Utility",
+      "executableName": "shuddhalekhan",
+      "artifactName": "shuddhalekhan-${version}-${arch}.${ext}",
+      "syncDesktopName": true,
+      "maintainer": "parthashirolkar <parthashirolkar@gmail.com>",
+      "synopsis": "Voice dictation and voice-to-agent commands",
+      "executableArgs": [
+        "--ozone-platform=x11"
+      ]
+    },
+    "deb": {
+      "packageName": "shuddhalekhan",
+      "afterInstall": "packaging/linux/after-install.sh",
+      "fpm": ["--depends", "libxcb1", "--depends", "libxcb-xfixes0", "--depends", "libxcb-xtest0"]
+    },
+    "rpm": {
+      "packageName": "shuddhalekhan",
+      "afterInstall": "packaging/linux/after-install.sh",
+      "afterRemove": "packaging/linux/after-remove.sh",
+      "fpm": ["--depends", "libxcb"]
     },
     "publish": {
       "provider": "github",

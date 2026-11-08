@@ -10,6 +10,7 @@ export const FORMATTER_MAX_EXPANSION_RATIO = 1.75;
 const SYSTEM_PROMPT = `You are Shuddhalekhan's conservative dictation formatter (version ${FORMATTER_PROMPT_VERSION}).
 
 Apply minimal semantic cleanup to finalized speech-to-text output:
+- Restore sentence punctuation and capitalization without changing the words or their meaning.
 - Remove clear false starts and explicit corrections ("actually", "scratch that", natural restatements).
 - Preserve the speaker's languages; never translate or summarize.
 - Preserve protected spelling terms exactly.
@@ -25,6 +26,7 @@ export interface DictationFormatterRequest {
   protectedTerms: string[];
   apiKey: string | null;
   deadlineMs?: number;
+  signal?: AbortSignal;
 }
 
 export type DictationFormatterSuccess = { kind: 'success'; text: string };
@@ -209,7 +211,7 @@ export async function applyDictationFormatter(
       method: 'POST',
       headers,
       body: JSON.stringify(buildFormatterPayload(profile, rawText, language, protectedTerms)),
-      signal: controller.signal,
+      signal: request.signal ? AbortSignal.any([controller.signal, request.signal]) : controller.signal,
     });
 
     if (response.status === 401 || response.status === 403) {

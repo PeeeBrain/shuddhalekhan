@@ -28,7 +28,7 @@ jobs:
         id: bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Cache Bun packages
         uses: actions/cache@v5
@@ -49,3 +49,23 @@ jobs:
       - name: Verify Electron native dependencies
         run: bun x electron-builder install-app-deps
         working-directory: app
+
+  linux-dictation:
+    name: Linux Dictation contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - name: Install X11 test server and native libraries
+        run: sudo apt-get update && sudo apt-get install -y xvfb libxcb1 libxcb-xfixes0 libxcb-xtest0
+      - name: Install dependencies without packaging hooks
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check capture and desktop protocol contracts
+        run: bun test app/src/main/desktop/__tests__ app/src/main/native/__tests__/linux-input.test.ts app/src/main/__tests__/audio-spool.test.ts app/src/main/__tests__/keyboard.test.ts app/src/renderer/__tests__/audio-capture.test.ts app/src/renderer/__tests__/audio-capture-worklet.test.ts
+      - name: Check native X11 focus, ownership and paste
+        run: bun test app/src/main/native/__tests__/x11-target.integration.test.ts app/src/main/desktop/__tests__/x11-shortcuts.integration.test.ts
+        env:
+          SHUDDHALEKHAN_X11_INTEGRATION: '1'

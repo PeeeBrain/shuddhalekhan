@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(/scripts/eval/score.ts)",
+      "Write(/scripts/eval/score.ts)",
+      "Edit(/scripts/eval/dev-set.json)",
+      "Write(/scripts/eval/dev-set.json)",
+      "Edit(/scripts/eval/baseline.json)",
+      "Write(/scripts/eval/baseline.json)",
+      "Edit(/scripts/eval/baseline-e2e.json)",
+      "Write(/scripts/eval/baseline-e2e.json)",
+      "Edit(/eval-data/**)",
+      "Write(/eval-data/**)"
+    ]
+  }
+}

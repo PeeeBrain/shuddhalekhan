@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfig,
   AppInfo,
@@ -140,15 +140,15 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     };
   }, [settingsIpc]);
 
-  const applyOptimistic = <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => {
-    setConfigState((current) => (current ? { ...current, [key]: value } : current));
-  };
+  const applyConfig = useCallback((patch: Partial<AppConfig>) => {
+    setConfigState((current) => (current ? { ...current, ...patch } : current));
+  }, []);
 
-  const persistence = useSettingsPersistence(settingsIpc, applyOptimistic);
+  const persistence = useSettingsPersistence(settingsIpc, applyConfig);
 
   if (!config) {
     return (
-      <main className="settings-root flex h-screen items-center justify-center bg-background text-foreground">
+      <main className="settings-root flex h-full items-center justify-center bg-background text-foreground">
         <p className="text-muted-foreground">Loading settings…</p>
       </main>
     );
@@ -198,7 +198,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   };
 
   return (
-    <main className="settings-root relative flex h-screen overflow-hidden bg-background text-foreground">
+    <main className="settings-root relative flex h-full overflow-hidden bg-background text-foreground">
       <aside
         inert={paletteOpen}
         className="flex w-52 shrink-0 flex-col overflow-y-auto border-r border-border/60 bg-canvas px-2.5 py-5"
@@ -235,7 +235,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
         </nav>
       </aside>
 
-      <section inert={paletteOpen} className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <section inert={paletteOpen} className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <div
           key={activeSection}
           role="tabpanel"

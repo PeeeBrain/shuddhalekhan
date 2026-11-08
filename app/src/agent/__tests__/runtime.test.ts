@@ -43,21 +43,6 @@ describe('runAgent', () => {
     delete process.env.OPENROUTER_API_KEY;
   });
 
-  it('marks the provider request immediately before starting the model stream', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-    const order: string[] = [];
-    streamTextMock.mockImplementation(() => {
-      order.push('streamText');
-      return makeStreamResult({ text: 'Done', steps: [], toolCalls: [], toolResults: [] });
-    });
-    const callbacks = makeCallbacks();
-    callbacks.onProviderRequestStarted.mockImplementation(() => { order.push('provider-marker'); });
-
-    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
-
-    expect(order.slice(0, 2)).toEqual(['provider-marker', 'streamText']);
-  });
-
   it('fails when provider config is incomplete', async () => {
     const callbacks = makeCallbacks();
     const config = { ...baseConfig, agent: { ...baseConfig.agent, provider: { ...baseConfig.agent.provider, baseUrl: '' } } };
@@ -186,6 +171,26 @@ describe('runAgent', () => {
     const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions.content;
     expect(systemPrompt).toContain('<identity>');
     expect(systemPrompt).not.toContain('# Identity');
+  });
+
+  it('puts custom instructions in a system prompt that stays byte-identical across runs', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [{ toolCalls: [], toolResults: [] }],
+      toolCalls: [],
+      toolResults: [],
+    }));
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, customInstructions: '  Reply in French.\n' } };
+
+    await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, makeCallbacks());
+    await runAgent('run-2', 'what time is it?', config as never, {}, new AbortController().signal, makeCallbacks());
+
+    const first = streamTextMock.mock.calls[0]?.[0].instructions.content;
+    const second = streamTextMock.mock.calls[1]?.[0].instructions.content;
+    expect(first).toEndWith('Reply in French.\n</user_instructions>');
+    expect(second).toBe(first);
+    expect(streamTextMock.mock.calls[0]?.[0].messages[0].content).not.toContain('Reply in French.');
   });
 
   it('injects the current local datetime into each agent run prompt', async () => {
@@ -555,7 +560,6 @@ describe('runAgent', () => {
 function makeCallbacks(): AgentRuntimeCallbacks & { [K in keyof AgentRuntimeCallbacks]: ReturnType<typeof mock> } {
   return {
     onStatus: mock(() => undefined),
-    onProviderRequestStarted: mock(() => undefined),
     onResponseDelta: mock(() => undefined),
     onCompleted: mock(() => undefined),
     onFailed: mock(() => undefined),

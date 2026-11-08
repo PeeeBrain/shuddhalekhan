@@ -13,14 +13,13 @@ class FakeUtilityProcess extends EventEmitter {
     this.emit('sent', message);
     if (!message || typeof message !== 'object' || !('kind' in message)) return;
     if (message.kind === 'load' && this.respondToLoad) {
-      queueMicrotask(() => this.emit('message', { kind: 'ready', loadMilliseconds: 12 }));
+      queueMicrotask(() => this.emit('message', { kind: 'ready' }));
     }
     if (message.kind === 'transcribe' && 'requestId' in message && this.respondToTranscription) {
       queueMicrotask(() => this.emit('message', {
         kind: 'result',
         requestId: message.requestId,
         text: 'hello world',
-        transcriptionMilliseconds: 8,
       }));
     }
   }
@@ -32,6 +31,18 @@ class FakeUtilityProcess extends EventEmitter {
 }
 
 describe('managed local runtime supervision', () => {
+  it('does not spawn a stale worker when shutdown happens before model resolution', async () => {
+    let resolvePath!: (path: string) => void;
+    const startProcess = mock(() => new FakeUtilityProcess());
+    const transcriber = createManagedLocalTranscriber({
+      getModelPath: () => new Promise<string>(resolve => { resolvePath = resolve; }), startProcess,
+    });
+    const startup = transcriber.warmup();
+    await transcriber.shutdown();
+    resolvePath('model');
+    await expect(startup).rejects.toThrow('stopped');
+    expect(startProcess).not.toHaveBeenCalled();
+  });
   it.skipIf(availableParallelism() < 2)('uses new thread settings for a transcription waiting on startup', async () => {
     let numThreads = 1;
     const children: FakeUtilityProcess[] = [];
@@ -55,7 +66,7 @@ describe('managed local runtime supervision', () => {
         audio: new Uint8Array([1]),
         recognition: { language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false },
       });
-      children[0].emit('message', { kind: 'ready', loadMilliseconds: 12 });
+      children[0].emit('message', { kind: 'ready' });
       await warmup;
       expect(await transcription).toBe('hello world');
       expect(children).toHaveLength(2);
@@ -100,7 +111,7 @@ describe('managed local runtime supervision', () => {
         message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe'
       ));
       if (!message || typeof message !== 'object' || !('requestId' in message)) throw new Error('No transcription request');
-      firstChild.emit('message', { kind: 'result', requestId: message.requestId, text: 'original run', transcriptionMilliseconds: 8 });
+      firstChild.emit('message', { kind: 'result', requestId: message.requestId, text: 'original run' });
       expect(await active).toBe('original run');
       expect(await next).toBe('hello world');
       expect(children).toHaveLength(2);
@@ -190,6 +201,47 @@ describe('managed local runtime supervision', () => {
       message && typeof message === 'object' && 'kind' in message ? message.kind : null
     ))).toEqual(['load', 'transcribe']);
     await transcriber.shutdown();
+  });
+
+  it('pins vocabulary before async startup and transports it to the native worker', async () => {
+    const child = new FakeUtilityProcess();
+    const transcriber = createManagedLocalTranscriber({ getModelPath: async () => 'model', startProcess: () => child });
+    const recognition = { language: 'en', task: 'transcribe' as const, dictionary: ['Shuddhalekhan'], removeFillerWords: false };
+    try {
+      const result = transcriber.transcribe({ audio: new Uint8Array([1]), recognition });
+      recognition.dictionary[0] = 'Changed after recording';
+      await result;
+      expect(child.sent.find(message => message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe'))
+        .toMatchObject({ dictionary: ['Shuddhalekhan'] });
+    } finally { await transcriber.shutdown(); }
+  });
+
+  it('returns at once on abort, drains the running decode, and never sends queued aborted work', async () => {
+    const child = new FakeUtilityProcess();
+    child.respondToTranscription = false;
+    const transcriber = createManagedLocalTranscriber({ getModelPath: async () => 'model', startProcess: () => child });
+    const recognition = { language: 'en', task: 'transcribe' as const, dictionary: [], removeFillerWords: false };
+    const transcribes = () => child.sent.filter((message): message is { requestId: string } =>
+      !!message && typeof message === 'object' && 'kind' in message && message.kind === 'transcribe');
+    try {
+      const first = new AbortController();
+      const running = transcriber.transcribe({ audio: new Uint8Array([1]), recognition, signal: first.signal });
+      while (!transcribes().length) await Promise.resolve();
+      const queued = new AbortController();
+      const skipped = transcriber.transcribe({ audio: new Uint8Array([2]), recognition, signal: queued.signal });
+      const next = transcriber.transcribe({ audio: new Uint8Array([3]), recognition });
+      first.abort();
+      queued.abort();
+      await expect(running).rejects.toThrow();
+      await expect(skipped).rejects.toThrow();
+      expect(transcribes()).toHaveLength(1);
+
+      child.emit('message', { kind: 'result', requestId: transcribes()[0].requestId, text: 'late' });
+      while (transcribes().length < 2) await Promise.resolve();
+      child.emit('message', { kind: 'result', requestId: transcribes()[1].requestId, text: 'next' });
+      expect(await next).toBe('next');
+      expect(transcribes()).toHaveLength(2);
+    } finally { await transcriber.shutdown(); }
   });
 
   it('rejects work on a crash and starts a fresh process for the next request', async () => {

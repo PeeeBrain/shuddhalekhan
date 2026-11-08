@@ -6,6 +6,7 @@ import type { LanguageModel, ModelMessage, SystemModelMessage, streamText } from
 import type { AgentProviderConfig, AgentProviderDiagnostic } from '../types/ipc';
 import { isDeepSeekV4Provider, normalizeAgentProvider } from '../shared/agent-provider';
 import { resolveAgentProviderKey } from '../shared/agent-provider-validation';
+import { z } from 'zod';
 
 // Runs and probes report bounded, redacted warnings through our own UI/audit path.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -30,13 +31,33 @@ export function createAgentProvider(value: AgentProviderConfig, storedApiKey?: s
 
   // Every adapter uses the selected auth mode. Never inherit a different key or
   // forward credentials through a redirect to an unreviewed endpoint.
-  const authenticatedFetch: typeof fetch = (input, init) => {
+  const authenticatedFetch: typeof fetch = async (input, init) => {
     const headers = new Headers(init?.headers);
     headers.delete('authorization');
     headers.delete('api-key');
     if (provider.auth === 'bearer' && apiKey) headers.set('Authorization', `Bearer ${apiKey}`);
     if (provider.auth === 'api-key' && apiKey) headers.set('api-key', apiKey);
-    return fetch(input, { ...init, headers, redirect: 'error' });
+    if (provider.kind !== 'chatgpt' || typeof init?.body !== 'string') {
+      return fetch(input, { ...init, headers, redirect: 'error' });
+    }
+    const body = z.record(z.string(), z.unknown()).parse(JSON.parse(init.body));
+    for (const field of ['background', 'conversation', 'max_output_tokens', 'max_tool_calls', 'metadata',
+      'moderation', 'multi_agent', 'prompt', 'prompt_cache_retention', 'safety_identifier', 'temperature',
+      'top_logprobs', 'top_p', 'truncation', 'user', 'previous_response_id', 'service_tier', 'prompt_cache_key']) delete body[field];
+    body.store = false;
+    body.stream = true;
+    // The AI SDK adds `include` for store:false reasoning; retry without it if SIWC rejects it.
+    const send = () => fetch(input, { ...init, body: JSON.stringify(body), headers, redirect: 'error' });
+    const response = await send();
+    if (response.status === 400 && body.include !== undefined) {
+      const rejection = z.object({ error: z.object({ param: z.string().optional() }) })
+        .safeParse(await response.clone().json().catch(() => null));
+      if (rejection.success && /^include(?:\[|\.|$)/.test(rejection.data.error.param ?? '')) {
+        delete body.include;
+        return send();
+      }
+    }
+    return response;
   };
   const hostname = new URL(provider.baseUrl).hostname;
   const headers: Record<string, string> | undefined = hostname === 'opencode.ai'
@@ -91,6 +112,10 @@ export function createAgentProvider(value: AgentProviderConfig, storedApiKey?: s
   const responses = { ...nativeOptions, reasoningSummary: null, store: false, include: ['reasoning.encrypted_content'] };
 
   switch (provider.kind) {
+    case 'chatgpt': {
+      return { model: createOpenAI(settings).responses(provider.model), apiKey,
+        providerOptions: { openai: { ...reasoning, store: false, systemMessageMode: 'developer' } } };
+    }
     case 'openai': {
       const client = createOpenAI(settings);
       return provider.apiMode === 'responses'

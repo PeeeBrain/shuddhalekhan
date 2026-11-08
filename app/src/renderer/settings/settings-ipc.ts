@@ -12,9 +12,14 @@ import type {
   TranscriptionReadiness,
   ManagedLocalModelSnapshot,
   ManagedLocalModelState,
+  ManagedLocalTarget,
+  ManagedLocalDeleteTarget,
   AgentProviderConfig,
   AgentProviderValidation,
   AgentProviderTestResult,
+  ChatGptAccountStatus,
+  ChatGptModel,
+  TranscriptionSettingsPatch,
 } from '../../types/ipc';
 import type {
   AgentMemorySnapshot,
@@ -22,12 +27,15 @@ import type {
   AgentSkillImport,
   AgentSkillSummary,
 } from '../../shared/agent-context';
+import type { DesktopStatus } from '../../shared/desktop-status';
 
 type Unsubscribe = () => void;
 
 export interface SettingsIpc {
   getConfig: () => Promise<AppConfig>;
   setConfig: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => Promise<void>;
+  /** All-or-nothing transcription transition; main normalizes and returns the saved config. */
+  patchTranscriptionConfig: (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;
   getAppInfo: () => Promise<AppInfo>;
   getReleaseNotes: () => Promise<VersionReleaseNotes | null>;
   getUpdateStatus: () => Promise<UpdateStatus>;
@@ -38,8 +46,9 @@ export interface SettingsIpc {
   checkTranscriptionReadiness: () => Promise<TranscriptionReadiness>;
   onTranscriptionReadinessChanged: (callback: (readiness: TranscriptionReadiness) => void) => Unsubscribe | undefined;
   getManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
-  installManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
-  deleteManagedLocalModel: () => Promise<ManagedLocalModelSnapshot>;
+  /** Omit `target` for the selected model's primary install (Auto means CPU). */
+  installManagedLocalModel: (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
+  deleteManagedLocalModel: (target?: ManagedLocalDeleteTarget) => Promise<ManagedLocalModelSnapshot>;
   onManagedLocalModelStateChanged: (callback: (state: ManagedLocalModelState) => void) => Unsubscribe | undefined;
   onOnboardingCompleted: (callback: () => void) => Unsubscribe | undefined;
   getShortcutsPaused: () => Promise<boolean>;
@@ -47,6 +56,9 @@ export interface SettingsIpc {
   beginShortcutCapture: () => Promise<void>;
   endShortcutCapture: () => Promise<void>;
   onShortcutsPausedChanged: (callback: (paused: boolean) => void) => Unsubscribe | undefined;
+  getDesktopStatus: () => Promise<DesktopStatus>;
+  setWaylandInsertion: (enabled: boolean) => Promise<DesktopStatus>;
+  onDesktopStatusChanged: (callback: (status: DesktopStatus) => void) => Unsubscribe | undefined;
   onUpdateStatusChanged: (callback: (status: UpdateStatus) => void) => Unsubscribe | undefined;
   onNavigateRequested: (callback: (section: 'about') => void) => Unsubscribe | undefined;
   onMcpStatusSnapshot: (callback: (snapshot: McpStatusSnapshot) => void) => Unsubscribe | undefined;
@@ -61,6 +73,11 @@ export interface SettingsIpc {
   testAgentProvider: (provider: AgentProviderConfig) => Promise<AgentProviderTestResult>;
   cancelAgentProviderTest: () => Promise<void>;
   onAgentProviderInvalidated: (callback: () => void) => Unsubscribe | undefined;
+  getChatGptStatus: () => Promise<ChatGptAccountStatus>;
+  signInChatGpt: () => Promise<ChatGptAccountStatus>;
+  signOutChatGpt: () => Promise<ChatGptAccountStatus>;
+  listChatGptModels: () => Promise<ChatGptModel[]>;
+  onChatGptChanged: (callback: (status: ChatGptAccountStatus) => void) => Unsubscribe | undefined;
   listSkills: () => Promise<AgentSkillSummary[]>;
   readSkill: (name: string) => Promise<AgentSkillDocument>;
   saveSkill: (document: AgentSkillDocument & { create: boolean }) => Promise<AgentSkillSummary[]>;
@@ -81,6 +98,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     setConfig: async (key, value) => {
       await electronAPI?.invoke('config:set', key, value);
     },
+    patchTranscriptionConfig: (patch) => requireElectronApi(electronAPI).invoke('config:patch-transcription', patch),
     getAppInfo: () => requireElectronApi(electronAPI).invoke('app:get-info'),
     getReleaseNotes: () => requireElectronApi(electronAPI).invoke('app:get-release-notes'),
     getUpdateStatus: () => requireElectronApi(electronAPI).invoke('updater:get-status'),
@@ -100,13 +118,16 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await requireElectronApi(electronAPI).invoke('shortcuts:end-capture');
     },
     onShortcutsPausedChanged: (callback) => electronAPI?.subscribe('shortcuts:paused-changed', callback),
+    getDesktopStatus: () => requireElectronApi(electronAPI).invoke('desktop:get-status'),
+    setWaylandInsertion: (enabled) => requireElectronApi(electronAPI).invoke('desktop:set-wayland-insertion', enabled),
+    onDesktopStatusChanged: (callback) => electronAPI?.subscribe('desktop:status-changed', callback),
     onUpdateStatusChanged: (callback) => electronAPI?.subscribe('updater:status-changed', callback),
     onNavigateRequested: (callback) => electronAPI?.subscribe('settings:navigate', callback),
     onMcpStatusSnapshot: (callback) => electronAPI?.subscribe('mcp:status-snapshot', callback),
     onTranscriptionReadinessChanged: (callback) => electronAPI?.subscribe('transcription:readiness-changed', callback),
     getManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:get-model'),
-    installManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:install-model'),
-    deleteManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:delete-model'),
+    installManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:install-model', target),
+    deleteManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:delete-model', target),
     onManagedLocalModelStateChanged: (callback) => electronAPI?.subscribe('managed-local:model-state-changed', callback),
     onOnboardingCompleted: (callback) => electronAPI?.subscribe('onboarding:completed', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
@@ -122,6 +143,11 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
       await electronAPI?.invoke('agent:cancel-provider-test');
     },
     onAgentProviderInvalidated: (callback) => electronAPI?.subscribe('agent:provider-invalidated', callback),
+    getChatGptStatus: () => requireElectronApi(electronAPI).invoke('chatgpt:get-status'),
+    signInChatGpt: () => requireElectronApi(electronAPI).invoke('chatgpt:sign-in'),
+    signOutChatGpt: () => requireElectronApi(electronAPI).invoke('chatgpt:sign-out'),
+    listChatGptModels: () => requireElectronApi(electronAPI).invoke('chatgpt:list-models'),
+    onChatGptChanged: (callback) => electronAPI?.subscribe('chatgpt:changed', callback),
     listSkills: () => requireElectronApi(electronAPI).invoke('skills:list'),
     readSkill: (name) => requireElectronApi(electronAPI).invoke('skills:read', name),
     saveSkill: (document) => requireElectronApi(electronAPI).invoke('skills:save', document),

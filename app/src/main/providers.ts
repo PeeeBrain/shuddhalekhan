@@ -9,12 +9,13 @@ import {
   type TranscriptionCapabilities,
   TranscriptionFailure,
 } from './transcription';
-import { localWhisperCppTranscriber } from './whisper';
+import { createLocalWhisperCppTranscriber } from './whisper';
 import { createAzureSpeechTranscriber } from './azure-speech';
 import { createGoogleCloudSpeechTranscriber } from './google-cloud-speech';
 import { createWhisperLiveKitTranscriber } from './whisper-live-kit';
 import { managedLocalTranscriber } from './managed-local';
 import type { AppConfig } from '../types/ipc';
+import { resolveTranscriptionFeatures } from '../shared/transcription-features';
 
 type CredentialReader = { read: (id: string) => string | null };
 
@@ -34,13 +35,18 @@ export const CUSTOM_OPENAI_CAPABILITIES: TranscriptionCapabilities = {
   maxDurationSeconds: null,
 };
 
+/**
+ * Resolves provider settings and saved credentials now, so a recording keeps
+ * the provider it began with even if Settings change before it finishes.
+ */
 export function getTranscriber(
   config: AppConfig,
   vault: CredentialReader,
 ): Transcriber {
+  config = structuredClone(config);
   const provider = config.transcription.activeProvider;
 
-  if (provider === 'managed-local') return managedLocalTranscriber;
+  if (provider === 'managed-local') return managedLocalTranscriber.forRecording();
 
   if (provider === 'openai') {
     return createOpenAiTranscriber(config, vault);
@@ -83,19 +89,23 @@ export function getTranscriber(
     );
   }
 
-  return localWhisperCppTranscriber;
+  return createLocalWhisperCppTranscriber(config.transcription.providers.localWhisperCpp.endpoint);
 }
 
 function createOpenAiTranscriber(
   config: AppConfig,
   vault: CredentialReader,
 ): Transcriber {
+  const features = resolveTranscriptionFeatures(config);
+  const openAiConfig = config.transcription.providers.openai;
+  const apiKey = vault.read('openai-api-key');
   return {
     id: 'openai',
-    capabilities: OPENAI_CAPABILITIES,
-    async transcribe({ audio, recognition }) {
-      const openAiConfig = config.transcription.providers.openai;
-      const apiKey = vault.read('openai-api-key');
+    capabilities: { ...OPENAI_CAPABILITIES, translation: features.translation, dictionaryHints: features.dictionaryHints },
+    async transcribe({ audio, recognition, signal }) {
+      if (recognition.task === 'translate' && !features.translation) {
+        throw new TranscriptionFailure('model', 'The selected OpenAI model does not support file translation.');
+      }
       if (!apiKey) {
         throw new TranscriptionFailure(
           'authentication',
@@ -104,12 +114,14 @@ function createOpenAiTranscriber(
       }
       return transcribeOpenAiLike(
         audio,
-        recognition,
+        { ...recognition, dictionary: features.dictionaryHints ? recognition.dictionary : [] },
         buildOpenAiEndpoint(openAiConfig.baseUrl, recognition.task),
         openAiConfig.model,
         'bearer',
         apiKey,
         undefined,
+        'openai',
+        signal,
       );
     },
   };
@@ -120,6 +132,8 @@ function createNvidiaSpeechNimTranscriber(
   vault: CredentialReader,
 ): Transcriber {
   const nim = config.transcription.providers.nvidiaSpeechNim;
+  const secret = nim.auth === 'bearer' ? vault.read('nvidia-nim-bearer')
+    : nim.auth === 'header' ? vault.read('nvidia-nim-header') : null;
   return {
     id: 'nvidia-speech-nim',
     capabilities: {
@@ -129,10 +143,7 @@ function createNvidiaSpeechNimTranscriber(
       authentication: 'optional',
       maxDurationSeconds: null,
     },
-    async transcribe({ audio, recognition }) {
-      let secret: string | null = null;
-      if (nim.auth === 'bearer') secret = vault.read('nvidia-nim-bearer');
-      if (nim.auth === 'header') secret = vault.read('nvidia-nim-header');
+    async transcribe({ audio, recognition, signal }) {
       if (nim.auth !== 'none' && !secret) {
         throw new TranscriptionFailure('authentication', 'NVIDIA Speech NIM credentials are not configured. Save them in Settings.');
       }
@@ -153,6 +164,7 @@ function createNvidiaSpeechNimTranscriber(
         secret,
         nim.auth === 'header' ? nim.headerName : undefined,
         'nvidia-nim',
+        signal,
       );
     },
   };
@@ -162,11 +174,19 @@ function createCustomOpenAiTranscriber(
   config: AppConfig,
   vault: CredentialReader,
 ): Transcriber {
+  const features = resolveTranscriptionFeatures(config);
+  const customConfig = config.transcription.providers.customOpenAiCompatible;
+  const savedSecret = customConfig.auth === 'bearer' ? vault.read('custom-open-ai-compatible-bearer')
+    : customConfig.auth === 'header' ? vault.read('custom-open-ai-compatible-header') : null;
   return {
     id: 'custom-open-ai-compatible',
-    capabilities: CUSTOM_OPENAI_CAPABILITIES,
-    async transcribe({ audio, recognition }) {
-      const customConfig = config.transcription.providers.customOpenAiCompatible;
+    capabilities: { ...CUSTOM_OPENAI_CAPABILITIES, translation: features.translation,
+      automaticLanguageDetection: features.automaticLanguageDetection, dictionaryHints: features.dictionaryHints },
+    async transcribe({ audio, recognition, signal }) {
+      if (recognition.task === 'translate' && !features.translation) {
+        throw new TranscriptionFailure('model', 'Translation is not enabled for this custom endpoint.');
+      }
+      recognition = { ...recognition, dictionary: features.dictionaryHints ? recognition.dictionary : [] };
       const endpoint = customConfig.endpoint;
       if (!endpoint) {
         throw new TranscriptionFailure(
@@ -186,14 +206,15 @@ function createCustomOpenAiTranscriber(
           'none',
           undefined,
           undefined,
+          'openai',
+          signal,
         );
       }
 
-      let apiKey: string | null = null;
+      const apiKey = savedSecret;
       let headerName: string | undefined;
 
       if (customConfig.auth === 'bearer') {
-        apiKey = vault.read('custom-open-ai-compatible-bearer');
         if (!apiKey) {
           throw new TranscriptionFailure(
             'authentication',
@@ -201,7 +222,6 @@ function createCustomOpenAiTranscriber(
           );
         }
       } else if (customConfig.auth === 'header') {
-        apiKey = vault.read('custom-open-ai-compatible-header');
         headerName = customConfig.headerName;
         if (!apiKey) {
           throw new TranscriptionFailure(
@@ -231,6 +251,8 @@ function createCustomOpenAiTranscriber(
         customConfig.auth,
         apiKey,
         headerName,
+        'openai',
+        signal,
       );
     },
   };
@@ -256,6 +278,7 @@ export async function transcribeOpenAiLike(
   apiKey: string | null | undefined,
   headerName: string | undefined,
   contract: 'openai' | 'nvidia-nim' = 'openai',
+  signal?: AbortSignal,
 ): Promise<string> {
   const { removeFillerWords, language, task, dictionary } = recognition;
 
@@ -309,6 +332,7 @@ export async function transcribeOpenAiLike(
       method: 'POST',
       headers,
       body: form as unknown as BodyInit,
+      signal,
     });
   } catch {
     throw new TranscriptionFailure(

@@ -1,19 +1,24 @@
 import { randomUUID } from 'crypto';
 import { join } from 'path';
-import { app, BrowserWindow, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
+import { app, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
 import {
   getConfig,
+  getChatGptHostId,
+  setChatGptHostId,
   getLastSeenReleaseNotesVersion,
   mergeDiscoveredTools,
   setConfig,
+  patchTranscriptionConfig,
   setLastSeenReleaseNotesVersion,
 } from './config';
 import { credentialVault } from './credential-vault';
 import { registerCredentialIpcHandlers } from './credential-ipc';
 import { getAgentSidecarApiKey } from './agent-credential';
+import { ChatGptAuth } from './chatgpt-auth';
+import { loadAppIcon } from './app-icon';
 import { failedProviderTest, normalizeAgentProvider } from '../shared/agent-provider';
 import { agentProviderSchema, resolveAgentProviderKey } from '../shared/agent-provider-validation';
 import type { AgentProviderConfig } from '../types/ipc';
@@ -29,6 +34,7 @@ import {
   validateProviderReadiness,
 } from './transcription';
 import { getTranscriber } from './providers';
+import { resolveRecognitionSettings } from '../shared/transcription-features';
 import { checkWhisperLiveKitReadiness } from './whisper-live-kit';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { McpStatusStore } from './mcp-status-store';
@@ -42,55 +48,86 @@ import {
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
 import type { AgentApprovalChoice, AppConfig, AudioDevice, InjectResult, McpStatusSnapshot, McpToolPolicyKey, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
-import { emitPerformanceMarker } from './performance/marker-collector';
-import { buildElectronProcessInventory } from './performance/process-inventory';
-import { createRuntimeReadinessBarrier } from './performance/runtime-readiness';
-import {
-  createPerformanceScenarioDriver,
-  isPerformanceScenarioDriverEnabled,
-  parsePerformanceScenarioDriverConfig,
-} from './performance/scenario-driver';
-import { transcribe as transcribeLocalFixture } from './whisper';
+import { createRuntimeReadinessBarrier } from './runtime-readiness';
 import { RuntimeShell } from './runtime-shell';
 import { createRuntimeShellPresenter } from './agent-presentation';
-import { getLiveRecoveryActions, getRecoveryActions } from './dictation-recovery';
+import { getRecoveryActions } from './dictation-recovery';
 import { getPersistentStoreDirectory, preparePersistentStoreDirectory } from './store-path';
 import { registerAgentContextIpcHandlers } from './agent-context';
 import {
   configureManagedLocal,
   getManagedLocalModelManager,
   managedLocalTranscriber,
+  managedLocalSnapshot,
+  installManagedLocalModel,
+  deleteManagedLocalModel,
 } from './managed-local';
-import { outerTrimTranscript } from '../shared/live-dictation';
 import { applyDictationFormatter } from './dictation-formatter';
 import { getDictationFormatterApiKey } from './dictation-formatter-credential';
-import { getManagedLocalThreadLimits } from './managed-local-threads';
-import {
-  isDictationResultStillDeliverable,
-  markDictationResultPending,
-} from './dictation-result-delivery';
+import { getAutomaticDeliveryError, isKdeWaylandSession, isWaylandSession } from './dictation-delivery-policy';
+import type { DesktopStatus } from '../shared/desktop-status';
+import { prepareDevelopmentIdentity } from './desktop/dev-identity';
+import { createKdeFocusTracker } from './desktop/kde-focus';
+import { createRemoteDesktopKeyboard } from './desktop/remote-desktop-keyboard';
+import { BEST_EFFORT_DISCLOSURE, KdeWaylandDelivery } from './kde-wayland-delivery';
+import { captureForegroundTarget } from './native/target';
+import { resolvePasteStrategy } from './paste-strategy';
+
+let desktopShortcuts: DesktopStatus['shortcuts'] = process.platform === 'win32'
+  ? { backend: 'windows' } : { backend: 'initializing' };
+
+/** Opt-in KDE Wayland test mode; null everywhere else, which keeps Wayland copy-only. */
+const waylandDelivery = isKdeWaylandSession(process.platform, process.env) ? new KdeWaylandDelivery({
+  createTracker: () => createKdeFocusTracker(publishDesktopStatus),
+  createKeyboard: () => createRemoteDesktopKeyboard(publishDesktopStatus),
+  waitForShortcutRelease: signal => keyboardHook.waitForShortcutDeactivation(signal),
+  stageClipboard: copyLastTranscriptToClipboard,
+  getPasteStrategy: appId => resolvePasteStrategy(appId, getConfig().pasteStrategy),
+  onChange: publishDesktopStatus,
+}) : null;
+
+function getDesktopStatus(): DesktopStatus {
+  const bestEffortReady = waylandDelivery?.isReady() ?? false;
+  const deliveryError = getAutomaticDeliveryError(process.platform, process.env, bestEffortReady);
+  return {
+    shortcuts: desktopShortcuts,
+    delivery: {
+      available: !deliveryError,
+      message: deliveryError ?? (bestEffortReady ? BEST_EFFORT_DISCLOSURE
+        : 'Final text is pasted after checking the original window. A window check cannot identify changes between fields in the same window.'),
+    },
+    waylandInsertion: !isWaylandSession(process.platform, process.env) ? undefined : waylandDelivery?.status()
+      ?? { state: 'unsupported', message: 'Best-effort insertion is available only on KDE Plasma. Copy finished transcripts from Last Transcript.' },
+  };
+}
+
+function publishDesktopStatus(): void {
+  getSettingsWindow()?.webContents.send('desktop:status-changed', getDesktopStatus());
+}
+
+/** Persists the opt-in only once setup actually succeeded, so a declined prompt never re-prompts at launch. */
+async function setWaylandInsertion(enabled: boolean): Promise<void> {
+  if (!waylandDelivery) return;
+  if (!enabled) {
+    setConfig('waylandBestEffortInsertion', false);
+    await waylandDelivery.disable();
+    return;
+  }
+  const outcome = await waylandDelivery.enable();
+  if (outcome !== 'superseded') setConfig('waylandBestEffortInsertion', outcome === 'ready');
+}
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
+let providerTestRevision = 0;
 let retryPasteInFlight = false;
-let shellPillReadyEmitted = false;
-let startPerformanceScenario = async (): Promise<void> => undefined;
-const performanceDriverEnabled = isPerformanceScenarioDriverEnabled(process.env);
-const performanceDriverConfig = parsePerformanceScenarioDriverConfig(process.env);
 const runtimeShell = new RuntimeShell();
 const agentPresenter = createRuntimeShellPresenter(runtimeShell);
-const agentTerminalWaiters = new Map<string, () => void>();
-const surfacePaintWaiters = new Map<string, Array<() => void>>();
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
-  emitElectronProcessInventory();
-  emitPerformanceMarker('runtime.operational');
   queueMicrotask(() => {
-    if (!performanceDriverEnabled && getConfig().transcription.activeProvider === 'managed-local') {
+    if (getConfig().transcription.activeProvider === 'managed-local') {
       void managedLocalTranscriber.warmup().catch(() => undefined);
     }
-    void startPerformanceScenario().catch((error) => {
-      console.error('Performance scenario driver failed:', error);
-    });
   });
 });
 const mcpStatusStore = new McpStatusStore();
@@ -119,8 +156,6 @@ const sidecarEventRouter = createSidecarEventRouter({
   onMemoryEvent: event => agentContext.handleMemoryEvent(event),
   onAgentTerminal: (agentRunId) => {
     if (activeAgentRunId === agentRunId) activeAgentRunId = null;
-    agentTerminalWaiters.get(agentRunId)?.();
-    agentTerminalWaiters.delete(agentRunId);
   },
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
@@ -129,11 +164,7 @@ const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
   },
   onGenerationExit: () => {
     notifyAgentRuntimeStopped('Agent runtime stopped unexpectedly. Try Agent Mode again.');
-    if (activeAgentRunId) {
-      agentTerminalWaiters.get(activeAgentRunId)?.();
-      agentTerminalWaiters.delete(activeAgentRunId);
-      activeAgentRunId = null;
-    }
+    activeAgentRunId = null;
   },
 });
 const agentContext = registerAgentContextIpcHandlers(getPersistentStoreDirectory(), {
@@ -143,6 +174,19 @@ const agentContext = registerAgentContextIpcHandlers(getPersistentStoreDirectory
   reply: (agentRunId, requestId, result) => agentSidecar.sendMemoryResult(agentRunId, requestId, result),
   publish: snapshot => getSettingsWindow()?.webContents.send('memory:changed', snapshot),
 });
+const chatGptAuth = new ChatGptAuth({
+  vault: credentialVault, fetch: (url, init) => fetch(url, init), now: Date.now,
+  openBrowser: url => shell.openExternal(url), getHostId: getChatGptHostId, setHostId: setChatGptHostId,
+  appIconDataUrl: () => loadAppIcon().toDataURL(),
+  onChanged: status => {
+    getSettingsWindow()?.webContents.send('chatgpt:changed', status);
+    agentSidecar.cancelProviderTest();
+    getSettingsWindow()?.webContents.send('agent:provider-invalidated');
+    if (status.state === 'signed-out' && getConfig().agent.provider.kind === 'chatgpt') {
+      if (getConfig().agent.enabled) agentSidecar.start(getConfig());
+    }
+  },
+});
 const recordingSession = new RecordingSession({
   runtimeShell,
   isAgentModeEnabled: () => cachedAgentEnabled,
@@ -150,24 +194,25 @@ const recordingSession = new RecordingSession({
   onBegin: (intent) => {
     if (intent === 'agent') invalidateActiveAgentRun();
   },
-  onFirstAudioBuffer: (transcriber) => {
-    if (transcriber === managedLocalTranscriber) {
-      void managedLocalTranscriber.warmup().catch(() => undefined);
-    }
-  },
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
-  getDictationMode: () => getConfig().dictation.mode,
-  getRecognitionSettings: () => {
+  getDictationContext: () => {
     const config = getConfig();
     return {
+      config: config.dictation,
       language: config.language,
-      task: config.task,
-      dictionary: config.dictionary,
-      removeFillerWords: config.removeFillerWords,
+      protectedTerms: config.dictionary,
+      formatterApiKey: config.dictation.formatter?.processingConsent
+        ? getDictationFormatterApiKey(config.dictation.formatter, credentialVault) : null,
     };
   },
+  getRecognitionSettings: (intent) => {
+    const config = getConfig();
+    return resolveRecognitionSettings(intent === 'agent'
+      ? { ...config, dictation: { ...config.dictation, mode: 'batch' } } : config);
+  },
   getTranscriber: () => getTranscriber(getConfig(), credentialVault),
+  captureTarget: () => waylandDelivery?.capture() ?? captureForegroundTarget(),
   getReadinessError: (intent) => {
     const config = getConfig();
     if (intent === 'agent') {
@@ -185,144 +230,51 @@ const recordingSession = new RecordingSession({
   onError: showTranscriptionError,
 });
 runtimeShell.setCrashHandler((reason) => recordingSession.markRuntimeShellCrashed(reason));
-const performanceScenarioDriver = createPerformanceScenarioDriver(
-  performanceDriverConfig,
-  {
-    openSettings: async () => {
-      const painted = waitForSurfacePaint('settings');
-      openSettingsWindow();
-      await painted;
-    },
-    getConfig,
-    async runRecording({ wav, playbackDurationMs, transcriptionEndpoint }) {
-      const config = getConfig();
-      const fixtureConfig: AppConfig = {
-        ...config,
-        whisperUrl: transcriptionEndpoint,
-        transcription: {
-          ...config.transcription,
-          activeProvider: 'local-whisper-cpp',
-          providers: {
-            ...config.transcription.providers,
-            localWhisperCpp: { endpoint: transcriptionEndpoint },
-          },
-        },
-      };
-      await recordingSession.runPerformanceFixture(wav, playbackDurationMs, {
-        id: 'local-whisper-cpp',
-        capabilities: {
-          translation: true,
-          automaticLanguageDetection: true,
-          dictionaryHints: true,
-          authentication: 'none',
-          maxDurationSeconds: null,
-        },
-        transcribe: ({ audio }) => transcribeLocalFixture(audio, fixtureConfig),
-      });
-    },
-    runAgent: ({ transcript, config }) => startAgentRun(transcript, config),
-  },
-);
-startPerformanceScenario = () => performanceScenarioDriver.start();
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
-  if (!result?.text) return;
+  if (!result?.text || result.signal.aborted) return;
+
+  if (result.outcome.kind === 'failed') {
+    if (result.intent === 'dictation') {
+      setLastTranscript(result.text, result.targetSnapshot);
+      markLastTranscriptInjected('failed');
+      runtimeShell.showFailure(result.recordingSessionId,
+        'Transcription could not complete. Last Transcript contains the text recognized so far.',
+        ['copy-full-transcript']);
+    } else {
+      showTranscriptionError(new TranscriptionFailure('unknown', 'Transcription could not complete. No Agent command was sent.'));
+    }
+    return;
+  }
 
   if (result.intent === 'agent') {
+    // Processing outranks every Agent card, so it must end before the run starts reporting.
+    runtimeShell.finish();
     handleAgentTranscript(result.text);
     return;
   }
 
   const sessionId = result.recordingSessionId;
-  markDictationResultPending(sessionId);
-
-  const live = result.liveDictation;
-  const liveDispatch = live ? {
-    hasAcceptedEvents: live.hasAcceptedEvents,
-    uncertain: live.uncertain,
-  } : undefined;
-
-  if (live) {
-    setLastTranscript(result.text, result.targetSnapshot, liveDispatch);
-
-    if (result.outcome.kind === 'failed') {
-      markLastTranscriptInjected(live.hasAcceptedEvents || live.uncertain ? 'uncertain' : 'failed');
-      const message = 'Live Dictation could not complete. Last Transcript contains Recognized So Far.';
-      const actions = getLiveRecoveryActions(live);
-      if (runtimeShell) {
-        runtimeShell.showFailure(result.recordingSessionId, message, actions);
-      } else {
-        showRecoveryNotification(
-          { kind: 'input-blocked', acceptedEvents: live.hasAcceptedEvents || live.uncertain ? 1 : 0, reason: message },
-          'Live Dictation stopped',
-        );
-      }
-      return;
-    }
-
-    const projectedFull = outerTrimTranscript(result.text);
-    const sameTranscript = outerTrimTranscript(live.rawCommitted) === projectedFull;
-    const fullyDispatched = sameTranscript
-      && live.dispatchedProjectedLength >= projectedFull.length;
-
-    if (live.hasAcceptedEvents || live.uncertain) {
-      const uncertain = live.uncertain || !fullyDispatched;
-      markLastTranscriptInjected(uncertain ? 'uncertain' : 'dispatched');
-      if (!uncertain) completeOnboarding();
-      if (uncertain) {
-        const message = !fullyDispatched
-          ? 'Live Dictation stopped before the full transcript was inserted.'
-          : 'Live Dictation stopped because Windows could not confirm the last insertion.';
-        if (runtimeShell) {
-          runtimeShell.showFailure(
-            result.recordingSessionId,
-            message,
-            getLiveRecoveryActions(live),
-          );
-        } else {
-          showRecoveryNotification(
-            { kind: 'input-blocked', acceptedEvents: 1, reason: message },
-            'Live Dictation stopped',
-          );
-        }
-      }
-      return;
-    }
-
-    const fallbackText = outerTrimTranscript(result.text);
-    const injectResult = await injectIntoFocusedApp(fallbackText, result.targetSnapshot);
-    if (injectResult.kind === 'input-dispatched') {
-      markLastTranscriptInjected('dispatched');
-      completeOnboarding();
-      return;
-    }
-    markLastTranscriptInjected('failed');
-    runtimeShell?.showFailure(
-      result.recordingSessionId,
-      getRecoveryMessage(injectResult),
-      getRecoveryActions(injectResult),
-    );
-    return;
-  }
-
-  const config = getConfig();
+  const delivery = result.dictation;
+  if (!delivery) return;
   let text = result.text;
   let formatterDegraded = false;
 
   if (
-    config.dictation.mode === 'corrected'
-    && config.dictation.formatter?.processingConsent
+    delivery.config.mode === 'corrected'
+    && delivery.config.formatter?.processingConsent
   ) {
     if (runtimeShell) runtimeShell.showProcessing(sessionId);
     const outcome = await applyDictationFormatter({
-      profile: config.dictation.formatter,
+      profile: delivery.config.formatter,
       rawText: result.text,
-      language: config.language,
-      protectedTerms: config.dictionary,
-      apiKey: getDictationFormatterApiKey(config.dictation.formatter, credentialVault),
+      language: delivery.language,
+      protectedTerms: delivery.protectedTerms,
+      apiKey: delivery.formatterApiKey,
+      signal: result.signal,
     });
-    if (!isDictationResultStillDeliverable(sessionId)) return;
+    if (result.signal.aborted) return;
     if (outcome.kind === 'fallback') {
       text = outcome.rawText;
       formatterDegraded = true;
@@ -331,16 +283,57 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     }
   }
 
-  if (!isDictationResultStillDeliverable(sessionId)) return;
+  if (result.signal.aborted) return;
 
   setLastTranscript(text, result.targetSnapshot);
 
-  const injectResult = await injectIntoFocusedApp(text, result.targetSnapshot);
+  const deliveryError = getAutomaticDeliveryError(process.platform, process.env, waylandDelivery?.isReady() ?? false);
+  if (deliveryError) {
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(sessionId, deliveryError, ['copy-full-transcript']);
+    return;
+  }
+
+  if (!result.targetSnapshot) {
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(sessionId,
+      'The original destination could not be identified when recording began. Copy the transcript to the intended field.',
+      ['copy-full-transcript']);
+    return;
+  }
+
+  if (result.targetSnapshot.kind === 'kde-wayland') {
+    if (!waylandDelivery) return;
+    runtimeShell.finish();
+    const waylandResult = await waylandDelivery.deliver(text, result.targetSnapshot, result.signal);
+    if (result.signal.aborted) return;
+    if (waylandResult.kind === 'input-dispatched') {
+      markLastTranscriptInjected('dispatched');
+      completeOnboarding();
+      if (formatterDegraded) showFormatterDegradedNotice();
+      return;
+    }
+    // Never retried: the clipboard already holds the text, and a second paste could double-insert.
+    markLastTranscriptInjected(waylandResult.kind === 'error' ? 'uncertain' : 'failed');
+    runtimeShell.showFailure(sessionId, getRecoveryMessage(waylandResult), ['copy-full-transcript']);
+    return;
+  }
+
+  const released = await keyboardHook.waitForKeysReleased(result.signal);
+  if (result.signal.aborted) return;
+  if (!released) {
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(sessionId, 'Release the recording shortcut before pasting the transcript.',
+      ['retry-paste', 'copy-full-transcript']);
+    return;
+  }
+  runtimeShell.finish();
+  const injectResult = await injectIntoFocusedApp(text, result.targetSnapshot, undefined, result.signal);
+  if (result.signal.aborted) return;
   if (injectResult.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
     completeOnboarding();
     if (formatterDegraded) showFormatterDegradedNotice();
-    runtimeShell?.finish();
     return;
   }
 
@@ -375,24 +368,11 @@ function showFormatterDegradedNotice(): void {
 async function pasteLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
   if (!transcript) return;
-  if (transcript.liveDispatch?.hasAcceptedEvents || transcript.liveDispatch?.uncertain) {
-    showLiveCopyOnlyNotification();
-    return;
-  }
 
   const result = await injectIntoFocusedApp(transcript.text);
   if (result.kind !== 'input-dispatched') {
     showRecoveryNotification(result, 'Paste last transcript failed');
   }
-}
-
-function showLiveCopyOnlyNotification(): void {
-  if (!Notification.isSupported()) return;
-  new Notification({
-    title: 'Paste last transcript unavailable',
-    body: 'Live Dictation may already have inserted this text. Use “Copy last transcript” in the tray menu to avoid duplication.',
-    silent: true,
-  }).show();
 }
 
 async function copyLastTranscript(): Promise<void> {
@@ -428,10 +408,10 @@ function showRecoveryNotification(result: InjectResult, title = 'Dictation Paste
 
 function getRecoveryMessage(result: InjectResult): string {
   if (result.kind === 'clipboard-conflict') {
-    return 'Clipboard changed before Shuddhalekhan could paste the transcript.';
+    return 'Clipboard changed during Dictation. Check the destination before copying the transcript; text may already have been inserted.';
   }
   if (result.kind === 'target-changed') return result.reason;
-  if (result.kind === 'input-blocked') return result.reason ?? 'Windows blocked automatic paste.';
+  if (result.kind === 'input-blocked') return result.reason ?? 'The system blocked automatic paste.';
   if (result.kind === 'error') return result.message;
   return 'Automatic paste failed.';
 }
@@ -445,7 +425,8 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     return;
   }
   if (action !== 'retry-paste') return;
-  if (retryPasteInFlight) return;
+  // KDE Wayland best-effort delivery is attempted once per recording.
+  if (retryPasteInFlight || transcript.targetSnapshot?.kind === 'kde-wayland') return;
   retryPasteInFlight = true;
   try {
     runtimeShell.finish();
@@ -475,8 +456,10 @@ function setShortcutsPaused(paused: boolean): void {
 
 function showTranscriptionError(err: unknown): void {
   const message = getSafeTranscriptionFailureMessage(err);
-  const detail = err instanceof Error ? `${err.name}: ${err.message}` : 'Unknown failure';
-  console.error(`Transcription failed (${detail}):`, message);
+  console.error('Transcription failed:', {
+    category: err instanceof TranscriptionFailure ? err.category : 'unknown',
+    message,
+  });
   runtimeShell.showFailure(null, message);
 }
 
@@ -493,43 +476,41 @@ function invalidateActiveAgentRun(): void {
   const previousRunId = activeAgentRunId;
   activeAgentRunId = null;
   if (!previousRunId) return;
-  agentTerminalWaiters.get(previousRunId)?.();
-  agentTerminalWaiters.delete(previousRunId);
   agentSidecar.cancelRun(previousRunId);
 }
 
-function startAgentRun(text: string, config: AppConfig): Promise<void> {
+async function startAgentRun(text: string, config: AppConfig): Promise<void> {
   if (!config.agent.enabled) {
     console.warn('Ignoring Agent Mode transcript because Agent Mode is disabled');
     showAgentConfigNotice('Agent Mode is disabled. Open Settings to enable it.');
-    return Promise.resolve();
+    return;
   }
 
   // A new run invalidates any prior run before replacement events can arrive.
   invalidateActiveAgentRun();
   const agentRunId = randomUUID();
   activeAgentRunId = agentRunId;
-  const terminal = new Promise<void>((resolve) => {
-    agentTerminalWaiters.set(agentRunId, resolve);
-  });
+  let apiKey: string | undefined;
+  try {
+    apiKey = config.agent.provider.kind === 'chatgpt'
+      ? await chatGptAuth.getAccessToken() : getAgentSidecarApiKey(config, credentialVault);
+  } catch (error) {
+    if (activeAgentRunId !== agentRunId) return;
+    activeAgentRunId = null;
+    runtimeShell.showFailure(null, error instanceof Error ? error.message : 'Sign in with ChatGPT again in Settings.');
+    return;
+  }
+  if (activeAgentRunId !== agentRunId) return;
+  if (!getConfig().agent.enabled) { activeAgentRunId = null; return; }
   agentSidecar.startRun(
     agentRunId,
     text,
     config,
-    getAgentSidecarApiKey(config, credentialVault),
+    apiKey,
     agentContext.createRunContext(),
   );
   console.log(`Started Agent Mode run ${agentRunId}`);
   getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);
-  return terminal;
-}
-
-function waitForSurfacePaint(surface: string): Promise<void> {
-  return new Promise((resolve) => {
-    const waiters = surfacePaintWaiters.get(surface) ?? [];
-    waiters.push(resolve);
-    surfacePaintWaiters.set(surface, waiters);
-  });
 }
 
 function publishUpdateStatus(status: UpdateStatus): void {
@@ -538,22 +519,6 @@ function publishUpdateStatus(status: UpdateStatus): void {
   if (settingsWin && !settingsWin.isDestroyed()) {
     settingsWin.webContents.send('updater:status-changed', status);
   }
-}
-
-function emitElectronProcessInventory(): void {
-  const windows = BrowserWindow.getAllWindows().flatMap((window) => {
-    try {
-      return [{
-        webContentsId: window.webContents.id,
-        pid: window.webContents.getOSProcessId(),
-        url: window.webContents.getURL(),
-      }];
-    } catch {
-      return [];
-    }
-  });
-  const inventory = buildElectronProcessInventory(app.getAppMetrics(), windows);
-  emitPerformanceMarker('process.inventory', inventory);
 }
 
 async function showBundledReleaseNotesAfterInstall(): Promise<void> {
@@ -586,12 +551,18 @@ async function showBundledReleaseNotesAfterInstall(): Promise<void> {
 
 // IPC handlers
 function invalidateProviderTest(): void {
+  providerTestRevision++;
   agentSidecar.cancelProviderTest();
   getSettingsWindow()?.webContents.send('agent:provider-invalidated');
 }
 
 function validateAgentProvider(provider: AgentProviderConfig) {
   const normalized = normalizeAgentProvider(provider);
+  if (normalized.kind === 'chatgpt') {
+    const status = chatGptAuth.getStatus();
+    // Validation reads account state without minting or exposing a credential.
+    return resolveAgentProviderKey(provider, status.state === 'signed-in' && status.planUsage ? 'available' : undefined, {}).validation;
+  }
   const apiKey = normalized.auth !== 'none' && normalized.apiKeySource === 'stored'
     ? credentialVault.read('agent-api-key') ?? undefined : undefined;
   return resolveAgentProviderKey(provider, apiKey, process.env).validation;
@@ -601,6 +572,15 @@ registerCredentialIpcHandlers(ipcMain, credentialVault, credential => {
   getSettingsWindow()?.webContents.send('credential:changed', credential);
   if (credential === 'agent-api-key') invalidateProviderTest();
 });
+
+ipcMain.handle('chatgpt:get-status', () => chatGptAuth.getStatus());
+ipcMain.handle('chatgpt:sign-in', () => chatGptAuth.signIn());
+ipcMain.handle('chatgpt:sign-out', () => {
+  providerTestRevision++;
+  if (getConfig().agent.provider.kind === 'chatgpt') invalidateActiveAgentRun();
+  return chatGptAuth.signOut();
+});
+ipcMain.handle('chatgpt:list-models', () => chatGptAuth.listModels());
 
 ipcMain.handle('agent:validate-provider', (_event, value: unknown) => {
   const parsed = agentProviderSchema.safeParse(value);
@@ -616,12 +596,21 @@ ipcMain.handle('agent:test-provider', async (_event, value: unknown) => {
   if (validation.issues.length) return failedProviderTest({ kind: 'configuration', message: validation.issues[0].message, action: 'Correct the Agent settings before testing.' }, validation);
   if (!getConfig().agent.enabled) return failedProviderTest({ kind: 'configuration', message: 'Agent Mode is disabled.', action: 'Enable Agent Mode to test the model. Local validation works while disabled.' }, validation);
   if (activeAgentRunId) return failedProviderTest({ kind: 'busy', message: 'An agent run is active.', action: 'Wait for the run to finish before testing the model.' }, validation);
-  const apiKey = provider.apiKeySource === 'stored' && provider.auth !== 'none'
-    ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+  const revision = ++providerTestRevision;
+  let apiKey: string | undefined;
+  try {
+    apiKey = provider.kind === 'chatgpt' ? await chatGptAuth.getAccessToken()
+      : provider.apiKeySource === 'stored' && provider.auth !== 'none' ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+  } catch (error) {
+    return failedProviderTest({ kind: 'authentication', message: error instanceof Error ? error.message : 'Sign in with ChatGPT again.', action: 'Open ChatGPT account settings and sign in again.' }, validateAgentProvider(provider));
+  }
+  if (revision !== providerTestRevision || activeAgentRunId || !getConfig().agent.enabled) {
+    return failedProviderTest({ kind: 'cancelled', message: 'The provider test was cancelled.', action: 'Test the current provider again when ready.' }, validation);
+  }
   return agentSidecar.testProvider(provider, apiKey);
 });
 
-ipcMain.handle('agent:cancel-provider-test', () => { agentSidecar.cancelProviderTest(); });
+ipcMain.handle('agent:cancel-provider-test', () => { providerTestRevision++; agentSidecar.cancelProviderTest(); });
 
 ipcMain.handle('audio:get-devices', async () => {
   const webContents = recordingSession.getAudioWebContents();
@@ -638,6 +627,11 @@ ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
 
 ipcMain.handle('config:get', () => {
   return getConfig();
+});
+ipcMain.handle('desktop:get-status', getDesktopStatus);
+ipcMain.handle('desktop:set-wayland-insertion', async (_event, enabled: unknown) => {
+  await setWaylandInsertion(enabled === true);
+  return getDesktopStatus();
 });
 
 ipcMain.handle('shortcuts:get-paused', () => {
@@ -691,22 +685,34 @@ ipcMain.handle('transcription:check-readiness', async () => {
   const provider = config.transcription.activeProvider;
   if (provider === 'managed-local') {
     const state = await getManagedLocalModelManager().getState();
+    if (state.kind === 'ready') {
+      try {
+        await managedLocalTranscriber.warmup();
+        const snapshot = await managedLocalSnapshot();
+        return { providerId: provider, state: 'ready' as const,
+          message: snapshot.runtime.status === 'ready'
+            ? snapshot.runtime.message || `Running on ${snapshot.runtime.backend === 'cuda' ? 'NVIDIA GPU' : 'CPU'}.` :'Model files are installed. Changes apply to the next recording.',
+          checkedAt: new Date().toISOString() };
+      } catch (error) {
+        return { providerId: provider, state: 'unavailable' as const,
+          message: getSafeTranscriptionFailureMessage(error), checkedAt: new Date().toISOString() };
+      }
+    }
     return {
       providerId: provider,
-      state: state.kind === 'ready' ? 'ready' as const : 'unavailable' as const,
-      message: state.kind === 'ready'
-        ? 'Local speech recognition is ready and works offline.'
-        : state.kind === 'error'
+      state: 'unavailable' as const,
+      message: state.kind === 'error'
           ? state.message
           : 'Install the recommended local speech model to start Dictation.',
       checkedAt: new Date().toISOString(),
     };
   }
   if (provider !== 'whisper-live-kit') {
+    const error = validateProviderReadiness(provider, config, credentialVault)[0];
     return {
       providerId: provider,
-      state: 'ready' as const,
-      message: 'The selected batch provider is ready for recording.',
+      state: error ? 'unavailable' as const : 'ready' as const,
+      message: error ?? 'Settings are complete. Provider connectivity has not been checked.',
       checkedAt: new Date().toISOString(),
     };
   }
@@ -728,37 +734,20 @@ ipcMain.handle('transcription:check-readiness', async () => {
   return readiness;
 });
 
-function managedLocalSnapshot() {
-  const manager = getManagedLocalModelManager();
-  return manager.getState().then((state) => ({
-    model: {
-      id: manager.manifest.id,
-      name: manager.manifest.name,
-      downloadBytes: manager.manifest.downloadBytes,
-      installedBytes: manager.manifest.installedBytes,
-      languages: [...manager.manifest.languages],
-    },
-    state,
-    inference: getManagedLocalThreadLimits(),
-  }));
-}
-
 ipcMain.handle('managed-local:get-model', managedLocalSnapshot);
-ipcMain.handle('managed-local:install-model', async () => {
-  const manager = getManagedLocalModelManager();
-  await manager.install();
-  try {
-    await managedLocalTranscriber.warmup();
-  } catch (error) {
-    manager.reportFailure('Local speech recognition could not load. Repair the model and try again.');
-    throw error;
-  }
-  return managedLocalSnapshot();
+ipcMain.handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
+ipcMain.handle('managed-local:delete-model', (_event, target: unknown) => {
+  if (recordingSession.isBusy()) throw new Error('Finish the current recording before deleting local model files.');
+  return deleteManagedLocalModel(target);
 });
-ipcMain.handle('managed-local:delete-model', async () => {
-  await managedLocalTranscriber.shutdown();
-  await getManagedLocalModelManager().delete();
-  return managedLocalSnapshot();
+
+ipcMain.handle('config:patch-transcription', async (_event, patch: unknown) => {
+  const previous = getConfig();
+  const config = patchTranscriptionConfig(patch);
+  if (previous.transcription.activeProvider === 'managed-local' && config.transcription.activeProvider !== 'managed-local') {
+    await managedLocalTranscriber.shutdown().catch(() => undefined);
+  }
+  return config;
 });
 
 ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
@@ -771,6 +760,7 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
   cachedAgentEnabled = config.agent.enabled;
+  if (key === 'shortcuts' || key === 'agent') keyboardHook.refreshShortcuts();
   // A switched-away provider has no next use with this runtime; release
   // the loaded model instead of holding ~1.1GB idling all session.
   if (
@@ -878,21 +868,8 @@ ipcMain.on('runtime:agent-dismiss', () => {
   runtimeShell?.dismissAgentCard();
 });
 
-ipcMain.on('surface-paint-proxy', (_event, surface: string, correlationId?: string) => {
-  emitPerformanceMarker('surface.paint-proxy', {
-    surface,
-    ...(surface === 'recording' && correlationId ? { recordingSessionId: correlationId } : {}),
-  });
-  if (surface === 'recording') {
-    if (!shellPillReadyEmitted) {
-      shellPillReadyEmitted = true;
-      emitPerformanceMarker('shell.pill.ready');
-    }
-    runtimeReadiness.markShellPaintReady();
-  }
-  emitElectronProcessInventory();
-  for (const resolve of surfacePaintWaiters.get(surface) ?? []) resolve();
-  surfacePaintWaiters.delete(surface);
+ipcMain.on('surface-paint-proxy', (_event, surface: string) => {
+  if (surface === 'recording') runtimeReadiness.markShellPaintReady();
 });
 
 // App lifecycle
@@ -900,19 +877,45 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.whenReady().then(() => {
-    emitPerformanceMarker('app.electron-ready');
+    if (process.platform === 'linux' && !app.isPackaged) {
+      try {
+        const cleanup = prepareDevelopmentIdentity({ executable: process.execPath, appPath: app.getAppPath() });
+        app.on('will-quit', cleanup);
+      } catch (error) {
+        console.warn('Could not prepare the development desktop identity:', error);
+      }
+    }
+    keyboardHook.setLinuxShortcutStatusListener(status => {
+      desktopShortcuts = status;
+      publishDesktopStatus();
+      if (status.backend === 'unavailable') {
+        void dialog.showMessageBox({
+          type: 'warning', title: 'Shortcuts unavailable',
+          message: 'Shuddhalekhan could not register its keyboard shortcuts.', detail: status.error,
+        });
+      }
+    });
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(permission === 'media');
     });
     configureManagedLocal({
       root: join(preparePersistentStoreDirectory(), 'models'),
       onStateChanged: (state) => {
-        emitPerformanceMarker('managed-local.model-state', { modelId: state.modelId, state: state.kind });
         getSettingsWindow()?.webContents.send('managed-local:model-state-changed', state);
       },
     });
 
-    recordingSession.start();
+    try {
+      recordingSession.start();
+    } catch (error) {
+      // Linux: keyboards are unreadable until the user joins the `input` group.
+      void dialog.showMessageBox({
+        type: 'warning',
+        title: 'Shortcuts unavailable',
+        message: 'Shuddhalekhan could not listen for its keyboard shortcuts.',
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
     const failClosed = () => { void recordingSession.cancel(); };
     powerMonitor.on('suspend', failClosed);
     powerMonitor.on('lock-screen', failClosed);
@@ -930,9 +933,6 @@ if (!gotSingleInstanceLock) {
       },
     });
 
-    emitPerformanceMarker('tray.ready');
-    emitPerformanceMarker('hotkey-hook.ready');
-
     const startupConfig = getConfig();
     cachedAgentEnabled = startupConfig.agent.enabled;
     if (startupConfig.agent.enabled) {
@@ -943,12 +943,12 @@ if (!gotSingleInstanceLock) {
       );
     }
     if (startupConfig.onboarding.status === 'pending') openSettingsWindow();
+    // The user opted in earlier; reconnect at launch (never after recognition).
+    if (startupConfig.waylandBestEffortInsertion) void setWaylandInsertion(true);
 
-    if (!performanceDriverEnabled) {
-      setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
-      publishUpdateStatus(getUpdateStatus());
-      void showBundledReleaseNotesAfterInstall();
-    }
+    setupUpdater(publishUpdateStatus, () => openSettingsWindow('about'));
+    publishUpdateStatus(getUpdateStatus());
+    void showBundledReleaseNotesAfterInstall();
     runtimeReadiness.markMainReady();
 
     app.on('activate', () => {
@@ -970,11 +970,13 @@ if (!gotSingleInstanceLock) {
     agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
-    void Promise.all([agentSidecar.stop(), managedLocalTranscriber.shutdown()]).finally(() => {
+    void Promise.all([agentSidecar.stop(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable()]).finally(() => {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;
-      app.quit();
+      // Cleanup often settles as a microtask inside this same before-quit
+      // dispatch; a re-entrant app.quit() there hangs Electron (seen on SIGTERM).
+      setImmediate(() => app.quit());
     });
   });
 }

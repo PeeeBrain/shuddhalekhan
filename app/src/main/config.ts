@@ -6,15 +6,18 @@ import { existsSync, readFileSync, unlinkSync } from 'fs';
 import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, RecordingActivationMode, ShortcutsConfig, TranscriptionConfig, TranscriptionProviderId } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
-import { getDictationCombinationError, getTranscriptionTransportCapabilities, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
+import { getDictationConfigError, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
 import { preparePersistentStoreDirectory } from './store-path';
-import { isolatePerformanceDriverConfig } from './performance/scenario-driver';
 import { isManagedLocalThreadCount } from './managed-local-threads';
+import { DEFAULT_MANAGED_LOCAL, managedLocalSelectionSchema, resolveManagedLocalSelection } from '../shared/managed-local-selection';
 import { normalizeAgentProvider } from '../shared/agent-provider';
 import { agentProviderSchema, getAgentProviderIssues } from '../shared/agent-provider-validation';
 import { z } from 'zod';
+import { normalizeTranscriptionTransition, getTranscriptionDictionaryError } from '../shared/transcription-features';
+import { transcriptionSettingsPatchSchema } from './transcription-settings';
 
 type StoreConfig = Omit<AppConfig, 'dictation'> & {
+  chatGptHostId?: string;
   dictation?: unknown;
   migrated?: boolean;
   transcriptionMigrated?: boolean;
@@ -53,7 +56,8 @@ const DEFAULT_TRANSCRIPTION: TranscriptionConfig = {
     azureSpeech: { endpoint: '', region: '' },
     googleCloudSpeech: { project: '', location: 'global', model: '', credentialSource: 'service-account' },
     nvidiaSpeechNim: { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-    customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '' },
+    customOpenAiCompatible: { endpoint: '', model: '', auth: 'none', headerName: '',
+      supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
     whisperLiveKit: { baseUrl: 'http://localhost:8000', auth: 'none' },
   },
 };
@@ -65,6 +69,7 @@ const store = new Store<StoreConfig>({
     whisperUrl: DEFAULT_LOCAL_ENDPOINT,
     transcription: DEFAULT_TRANSCRIPTION,
     managedLocalThreads: null,
+    managedLocal: DEFAULT_MANAGED_LOCAL,
     selectedDeviceId: null,
     removeFillerWords: true,
     language: 'auto',
@@ -74,6 +79,7 @@ const store = new Store<StoreConfig>({
       default: 'ctrl-v',
       overrides: {},
     },
+    waylandBestEffortInsertion: false,
     setupChecklistDismissed: false,
     onboarding: { status: existingInstallationExisted ? 'complete' : 'pending' },
     shortcuts: {
@@ -181,6 +187,19 @@ function normalizeShortcutsConfig(stored: ShortcutsConfig | undefined): Shortcut
   };
 }
 
+/**
+ * A stored binding the current rules refuse (e.g. one saved before paste chords
+ * were reserved) reads as unassigned, so it is never grabbed and never blocks
+ * saving other settings. The user rebinds it in Settings.
+ */
+function withoutRefusedBindings(shortcuts: ShortcutsConfig): ShortcutsConfig {
+  const keep = ({ binding, activationMode }: IntentShortcutConfig): IntentShortcutConfig => ({
+    binding: assessBinding(binding, null).status === 'error' ? null : binding,
+    activationMode,
+  });
+  return { dictation: keep(shortcuts.dictation), agent: keep(shortcuts.agent) };
+}
+
 function maybeMigrateShortcutsConfig(): void {
   if (store.get('shortcutsMigrated')) return;
 
@@ -253,22 +272,24 @@ export function getConfig(): AppConfig {
     },
   };
 
-  return isolatePerformanceDriverConfig({
+  return {
     whisperUrl: localEndpoint,
     transcription,
     managedLocalThreads: isManagedLocalThreadCount(store.get('managedLocalThreads'))
       ? store.get('managedLocalThreads') : null,
+    managedLocal: resolveManagedLocalSelection(store.get('managedLocal')),
     selectedDeviceId: store.get('selectedDeviceId'),
     removeFillerWords: store.get('removeFillerWords'),
     language: store.get('language') ?? 'auto',
     task: store.get('task') ?? 'transcribe',
     dictionary: store.get('dictionary') ?? [],
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
+    waylandBestEffortInsertion: store.get('waylandBestEffortInsertion') === true,
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
     onboarding: store.get('onboarding')?.status === 'pending'
       ? { status: 'pending' }
       : { status: 'complete' },
-    shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
+    shortcuts: withoutRefusedBindings(normalizeShortcutsConfig(store.get('shortcuts'))),
     dictation: normalizeDictationConfig(store.get('dictation')),
     agent: {
       enabled: agent?.enabled ?? false,
@@ -276,14 +297,51 @@ export function getConfig(): AppConfig {
       mcpServers,
       disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
       memoryEnabled: agent?.memoryEnabled === true,
+      customInstructions: typeof agent?.customInstructions === 'string' ? agent.customInstructions : '',
     },
-  }, process.env);
+  };
+}
+
+export function getChatGptHostId(): string | undefined { return store.get('chatGptHostId'); }
+export function setChatGptHostId(id: string): void { store.set('chatGptHostId', id); }
+
+export function patchTranscriptionConfig(value: unknown): AppConfig {
+  const patch = transcriptionSettingsPatchSchema.parse(value);
+  const previous = getConfig();
+  const next = normalizeTranscriptionTransition(previous, patch);
+  if (patch.dictionary) {
+    const error = getTranscriptionDictionaryError(next);
+    const removingOnly = next.dictionary.length < previous.dictionary.length
+      && next.dictionary.every(term => previous.dictionary.includes(term));
+    if (error && !removingOnly) throw new Error(error);
+  }
+  for (const intent of ['dictation', 'agent'] as const) {
+    const other = intent === 'dictation' ? 'agent' : 'dictation';
+    const verdict = assessBinding(next.shortcuts[intent].binding, next.shortcuts[other].binding);
+    if (verdict.status === 'error') throw new Error(verdict.message);
+  }
+  assertDictationConfig(next.dictation);
+  // electron-store's object overload commits the validated transition in one write.
+  store.set({
+    transcription: next.transcription, managedLocal: next.managedLocal,
+    language: next.language, task: next.task, dictionary: next.dictionary,
+    removeFillerWords: next.removeFillerWords, dictation: next.dictation, shortcuts: next.shortcuts,
+    whisperUrl: next.transcription.providers.localWhisperCpp.endpoint,
+  });
+  return getConfig();
 }
 
 export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): void {
+  if (key === 'managedLocal') {
+    const parsed = managedLocalSelectionSchema.safeParse(value);
+    if (!parsed.success) throw new Error('Choose a supported local model and inference device.');
+    store.set('managedLocal', parsed.data);
+    return;
+  }
   if (key === 'agent') {
     const parsed = z.object({ enabled: z.boolean(), provider: agentProviderSchema,
       disabledSkills: z.array(z.string().max(64)).max(256).optional(), memoryEnabled: z.boolean().optional(),
+      customInstructions: z.string().max(4000).optional(),
     }).safeParse(value);
     if (!parsed.success) throw new Error('Provider settings contain an invalid value.');
     const previousAgent = store.get('agent');
@@ -314,39 +372,19 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
         throw new Error(verdict.message);
       }
     }
-    const previousShortcuts = normalizeShortcutsConfig(store.get('shortcuts'));
-    if (shortcuts.dictation.activationMode !== previousShortcuts.dictation.activationMode) {
-      assertDictationCombination({
-        dictation: normalizeDictationConfig(store.get('dictation')),
-        shortcuts,
-        transcription: store.get('transcription') ?? DEFAULT_TRANSCRIPTION,
-      });
-    }
     store.set(key, shortcuts as AppConfig[K]);
     return;
   }
 
   if (key === 'dictation') {
     const dictation = normalizeDictationConfig(value);
-    assertDictationCombination({
-      dictation,
-      shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
-      transcription: store.get('transcription') ?? DEFAULT_TRANSCRIPTION,
-    });
+    assertDictationConfig(dictation);
     store.set(key, dictation as AppConfig[K]);
     return;
   }
 
   if (key === 'transcription') {
-    const transcription = value as TranscriptionConfig;
-    sarvamConfigSchema.parse(transcription.providers.sarvam);
-    if (transcription.activeProvider !== store.get('transcription')?.activeProvider) {
-      assertDictationCombination({
-        dictation: normalizeDictationConfig(store.get('dictation')),
-        shortcuts: normalizeShortcutsConfig(store.get('shortcuts')),
-        transcription,
-      });
-    }
+    sarvamConfigSchema.parse((value as TranscriptionConfig).providers.sarvam);
   }
 
   store.set(key, value);
@@ -383,17 +421,8 @@ function isTranscriptionProviderId(value: unknown): value is TranscriptionProvid
     || value === 'whisper-live-kit';
 }
 
-function assertDictationCombination(input: {
-  dictation: DictationConfig;
-  shortcuts: ShortcutsConfig;
-  transcription: TranscriptionConfig;
-}): void {
-  const error = getDictationCombinationError({
-    mode: input.dictation.mode,
-    activationMode: input.shortcuts.dictation.activationMode,
-    capabilities: getTranscriptionTransportCapabilities(input.transcription.activeProvider),
-    formatter: input.dictation.formatter,
-  });
+function assertDictationConfig(dictation: DictationConfig): void {
+  const error = getDictationConfigError(dictation);
   if (error) throw new Error(error);
 }
 

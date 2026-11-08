@@ -44,12 +44,17 @@ export function normalizeAgentProvider(value?: AgentProviderConfig) {
   const unusedEnv = auth === 'none' || raw.apiKeySource === 'stored';
   const reasoning = raw.reasoning ?? (raw.thinkingEnabled === true
     ? isDeepSeekV4Provider(baseUrl, model) ? 'high' : raw.reasoningEffort ?? 'medium' : 'default');
-  return {
+  const normalized = {
     baseUrl, model, apiKeyEnvVar: unusedEnv && !isAgentApiKeyEnvVarName(envVar) ? '' : envVar, apiKeySource: raw.apiKeySource ?? 'environment',
     kind, apiMode: raw.apiMode ?? 'chat-completions', auth, reasoning,
     allowInsecureHttp: raw.allowInsecureHttp ?? false,
     cacheBreakpoints: raw.cacheBreakpoints ?? false,
   };
+  return kind === 'chatgpt' ? {
+    ...normalized, baseUrl: 'https://api.openai.com/v1', apiMode: 'responses' as const,
+    auth: 'bearer' as const, apiKeySource: 'stored' as const, apiKeyEnvVar: '',
+    allowInsecureHttp: false, cacheBreakpoints: false,
+  } : normalized;
 }
 
 export type ResolvedAgentProvider = ReturnType<typeof normalizeAgentProvider>;

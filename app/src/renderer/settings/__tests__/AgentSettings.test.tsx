@@ -8,11 +8,21 @@ import type {
   AgentProviderTestResult,
   AgentProviderValidation,
   AppConfig,
+  ChatGptAccountStatus,
+  ChatGptModel,
 } from '../../../types/ipc';
 
 afterEach(cleanup);
 
 const OK: AgentProviderValidation = { issues: [], credentials: 'available' };
+const SIGNED_IN: ChatGptAccountStatus = { state: 'signed-in', email: 'me@example.com', planUsage: true };
+const MODELS: ChatGptModel[] = [
+  { slug: 'gpt-6.1-sol', displayName: 'GPT-6.1 Sol' },
+  { slug: 'gpt-6-luna', displayName: 'GPT-6 Luna' },
+];
+const CHATGPT: Partial<AgentProviderConfig> = {
+  kind: 'chatgpt', baseUrl: 'https://api.openai.com/v1', apiMode: 'responses', auth: 'bearer', model: '',
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -36,11 +46,20 @@ async function renderAgent({
   enabled = true,
   validate = () => Promise.resolve(OK),
   test = () => Promise.resolve(passedResult()),
+  chatGptStatus = { state: 'signed-out' },
+  signIn = () => Promise.resolve(SIGNED_IN),
+  models = () => Promise.resolve(MODELS),
+  saveFails = false,
 }: {
   provider?: Partial<AgentProviderConfig>;
   enabled?: boolean;
   validate?: (provider: AgentProviderConfig) => Promise<AgentProviderValidation>;
   test?: (provider: AgentProviderConfig) => Promise<AgentProviderTestResult>;
+  chatGptStatus?: ChatGptAccountStatus;
+  signIn?: () => Promise<ChatGptAccountStatus>;
+  models?: () => Promise<ChatGptModel[]>;
+  /** Like real persistence on a rejected save: the saved config is restored. */
+  saveFails?: boolean;
 } = {}) {
   let agent: AppConfig['agent'] = {
     enabled,
@@ -63,9 +82,14 @@ async function renderAgent({
       return () => undefined;
     }),
     getCredentialStatus: mock(() => Promise.resolve({ available: true as const, exists: false })),
+    getChatGptStatus: mock(() => Promise.resolve(chatGptStatus)),
+    signInChatGpt: mock(signIn),
+    signOutChatGpt: mock((): Promise<ChatGptAccountStatus> => Promise.resolve({ state: 'signed-out' })),
+    listChatGptModels: mock(models),
+    onChatGptChanged: mock(() => () => undefined),
   };
   const commit = mock(async (_key: 'agent', value: AppConfig['agent']) => {
-    agent = value;
+    if (!saveFails) agent = value;
     view.rerender(<AgentSettings {...props()} />);
   });
   const props = () => ({
@@ -103,6 +127,35 @@ async function startTest() {
   await waitFor(() => expect(button).toBeEnabled());
   await click(button);
 }
+
+describe('AgentSettings custom instructions', () => {
+  it('saves only from the Save button', async () => {
+    const { commit } = await renderAgent();
+    const field = screen.getByRole('textbox', { name: 'Custom instructions' });
+    const save = screen.getByRole('button', { name: 'Save instructions' });
+    expect(save).toBeDisabled();
+
+    fireEvent.change(field, { target: { value: 'Reply in French.' } });
+    await act(async () => { fireEvent.blur(field); });
+    expect(commit).not.toHaveBeenCalled();
+
+    await click(save);
+    expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({ customInstructions: 'Reply in French.' }), 'agent-custom-instructions');
+    expect(save).toBeDisabled();
+  });
+
+  it('keeps typed instructions when the save is rejected', async () => {
+    const { commit } = await renderAgent({ saveFails: true });
+    const field = screen.getByRole('textbox', { name: 'Custom instructions' });
+
+    fireEvent.change(field, { target: { value: 'Reply in French.' } });
+    await click(screen.getByRole('button', { name: 'Save instructions' }));
+
+    expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({ customInstructions: 'Reply in French.' }), 'agent-custom-instructions');
+    expect(field).toHaveValue('Reply in French.');
+    expect(screen.getByRole('button', { name: 'Save instructions' })).toBeEnabled();
+  });
+});
 
 describe('AgentSettings provider kind', () => {
   it('fills the recommended URL, Responses API, and standard auth over a preset, keeping model and key', async () => {
@@ -312,5 +365,55 @@ describe('AgentSettings provider checks', () => {
     unmount();
 
     expect(settingsIpc.cancelAgentProviderTest).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AgentSettings ChatGPT plan', () => {
+  it('switches to the ChatGPT plan without endpoint, API key, or the previous provider’s model', async () => {
+    const { lastProvider } = await renderAgent({ provider: { model: 'openai/gpt-4.1-mini' } });
+
+    await chooseOption('Provider', 'ChatGPT plan');
+
+    expect(lastProvider()).toMatchObject({
+      kind: 'chatgpt', baseUrl: 'https://api.openai.com/v1', apiMode: 'responses', auth: 'bearer', model: '',
+    });
+    expect(screen.queryByRole('textbox', { name: 'Base URL' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Authentication' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeInTheDocument();
+  });
+
+  it('signs in, picks a model from the account, and disconnects', async () => {
+    const { settingsIpc, lastProvider } = await renderAgent({ provider: CHATGPT });
+
+    await click(await screen.findByRole('button', { name: 'Continue with ChatGPT' }));
+
+    expect(await screen.findByText('me@example.com')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Manage usage' })).toHaveAttribute('href', 'https://chatgpt.com/settings/usage');
+    await chooseOption('Model', 'GPT-6 Luna');
+    expect(lastProvider().model).toBe('gpt-6-luna');
+
+    await click(screen.getByRole('button', { name: 'Disconnect' }));
+
+    expect(settingsIpc.signOutChatGpt).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('button', { name: 'Continue with ChatGPT' })).toBeInTheDocument();
+  });
+
+  it('shows why sign-in failed and lets the user try again', async () => {
+    await renderAgent({ provider: CHATGPT, signIn: () => Promise.reject(new Error('You declined access.')) });
+
+    await click(await screen.findByRole('button', { name: 'Continue with ChatGPT' }));
+
+    expect(await screen.findByText('You declined access.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeEnabled();
+  });
+
+  it('asks for plan permission again when sign-in did not grant it, without listing models', async () => {
+    const { settingsIpc } = await renderAgent({
+      provider: CHATGPT, chatGptStatus: { state: 'signed-in', email: 'me@example.com', planUsage: false },
+    });
+
+    expect(await screen.findByText(/did not allow Shuddhalekhan to use your ChatGPT plan/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeInTheDocument();
+    expect(settingsIpc.listChatGptModels).not.toHaveBeenCalled();
   });
 });

@@ -3,11 +3,6 @@ import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
 import type { StreamingTranscriptionRequest, Transcriber } from '../transcription';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
 import type { RecordingSession } from '../recording-session';
-import {
-  createMarkerCollector,
-  resetPerformanceMarkerCollectorForTests,
-  setPerformanceMarkerCollector,
-} from '../performance/marker-collector';
 
 const vi = { fn: mock };
 let RecordingSessionCtor: typeof RecordingSession;
@@ -40,7 +35,8 @@ function createRuntimeShellMock() {
     destroy: vi.fn(),
     markReady: vi.fn(),
     markCrashed: vi.fn(),
-    getWebContents: vi.fn(() => null),
+    getWebContents: vi.fn(),
+    markCaptureReady: vi.fn(),
     show: vi.fn(),
     hide: vi.fn(),
     showProcessing: vi.fn(),
@@ -82,6 +78,7 @@ describe('RecordingSession', () => {
     keyboardStop = vi.fn();
     captureTarget = vi.fn(() => ({
       hwnd: 12345,
+      kind: 'win32',
       processId: 67890,
       processCreationTime: '2026-01-01T00:00:00.000Z',
       threadId: 111,
@@ -97,8 +94,6 @@ describe('RecordingSession', () => {
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,
@@ -138,6 +133,113 @@ describe('RecordingSession', () => {
 
     expect(onBegin).toHaveBeenCalledWith('agent');
     expect(onBegin).toHaveBeenCalledTimes(1);
+  });
+
+  it('pins formatter consent, model, dictionary and resolved credentials at recording start', async () => {
+    const context = {
+      config: { mode: 'corrected' as const, formatter: {
+        baseUrl: 'http://localhost:11434/v1', model: 'original', apiKeyEnvVar: '',
+        apiKeySource: 'environment' as const, processingConsent: true,
+      } },
+      language: 'mr', protectedTerms: ['Shuddhalekhan'], formatterApiKey: 'original-secret',
+    };
+    const onResult = vi.fn();
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream, transcriber: createTranscriber(async () => 'finished'),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop }, isAgentModeEnabled,
+      getDictationContext: () => context, onResult,
+    });
+    session.begin();
+    context.config.formatter.model = 'different';
+    context.config.formatter.processingConsent = false;
+    context.language = 'en';
+    context.protectedTerms[0] = 'Different';
+    context.formatterApiKey = 'different-secret';
+    const ending = session.end();
+    await session.complete(new Uint8Array(64));
+    const result = await ending;
+    expect(result?.dictation).toMatchObject({
+      config: { formatter: { model: 'original', processingConsent: true } },
+      language: 'mr', protectedTerms: ['Shuddhalekhan'], formatterApiKey: 'original-secret',
+    });
+  });
+
+  it('keeps one session through final delivery and refuses a second completion or recording', async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const delivering = new Promise<void>(resolve => { started = resolve; });
+    const delivery = new Promise<void>(resolve => { release = resolve; });
+    const onResult = vi.fn(async () => { started(); await delivery; });
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream, transcriber: createTranscriber(transcribe),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop }, isAgentModeEnabled, onResult,
+    });
+    session.begin();
+    const ending = session.end();
+    const completion = session.complete(new Uint8Array(64));
+    await delivering;
+    expect(session.begin()).toBe(false);
+    const duplicate = new Uint8Array(64).fill(7);
+    expect(await session.complete(duplicate)).toBeNull();
+    expect(duplicate.every(value => value === 0)).toBe(true);
+    expect(onResult).toHaveBeenCalledTimes(1);
+    release();
+    await completion;
+    expect((await ending)?.text).toBe('transcribed text');
+    expect(session.begin()).toBe(true);
+    await session.cancel();
+  });
+
+  it('aborts final delivery on cancellation and ignores it after a new recording begins', async () => {
+    let release!: () => void;
+    let started!: () => void;
+    const delivering = new Promise<void>(resolve => { started = resolve; });
+    const delivery = new Promise<void>(resolve => { release = resolve; });
+    let signal: AbortSignal | undefined;
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream, transcriber: createTranscriber(transcribe),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop }, isAgentModeEnabled,
+      onResult: async result => { signal = result?.signal; started(); await delivery; },
+    });
+    session.begin();
+    const ending = session.end();
+    const completion = session.complete(new Uint8Array(64));
+    await delivering;
+    await session.cancel();
+    expect(signal?.aborted).toBe(true);
+    expect(await ending).toBeNull();
+    expect(session.begin('dictation', 'replacement')).toBe(true);
+    release();
+    expect(await completion).toBeNull();
+    expect(session.isActive()).toBe(true);
+    await session.cancel();
+  });
+
+  it.each(['dictation', 'agent'] as const)('automatically previews %s with Push to Talk and no foreground target', async (intent: RecordingIntent) => {
+    let publish!: StreamingTranscriptionRequest['onSnapshot'];
+    const onResult = vi.fn();
+    const batch = vi.fn(async () => 'unexpected batch');
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream,
+      transcriber: { ...createTranscriber(batch),
+        startStreaming: request => {
+          publish = request.onSnapshot;
+          return { send: async () => undefined, finish: async () => 'um final words', cancel: vi.fn() };
+        },
+      },
+      captureTarget: () => null, getRecordingActivationMode: () => 'push-to-talk',
+      getRecognitionSettings: () => ({ language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: true }),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop }, isAgentModeEnabled, onResult,
+    });
+    expect(session.begin(intent, 'preview')).toBe(true);
+    publish({ sequence: 0, committed: 'um final words', tentative: 'um final words maybe' });
+    expect(audioStream.showStreamingPreview).toHaveBeenCalledWith('preview', 'um final words', 'um final words maybe');
+    expect(onResult).not.toHaveBeenCalled();
+    const ending = session.end();
+    await session.complete(new Uint8Array(64));
+    expect((await ending)?.text).toBe('final words');
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(batch).not.toHaveBeenCalled();
   });
 
   it('attaches opaque session identity, revision, and provider capabilities to recording presentation', () => {
@@ -182,7 +284,7 @@ describe('RecordingSession', () => {
     expect(session.isActive()).toBe(false);
   });
 
-  it('submits completed audio and recognition settings through the provider-neutral transcriber', async () => {
+  it('pins recognition settings when recording starts even if Settings changes before completed audio arrives', async () => {
     const providerTranscriber: Transcriber = {
       id: 'local-whisper-cpp',
       capabilities: {
@@ -194,21 +296,19 @@ describe('RecordingSession', () => {
       },
       transcribe: vi.fn(async () => 'provider text'),
     };
+    const recognition = { language: 'mr', task: 'translate' as const, dictionary: ['Shuddhalekhan'], removeFillerWords: true };
     session = new RecordingSessionCtor({
       runtimeShell: audioStream,
       transcriber: providerTranscriber,
-      getRecognitionSettings: () => ({
-        language: 'mr',
-        task: 'translate',
-        dictionary: ['Shuddhalekhan'],
-        removeFillerWords: true,
-      }),
+      getRecognitionSettings: () => recognition,
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
       isAgentModeEnabled,
     });
 
     session.begin('dictation');
+    recognition.dictionary[0] = 'Different term';
+    recognition.language = 'en';
     const resultPromise = session.end();
     const audio = new Uint8Array(64).fill(7);
     await session.complete(audio);
@@ -222,20 +322,22 @@ describe('RecordingSession', () => {
         dictionary: ['Shuddhalekhan'],
         removeFillerWords: true,
       },
+      signal: expect.any(AbortSignal),
     });
     expect(audio.every((byte) => byte === 0)).toBe(true);
   });
 
   it('ends recording and resolves with transcribed text and original intent', async () => {
+    captureTarget.mockImplementation(() => { throw new Error('Dictation target backend unavailable'); });
     session.begin('agent');
 
     const resultPromise = session.end();
     await session.complete(new Uint8Array(64));
 
-    await expect(resultPromise).resolves.toEqual({
+    await expect(resultPromise).resolves.toMatchObject({
       text: 'transcribed text',
       intent: 'agent' satisfies RecordingIntent,
-      targetSnapshot: expect.any(Object),
+      targetSnapshot: null,
       recordingSessionId: expect.any(String),
       sequence: 2,
       revision: 2,
@@ -243,9 +345,44 @@ describe('RecordingSession', () => {
       outcome: { kind: 'completed' },
     });
     expect(audioStream.showProcessing).toHaveBeenCalledTimes(1);
+    expect(captureTarget).not.toHaveBeenCalled();
     expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
     expect(transcribe).toHaveBeenCalledWith(new Uint8Array(64));
     expect(session.isActive()).toBe(false);
+  });
+
+  it.each(['', '   '])('reports an empty recognition result instead of silently dismissing the recording (%j)', async (text: string) => {
+    const onError = vi.fn();
+    const onResult = vi.fn();
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream, transcriber: createTranscriber(async () => text),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget, isAgentModeEnabled, onError, onResult,
+    });
+    session.begin('dictation');
+    const ending = session.end().catch(error => error);
+    const audio = new Uint8Array(64);
+    await session.complete(audio);
+    const failure = await ending;
+    expect(failure.message).toContain('No speech was recognized');
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('nearly silent') }));
+    expect(onResult).not.toHaveBeenCalled();
+    expect(session.isBusy()).toBe(false);
+    expect(audio.every(byte => byte === 0)).toBe(true);
+  });
+
+  it('tells the user a no-speech recording was clipping rather than too quiet', async () => {
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream, transcriber: createTranscriber(async () => ''),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop }, captureTarget, isAgentModeEnabled,
+    });
+    session.begin('dictation');
+    const ending = session.end().catch(error => error);
+    const audio = new Uint8Array(64);
+    const pcm = new Int16Array(audio.buffer, 44, 10);
+    pcm.forEach((_, index) => { pcm[index] = index % 2 ? 32_767 : -32_768; });
+    await session.complete(audio);
+    expect((await ending).message).toContain('clipping');
   });
 
   it('pins the transcriber and advances session metadata monotonically through completion', async () => {
@@ -287,6 +424,7 @@ describe('RecordingSession', () => {
   it('captures the foreground target when recording begins and returns it with the result', async () => {
     const snapshot = {
       hwnd: 42,
+      kind: 'win32',
       processId: 100,
       threadId: 200,
       windowClass: 'Chrome_WidgetWin_1',
@@ -337,6 +475,81 @@ describe('RecordingSession', () => {
 
     await expect(resultPromise).resolves.toBeNull();
     expect(acceptedNext).toBe(true);
+  });
+
+  it('aborts in-flight batch recognition when the recording is cancelled', async () => {
+    let signal: AbortSignal | undefined;
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream,
+      transcriber: createTranscriber((request) => {
+        signal = request.signal;
+        return new Promise(() => undefined);
+      }),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+    session.begin('dictation');
+    const resultPromise = session.end();
+    void session.complete(new Uint8Array(64));
+
+    expect(signal?.aborted).toBe(false);
+    await session.cancel();
+
+    expect(signal?.aborted).toBe(true);
+    await expect(resultPromise).resolves.toBeNull();
+  });
+
+  it('releases the session and scrubs the WAV when cancelled under a provider that ignores abort', async () => {
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream,
+      transcriber: createTranscriber(() => new Promise(() => undefined)),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+    session.begin('dictation');
+    void session.end();
+    const audio = new Uint8Array(64).fill(7);
+    const completion = session.complete(audio);
+    await session.cancel();
+
+    await expect(completion).resolves.toBeNull();
+    expect(audio.every((byte) => byte === 0)).toBe(true);
+    expect(session.begin('dictation')).toBe(true);
+  });
+
+  it('fails batch recognition at the deadline by aborting the provider request, without retrying', async () => {
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    let signal: AbortSignal | undefined;
+    const transcribeHung = vi.fn((request: { signal?: AbortSignal }) => {
+      signal = request.signal;
+      return new Promise<string>(() => undefined);
+    });
+    const onError = vi.fn();
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream,
+      transcriber: createTranscriber(transcribeHung),
+      setTimeoutFn: ((callback: () => void, delay: number) =>
+        timers.push({ callback, delay }) as unknown as ReturnType<typeof setTimeout>) as typeof setTimeout,
+      clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+    });
+    session.begin('dictation');
+    const ending = session.end();
+    const audio = new Uint8Array(64).fill(7);
+    const completion = session.complete(audio);
+    timers.find((timer) => timer.delay === 120_000)?.callback();
+
+    await expect(ending).rejects.toThrow('did not finish in time');
+    await expect(completion).resolves.toBeNull();
+    expect(signal?.aborted).toBe(true);
+    expect(transcribeHung).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Transcription did not finish in time.' }));
+    expect(audio.every((byte) => byte === 0)).toBe(true);
   });
 
   it('cancels recording and tells the audio stream to discard capture', async () => {
@@ -486,8 +699,6 @@ describe('RecordingSession', () => {
 
     const registeredChannels = (electronMock.ipcMain.on as any).mock.calls.map((call: any) => call[0]);
     expect(registeredChannels).toContain('audio-stream-ready');
-    expect(registeredChannels).toContain('audio-capture-started');
-    expect(registeredChannels).toContain('runtime:audio-first-buffer');
     expect(registeredChannels).toContain('audio-level-changed');
     expect(registeredChannels).not.toContain('audio-window-ready');
     expect(registeredChannels).not.toContain('audio-data-ready');
@@ -497,8 +708,6 @@ describe('RecordingSession', () => {
 
     const unregisteredChannels = (electronMock.ipcMain.off as any).mock.calls.map((call: any) => call[0]);
     expect(unregisteredChannels).toContain('audio-stream-ready');
-    expect(unregisteredChannels).toContain('audio-capture-started');
-    expect(unregisteredChannels).toContain('runtime:audio-first-buffer');
     expect(unregisteredChannels).toContain('audio-level-changed');
     expect(unregisteredChannels).not.toContain('audio-window-ready');
     expect(unregisteredChannels).not.toContain('audio-data-ready');
@@ -551,7 +760,7 @@ describe('RecordingSession', () => {
     await listener({}, 1, command.recordingSessionId, command.sequence, fakeAudioData.buffer);
 
     await endPromise;
-    expect(onResult).toHaveBeenCalledWith({
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
       text: 'transcribed text',
       intent: 'dictation',
       targetSnapshot: expect.any(Object),
@@ -560,7 +769,7 @@ describe('RecordingSession', () => {
       revision: 2,
       capabilities: { batch: true, streaming: false },
       outcome: { kind: 'completed' },
-    });
+    }));
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -638,6 +847,35 @@ describe('RecordingSession', () => {
     expect(session.begin('dictation', 'recovered')).toBe(true);
   });
 
+  it('fails a capture whose renderer never becomes ready, releases the shortcut, and accepts a new recording', async () => {
+    const timers: Array<() => void> = [];
+    const onError = vi.fn();
+    const recordingEndedExternally = vi.fn();
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream,
+      transcriber: createTranscriber(async () => 'unused'),
+      keyboardHook: { start: keyboardStart, stop: keyboardStop, recordingEndedExternally },
+      captureTarget,
+      isAgentModeEnabled,
+      onError,
+      setTimeoutFn: ((callback: () => void) => {
+        timers.push(callback);
+        return timers.length as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout,
+      clearTimeoutFn: vi.fn(),
+    });
+    session.begin('dictation', 'never-ready');
+    timers[0]();
+    expect(audioStream.cancelCapture).toHaveBeenCalledTimes(1);
+    expect(recordingEndedExternally).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('did not start in time') }));
+    expect(session.isBusy()).toBe(false);
+    expect(session.begin('dictation', 'replacement')).toBe(true);
+    timers[0]();
+    expect(audioStream.cancelCapture).toHaveBeenCalledTimes(1);
+    await session.cancel();
+  });
+
   it('warns for the final ten seconds and auto-stops a duration-limited provider exactly once', async () => {
     const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
     const recordingEndedExternally = vi.fn();
@@ -666,8 +904,26 @@ describe('RecordingSession', () => {
       getRecordingActivationMode,
     });
 
-    session.begin('dictation');
-    expect(timers.map((timer) => timer.delay)).toEqual([
+    const sender = {};
+    audioStream.getWebContents.mockReturnValue(sender);
+    session.start();
+    session.begin('dictation', 'limited-capture');
+    expect(timers.map(timer => timer.delay)).toEqual([30_000]);
+    const ready = electronMock.ipcMain.on.mock.calls.find((call: unknown[]) => call[0] === 'runtime:audio-ready')?.[1];
+    expect(ready).toBeDefined();
+    const command = audioStream.beginCapture.mock.calls[0]?.[0];
+    ready({ sender: {} }, 1, command.recordingSessionId, command.sequence);
+    ready({ sender }, 1, 'obsolete-session', command.sequence);
+    audioStream.acceptsAudioEvent.mockReturnValue(false);
+    ready({ sender }, 99, command.recordingSessionId, command.sequence);
+    expect(timers.map(timer => timer.delay)).toEqual([30_000]);
+    expect(audioStream.markCaptureReady).not.toHaveBeenCalled();
+    audioStream.acceptsAudioEvent.mockReturnValue(true);
+    ready({ sender }, 1, command.recordingSessionId, command.sequence);
+    ready({ sender }, 1, command.recordingSessionId, command.sequence);
+    expect(audioStream.markCaptureReady).toHaveBeenCalledTimes(1);
+    expect(timers[0].cleared).toBe(true);
+    expect(timers.filter(timer => !timer.cleared).map((timer) => timer.delay)).toEqual([
       45000, 46000, 47000, 48000, 49000, 50000, 51000, 52000, 53000, 54000, 55000,
     ]);
     timers.find((timer) => timer.delay === 45000)?.callback();
@@ -681,6 +937,8 @@ describe('RecordingSession', () => {
     expect(recordingEndedExternally).toHaveBeenCalledTimes(1);
     expect(audioStream.showProcessing).toHaveBeenCalledTimes(1);
     expect(session.isActive()).toBe(false);
+    ready({ sender }, 1, command.recordingSessionId, command.sequence);
+    expect(audioStream.markCaptureReady).toHaveBeenCalledTimes(1);
     session.begin('agent');
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
   });
@@ -724,128 +982,15 @@ describe('RecordingSession', () => {
     expect(onResult).toHaveBeenCalledTimes(1);
   });
 
-  it('measures keyboard activation through the renderer-confirmed capture start', async () => {
-    const lines: string[] = [];
-    const onFirstAudioBuffer = vi.fn();
-    const transcriber = createTranscriber(({ audio }) => transcribe(audio));
-    resetPerformanceMarkerCollectorForTests();
-    setPerformanceMarkerCollector(createMarkerCollector(
-      {
-        enabled: true,
-        runId: 'run-test',
-        scenarioId: 'recording',
-        eventsPath: 'events.jsonl',
-      },
-      { pid: 99, now: () => 10, writeLine: (line) => lines.push(line) },
-    ));
-
-    session = new RecordingSessionCtor({
-      runtimeShell: audioStream,
-      transcriber,
-      keyboardHook: { start: keyboardStart, stop: keyboardStop },
-      captureTarget,
-      isAgentModeEnabled,
-      onFirstAudioBuffer,
-    });
-
-    session.start();
-    const onStart = (keyboardStart.mock.calls[0][0] as {
-      onStart: (intent: RecordingIntent) => void;
-    }).onStart;
-    onStart('dictation');
-
-    let events = lines.map((line) => JSON.parse(line).event);
-    expect(events).toEqual(['hotkey.detected', 'recording.begin.accepted']);
-    expect(onFirstAudioBuffer).not.toHaveBeenCalled();
-
-    const captureStartedCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'audio-capture-started'
-    );
-    expect(captureStartedCall).toBeDefined();
-    const firstBufferCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-first-buffer'
-    );
-    const command = audioStream.beginCapture.mock.calls[0]?.[0] as {
-      recordingSessionId: string;
-      sequence: number;
-    };
-    captureStartedCall[1]({}, 1, 'stale-session', command.sequence);
-    captureStartedCall[1]({}, 1, command.recordingSessionId, command.sequence, {
-      micAcquisitionMs: 180,
-      graphSetupMs: 12,
-    });
-    firstBufferCall[1]({}, 1, 'stale-session', command.sequence);
-    firstBufferCall[1]({}, 1, command.recordingSessionId, command.sequence);
-    expect(onFirstAudioBuffer).toHaveBeenCalledTimes(1);
-    expect(onFirstAudioBuffer).toHaveBeenCalledWith(transcriber);
-
-    const endPromise = session.end();
-    const fakeAudioData = new Uint8Array(64);
-    await session.complete(fakeAudioData);
-    await endPromise;
-
-    events = lines.map((line) => JSON.parse(line).event);
-    expect(events).toEqual([
-      'hotkey.detected',
-      'recording.begin.accepted',
-      'audio.capture.started',
-      'audio.first-buffer.received',
-      'recording.stop.requested',
-      'transcription.batch.requested',
-      'transcription.batch.completed',
-      'recording.session.completed',
-    ]);
-    const captureMarker = lines.map((line) => JSON.parse(line)).find((line) => line.event === 'audio.capture.started');
-    expect(captureMarker).toMatchObject({ micAcquisitionMs: 180, graphSetupMs: 12 });
-    resetPerformanceMarkerCollectorForTests();
-  });
-
-  it('runs a paced benchmark WAV without opening the live microphone', async () => {
-    const lines: string[] = [];
-    setPerformanceMarkerCollector(createMarkerCollector(
-      {
-        enabled: true,
-        runId: 'fixture-run',
-        scenarioId: 'dictation-recording',
-        eventsPath: 'events.jsonl',
-      },
-      { pid: 99, now: () => 10, writeLine: (line) => lines.push(line) },
-    ));
-    const fixtureTranscribe = vi.fn(async () => 'fixture transcript');
-
-    const result = await session.runPerformanceFixture(
-      new Uint8Array(64),
-      0,
-      createTranscriber(({ audio }) => fixtureTranscribe(audio)),
-    );
-
-    expect(result?.text).toBe('fixture transcript');
-    expect(audioStream.prepare).toHaveBeenCalledTimes(1);
-    expect(audioStream.beginCapture).not.toHaveBeenCalled();
-    expect(audioStream.endCapture).not.toHaveBeenCalled();
-    expect(showRecordingPill).toHaveBeenCalledTimes(1);
-    expect(hideRecordingPill).toHaveBeenCalledTimes(1);
-    expect(lines.map((line) => JSON.parse(line).event)).toEqual([
-      'hotkey.detected',
-      'recording.begin.accepted',
-      'audio.capture.started',
-      'recording.stop.requested',
-      'transcription.batch.requested',
-      'transcription.batch.completed',
-      'recording.session.completed',
-    ]);
-    resetPerformanceMarkerCollectorForTests();
-  });
-
-  it('streams correlated PCM, publishes preview, and returns one finalized transcript', async () => {
+  it('streams correlated PCM, publishes revisable previews, and returns the authoritative provider final', async () => {
     let publishSnapshot!: (snapshot: { sequence: number; committed: string; tentative: string }) => void;
     const sentPcm: Uint8Array[] = [];
     const sendPcm = vi.fn(async (pcm: Uint8Array) => {
       sentPcm.push(new Uint8Array(pcm));
     });
     const finishStream = vi.fn(async () => {
-      publishSnapshot({ sequence: 1, committed: 'Hello world', tentative: 'Hello world maybe' });
-      return 'Hello world';
+      publishSnapshot({ sequence: 1, committed: 'Yellow world', tentative: 'Yellow world maybe' });
+      return 'Hello, world.';
     });
     const cancelStream = vi.fn();
     const batchTranscribe = vi.fn(async () => 'batch fallback');
@@ -878,13 +1023,10 @@ describe('RecordingSession', () => {
     session = new RecordingSessionCtor({
       runtimeShell,
       transcriber: streamingTranscriber,
-      getDictationMode: () => 'live',
       getRecordingActivationMode,
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,
@@ -919,7 +1061,16 @@ describe('RecordingSession', () => {
     );
     await audioReadyCall[1]({}, 1, 'live-session', 1, new Uint8Array(128).buffer);
 
-    await expect(ending).resolves.toMatchObject({ text: 'Hello world', intent: 'dictation' });
+    await expect(ending).resolves.toMatchObject({
+      text: 'Hello, world.',
+      intent: 'dictation',
+      outcome: { kind: 'completed' },
+    });
+    expect(runtimeShell.showStreamingPreview).toHaveBeenLastCalledWith(
+      'live-session',
+      'Yellow world',
+      'Yellow world maybe',
+    );
     expect(finishStream).toHaveBeenCalledTimes(1);
     expect(batchTranscribe).not.toHaveBeenCalled();
     expect(onResult).toHaveBeenCalledTimes(1);
@@ -956,13 +1107,10 @@ describe('RecordingSession', () => {
     session = new RecordingSessionCtor({
       runtimeShell,
       transcriber: streamingTranscriber,
-      getDictationMode: () => 'live',
       getRecordingActivationMode,
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,
@@ -975,6 +1123,27 @@ describe('RecordingSession', () => {
     await expect(ending).resolves.toMatchObject({ text: 'complete batch transcript' });
     expect(batchTranscribe).toHaveBeenCalledTimes(1);
     expect(cancelStream).toHaveBeenCalledTimes(1);
+  });
+
+  it('captures no live audio for an offline Managed Local recording and decodes the completed WAV once', async () => {
+    const batchTranscribe = vi.fn(async () => 'whole recording transcript');
+    const runtimeShell = createRuntimeShellMock();
+    session = new RecordingSessionCtor({
+      runtimeShell,
+      transcriber: { ...createTranscriber(batchTranscribe), id: 'managed-local' },
+      getRecordingActivationMode,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+    });
+
+    session.begin('dictation', 'offline-session');
+    expect(runtimeShell.beginCapture.mock.calls[0][0]).toMatchObject({ streamingActive: false });
+    const ending = session.end();
+    await session.complete(new Uint8Array(128).fill(4));
+
+    await expect(ending).resolves.toMatchObject({ text: 'whole recording transcript' });
+    expect(batchTranscribe).toHaveBeenCalledTimes(1);
   });
 
   it('does not fall back or deliver a transcript when cancelled during stream finalization', async () => {
@@ -1013,13 +1182,10 @@ describe('RecordingSession', () => {
     session = new RecordingSessionCtor({
       runtimeShell,
       transcriber: streamingTranscriber,
-      getDictationMode: () => 'live',
       getRecordingActivationMode,
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,
@@ -1075,13 +1241,10 @@ describe('RecordingSession', () => {
     session = new RecordingSessionCtor({
       runtimeShell,
       transcriber: streamingTranscriber,
-      getDictationMode: () => 'live',
       getRecordingActivationMode,
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,
@@ -1125,13 +1288,10 @@ describe('RecordingSession', () => {
     session = new RecordingSessionCtor({
       runtimeShell,
       transcriber,
-      getDictationMode: () => 'live',
       getRecordingActivationMode,
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,
@@ -1144,118 +1304,6 @@ describe('RecordingSession', () => {
 
     await expect(ending).rejects.toThrow('No microphone audio was captured');
     expect(cancelStream).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects Live Dictation when streaming prerequisites are unavailable', () => {
-    const onError = vi.fn();
-    session = new RecordingSessionCtor({
-      runtimeShell: audioStream,
-      transcriber: createTranscriber(async () => 'unused'),
-      getDictationMode: () => 'live',
-      getRecordingActivationMode,
-      keyboardHook: {
-        start: keyboardStart,
-        stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
-      },
-      captureTarget,
-      isAgentModeEnabled,
-      onError,
-    });
-
-    expect(session.begin('dictation', 'live-unavailable')).toBe(false);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Live Dictation requires a streaming-capable provider.',
-    }));
-    expect(showRecordingPill).not.toHaveBeenCalled();
-  });
-
-  it('starts Live Dictation without consulting retired environment gates', () => {
-    const onError = vi.fn();
-    const startStreaming = vi.fn(() => ({
-      send: vi.fn(async () => undefined),
-      finish: vi.fn(async () => ''),
-      cancel: vi.fn(),
-    }));
-    const runtimeShell = {
-      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
-      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
-      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
-      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
-      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
-      acceptsAudioEvent: vi.fn(() => true),
-    };
-    const transcriber: Transcriber = {
-      ...createTranscriber(async () => 'unused'),
-      id: 'whisper-live-kit',
-      transportCapabilities: { batch: true, streaming: true },
-      startStreaming,
-    };
-    process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE = '1';
-
-    try {
-      session = new RecordingSessionCtor({
-        runtimeShell,
-        transcriber,
-        getDictationMode: () => 'live',
-        getRecordingActivationMode,
-        keyboardHook: {
-          start: keyboardStart,
-          stop: keyboardStop,
-          isKeyboardClear: () => true,
-          setKeyboardStateListener: vi.fn(),
-        },
-        captureTarget,
-        isAgentModeEnabled,
-        onError,
-      });
-
-      expect(session.begin('dictation', 'unicode-enabled')).toBe(true);
-      expect(startStreaming).toHaveBeenCalledTimes(1);
-    } finally {
-      delete process.env.SHUDDHALEKHAN_DISABLE_DIRECT_UNICODE;
-    }
-  });
-
-  it('rejects Live Dictation when the streaming session cannot start', () => {
-    const onError = vi.fn();
-    const runtimeShell = {
-      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
-      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
-      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
-      showStreamingPreview: vi.fn(), destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(),
-      getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
-      acceptsAudioEvent: vi.fn(() => true),
-    };
-    const transcriber: Transcriber = {
-      ...createTranscriber(async () => 'unused'),
-      id: 'whisper-live-kit',
-      transportCapabilities: { batch: true, streaming: true },
-      startStreaming: vi.fn(() => { throw new Error('WebSocket creation failed'); }),
-    };
-    session = new RecordingSessionCtor({
-      runtimeShell,
-      transcriber,
-      getDictationMode: () => 'live',
-      getRecordingActivationMode,
-      keyboardHook: {
-        start: keyboardStart,
-        stop: keyboardStop,
-        isKeyboardClear: () => true,
-        setKeyboardStateListener: vi.fn(),
-      },
-      captureTarget,
-      isAgentModeEnabled,
-      onError,
-    });
-
-    expect(session.begin('dictation', 'stream-start-failed')).toBe(false);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Live Dictation streaming could not start.',
-    }));
-    expect(runtimeShell.beginCapture).not.toHaveBeenCalled();
-    expect(session.isActive()).toBe(false);
   });
 
   it('returns Recognized So Far when streaming and Batch fallback both fail', async () => {
@@ -1286,13 +1334,10 @@ describe('RecordingSession', () => {
     session = new RecordingSessionCtor({
       runtimeShell,
       transcriber,
-      getDictationMode: () => 'live',
       getRecordingActivationMode,
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => false,
-        setKeyboardStateListener: vi.fn(),
       },
       captureTarget,
       isAgentModeEnabled,
@@ -1308,15 +1353,64 @@ describe('RecordingSession', () => {
     await expect(completion).resolves.toMatchObject({
       text: 'recognized so far',
       outcome: { kind: 'failed', message: 'Batch fallback failed' },
-      liveDictation: { rawCommitted: 'recognized so far' },
     });
     await expect(ending).resolves.toMatchObject({ text: 'recognized so far' });
     expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ text: 'recognized so far' }));
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it('clears the keyboard listener when cancelling a live streaming session', async () => {
-    const setKeyboardStateListener = vi.fn();
+  it('keeps Recognized So Far without a Batch retry when stream finalization outlives the deadline', async () => {
+    let publishSnapshot!: (snapshot: { sequence: number; committed: string; tentative: string }) => void;
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const batchTranscribe = vi.fn(async () => 'late batch transcript');
+    const cancelStream = vi.fn();
+    const transcriber: Transcriber = {
+      ...createTranscriber(batchTranscribe),
+      id: 'whisper-live-kit',
+      transportCapabilities: { batch: true, streaming: true },
+      startStreaming: vi.fn((request: StreamingTranscriptionRequest) => {
+        publishSnapshot = request.onSnapshot;
+        return {
+          send: vi.fn(async () => undefined),
+          finish: vi.fn(() => new Promise<string>(() => undefined)),
+          cancel: cancelStream,
+        };
+      }),
+    };
+    const onResult = vi.fn();
+    session = new RecordingSessionCtor({
+      runtimeShell: audioStream,
+      transcriber,
+      setTimeoutFn: ((callback: () => void, delay: number) =>
+        timers.push({ callback, delay }) as unknown as ReturnType<typeof setTimeout>) as typeof setTimeout,
+      clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop },
+      captureTarget,
+      isAgentModeEnabled,
+      onResult,
+    });
+
+    session.begin('dictation', 'deadline');
+    publishSnapshot({ sequence: 0, committed: 'recognized so far', tentative: 'recognized so far maybe' });
+    void session.end();
+    const completion = session.complete(new Uint8Array(128).fill(4));
+    await Promise.resolve();
+    timers.find((timer) => timer.delay === 120_000)?.callback();
+
+    const result = await completion;
+    expect(result).toMatchObject({
+      text: 'recognized so far',
+      outcome: { kind: 'failed', message: 'Transcription did not finish in time.' },
+    });
+    // Only recognition was aborted; the run stays deliverable.
+    expect(result?.signal.aborted).toBe(false);
+    expect(cancelStream).toHaveBeenCalled();
+    expect(batchTranscribe).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the preview provider when cancelling a recording', async () => {
+    const cancelStream = vi.fn();
     const runtimeShell = {
       prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
       setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
@@ -1332,28 +1426,24 @@ describe('RecordingSession', () => {
       startStreaming: vi.fn(() => ({
         send: vi.fn(async () => undefined),
         finish: vi.fn(async () => 'cancelled transcript'),
-        cancel: vi.fn(),
+        cancel: cancelStream,
       })),
     };
     session = new RecordingSessionCtor({
       runtimeShell,
       transcriber: streamingTranscriber,
-      getDictationMode: () => 'live',
       getRecordingActivationMode,
       keyboardHook: {
         start: keyboardStart,
         stop: keyboardStop,
-        isKeyboardClear: () => false,
-        setKeyboardStateListener,
       },
       captureTarget,
       isAgentModeEnabled,
     });
 
     session.begin('dictation', 'live-cancel');
-    expect(setKeyboardStateListener).toHaveBeenCalledWith(expect.any(Function));
     await session.cancel();
-    expect(setKeyboardStateListener).toHaveBeenLastCalledWith(null);
+    expect(cancelStream).toHaveBeenCalled();
   });
 
   it('carries WhisperLiveKit mandatory Batch capability into the ordinary Batch presentation', async () => {
@@ -1427,8 +1517,10 @@ describe('RecordingSession', () => {
 
     const acceptedFirst = session.begin('dictation', 'session-alpha');
     expect(acceptedFirst).toBe(true);
+    expect(session.isBusy()).toBe(true);
 
     const endPromise = session.end();
+    expect(session.isBusy()).toBe(true);
     const completePromise = session.complete(new Uint8Array(64));
 
     // While transcription is pending, session ownership must not be released:
@@ -1448,6 +1540,7 @@ describe('RecordingSession', () => {
       revision: 2,
     });
     expect(endResult).toEqual(result);
+    expect(session.isBusy()).toBe(false);
 
     // After completion reaches terminal state, a new session can begin
     const acceptedThird = session.begin('dictation', 'session-gamma');

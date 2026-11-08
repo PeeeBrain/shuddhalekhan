@@ -39,6 +39,7 @@ describe('target capture', () => {
     const result = captureTarget();
 
     expect(result).toEqual({
+      kind: 'win32',
       hwnd: 12345,
       processId: 67890,
       processCreationTime: '2026-01-01T00:00:00.000Z',

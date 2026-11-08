@@ -43,13 +43,26 @@ export function buildPasteStrategyEvents(strategy: PasteStrategy): KeyEvent[] {
   }
 }
 
+/**
+ * Linux terminals where Ctrl+V reaches the shell as ^V instead of pasting.
+ * Names are X11 executables and KDE window app IDs, lowercased.
+ */
+const CTRL_SHIFT_V_TERMINALS = new Set([
+  'konsole', 'org.kde.konsole', 'yakuake', 'org.kde.yakuake',
+  'gnome-terminal-server', 'org.gnome.terminal', 'ptyxis', 'org.gnome.ptyxis', 'kgx', 'org.gnome.console',
+  'kitty', 'alacritty', 'foot', 'wezterm-gui', 'org.wezfurlong.wezterm', 'ghostty', 'com.mitchellh.ghostty',
+  'tilix', 'com.gexperts.tilix', 'xfce4-terminal',
+]);
+
+/** `executablePath` is an executable path (Windows/X11) or a KDE window app ID. User overrides always win. */
 export function resolvePasteStrategy(
   executablePath: string | null,
   config: PasteStrategyConfig
 ): PasteStrategy {
   if (!executablePath) return config.default;
   const executableName = executablePath.split(/[\\/]/).pop()?.toLowerCase() ?? '';
-  return config.overrides[executableName] ?? config.default;
+  return config.overrides[executableName]
+    ?? (CTRL_SHIFT_V_TERMINALS.has(executableName) ? 'ctrl-shift-v' : config.default);
 }
 
 export function isValidPasteStrategy(value: unknown): value is PasteStrategy {

@@ -18,7 +18,7 @@ describe('Agent credential source selection', () => {
   it('preserves existing environment-variable configurations without consulting the vault', () => {
     let reads = 0;
     const vault = { read: () => { reads += 1; return 'stored-secret'; } };
-    for (const provider of [{ apiKeyEnvVar: 'OPENROUTER_API_KEY' }, { apiKeySource: 'stored', auth: 'none' }]) {
+    for (const provider of [{ apiKeyEnvVar: 'OPENROUTER_API_KEY' }, { apiKeySource: 'stored', auth: 'none' }, { kind: 'chatgpt', apiKeySource: 'stored', auth: 'bearer' }]) {
       expect(getAgentSidecarApiKey({ agent: { provider } } as never, vault)).toBeUndefined();
     }
     expect(reads).toBe(0);
