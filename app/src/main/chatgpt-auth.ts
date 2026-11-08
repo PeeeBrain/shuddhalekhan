@@ -54,25 +54,33 @@ export class ChatGptAuth {
   private pending: AbortController | null = null;
   private revision = 0;
   private refresh: Promise<void> | null = null;
+  private restored = false;
 
-  constructor(private readonly deps: AuthDeps) {
+  constructor(private readonly deps: AuthDeps) {}
+
+  // safeStorage cannot decrypt until Electron is ready, so the saved session loads on first use, not at construction.
+  private restore(): void {
+    if (this.restored) return;
+    this.restored = true;
     try {
-      const saved = deps.vault.read(VAULT_ID);
+      const saved = this.deps.vault.read(VAULT_ID);
       if (saved) {
         const registration = z.union([accountSchema, registrationSchema]).parse(JSON.parse(saved));
         this.clientId = registration.clientId;
         if ('tokens' in registration) this.account = registration;
       }
-    } catch { deps.vault.remove(VAULT_ID); }
+    } catch { this.deps.vault.remove(VAULT_ID); }
   }
 
   getStatus(): ChatGptAccountStatus {
+    this.restore();
     return this.account?.tokens
       ? { state: 'signed-in', email: this.account.email, planUsage: this.account.tokens.scopes.includes(PLAN_SCOPE) }
       : { state: 'signed-out' };
   }
 
   async getAccessToken(): Promise<string> {
+    this.restore();
     if (!this.account?.tokens) throw new Error('Sign in with ChatGPT in Settings.');
     if (!this.account.tokens.scopes.includes(PLAN_SCOPE)) throw new Error('ChatGPT plan usage is not enabled. Sign in again and allow plan usage.');
     if (this.account.tokens.expiresAt - this.deps.now() < 5 * 60_000) {
@@ -84,6 +92,7 @@ export class ChatGptAuth {
   }
 
   async signOut(): Promise<ChatGptAccountStatus> {
+    this.restore();
     this.pending?.abort();
     const account = this.account;
     this.revision++;
@@ -142,6 +151,7 @@ export class ChatGptAuth {
   }
 
   async signIn(): Promise<ChatGptAccountStatus> {
+    this.restore();
     if (this.pending) throw new Error('A ChatGPT sign-in is already in progress.');
     const controller = new AbortController();
     this.pending = controller;
