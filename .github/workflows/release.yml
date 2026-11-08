@@ -312,7 +312,7 @@ jobs:
 
       - name: Publish OTA update
         working-directory: mobile
-        run: npx --yes eas-cli@latest update --channel production --environment production --message "$RELEASE_TAG" --non-interactive
+        run: npx --yes eas-cli@latest update --platform ios --channel production --environment production --message "$RELEASE_TAG" --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 

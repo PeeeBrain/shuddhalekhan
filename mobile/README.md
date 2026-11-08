@@ -209,7 +209,7 @@ From `mobile/`, with the native code unchanged since the installed IPA:
 
 ```sh
 npx --yes eas-cli@latest login
-npx --yes eas-cli@latest update --channel production --environment production --message "Describe the fix"
+npx --yes eas-cli@latest update --platform ios --channel production --environment production --message "Describe the fix"
 ```
 
 The project is linked to `@parthashirolkar/shuddhalekhan-mobile`. A fork first removes `owner`, `extra.eas.projectId`, and `updates.url` from `app.json`, runs `npx --yes eas-cli@latest init` and `eas update:configure`, and commits the result before building its first IPA; otherwise that IPA asks the original project for updates. EAS Update's free tier covers 1,000 monthly active users. Updates are not code-signed, which needs a paid plan, so keep two-factor login on the Expo account that publishes them.
