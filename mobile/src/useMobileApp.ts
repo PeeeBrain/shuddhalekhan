@@ -102,13 +102,14 @@ export function useMobileApp() {
   const startSession = async () => {
     // The session holds the microphone; in-app recording stays disabled until it ends.
     if (controller.getSnapshot().phase !== 'idle') throw new Error('Finish the current command first.');
-    // Agent readiness is fixed for the session; a cold launch from the keyboard must not read sign-in before it loads.
-    await chatGptAuth.initialize();
     const settings = controller.getSnapshot().settings;
-    const agentReady = settings.agentEnabled && agentActivity !== undefined &&
-      (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' :
-        settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey);
-    await startKeyboardSession(settings.language, agentReady);
+    // Agent readiness is fixed for the session; a cold launch from the keyboard must not read sign-in before it loads.
+    await startKeyboardSession(settings.language, async () => {
+      await chatGptAuth.initialize();
+      return settings.agentEnabled && agentActivity !== undefined &&
+        (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' :
+          settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey);
+    });
   };
   // Links arrive in a mount-time listener; it calls the latest start, not the first render's.
   // The session Live Activity opens the same link, so a live session is left alone.

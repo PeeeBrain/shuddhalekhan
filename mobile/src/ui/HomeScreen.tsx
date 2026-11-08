@@ -163,7 +163,7 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
     );
   }
 
-  const off = phase !== 'idle' || !configured || app.keyboardSession.active;
+  const off = phase !== 'idle' || !configured || app.keyboardSession.active || app.keyboardSession.starting;
   const limit = recordingLimitSeconds(app.settings);
   return (
     <Pressable

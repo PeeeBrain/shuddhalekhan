@@ -155,12 +155,15 @@ export function useKeyboardSession(onSession: (event: KeyboardSessionEvent) => P
     return () => clearInterval(timer);
   }, [session.endsAt]);
 
-  const startKeyboardSession = async (language: string, agentReady: boolean) => {
+  // `starting` is claimed before the first await so in-app recording stays disabled while the session prepares.
+  const startKeyboardSession = async (language: string, agentReady: () => Promise<boolean>) => {
     if (!speech || starting) return;
-    setStarting(true);
     const selected = checkedLocalLanguage(language);
-    try { setSession(keyboardSessionSchema.parse(await speech.startKeyboardSession(keyboardSessionMinutes, selected, agentReady))); }
-    catch { throw new Error('Could not start the keyboard session. Check microphone access and that Parakeet is downloaded, then try again.'); }
+    setStarting(true);
+    try {
+      const ready = await agentReady();
+      setSession(keyboardSessionSchema.parse(await speech.startKeyboardSession(keyboardSessionMinutes, selected, ready)));
+    } catch { throw new Error('Could not start the keyboard session. Check microphone access and that Parakeet is downloaded, then try again.'); }
     finally { setStarting(false); }
   };
   return {
