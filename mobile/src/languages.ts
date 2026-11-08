@@ -59,6 +59,8 @@ const locales: Record<string, string> = {
   ro: 'ro-RO', ru: 'ru-RU', sk: 'sk-SK', sl: 'sl-SI', es: 'es-ES', sv: 'sv-SE', uk: 'uk-UA',
   hi: 'hi-IN', mr: 'mr-IN', gu: 'gu-IN', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN',
   kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', ne: 'ne-NP', as: 'as-IN',
+  // Sarvam's Odia code is `od`; BCP 47 providers use `or`.
+  od: 'or-IN',
   ar: 'ar-SA', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR',
 };
 

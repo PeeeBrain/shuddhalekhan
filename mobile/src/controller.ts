@@ -108,7 +108,8 @@ export class MobileController {
 
   stopRecording = async () => {
     const active = this.active;
-    if (!active || this.state.phase !== 'recording' || active.signal.aborted) return;
+    // An interruption's cleanup keeps the phase at recording; its audio must never be sent.
+    if (!active || this.state.phase !== 'recording' || active.signal.aborted || this.finishing) return;
     this.update({ phase: 'transcribing', status: 'Transcribing…' });
     try {
       const audio = await this.ports.recorder.stop();

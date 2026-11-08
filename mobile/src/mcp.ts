@@ -7,6 +7,7 @@ export type JSONObject = z.infer<typeof jsonObjectSchema>;
 const envelopeSchema = z.object({
   jsonrpc: z.literal('2.0'),
   id: z.union([z.number(), z.string(), z.null()]).optional(),
+  method: z.string().optional(),
   result: z.json().optional(),
   error: z.object({ code: z.number() }).passthrough().optional(),
 }).passthrough();
@@ -21,7 +22,8 @@ export type MCPTool = z.infer<typeof toolSchema>;
 async function readReply(response: Response, id: number, signal: AbortSignal): Promise<unknown> {
   const check = (data: unknown) => {
     const envelope = parseResponse(envelopeSchema, data);
-    if (envelope.id !== id) return { matched: false as const };
+    // Server requests (ping) and notifications carry a method and their own id space.
+    if (envelope.method !== undefined || envelope.id !== id) return { matched: false as const };
     if (envelope.error) throw new Error(`MCP request failed (code ${envelope.error.code}).`);
     if (envelope.result === undefined) throw new Error('MCP returned a response without a result.');
     return { matched: true as const, result: envelope.result };
@@ -114,12 +116,13 @@ export class MCPConnection {
     let cursor: string | undefined;
     do {
       const page = parseResponse(z.object({ tools: z.array(toolSchema).max(256), nextCursor: z.string().max(4096).optional() }),
-        await this.rpc('tools/list', cursor ? { cursor } : {}, signal));
+        await this.rpc('tools/list', cursor !== undefined ? { cursor } : {}, signal));
       tools.push(...page.tools);
       if (tools.length > 256) throw new Error('An MCP server exposes too many tools (maximum 256).');
       cursor = page.nextCursor;
       if (cursor !== undefined && cursors.has(cursor)) throw new Error('MCP repeated a tool-list cursor.');
       if (cursor !== undefined) cursors.add(cursor);
+      if (cursors.size > 256) throw new Error('An MCP server returned too many tool-list pages.');
     } while (cursor !== undefined);
     if (new Set(tools.map(tool => tool.name)).size !== tools.length) throw new Error('MCP returned duplicate tool names.');
     return tools;

@@ -223,3 +223,15 @@ describe('mobile command lifecycle', () => {
     } finally { await server.stop(true); }
   });
 });
+
+test('Stop during interruption cleanup never sends the retained audio', async () => {
+  const cleanup = Promise.withResolvers<void>();
+  const native = recorder();
+  const controller = createController({ ...native.port, discard: () => cleanup.promise });
+  await controller.initialize();
+  await controller.startRecording('dictation');
+  controller.recordingInterrupted();
+  await controller.stopRecording();
+  expect(native.calls.stops).toBe(0);
+  cleanup.resolve();
+});

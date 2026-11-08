@@ -107,7 +107,7 @@ export function useMobileApp() {
     await startKeyboardSession(settings.language, async () => {
       await chatGptAuth.initialize();
       return settings.agentEnabled && agentActivity !== undefined &&
-        (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' :
+        (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' && chatGptAuth.getSnapshot().planUsage :
           settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey);
     });
   };

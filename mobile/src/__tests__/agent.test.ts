@@ -175,9 +175,10 @@ describe('agent HTTP and MCP flow', () => {
               ': heartbeat\n\n',
               'event: message\ndata: {"jsonrpc":"2.0","id":999,"result":{"tools":[]}}\n\n',
               'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":0.5}}\n\n',
+              `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: body.id, method: 'ping' })}\n\n`,
               `event: message\ndata: ${JSON.stringify({
                 jsonrpc: '2.0', id: body.id,
-                result: { tools: [{ name: 'search', inputSchema: { type: 'object' } }], nextCursor: 'page-two' },
+                result: { tools: [{ name: 'search', inputSchema: { type: 'object' } }], nextCursor: '' },
               })}\n\n`,
             ].join('')));
           },
@@ -208,7 +209,7 @@ describe('agent HTTP and MCP flow', () => {
       expect(requests[1]?.id).toBeUndefined();
       expect(requests[2]?.protocol).toBe('2025-06-18');
       expect(requests[2]?.session).toBe('discovery-session');
-      expect(requests[3]?.cursor).toBe('page-two');
+      expect(requests[3]?.cursor).toBe('');
       expect(requests[4]?.protocol).toBe('2025-06-18');
       expect(requests[4]?.session).toBe('discovery-session');
     });

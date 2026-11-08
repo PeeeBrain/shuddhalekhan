@@ -145,3 +145,8 @@ test('a stream that ends after deltas or finalized items cannot return an answer
   await expect(run(async () => new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''))))
     .rejects.toThrow('disconnected before completing');
 });
+
+test('a malformed function call fails the run instead of returning the text as the answer', async () => {
+  const response = { ...completed, output: [...completed.output, { type: 'function_call', name: 'search', arguments: '{}' }] };
+  await expect(run(async () => sse('response.completed', response))).rejects.toThrow();
+});

@@ -89,10 +89,13 @@ const responseItemSchema = z.discriminatedUnion('type', [
 const responsesSchema = z.object({
   status: z.string(),
   incomplete_details: z.object({ reason: z.string().max(100) }).nullable().optional(),
-  // Ignore output items this harness never requests (web search, images) instead of failing the run.
-  output: z.array(z.unknown()).max(100).transform(items => items.flatMap(item => {
+  // Ignore output types this harness never requests (web search, images); a malformed known item fails the run.
+  output: z.array(z.unknown()).max(100).transform((items, ctx) => items.flatMap(item => {
+    const type = z.object({ type: z.string() }).safeParse(item).data?.type;
+    if (type !== 'reasoning' && type !== 'function_call' && type !== 'message') return [];
     const parsed = responseItemSchema.safeParse(item);
-    return parsed.success ? [parsed.data] : [];
+    if (!parsed.success) { ctx.addIssue({ code: 'custom', message: `Malformed ${type} output item.` }); return []; }
+    return [parsed.data];
   })),
 });
 
