@@ -340,7 +340,10 @@ function runArchiver(command: 'tar' | 'unzip', args: string[]): Promise<string> 
   return new Promise((resolve, reject) => {
     // Windows' own bsdtar; a GNU tar earlier on PATH (Git for Windows) cannot read zip or drive-letter paths.
     const tar = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-    const child = spawn(command === 'tar' ? tar : command, args, { windowsHide: true });
+    // GNU tar and Info-ZIP read default options from these; the listing checks and extraction need ours only.
+    const env = { ...process.env };
+    for (const name of ['TAR_OPTIONS', 'UNZIP', 'UNZIPOPT', 'ZIPINFO', 'ZIPINFOOPT']) delete env[name];
+    const child = spawn(command === 'tar' ? tar : command, args, { windowsHide: true, env });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
