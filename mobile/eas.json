@@ -7,7 +7,7 @@
     "sideloadly": {
       "distribution": "internal",
       "node": "24.16.0",
-      "bun": "1.4.2",
+      "bun": "1.4.4",
       "ios": {
         "image": "sdk-58",
         "withoutCredentials": true,

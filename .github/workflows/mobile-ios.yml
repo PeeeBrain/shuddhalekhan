@@ -6,6 +6,8 @@ on:
       - "mobile/**"
       - "package.json"
       - "bun.lock"
+      - "bunfig.toml"
+      - "app/src/shared/**"
       - ".github/workflows/mobile-ios.yml"
   push:
     branches: [main]
@@ -13,6 +15,8 @@ on:
       - "mobile/**"
       - "package.json"
       - "bun.lock"
+      - "bunfig.toml"
+      - "app/src/shared/**"
       - ".github/workflows/mobile-ios.yml"
   workflow_dispatch:
 
@@ -41,7 +45,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install workspace dependencies without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
@@ -81,7 +85,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Install workspace dependencies without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
