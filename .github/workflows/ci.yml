@@ -59,6 +59,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+      - name: Check release publication retry guards
+        run: python3 -B -m unittest discover -s .github/scripts/__tests__ -p '*_test.py'
       - name: Install X11 test server and native libraries
         run: sudo apt-get update && sudo apt-get install -y xvfb libxcb1 libxcb-xfixes0 libxcb-xtest0
       - name: Install dependencies without packaging hooks

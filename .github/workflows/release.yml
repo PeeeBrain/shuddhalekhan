@@ -32,6 +32,7 @@ jobs:
     outputs:
       version: ${{ steps.release_version.outputs.version }}
       commit: ${{ steps.release_version.outputs.commit }}
+      ota-published: ${{ steps.verify_retry.outputs.ota-published }}
 
     steps:
       - name: Checkout repository
@@ -50,18 +51,14 @@ jobs:
           commit=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
-      - name: Verify successful builds for publication retry
+      - name: Verify successful builds and unchanged assets for publication retry
         if: inputs.resume-run-id != ''
+        id: verify_retry
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RESUME_RUN_ID: ${{ inputs.resume-run-id }}
-        run: |
-          [[ "$RESUME_RUN_ID" =~ ^[0-9]+$ ]]
-          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN_ID" --jq .path)" = '.github/workflows/release.yml'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq '.jobs | map({key: .name, value: .conclusion}) | from_entries' > "$RUNNER_TEMP/build-results.json"
-          jq -e '."release-windows" == "success" and ."release-linux" == "success" and ."release-ios" == "success"' \
-            "$RUNNER_TEMP/build-results.json"
+          COMMIT: ${{ steps.release_version.outputs.commit }}
+        run: python3 .github/scripts/verify-release-retry.py "$RESUME_RUN_ID" "$COMMIT" "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Reuse release notes from successful builds
         if: inputs.resume-run-id != ''
@@ -371,6 +368,7 @@ jobs:
           mv "$RUNNER_TEMP/app.json" mobile/app.json
 
       - name: Publish OTA update
+        if: needs.prepare.outputs.ota-published != 'true'
         working-directory: mobile
         run: npx --yes eas-cli@latest update --platform ios --channel production --environment production --message "$RELEASE_TAG" --non-interactive
         env:
