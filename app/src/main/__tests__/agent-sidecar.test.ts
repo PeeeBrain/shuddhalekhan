@@ -301,6 +301,26 @@ describe('AgentSidecarManager', () => {
     }
   });
 
+  it('passes the same audit directory override used by History to the sidecar', async () => {
+    const previous = process.env.SHUDDHALEKHAN_AUDIT_DIR;
+    process.env.SHUDDHALEKHAN_AUDIT_DIR = join('custom-data', 'audit');
+    try {
+      const { AgentSidecarManager } = await importManager('audit-directory');
+      const manager = new AgentSidecarManager(() => undefined, { jobPort: new FakeJobPort() });
+      manager.start(config);
+      expect(spawn).toHaveBeenCalledWith(
+        expect.any(String), expect.any(Array),
+        expect.objectContaining({ env: expect.objectContaining({
+          SHUDDHALEKHAN_AUDIT_DIR: join('custom-data', 'audit'),
+        }) }),
+      );
+      manager.stop();
+    } finally {
+      if (previous === undefined) delete process.env.SHUDDHALEKHAN_AUDIT_DIR;
+      else process.env.SHUDDHALEKHAN_AUDIT_DIR = previous;
+    }
+  });
+
   it('ignores blank stdout lines from the sidecar', async () => {
     const events: unknown[] = [];
     const { AgentSidecarManager } = await importManager('blank');

@@ -7,6 +7,9 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Agent
+- Fixed empty desktop Agent History on Linux by reading the same persistent database as the sidecar. Existing recorded runs become visible without moving or deleting them. Custom audit-directory overrides now reach the sidecar as well as History.
+
 ### Mobile
 - Added per-tool approval policies for each MCP server: Ask every time, Always allow, or Disabled. New tools still ask. The iOS 26 system activity now receives a final-answer preview instead of a generic completion subtitle.
 - Added iOS Agent Mode progress and saved final answers. iOS 26 uses the system background-processing activity without a duplicate custom card. Tool approvals arrive as notifications with authenticated Approve once, Deny, and Review arguments actions; interrupted runs never replay automatically. Final answers render as Markdown in the app. Earlier iOS versions retain the custom Live Activity and require foreground execution.
@@ -28,6 +31,7 @@ tags and commit history, not from this file. Keep new entries under
 - Linux shortcuts use desktop portals or X11 grabs and show the actual assigned trigger in Settings. X11 paste checks the original window, respects the server's keymap, and tracks clipboard ownership. The uinput paste device and packaged udev rule are removed; input-device shortcut observation remains a reported fallback.
 
 ### Transcription
+- Google Application Default Credentials now respect `CLOUDSDK_CONFIG` on Windows and Linux. Linux lookup no longer follows an inherited Windows `APPDATA` value.
 - A selected microphone that is no longer available (unplugged, or chosen in a development build) no longer fails every recording; capture uses another available microphone and the tray device list returns so you can pick again.
 - Empty recognition results now report that no speech was recognized instead of silently dismissing the recording, and say whether the input was nearly silent or clipping.
 - Dictation shows previews automatically with streaming providers and inserts the final transcript once after stopping. Existing Live settings migrate to Dictation without changing shortcuts or provider choices; Push to Talk and Toggle both work. Corrected Dictation keeps its final formatter step.

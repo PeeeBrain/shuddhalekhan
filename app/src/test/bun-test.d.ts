@@ -11,6 +11,11 @@ declare module 'bun:test' {
 }
 
 declare const Bun: {
+  spawnSync(args: string[]): {
+    exitCode: number;
+    stdout: Uint8Array;
+    stderr: Uint8Array;
+  };
   spawn(args: string[], options: { stdout: 'pipe'; stderr: 'pipe' }): {
     exited: Promise<number>;
     stdout: ReadableStream<Uint8Array>;

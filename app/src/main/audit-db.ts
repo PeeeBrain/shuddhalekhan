@@ -6,11 +6,12 @@ import fs from 'fs';
 import type { AuditRunSummary, AuditEventDetail } from '../types/ipc';
 import { AGENT_AUDIT_DB_FILENAME, AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
 import { summarizeAuditEvents, type AuditSummaryEventRow } from './audit-summary';
+import { getPersistentStoreDirectory } from './store-path';
 
 const MONOREPO_AUDIT_MIGRATION_KEY = 'monorepo-audit-merged-v1';
 
 function getAuditDbPath(): string {
-  return resolveAuditDbPath(app.getPath('userData'));
+  return resolveAuditDbPath(getPersistentStoreDirectory());
 }
 
 let dbInstance: Database.Database | null = null;

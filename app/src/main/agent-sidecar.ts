@@ -1,11 +1,12 @@
 import { app } from 'electron';
 import { randomUUID } from 'crypto';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
 import { failedProviderTest } from '../shared/agent-provider';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
 import { getPersistentStoreDirectory } from './store-path';
+import { resolveAuditDbPath } from '../shared/audit-db';
 import { createJobObjectPort, type JobObjectPort } from './native/job-object';
 import type { AgentMemoryCommitResult, AgentRunContext } from '../shared/agent-context';
 
@@ -339,6 +340,7 @@ export class AgentSidecarManager {
   }
 
   private getSidecarLaunch(): JsonlProcessLaunch {
+    const auditDirectory = dirname(resolveAuditDbPath(getPersistentStoreDirectory()));
     if (app.isPackaged) {
       return {
         command: process.execPath,
@@ -346,7 +348,7 @@ export class AgentSidecarManager {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: '1',
-          SHUDDHALEKHAN_AUDIT_DIR: getPersistentStoreDirectory(),
+          SHUDDHALEKHAN_AUDIT_DIR: auditDirectory,
         },
       };
     }
@@ -356,7 +358,7 @@ export class AgentSidecarManager {
       args: [join(app.getAppPath(), 'src', 'agent', 'index.ts')],
       env: {
         ...process.env,
-        SHUDDHALEKHAN_AUDIT_DIR: getPersistentStoreDirectory(),
+        SHUDDHALEKHAN_AUDIT_DIR: auditDirectory,
       },
     };
   }
