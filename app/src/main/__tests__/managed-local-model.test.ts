@@ -101,9 +101,29 @@ describe('managed local model lifecycle', () => {
     expect(() => selectArchiveMembers(listing, ['nvidia/cudnn/bin/*.dll'])).toThrow('missing expected files');
   });
 
+  // GNU tar cannot read the zip wheels NVIDIA's CUDA libraries ship in; Linux falls back to unzip.
+  it.skipIf(process.platform !== 'linux')('installs only native libraries from a wheel and rejects a symlinked one', async () => {
+    // nvidia/x/lib/{__init__.py, libx.so.1}; the second wheel adds liby.so.1 as a symlink to /etc/passwd.
+    const wheel = Buffer.from('UEsDBBQAAAAAAAAAIVwAAAAAAAAAAAAAAAAYAAAAbnZpZGlhL3gvbGliL19faW5pdF9fLnB5UEsDBBQAAAAAAAAAIVzMOw+pAwAAAAMAAAAWAAAAbnZpZGlhL3gvbGliL2xpYnguc28uMWxpYlBLAQIUAxQAAAAAAAAAIVwAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAACkgQAAAABudmlkaWEveC9saWIvX19pbml0X18ucHlQSwECFAMUAAAAAAAAACFczDsPqQMAAAADAAAAFgAAAAAAAAAAAAAApIE2AAAAbnZpZGlhL3gvbGliL2xpYnguc28uMVBLBQYAAAAAAgACAIoAAABtAAAAAAA=', 'base64');
+    const linked = Buffer.from('UEsDBBQAAAAAAAAAIVwAAAAAAAAAAAAAAAAYAAAAbnZpZGlhL3gvbGliL19faW5pdF9fLnB5UEsDBBQAAAAAAAAAIVzMOw+pAwAAAAMAAAAWAAAAbnZpZGlhL3gvbGliL2xpYnguc28uMWxpYlBLAwQUAAAAAAAAACFcCrkfKQsAAAALAAAAFgAAAG52aWRpYS94L2xpYi9saWJ5LnNvLjEvZXRjL3Bhc3N3ZFBLAQIUAxQAAAAAAAAAIVwAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAACkgQAAAABudmlkaWEveC9saWIvX19pbml0X18ucHlQSwECFAMUAAAAAAAAACFczDsPqQMAAAADAAAAFgAAAAAAAAAAAAAApIE2AAAAbnZpZGlhL3gvbGliL2xpYnguc28uMVBLAQIUAxQAAAAAAAAAIVwKuR8pCwAAAAsAAAAWAAAAAAAAAAAAAAD/oW0AAABudmlkaWEveC9saWIvbGlieS5zby4xUEsFBgAAAAADAAMAzgAAAKwAAAAAAA==', 'base64');
+    const install = async (bytes: Buffer) => {
+      const root = await tempRoot();
+      const manager = createManagedLocalModelManager({ root,
+        manifest: { ...manifestFor(bytes), archiveRoot: 'nvidia/x/lib', include: ['nvidia/x/lib/*.so*'], requiredFiles: ['libx.so.1'] },
+        fetchArtifact: async () => new Response(new Uint8Array(bytes), { status: 200 }) });
+      await manager.install();
+      return join(root, 'test-model-1');
+    };
+    const installed = await install(wheel);
+    expect(await readFile(join(installed, 'libx.so.1'), 'utf8')).toBe('lib');
+    await expect(access(join(installed, '__init__.py'))).rejects.toThrow();
+    await expect(install(linked)).rejects.toThrow('unsupported links');
+  });
+
   it('rejects archive entries that could escape the staging directory', () => {
     expect(() => validateArchiveEntries(['model/tokens.txt', '../outside'])).toThrow('unsafe');
     expect(() => validateArchiveEntries(['model/tokens.txt', '/absolute'])).toThrow('unsafe');
+    expect(() => validateArchiveEntries(['model/tokens.txt', '-d'])).toThrow('unsafe');
     expect(() => validateArchiveEntries(['model/tokens.txt'])).not.toThrow();
   });
 

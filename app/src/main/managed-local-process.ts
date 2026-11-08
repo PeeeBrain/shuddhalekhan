@@ -6,8 +6,12 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   const { utilityProcess } = await import('electron');
   const env = { ...process.env };
   if (runtime.libraryPaths) {
-    for (const name of Object.keys(env)) if (name.toUpperCase() === 'PATH') delete env[name];
-    env.PATH = [...runtime.libraryPaths, process.env.PATH ?? ''].join(delimiter);
+    // The loader reads this once at process start, so it must be in the worker's spawn environment.
+    // Linux: LD_LIBRARY_PATH also wins over the app addon's RUNPATH, and cuDNN dlopens its sub-libraries by soname.
+    const variable = process.platform === 'win32' ? 'PATH' : 'LD_LIBRARY_PATH';
+    const inherited = process.env[variable];
+    for (const name of Object.keys(env)) if (name.toUpperCase() === variable) delete env[name];
+    env[variable] = [...runtime.libraryPaths, ...inherited ? [inherited] : []].join(delimiter);
   }
   const child = utilityProcess.fork(join(__dirname, 'local-stt.cjs'), [], {
     serviceName: 'Shuddhalekhan local speech recognition', env, stdio: 'pipe',

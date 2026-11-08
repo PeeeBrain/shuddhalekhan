@@ -5,7 +5,7 @@ import { createManagedLocalModelManager, type ManagedLocalModelManifest } from '
 import { createManagedLocalTranscriber } from './managed-local-runtime';
 import { createManagedLocalEngine, type LocalRuntime } from './managed-local-engine';
 import { startLocalRuntimeProcess } from './managed-local-process';
-import { LOCAL_MODELS, LOCAL_FORMATTING_MODEL, legacyLocalModel } from './managed-local-catalog';
+import { CUDA_SUPPORTED, LOCAL_MODELS, LOCAL_FORMATTING_MODEL, legacyLocalModel } from './managed-local-catalog';
 import type { ManagedLocalModelSnapshot, ManagedLocalModelState, ManagedLocalTarget } from '../types/ipc';
 import { resolveManagedLocalSelection } from '../shared/managed-local-selection';
 import { getConfig } from './config';
@@ -32,8 +32,8 @@ export const managedLocalTranscriber = createManagedLocalEngine({
   getSettings: () => ({ selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads), revision,
     contextual: selection().model === 'parakeet' && getConfig().dictionary.length > 0 }),
   async getCandidates(settings) {
-    // CUDA artifacts are Windows builds; elsewhere a GPU choice runs on CPU.
-    const preference = process.platform === 'win32' ? settings.devices[settings.model] : 'cpu';
+    // Upstream CUDA builds exist for Windows and Linux x64 only; elsewhere a GPU choice runs on CPU.
+    const preference = CUDA_SUPPORTED ? settings.devices[settings.model] : 'cpu';
     const candidates: LocalRuntime[] = [];
     const formatting = getManagedLocalModelManager({ model: settings.model, backend: 'cpu' }).parts
       .find(part => part.manifest.id === LOCAL_FORMATTING_MODEL.id);
@@ -180,7 +180,7 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
         legacy: legacy && { name: legacy.name, installedBytes: legacy.installedBytes, inUse: state.kind !== 'ready' } };
     };
     return { key: model.key, name: model.name, description: model.description, languages: [...model.languages],
-      cpu: await variant('cpu'), cuda: process.platform === 'win32' ? await variant('cuda') : undefined };
+      cpu: await variant('cpu'), cuda: CUDA_SUPPORTED ? await variant('cuda') : undefined };
   }));
   // Primary state is what the next recording can use, so upgraded installs stay ready on their previous files.
   const state = await selected.getState();
@@ -198,7 +198,7 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
 
 export async function installManagedLocalModel(value?: unknown): Promise<ManagedLocalModelSnapshot> {
   const target = managedLocalTarget(value);
-  if (target.backend === 'cuda' && process.platform !== 'win32') throw new Error('GPU acceleration is available on Windows only.');
+  if (target.backend === 'cuda' && !CUDA_SUPPORTED) throw new Error('GPU acceleration is available on Windows and Linux x64 only.');
   await getManagedLocalModelManager(target).install();
   revision++;
   const settings = selection();
@@ -225,8 +225,7 @@ export async function deleteManagedLocalModel(value?: unknown): Promise<ManagedL
 let gpu: Promise<ManagedLocalModelSnapshot['gpu']> | null = null;
 function gpuInfo(): Promise<ManagedLocalModelSnapshot['gpu']> {
   return gpu ??= new Promise(resolve => {
-    // CUDA runtime artifacts in the catalog are Windows builds.
-    if (process.platform !== 'win32') return resolve({ name: null, message: 'GPU acceleration is available on Windows only.' });
+    if (!CUDA_SUPPORTED) return resolve({ name: null, message: 'GPU acceleration is available on Windows and Linux x64 only.' });
     execFile('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true, timeout: 3000 }, (error, stdout) => {
       const name = !error ? stdout.trim().split(/\r?\n/)[0] : null;
       resolve({ name, message: name ? '' : 'No NVIDIA GPU detected.' });
