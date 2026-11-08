@@ -45,7 +45,8 @@ describe('ManagedStdioMcpTransport', () => {
     await transport.send({ jsonrpc: '2.0', id: 1, method: 'getEnv' });
     await transport.send({ jsonrpc: '2.0', id: 2, method: 'ping' });
 
-    await waitFor(() => messages.length >= 2);
+    // The fixture also announces itself with id 0, so wait for both replies by id.
+    await waitFor(() => [1, 2].every((id) => messages.some((message) => (message as { id?: number }).id === id)));
     const envReply = messages.find((message) => (message as { id?: number }).id === 1) as {
       result?: { declared?: string | null; home?: string | null; userProfile?: string | null };
     };
