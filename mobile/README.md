@@ -172,18 +172,18 @@ If historical logs are needed, use `pymobiledevice3 syslog collect` separately f
 
 ## Distribution
 
-Everything here is free: no paid Apple Developer Program and no paid Expo plan. Native code ships as an unsigned IPA that each person signs with their own free Apple ID. JavaScript ships over the air with EAS Update.
+Installation and updates need no paid Apple Developer Program or paid Expo plan. CI runner usage follows the repository's Blacksmith plan. Native code ships as an unsigned IPA that each person signs with their own free Apple ID. JavaScript ships over the air with EAS Update.
 
 | Change | How it reaches the phone |
 | --- | --- |
 | Swift, native module, keyboard or widget extension, native dependency, `app.json` | New IPA: [build](#build-an-ipa), then [install](#install-with-iloader) |
 | JavaScript or assets only | [`eas update`](#ship-javascript-over-the-air) |
 
-A `vX.Y.Z` release tag ships iOS with the desktop builds: `release.yml` attaches the unsigned IPA to the GitHub release and publishes the same commit as an OTA update. That job needs an `EXPO_TOKEN` repository secret (an Expo access token); without it the release stays a draft. Between releases, use the manual workflow and `eas update` below.
+A `vX.Y.Z` release tag ships iOS with the desktop builds: `release.yml` prepares a draft and builds Windows, Linux, and the unsigned IPA in parallel on Blacksmith. After all three builds and the desktop checks succeed, it publishes the same commit as an OTA update on Linux using the runtime version embedded in the IPA, then publishes the GitHub release. That job needs an `EXPO_TOKEN` repository secret (an Expo access token); without it the release stays a draft. Between releases, use the manual workflow and `eas update` below. To recover a failed tag release after fixing CI, run **Release App** from `main` with the existing tag as its `tag` input. It builds the tagged product source with the selected workflow revision's iOS build helper, reuses the draft, and refuses to overwrite a published release. The tag stays unchanged.
 
 ## Build an IPA
 
-In GitHub Actions, open **Mobile iOS** and select **Run workflow**. The workflow runs the mobile checks, then uses `macos-latest` to generate the iOS project, install CocoaPods, run the native Swift self-checks, and build a Release app with code signing disabled. The script requires Xcode 26.4 or newer. Download the `Shuddhalekhan-unsigned-ipa` artifact from that run. macOS runners are free for this public repository. The PR and `main` push checks run on Ubuntu only.
+In GitHub Actions, open **Mobile iOS** and select **Run workflow**. The workflow runs the mobile checks, then uses `blacksmith-6vcpu-macos-latest` to generate the iOS project, install CocoaPods, run the native Swift self-checks, and build a Release app with code signing disabled. The script requires Xcode 26.4 or newer. Download the `Shuddhalekhan-unsigned-ipa` artifact from that run. Blacksmith macOS runner usage follows the repository's Blacksmith plan. The PR and `main` push checks run on Blacksmith Ubuntu only.
 
 The same script runs on a Mac with Xcode, CocoaPods, Bun, and Node 24:
 
