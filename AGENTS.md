@@ -30,7 +30,7 @@ We need to be on the same page with terminology. When communicating, use this la
 
 - **you** means the agent reading this file and changing Shuddhalekhan.
 - **we, us, and maintainers** mean Partha and anyone maintaining Shuddhalekhan. These are who you are talking to now.
-- **user** means the person running the Shuddhalekhan desktop app for dictation and/or Agent Mode.
+- **user** means the person running the Shuddhalekhan desktop or iOS app for dictation and/or Agent Mode.
 - **Dictation** means speech-to-text into the focused app. Synonymous with "transcription mode" in user-facing language.
 - **Agent Mode** means the opt-in voice-to-agent path. Spoken text is transcribed, then sent as a one-off command to the local agent. It is not a chat surface and does not keep conversational history by default.
 - **agent** / **agent run** means one single-flight Agent Mode execution inside the app (model + tools). Depending on context, "agent" may also mean you.
@@ -43,6 +43,20 @@ We need to be on the same page with terminology. When communicating, use this la
 - **tool approval policy** means the per-tool setting: `disabled`, `alwaysAsk`, or `alwaysAllow`. Newly discovered tools default to `alwaysAsk`.
 - **text injection** means pasting transcribed Dictation text into the focused window via the clipboard-sandwich pattern.
 - **app data** means Electron's application data directory: `electron-store` config (`shuddhalekhan-config`) and the sidecar-owned `agent-audit.sqlite`.
+- **keyboard session** means the bounded microphone session the iOS app starts so its keyboard extension can dictate into another app.
+- **Parakeet** means the on-device speech model: Sherpa ONNX on desktop Managed Local, Core ML on iOS.
+
+## Hit every surface
+
+The most common defect in this repo is a change that works on the path you tested and is missing everywhere else. Before calling product work done, walk this list and say which entries applied:
+
+- **Surfaces.** Windows and Linux are the same `app/`, with different native edges (Linux: X11 and KDE/Wayland delivery, portal shortcuts). iOS is `mobile/`. Skipping iOS needs a platform reason, stated in the PR body; "not asked for" is not a reason.
+- **Modes.** Dictation and Agent Mode stay separate intents. A change to one must not require or break the other.
+- **Entry points.** Desktop: hotkeys, tray, and Settings. iOS: in-app recording, the keyboard extension, and the agent Live Activity. Fixing one is not fixing the feature.
+- **Providers.** Every transcription and agent provider needs a decision, even if the decision is "not supported here".
+- **Contracts.** Shared ids and schemas live in `packages/shared`. Change them there and let typecheck show every surface that must decide. Never copy a schema or provider list into `app/` or `mobile/`.
+- **Reverse states.** If you added a way in, add the way out and the way to see it. Start needs cancel. Enable needs disable. A one-way door is a bug.
+- **Docs.** Check whether the change makes this file, `app/CONTEXT.md`, or `mobile/README.md` inaccurate.
 
 
 
@@ -89,7 +103,7 @@ Do not write tests that:
 - only check that a section "renders" when a component test already covers its behavior;
 - grep source or config files for strings.
 
-One owner per contract: test it once, at the strongest boundary (pure function > module > `index.ts` orchestration). Don't replay the same scenario at every layer it passes through.
+One owner per contract: test it once, at the strongest boundary (pure function > module > `index.ts` orchestration). Don't replay the same scenario at every layer it passes through, or repeat a case in desktop and mobile copies of the same logic; move shared logic to `packages/shared` and test it there.
 Never add an export, parameter, flag, or `*ForTest` hook to production code just so a test can reach it.
 Benchmark/tooling tests that spawn processes or burn CPU stay out of default `bun test`; gate them behind an env var.
 Bug fixes get one regression test that fails on the old code.
@@ -99,6 +113,7 @@ Bug fixes get one regression test that fails on the old code.
 - Never make a PR unless the developer explicitly asks you to do so.
 - Conventional commit titles, plain language: `fix(app): recording pill no longer spikes CPU while idle`.
 - Body: the problem in a sentence or two, then how you fixed it. Call out config, storage, IPC, MCP, OAuth, or native Windows behavior changes when relevant. End with the model and harness that did the work.
+- Include a `Surfaces:` line naming Windows, Linux, and iOS, with the reason for any surface skipped.
 - **Rebase onto latest main before opening.** Stale branches conflict and burn a review round.
 - UI changes need before/after images. Motion or timing needs a short video.
 - Attach evidence to the PR body with `gh pr edit <number> --attach <file>` or `gh pr create --attach <file>`, repeating `--attach` for multiple files. Keep evidence images and videos out of commits. To place uploads inline, reference their local paths in `--body-file` and attach the same files. See [GitHub CLI attachments](https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli).
@@ -121,18 +136,19 @@ Deeper product/architecture language lives in `app/CONTEXT.md` and `app/docs/adr
 
 ## Where code lives
 
-- `app/` — the Windows Electron product. Almost all feature work happens here.
+- `app/` — the Electron product for Windows and Linux. Most desktop feature work happens here.
 - `app/src/main/` — Electron main process: tray, hotkeys, windows, Whisper client, text injection, config, sidecar lifecycle, approval routing.
 - `app/src/renderer/` — React UI: recording pill, settings window, agent toasts, hidden audio capture window.
 - `app/src/preload/` — typed IPC bridge exposed to the renderer.
 - `app/src/types/ipc.ts` — shared IPC channels and config shapes. Update this whenever IPC or persisted config changes, and keep preload + main handlers in sync.
 - `app/src/agent/` — agent sidecar: AI SDK runtime, MCP registry/clients, OAuth helpers, JSONL protocol, SQLite audit log.
-- `app/src/shared/` — small shared helpers used across process boundaries (e.g. shortcut bindings, audit DB helpers).
+- `app/src/shared/` — small desktop helpers used across Electron process boundaries (e.g. shortcut bindings, audit DB helpers). May use Node; mobile never imports it.
+- `packages/shared/` — `@shuddhalekhan/shared`, contracts both `app/` and `mobile/` consume (provider ids, Sarvam settings). Platform-free: no `node:*`, `electron`, `react-native`, or `expo*` imports (its oxlint config enforces this). TypeScript source, no build step. `app/` lists it under `devDependencies` so electron-vite bundles it instead of externalizing it.
 - `app/CONTEXT.md` — durable product/architecture decisions and domain language. Update when behavior or boundaries change meaningfully.
 - `app/docs/adr/` — architecture decision records for larger choices.
 - `web/` — React/Vite marketing/landing site. Keep product behavior changes out of here unless the task is explicitly about the site.
 - `mobile/` — Expo iOS app, local speech module, UIKit dictation keyboard, native protocol checks, the IPA build script, and EAS Update config. See `mobile/README.md` for device verification and USB debugging.
-- Root `package.json` — Bun workspaces (`app`, `web`, `mobile`) and monorepo scripts.
+- Root `package.json` — Bun workspaces (`app`, `web`, `mobile`, `packages/*`) and monorepo scripts.
 
 ## Taste
 

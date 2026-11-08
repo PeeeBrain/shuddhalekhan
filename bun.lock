@@ -39,6 +39,7 @@
       },
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.10.6",
+        "@shuddhalekhan/shared": "workspace:*",
         "@tailwindcss/vite": "^4.3.2",
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.2",
@@ -66,6 +67,7 @@
         "@bacons/apple-targets": "5.0.0",
         "@expo/ui": "~58.0.27",
         "@react-native-async-storage/async-storage": "2.2.0",
+        "@shuddhalekhan/shared": "workspace:*",
         "expo": "~58.0.23",
         "expo-asset": "~58.0.20",
         "expo-audio": "~58.0.11",
@@ -89,6 +91,16 @@
         "@types/react": "~19.3.0",
         "oxlint": "1.89.0",
         "typescript": "~6.0.3",
+      },
+    },
+    "packages/shared": {
+      "name": "@shuddhalekhan/shared",
+      "version": "0.0.0-development",
+      "dependencies": {
+        "zod": "4.6.7",
+      },
+      "devDependencies": {
+        "oxlint": "1.89.0",
       },
     },
     "web": {
@@ -773,6 +785,8 @@
     "@shuddhalekhan/app": ["@shuddhalekhan/app@workspace:app"],
 
     "@shuddhalekhan/mobile": ["@shuddhalekhan/mobile@workspace:mobile"],
+
+    "@shuddhalekhan/shared": ["@shuddhalekhan/shared@workspace:packages/shared"],
 
     "@shuddhalekhan/web": ["@shuddhalekhan/web@workspace:web"],
 

@@ -51,6 +51,7 @@
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.6",
+    "@shuddhalekhan/shared": "workspace:*",
     "@tailwindcss/vite": "^4.3.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

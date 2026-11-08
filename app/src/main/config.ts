@@ -1,4 +1,5 @@
-import { DEFAULT_SARVAM_CONFIG, sarvamConfigSchema } from '../shared/sarvam';
+import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
+import { DEFAULT_SARVAM_CONFIG, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
 import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
@@ -410,15 +411,7 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
 }
 
 function isTranscriptionProviderId(value: unknown): value is TranscriptionProviderId {
-  return value === 'managed-local'
-    || value === 'local-whisper-cpp'
-    || value === 'openai'
-    || value === 'sarvam'
-    || value === 'azure-speech'
-    || value === 'google-cloud-speech-v2'
-    || value === 'nvidia-speech-nim'
-    || value === 'custom-open-ai-compatible'
-    || value === 'whisper-live-kit';
+  return (TRANSCRIPTION_PROVIDER_IDS as readonly unknown[]).includes(value);
 }
 
 function assertDictationConfig(dictation: DictationConfig): void {

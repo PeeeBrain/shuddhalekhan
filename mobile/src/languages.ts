@@ -1,4 +1,4 @@
-import { SARVAM_LANGUAGES } from '../../app/src/shared/sarvam';
+import { SARVAM_LANGUAGES } from '@shuddhalekhan/shared/sarvam';
 
 /** Parakeet v3's 25 languages. English alone routes to the English-only v2 model. */
 export const parakeetLanguages = [

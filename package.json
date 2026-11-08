@@ -5,7 +5,8 @@
   "workspaces": [
     "app",
     "web",
-    "mobile"
+    "mobile",
+    "packages/*"
   ],
   "scripts": {
     "dev": "bun run dev:app",

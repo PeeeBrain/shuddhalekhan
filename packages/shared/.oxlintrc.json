@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["node:*", "electron", "electron/*", "react-native", "react-native/*", "expo", "expo-*", "expo/*", "@expo/*"],
+            "message": "@shuddhalekhan/shared runs on desktop and iOS. Keep platform code in app/ or mobile/."
+          }
+        ]
+      }
+    ]
+  }
+}

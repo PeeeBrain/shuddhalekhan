@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { sarvamConfigSchema } from '../shared/sarvam';
+import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
+import { sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
 import { managedLocalSelectionSchema } from '../shared/managed-local-selection';
 import { hasDictionaryControlCharacters } from '../shared/transcription-features';
 
@@ -18,8 +19,7 @@ const shortcut = z.object({
 /** Renderer edits may change recognition settings, never agent settings, file paths, or artifacts. */
 export const transcriptionSettingsPatchSchema = z.object({
   transcription: z.object({
-    activeProvider: z.enum(['managed-local', 'local-whisper-cpp', 'openai', 'sarvam', 'azure-speech',
-      'google-cloud-speech-v2', 'nvidia-speech-nim', 'custom-open-ai-compatible', 'whisper-live-kit']),
+    activeProvider: z.enum(TRANSCRIPTION_PROVIDER_IDS),
     providers: z.object({
       localWhisperCpp: z.object({ endpoint: text }),
       openai: z.object({ baseUrl: text, model: text }),

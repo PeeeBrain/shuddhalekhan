@@ -6,6 +6,7 @@ import type { LanguageModel, ModelMessage, SystemModelMessage, streamText } from
 import type { AgentProviderConfig, AgentProviderDiagnostic } from '../types/ipc';
 import { isDeepSeekV4Provider, normalizeAgentProvider } from '../shared/agent-provider';
 import { resolveAgentProviderKey } from '../shared/agent-provider-validation';
+import { agentProviderSupportsCacheBreakpoints } from '@shuddhalekhan/shared/providers';
 import { z } from 'zod';
 
 // Runs and probes report bounded, redacted warnings through our own UI/audit path.
@@ -68,7 +69,7 @@ export function createAgentProvider(value: AgentProviderConfig, storedApiKey?: s
   const settings = {
     baseURL: provider.baseUrl, apiKey: apiKey ?? 'unused', headers, fetch: authenticatedFetch,
   };
-  const nativeCache = provider.cacheBreakpoints && (provider.kind === 'openai' || provider.kind === 'azure-openai');
+  const nativeCache = provider.cacheBreakpoints && agentProviderSupportsCacheBreakpoints(provider.kind);
   const cacheNamespace = provider.kind === 'azure-openai' && provider.apiMode === 'responses' ? 'azure' : 'openai';
   const cacheMessageOptions: SystemModelMessage['providerOptions'] = provider.kind === 'openrouter'
     ? { openrouter: { cacheControl: { type: 'ephemeral' } } }

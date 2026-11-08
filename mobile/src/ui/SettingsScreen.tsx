@@ -8,7 +8,7 @@ import {
   autocorrectionDisabled, disabled, foregroundStyle, keyboardType, lineLimit, multilineTextAlignment, navigationTitle, pickerStyle,
   scrollDismissesKeyboard, tag, textContentType, textInputAutocapitalization, tint,
 } from '@expo/ui/swift-ui/modifiers';
-import { SARVAM_MODELS, SARVAM_MODES } from '../../../app/src/shared/sarvam';
+import { SARVAM_MODELS, SARVAM_MODES } from '@shuddhalekhan/shared/sarvam';
 import type { ChatGptModel } from '../chatgpt';
 import { normalizeLanguage, parakeetLanguages, speechLanguages } from '../languages';
 import { localModelKey, type LocalModelState } from '../on-device';
