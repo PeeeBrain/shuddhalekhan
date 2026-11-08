@@ -11,6 +11,10 @@ on:
         description: Existing release tag to build with this workflow
         required: true
         type: string
+      resume-run-id:
+        description: Retry publication using this run's successful platform builds
+        required: false
+        type: string
 
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -24,6 +28,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
+      actions: read
     outputs:
       version: ${{ steps.release_version.outputs.version }}
       commit: ${{ steps.release_version.outputs.commit }}
@@ -45,7 +50,35 @@ jobs:
           commit=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
+      - name: Verify successful builds for publication retry
+        if: inputs.resume-run-id != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESUME_RUN_ID: ${{ inputs.resume-run-id }}
+        run: |
+          [[ "$RESUME_RUN_ID" =~ ^[0-9]+$ ]]
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN_ID" --jq .path)" = '.github/workflows/release.yml'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RESUME_RUN_ID/jobs?filter=latest&per_page=100" \
+            --jq '.jobs | map({key: .name, value: .conclusion}) | from_entries' > "$RUNNER_TEMP/build-results.json"
+          jq -e '."release-windows" == "success" and ."release-linux" == "success" and ."release-ios" == "success"' \
+            "$RUNNER_TEMP/build-results.json"
+
+      - name: Reuse release notes from successful builds
+        if: inputs.resume-run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          run-id: ${{ inputs.resume-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify retry tag matches the built version
+        if: inputs.resume-run-id != ''
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: jq -e --arg version "$VERSION" '.version == $version' release-notes.json
+
       - name: Generate release notes from merged pull requests
+        if: inputs.resume-run-id == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.release_version.outputs.version }}
@@ -91,6 +124,7 @@ jobs:
           if-no-files-found: error
 
   release-windows:
+    if: inputs.resume-run-id == ''
     needs: prepare
     runs-on: blacksmith-4vcpu-windows-2025
     permissions:
@@ -156,6 +190,7 @@ jobs:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
   release-linux:
+    if: inputs.resume-run-id == ''
     needs: prepare
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
@@ -220,6 +255,7 @@ jobs:
 
   # Attaches the unsigned IPA, signed later with iLoader. Finalize publishes the OTA.
   release-ios:
+    if: inputs.resume-run-id == ''
     needs: prepare
     runs-on: blacksmith-6vcpu-macos-latest
     timeout-minutes: 60
@@ -277,6 +313,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   finalize:
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      (inputs.resume-run-id != '' ||
+       (needs.release-windows.result == 'success' && needs.release-linux.result == 'success' && needs.release-ios.result == 'success'))
     needs: [prepare, release-windows, release-linux, release-ios]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
@@ -302,9 +342,29 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Read runtime from the existing IPA for publication retry
+        if: inputs.resume-run-id != ''
+        id: resume_runtime
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$RELEASE_TAG" --pattern Shuddhalekhan-unsigned.ipa --dir "$RUNNER_TEMP/ipa"
+          python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import os, plistlib, zipfile
+          from pathlib import Path
+          with zipfile.ZipFile(Path(os.environ["RUNNER_TEMP"]) / "ipa/Shuddhalekhan-unsigned.ipa") as ipa:
+              plists = [name for name in ipa.namelist() if name.startswith("Payload/") and name.endswith(".app/Expo.plist") and name.count("/") == 2]
+              if len(plists) != 1:
+                  raise ValueError("Expected one app Expo.plist in the IPA")
+              runtime = plistlib.loads(ipa.read(plists[0]))["EXUpdatesRuntimeVersion"]
+              if not isinstance(runtime, str) or not runtime or "\n" in runtime or "\r" in runtime:
+                  raise ValueError("Missing or invalid IPA runtime version")
+              print(f"version={runtime}")
+          PYTHON
+
       - name: Match OTA version and runtime to the IPA
         env:
-          RUNTIME_VERSION: ${{ needs.release-ios.outputs.runtime-version }}
+          RUNTIME_VERSION: ${{ needs.release-ios.outputs.runtime-version || steps.resume_runtime.outputs.version }}
         run: |
           jq --arg v "${RELEASE_TAG#v}" --arg runtime "$RUNTIME_VERSION" \
             '.expo.version = $v | .expo.runtimeVersion = $runtime' mobile/app.json > "$RUNNER_TEMP/app.json"
