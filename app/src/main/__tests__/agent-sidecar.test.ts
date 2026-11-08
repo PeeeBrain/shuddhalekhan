@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'events';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import type { AppConfig } from '../../types/ipc';
@@ -129,7 +129,12 @@ const config: AppConfig = {
 };
 
 describe('AgentSidecarManager', () => {
+  const originalAppData = process.env.APPDATA;
+  const originalAuditDir = process.env.SHUDDHALEKHAN_AUDIT_DIR;
+
   beforeEach(() => {
+    process.env.APPDATA = 'C:\\Users\\tester\\AppData\\Roaming';
+    delete process.env.SHUDDHALEKHAN_AUDIT_DIR;
     resetElectronMock();
     electronMock.app.getAppPath.mockReturnValue('D:\\git_repos\\speech-2-text');
     electronMock.app.getPath.mockImplementation((name: string) =>
@@ -144,6 +149,13 @@ describe('AgentSidecarManager', () => {
     stdout.removeAllListeners();
     stderr.removeAllListeners();
     child.killed = false;
+  });
+
+  afterEach(() => {
+    if (originalAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = originalAppData;
+    if (originalAuditDir === undefined) delete process.env.SHUDDHALEKHAN_AUDIT_DIR;
+    else process.env.SHUDDHALEKHAN_AUDIT_DIR = originalAuditDir;
   });
 
   it('queues config and run start until the sidecar is ready, then publishes in order', async () => {
