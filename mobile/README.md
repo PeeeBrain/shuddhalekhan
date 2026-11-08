@@ -179,7 +179,7 @@ Installation and updates need no paid Apple Developer Program or paid Expo plan.
 | Swift, native module, keyboard or widget extension, native dependency, `app.json` | New IPA: [build](#build-an-ipa), then [install](#install-with-iloader) |
 | JavaScript or assets only | [`eas update`](#ship-javascript-over-the-air) |
 
-A `vX.Y.Z` release tag ships iOS with the desktop builds: `release.yml` prepares a draft and builds Windows, Linux, and the unsigned IPA in parallel on Blacksmith. After all three builds and the desktop checks succeed, it publishes the same commit as an OTA update on Linux using the runtime version embedded in the IPA, then publishes the GitHub release. That job needs an `EXPO_TOKEN` repository secret (an Expo access token); without it the release stays a draft. Between releases, use the manual workflow and `eas update` below. To recover a failed tag release after fixing CI, run **Release App** from `main` with the existing tag as its `tag` input. It builds the tagged product source with the selected workflow revision's iOS build helper, reuses the draft, and refuses to overwrite a published release. The tag stays unchanged.
+A `vX.Y.Z` release tag ships iOS with the desktop builds: `release.yml` prepares a draft and builds Windows, Linux, and the unsigned IPA in parallel on Blacksmith. After all three builds and the desktop checks succeed, it publishes the same commit as an OTA update on Linux using the runtime version embedded in the IPA, then publishes the GitHub release. That job needs an `EXPO_TOKEN` repository secret (an Expo access token); without it the release stays a draft. Between releases, use the manual workflow and `eas update` below. To recover a failed tag release after fixing CI, run **Release App** from `main` with the existing tag as its `tag` input. It builds the tagged product source with the selected workflow revision's iOS build helper, reuses the draft, and refuses to overwrite a published release. The tag stays unchanged. If all three platform builds passed and publication failed, set `resume-run-id` to that run ID to retry publication without rebuilding; the workflow verifies successful jobs, checkout commits, matching release notes, and asset upload times against that run, then reads the runtime from the attached IPA. Retain the run logs and artifacts for this verification. If OTA publication already succeeded, the retry only finalizes the release metadata.
 
 ## Build an IPA
 
@@ -209,7 +209,7 @@ From `mobile/`, with the native code unchanged since the installed IPA:
 
 ```sh
 npx --yes eas-cli@latest login
-npx --yes eas-cli@latest update --channel production --environment production --message "Describe the fix"
+npx --yes eas-cli@latest update --platform ios --channel production --environment production --message "Describe the fix"
 ```
 
 The project is linked to `@parthashirolkar/shuddhalekhan-mobile`. A fork first removes `owner`, `extra.eas.projectId`, and `updates.url` from `app.json`, runs `npx --yes eas-cli@latest init` and `eas update:configure`, and commits the result before building its first IPA; otherwise that IPA asks the original project for updates. EAS Update's free tier covers 1,000 monthly active users. Updates are not code-signed, which needs a paid plan, so keep two-factor login on the Expo account that publishes them.
