@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import type { TranscriptionRequest } from '../transcription';
 import { createSarvamTranscriber } from '../sarvam';
-import { DEFAULT_SARVAM_CONFIG, getSarvamSettingsErrors } from '../../shared/sarvam';
+import { DEFAULT_SARVAM_CONFIG, getSarvamSettingsErrors } from '@shuddhalekhan/shared/sarvam';
 
 const recognition = { language: 'hi', task: 'transcribe', dictionary: ['PhonePe'], removeFillerWords: false } as const;
 const request = (): TranscriptionRequest => ({ audio: new Uint8Array([1, 2, 3]), recognition: { ...recognition, dictionary: [...recognition.dictionary] } });

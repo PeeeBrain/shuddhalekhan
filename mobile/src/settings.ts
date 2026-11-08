@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { getSarvamSettingsErrors, sarvamConfigSchema } from '../../app/src/shared/sarvam';
+import { getSarvamSettingsErrors, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
 import { isParakeetLanguage, languageBase, normalizeLanguage } from './languages';
-import { transcriptionEndpoint } from './providers';
+import { MOBILE_TRANSCRIPTION_PROVIDERS, transcriptionEndpoint } from './providers';
+import { AGENT_PROVIDER_KINDS, agentProviderSupportsCacheBreakpoints, agentProviderUsesChatCompletionsOnly } from '@shuddhalekhan/shared/providers';
 
 const credential = z.string().max(1500, 'Credentials must be at most 1500 characters.').regex(/^[\x21-\x7e]*$/, 'Credentials must contain only printable characters without spaces.');
 export const toolApprovalPolicySchema = z.enum(['disabled', 'alwaysAsk', 'alwaysAllow']);
@@ -18,7 +19,7 @@ const serverSchema = z.object({
 // Fields added after the first release default to the old generic behavior, so saved settings load unchanged.
 export const mobileSettingsSchema = z.object({
   transcriptionSource: z.enum(['endpoint', 'on-device']).default('endpoint'),
-  transcriptionProvider: z.enum(['openai', 'sarvam', 'azure-speech', 'google-cloud-speech-v2', 'nvidia-speech-nim', 'local-whisper-cpp', 'whisper-live-kit', 'custom-open-ai-compatible']).default('custom-open-ai-compatible'),
+  transcriptionProvider: z.enum(MOBILE_TRANSCRIPTION_PROVIDERS).default('custom-open-ai-compatible'),
   transcriptionEndpoint: z.string().trim().max(2048),
   transcriptionModel: z.string().trim().max(200),
   transcriptionKey: credential,
@@ -34,7 +35,7 @@ export const mobileSettingsSchema = z.object({
   language: z.string().trim().max(100).transform(normalizeLanguage).pipe(z.string().regex(/^$|^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/, 'Choose a language, or enter a language code such as en or en-IN.')),
   dictionary: z.string().max(4000),
   agentEnabled: z.boolean(),
-  agentProvider: z.enum(['openai', 'azure-openai', 'openrouter', 'openai-compatible', 'chatgpt']).default('openai-compatible'),
+  agentProvider: z.enum(AGENT_PROVIDER_KINDS).default('openai-compatible'),
   agentApiMode: z.enum(['chat-completions', 'responses']).default('chat-completions'),
   agentAuth: z.enum(['none', 'bearer', 'api-key']).default('bearer'),
   agentReasoning: z.enum(['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']).default('default'),
@@ -86,8 +87,8 @@ export const mobileSettingsSchema = z.object({
       if (settings.agentApiMode !== 'responses') issue('agentApiMode', 'ChatGPT plan requires Responses.');
       if (settings.agentAuth !== 'none' || settings.agentKey) issue('agentAuth', 'ChatGPT plan uses your signed-in account.');
     }
-    if ((settings.agentProvider === 'openrouter' || settings.agentProvider === 'openai-compatible') && settings.agentApiMode !== 'chat-completions') issue('agentApiMode', 'OpenRouter and custom providers use Chat Completions.');
-    if (settings.agentCache && settings.agentProvider !== 'openai' && settings.agentProvider !== 'azure-openai') issue('agentCache', 'Explicit cache breakpoints require OpenAI or Azure OpenAI.');
+    if (agentProviderUsesChatCompletionsOnly(settings.agentProvider) && settings.agentApiMode !== 'chat-completions') issue('agentApiMode', 'OpenRouter and custom providers use Chat Completions.');
+    if (settings.agentCache && !agentProviderSupportsCacheBreakpoints(settings.agentProvider)) issue('agentCache', 'Explicit cache breakpoints require OpenAI or Azure OpenAI.');
   }
   if (new Set(settings.mcpServers.map(server => server.id)).size !== settings.mcpServers.length) {
     ctx.addIssue({ code: 'custom', path: ['mcpServers'], message: 'MCP server IDs must be unique.' });

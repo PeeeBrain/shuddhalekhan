@@ -1,4 +1,4 @@
-import { getSarvamSettingsErrors } from '../shared/sarvam';
+import { getSarvamSettingsErrors } from '@shuddhalekhan/shared/sarvam';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';

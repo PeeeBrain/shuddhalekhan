@@ -3,7 +3,7 @@ import { bearerHeaders, parseResponse, readJSON, request, type Fetch } from './n
 import { dictionaryTerms, googleServiceAccountSchema, validSecretHeader, type MobileSettings } from './settings';
 import { languageBase, languageLocale, normalizeLanguage } from './languages';
 import { transcriptionEndpoint } from './providers';
-import { sarvamLanguageCode } from '../../app/src/shared/sarvam';
+import { sarvamLanguageCode } from '@shuddhalekhan/shared/sarvam';
 
 type SignGoogleJwt = (privateKey: string, input: string) => Promise<string>;
 

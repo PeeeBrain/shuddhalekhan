@@ -46,7 +46,7 @@ import {
   SARVAM_MODELS,
   SARVAM_MODES,
   sarvamLanguageCode,
-} from '../../shared/sarvam';
+} from '@shuddhalekhan/shared/sarvam';
 import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '../../shared/transcription-features';
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';

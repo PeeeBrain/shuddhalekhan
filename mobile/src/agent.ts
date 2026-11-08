@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { agentProviderSupportsCacheBreakpoints } from '@shuddhalekhan/shared/providers';
 import { MCPConnection, jsonObjectSchema, type MCPTool } from './mcp';
 import { bearerHeaders, parseResponse, readJSON, request, type Fetch } from './network';
 import { toolApprovalPolicy, type MobileSettings } from './settings';
@@ -347,7 +348,7 @@ function isDeepSeekV4(settings: MobileSettings): boolean {
 }
 
 function nativeCache(settings: MobileSettings): boolean {
-  return settings.agentCache && (settings.agentProvider === 'openai' || settings.agentProvider === 'azure-openai');
+  return settings.agentCache && agentProviderSupportsCacheBreakpoints(settings.agentProvider);
 }
 
 /**

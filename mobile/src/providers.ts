@@ -1,40 +1,49 @@
+import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
 import type { MobileSettings } from './settings';
 
-type TranscriptionProvider = MobileSettings['transcriptionProvider'];
-type AgentProvider = MobileSettings['agentProvider'];
+type Preset = { label: string; endpoint: string; model: string; placeholder: string };
+/** Managed Local runs models on the computer; iOS transcribes locally with on-device Parakeet instead. */
+type TranscriptionProvider = Exclude<TranscriptionProviderId, 'managed-local'>;
 
-/** Desktop's remote providers. `placeholder` shows the full URL this phone must reach. */
-export const transcriptionProviders: { value: TranscriptionProvider; label: string; endpoint: string; model: string; placeholder: string }[] = [
-  { value: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/audio/transcriptions', model: 'gpt-4o-transcribe', placeholder: '' },
-  { value: 'sarvam', label: 'Sarvam AI', endpoint: '', model: 'saaras:v4', placeholder: '' },
-  { value: 'azure-speech', label: 'Azure Speech', endpoint: '', model: '', placeholder: 'https://<resource>.cognitiveservices.azure.com' },
-  { value: 'google-cloud-speech-v2', label: 'Google Cloud Speech v2', endpoint: '', model: 'chirp_3', placeholder: '' },
-  { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM', endpoint: '', model: '', placeholder: 'http://192.168.1.20:9000/v1/audio/transcriptions' },
-  { value: 'local-whisper-cpp', label: 'whisper.cpp server', endpoint: '', model: '', placeholder: 'http://192.168.1.20:8080/inference' },
-  { value: 'whisper-live-kit', label: 'WhisperLiveKit', endpoint: '', model: '', placeholder: 'http://192.168.1.20:8000/v1/audio/transcriptions' },
-  { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible', endpoint: '', model: '', placeholder: 'https://example.com/v1/audio/transcriptions' },
-];
+/**
+ * Desktop's remote providers, in picker order. `placeholder` shows the full URL this phone must reach.
+ * A new shared provider fails typecheck here until it gets a preset or is excluded above.
+ */
+const transcriptionPresets = {
+  openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1/audio/transcriptions', model: 'gpt-4o-transcribe', placeholder: '' },
+  sarvam: { label: 'Sarvam AI', endpoint: '', model: 'saaras:v4', placeholder: '' },
+  'azure-speech': { label: 'Azure Speech', endpoint: '', model: '', placeholder: 'https://<resource>.cognitiveservices.azure.com' },
+  'google-cloud-speech-v2': { label: 'Google Cloud Speech v2', endpoint: '', model: 'chirp_3', placeholder: '' },
+  'nvidia-speech-nim': { label: 'NVIDIA Speech NIM', endpoint: '', model: '', placeholder: 'http://192.168.1.20:9000/v1/audio/transcriptions' },
+  'local-whisper-cpp': { label: 'whisper.cpp server', endpoint: '', model: '', placeholder: 'http://192.168.1.20:8080/inference' },
+  'whisper-live-kit': { label: 'WhisperLiveKit', endpoint: '', model: '', placeholder: 'http://192.168.1.20:8000/v1/audio/transcriptions' },
+  'custom-open-ai-compatible': { label: 'Custom OpenAI-compatible', endpoint: '', model: '', placeholder: 'https://example.com/v1/audio/transcriptions' },
+} satisfies Record<TranscriptionProvider, Preset>;
 
-export const agentProviders: { value: AgentProvider; label: string; endpoint: string; model: string; placeholder: string }[] = [
-  { value: 'chatgpt', label: 'ChatGPT plan', endpoint: 'https://api.openai.com/v1/responses', model: '', placeholder: '' },
-  { value: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/responses', model: 'gpt-4.1-mini', placeholder: '' },
-  { value: 'azure-openai', label: 'Azure OpenAI', endpoint: '', model: '', placeholder: 'https://<resource>.openai.azure.com/openai/v1/responses' },
-  { value: 'openrouter', label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: '', placeholder: '' },
-  { value: 'openai-compatible', label: 'Custom OpenAI-compatible', endpoint: '', model: '', placeholder: 'http://192.168.1.20:11434/v1/chat/completions' },
-];
+const agentPresets = {
+  chatgpt: { label: 'ChatGPT plan', endpoint: 'https://api.openai.com/v1/responses', model: '', placeholder: '' },
+  openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1/responses', model: 'gpt-4.1-mini', placeholder: '' },
+  'azure-openai': { label: 'Azure OpenAI', endpoint: '', model: '', placeholder: 'https://<resource>.openai.azure.com/openai/v1/responses' },
+  openrouter: { label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: '', placeholder: '' },
+  'openai-compatible': { label: 'Custom OpenAI-compatible', endpoint: '', model: '', placeholder: 'http://192.168.1.20:11434/v1/chat/completions' },
+} satisfies Record<AgentProviderKind, Preset>;
+
+export const MOBILE_TRANSCRIPTION_PROVIDERS = Object.keys(transcriptionPresets) as TranscriptionProvider[];
+export const transcriptionProviders = MOBILE_TRANSCRIPTION_PROVIDERS.map(value => ({ value, ...transcriptionPresets[value] }));
+export const agentProviders = (Object.keys(agentPresets) as AgentProviderKind[]).map(value => ({ value, ...agentPresets[value] }));
 
 /** Switching providers clears the old credential so it is never sent to the new service. */
 export function selectTranscriptionProvider(settings: MobileSettings, provider: TranscriptionProvider): MobileSettings {
   if (settings.transcriptionProvider === provider) return settings;
-  const preset = transcriptionProviders.find(option => option.value === provider)!;
+  const preset = transcriptionPresets[provider];
   return { ...settings, transcriptionProvider: provider, transcriptionEndpoint: preset.endpoint, transcriptionModel: preset.model,
     transcriptionKey: '', googleServiceAccount: '',
     transcriptionAuth: provider === 'openai' || provider === 'custom-open-ai-compatible' ? 'bearer' : 'none' };
 }
 
-export function selectAgentProvider(settings: MobileSettings, provider: AgentProvider): MobileSettings {
+export function selectAgentProvider(settings: MobileSettings, provider: AgentProviderKind): MobileSettings {
   if (settings.agentProvider === provider) return settings;
-  const preset = agentProviders.find(option => option.value === provider)!;
+  const preset = agentPresets[provider];
   return { ...settings, agentProvider: provider, agentEndpoint: preset.endpoint, agentModel: preset.model, agentKey: '',
     agentAuth: provider === 'azure-openai' ? 'api-key' : provider === 'openai-compatible' || provider === 'chatgpt' ? 'none' : 'bearer',
     agentApiMode: provider === 'openai' || provider === 'azure-openai' || provider === 'chatgpt' ? 'responses' : 'chat-completions',

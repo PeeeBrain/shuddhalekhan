@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { TranscriptionConfig } from '../types/ipc';
-import { getSarvamSettingsErrors, sarvamLanguageCode } from '../shared/sarvam';
+import { getSarvamSettingsErrors, sarvamLanguageCode } from '@shuddhalekhan/shared/sarvam';
 import { cleanFillerWords, failureForHttpStatus, TranscriptionFailure, type Transcriber } from './transcription';
 
 const responseSchema = z.object({ transcript: z.string() });

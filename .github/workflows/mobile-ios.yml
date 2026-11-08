@@ -7,7 +7,7 @@ on:
       - "package.json"
       - "bun.lock"
       - "bunfig.toml"
-      - "app/src/shared/**"
+      - "packages/shared/**"
       - ".github/workflows/mobile-ios.yml"
   push:
     branches: [main]
@@ -16,7 +16,7 @@ on:
       - "package.json"
       - "bun.lock"
       - "bunfig.toml"
-      - "app/src/shared/**"
+      - "packages/shared/**"
       - ".github/workflows/mobile-ios.yml"
   workflow_dispatch:
 
@@ -58,6 +58,9 @@ jobs:
 
       - name: Lint mobile app
         run: bun run --cwd mobile lint
+
+      - name: Lint platform-free shared package
+        run: bun run --cwd packages/shared lint
 
       - name: Verify Expo native dependencies
         working-directory: mobile
