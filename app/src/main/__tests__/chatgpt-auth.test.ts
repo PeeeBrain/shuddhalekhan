@@ -72,6 +72,20 @@ function fixture(options: { scope?: string; claims?: Record<string, unknown>; ca
   return { auth, writes, requests, authorizations, modelHeaders, pages, changes, advance: () => { clock += 3400_000; }, setRefresh: (response: typeof refreshResponse) => { refreshResponse = response; } };
 }
 
+it('restores the saved session on a relaunch even though the vault is unreadable until Electron is ready', async () => {
+  let ready = false;
+  const saved = JSON.stringify({ clientId: 'issued-client', issuer: 'https://auth.openai.com', subject: 'account-1', email: 'user@example.com',
+    tokens: { accessToken: 'saved-access', refreshToken: 'saved-refresh', idToken: 'id', expiresAt: now + 3600_000, scopes: scope.split(' ') } });
+  const auth = new ChatGptAuth({
+    vault: { read: () => (ready ? saved : null), save: () => ({ available: true, exists: true }), remove: () => ({ available: true, exists: false }) },
+    fetch: () => Promise.reject(new Error('Unexpected request')), now: () => now, openBrowser: async () => {},
+    getHostId: () => 'urn:uuid:installation', setHostId: () => {},
+  });
+  ready = true;
+  expect(auth.getStatus()).toEqual({ state: 'signed-in', email: 'user@example.com', planUsage: true });
+  expect(await auth.getAccessToken()).toBe('saved-access');
+});
+
 it('keeps identity sign-in without plan consent but never hands out an inference token', async () => {
   const { auth } = fixture({ scope: 'openid email' });
   expect(await auth.signIn()).toEqual({ state: 'signed-in', email: 'user@example.com', planUsage: false });
