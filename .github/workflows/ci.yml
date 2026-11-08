@@ -62,11 +62,11 @@ jobs:
       - name: Check release publication retry guards
         run: python3 -B -m unittest discover -s .github/scripts/__tests__ -p '*_test.py'
       - name: Install X11 test server and native libraries
-        run: sudo apt-get update && sudo apt-get install -y xvfb libxcb1 libxcb-xfixes0 libxcb-xtest0
+        run: sudo apt-get update && sudo apt-get install -y xvfb libxcb1 libxcb-xfixes0 libxcb-xtest0 unzip
       - name: Install dependencies without packaging hooks
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Check capture and desktop protocol contracts
-        run: bun test app/src/main/desktop/__tests__ app/src/main/native/__tests__/linux-input.test.ts app/src/main/__tests__/audio-spool.test.ts app/src/main/__tests__/keyboard.test.ts app/src/renderer/__tests__/audio-capture.test.ts app/src/renderer/__tests__/audio-capture-worklet.test.ts
+        run: bun test app/src/main/desktop/__tests__ app/src/main/native/__tests__/linux-input.test.ts app/src/main/__tests__/audio-spool.test.ts app/src/main/__tests__/keyboard.test.ts app/src/renderer/__tests__/audio-capture.test.ts app/src/renderer/__tests__/audio-capture-worklet.test.ts app/src/main/__tests__/managed-local-model.test.ts
       - name: Check native X11 focus, ownership and paste
         run: bun test app/src/main/native/__tests__/x11-target.integration.test.ts app/src/main/desktop/__tests__/x11-shortcuts.integration.test.ts
         env:
