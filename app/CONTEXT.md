@@ -7,12 +7,21 @@
 ## Package Manager
 - **Primary**: `bun` — chosen for install/build speed.
 - **Fallback**: `pnpm` — to be adopted if `bun` causes resolution or native-addon issues (e.g., `koffi`).
-- **Dev toolchain**: CI and local tooling run entirely on Bun (install, typecheck, lint, test, build, native deps). There is no external Node setup step in CI. Node remains only as Electron's bundled runtime in the packaged app; the `engines.node` and `.nvmrc` entries document the Electron/Vite compatibility floor, not a Bun-toolchain dependency.
+
+- **Dev toolchain**: Desktop CI and local tooling run on Bun (install, typecheck, lint, test, build, native deps). Desktop CI has no external Node setup step. Mobile CI installs Node 24 for Expo and Xcode's bundling scripts.
 
 ## Build Tool
 - **Frontend + Main + Preload**: `electron-vite` (Vite-based, preserves existing frontend build pipeline).
-- **Typechecking and linting**: TypeScript 7.0.2 is pinned as `typescript` across the monorepo. Oxlint replaces typescript-eslint so linting does not require a legacy TypeScript compiler. Workspace lint rules preserve the existing recommended checks, React rules and exclusions.
+- **Typechecking and linting**: TypeScript 7.0.2 is pinned for desktop and web; mobile uses Expo's recommended TypeScript 6. Oxlint replaces typescript-eslint so linting does not require a legacy TypeScript compiler. Workspace lint rules preserve the existing recommended checks, React rules and exclusions.
 - **Lint migration details**: Native React rules replace the Hooks and Refresh plugins. The Markdown renderer-map helper is excluded only from `react/only-export-components`, which mistakes its nested render functions for module exports. React Compiler configuration/gating checks are omitted because Oxlint has fixed compiler options; this app does not configure React Compiler gating. Strict mode replaces the old duplicate-argument and legacy-octal checks.
+
+## Mobile iOS app
+
+The separate `mobile/` workspace uses React Native with Expo. It records only in the foreground and transcribes through an OpenAI-compatible HTTP endpoint or on-device Parakeet v3 INT8 through a small Expo module wrapping FluidAudio/Core ML. Existing endpoint settings are preserved when local inference is added. The iPhone downloads its own Core ML models; it does not reuse desktop ONNX files. Agent Mode runs one stateless Chat Completions command with Streamable HTTP MCP servers; each tool call requires explicit approval. The Electron sidecar, Windows text injection, and stdio MCP are not part of the iOS app.
+
+The iOS keyboard is a UIKit extension. The foreground app starts a bounded native microphone session and publishes a loopback port plus a fresh session secret in a team-scoped named pasteboard. The visible keyboard authenticates a TCP connection to `127.0.0.1`, sends start/stop/cancel, and automatically inserts the matching transcript through `textDocumentProxy`. Commands and results never use the pasteboard in the background: device logs confirmed that iOS denies that access. Full Access permits the keyboard's phone-local connection; no App Group is used, so free Apple ID signing remains possible. The containing app owns background audio, Parakeet, expiry, and cleanup. Closing the keyboard cancels its utterance.
+
+Mobile settings are independent of desktop config, but provider ids and Sarvam settings come from the platform-free `packages/shared` workspace package, so a new provider fails typecheck on both until each decides how to handle it. API keys and MCP tokens live in iOS Keychain through Expo SecureStore; ordinary settings contain only references to those credentials. Distribution costs nothing: a manual GitHub Actions macOS job (or a local Mac) runs the build script to produce an unsigned Release IPA, which iLoader signs with a free Apple ID. JavaScript-only changes ship over the air through EAS Update's free tier, gated by a fingerprint `runtimeVersion` so they never reach an incompatible native build. See `mobile/README.md` for build instructions and platform limits.
 
 ## Agent Runtime
 - **Library**: Vercel AI SDK with `@ai-sdk/mcp`.

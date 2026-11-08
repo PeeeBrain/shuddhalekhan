@@ -1,0 +1,81 @@
+{
+  "expo": {
+    "name": "Shuddhalekhan",
+    "slug": "shuddhalekhan-mobile",
+    "scheme": "shuddhalekhan",
+    "version": "1.0.0",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "platforms": [
+      "ios"
+    ],
+    "ios": {
+      "buildNumber": "14",
+      "bundleIdentifier": "com.shuddhalekhan.mobile",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSSupportsLiveActivities": true,
+        "BGTaskSchedulerPermittedIdentifiers": [
+          "com.shuddhalekhan.mobile.agent.*"
+        ],
+        "NSLocalNetworkUsageDescription": "Connect to transcription and MCP services configured on your local network.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Shuddhalekhan to record audio after you tap Record, or during a keyboard session you start.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0",
+            "extraPods": [
+              {
+                "name": "FluidAudio",
+                "git": "https://github.com/FluidInference/FluidAudio.git",
+                "tag": "v0.15.5"
+              }
+            ]
+          }
+        }
+      ],
+      "@bacons/apple-targets"
+    ],
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6c292dda-4e19-40cb-9d00-1a0900fd0775",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6c292dda-4e19-40cb-9d00-1a0900fd0775"
+      }
+    },
+    "owner": "parthashirolkar"
+  }
+}

@@ -1,5 +1,8 @@
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
 import type { DesktopStatus } from '../shared/desktop-status';
+import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
+
+export type { AgentProviderKind, TranscriptionProviderId };
 
 export type AudioDevice = {
   deviceId: string;
@@ -61,7 +64,6 @@ export type CredentialStatus =
 
 export type AgentApiKeySource = 'environment' | 'stored';
 export type AgentReasoningEffort = 'low' | 'medium' | 'high';
-export type AgentProviderKind = 'openai' | 'azure-openai' | 'openrouter' | 'openai-compatible' | 'chatgpt';
 
 export type ChatGptAccountStatus =
   | { state: 'signed-out' }
@@ -373,17 +375,6 @@ export interface PasteStrategyConfig {
   overrides: Record<string, PasteStrategy>;
 }
 
-export type TranscriptionProviderId =
-  | 'managed-local'
-  | 'local-whisper-cpp'
-  | 'openai'
-  | 'sarvam'
-  | 'azure-speech'
-  | 'google-cloud-speech-v2'
-  | 'nvidia-speech-nim'
-  | 'custom-open-ai-compatible'
-  | 'whisper-live-kit';
-
 export interface LocalWhisperCppProviderConfig {
   endpoint: string;
 }
@@ -438,7 +429,7 @@ export interface TranscriptionConfig {
   providers: {
     localWhisperCpp: LocalWhisperCppProviderConfig;
     openai: OpenAiProviderConfig;
-    sarvam: import('zod').infer<typeof import('../shared/sarvam').sarvamConfigSchema>;
+    sarvam: import('zod').infer<typeof import('@shuddhalekhan/shared/sarvam').sarvamConfigSchema>;
     azureSpeech: AzureSpeechProviderConfig;
     googleCloudSpeech: GoogleCloudSpeechProviderConfig;
     nvidiaSpeechNim: NvidiaSpeechNimProviderConfig;

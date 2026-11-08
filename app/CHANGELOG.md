@@ -7,6 +7,18 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+### Mobile
+- Added per-tool approval policies for each MCP server: Ask every time, Always allow, or Disabled. New tools still ask. The iOS 26 system activity now receives a final-answer preview instead of a generic completion subtitle.
+- Added iOS Agent Mode progress and saved final answers. iOS 26 uses the system background-processing activity without a duplicate custom card. Tool approvals arrive as notifications with authenticated Approve once, Deny, and Review arguments actions; interrupted runs never replay automatically. Final answers render as Markdown in the app. Earlier iOS versions retain the custom Live Activity and require foreground execution.
+- Fixed keyboard transcription cancellation and serialized model replacement with inference. Listener startup callbacks and timeouts now stop with their session. Failed temporary audio cleanup and startup scans are logged and retried before recording again.
+- Improved iOS sheet safe areas, reduced-motion behavior, option search, field focus, and recording-limit warnings. Settings now confirms discarding unsaved edits, and tool approval content stays visible during dismissal.
+- Added the desktop transcription providers (OpenAI, Sarvam AI, Azure Speech, Google Cloud Speech v2, NVIDIA Speech NIM, whisper.cpp, WhisperLiveKit) and Agent Mode providers (OpenAI and Azure OpenAI with Responses or Chat Completions, OpenRouter) to the iOS app. Existing endpoints move to the custom OpenAI-compatible provider.
+- On-device transcription now uses the English-only Parakeet v2 for any English language choice. Other languages use Parakeet v3 with a language hint and multilingual chunk settings. This targets English coming out in another language or script, but accuracy on Indian-accented English hasn't been measured.
+- Stabilized the iOS dictation keyboard panel and added immediate key highlighting and enlarged character previews. Home prioritizes active keyboard sessions. Installed on-device speech models now prepare on launch without opening the microphone, and keyboard commands no longer send duplicate state acknowledgements.
+- Fixed the iOS dictation keyboard command handoff being blocked when the recording app is in the background. Commands and results now use an authenticated connection confined to the iPhone.
+- Added on-device Parakeet v3 setup and a keyboard for dictation into other apps during a microphone session. Existing endpoint settings are preserved. Added LM Studio setup guidance for voice agents over Tailscale.
+- Added a standalone React Native/Expo iOS app for recording, OpenAI-compatible transcription, copy/share, and one-off voice agents with approval-gated HTTP MCP tools. Includes secure credential storage and a macOS workflow for building unsigned IPAs for Sideloadly.
+
 ### Platforms
 - Linux builds: `.deb` for Ubuntu/Debian and `.rpm` for Fedora/RHEL, published with each release and updated in-app. On Wayland, Dictation preserves the final transcript for copying; automatic insertion stays unavailable until the original input context can be verified.
 - KDE Plasma Wayland test builds can opt into best-effort insertion (Settings → Transcription, off by default). Setup asks KDE to allow keyboard control before it reports insertion available. Dictation pastes once into the window that was active when recording began and cancels if another window was activated. It cannot detect a change between fields in the same window. The transcript is placed on the clipboard and left there. If KWin window tracking stops, Settings stops claiming insertion is ready. GNOME and other Wayland desktops remain copy-only.

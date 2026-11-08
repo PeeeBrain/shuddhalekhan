@@ -1,6 +1,6 @@
 import type { AppConfig, TranscriptionSettingsPatch } from '../types/ipc';
 import { getTranscriptionTransportCapabilities } from './dictation-runtime';
-import { SARVAM_LANGUAGES, sarvamLanguageCode } from './sarvam';
+import { SARVAM_LANGUAGES, sarvamLanguageCode } from '@shuddhalekhan/shared/sarvam';
 
 type FeatureConfig = Pick<AppConfig, 'transcription' | 'managedLocal' | 'task'>;
 

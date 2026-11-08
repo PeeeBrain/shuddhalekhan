@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { agentProviderSupportsCacheBreakpoints } from '@shuddhalekhan/shared/providers';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Textarea } from '@/components/ui/textarea';
@@ -385,7 +386,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
                 error={fieldErrors[FIELD_ID_INSECURE_HTTP]}
                 onChange={(allowInsecureHttp) => commitProvider({ allowInsecureHttp }, FIELD_ID_INSECURE_HTTP)}
               />
-              {provider.kind === 'openai' || provider.kind === 'azure-openai' ? (
+              {agentProviderSupportsCacheBreakpoints(provider.kind) ? (
                 <ToggleRow
                   title="Use cache breakpoints"
                   description="Automatic prompt caching applies either way. Only turn this on if your model supports cache breakpoints (GPT-5.6 or newer); on Azure, Standard pay-as-you-go deployments only. Older models and PTU deployments reject them, so run Test model after turning it on. Cache writes may cost extra."

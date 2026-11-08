@@ -1,2 +1,6 @@
 [test]
 preload = ["./app/src/test/setup.ts"]
+
+[install]
+# Expo native autolinking needs one physical copy of each native module across peer contexts.
+linker = "hoisted"

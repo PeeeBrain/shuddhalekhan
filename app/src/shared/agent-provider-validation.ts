@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AGENT_PROVIDER_KINDS, agentProviderUsesChatCompletionsOnly } from '@shuddhalekhan/shared/providers';
 import type { AgentProviderConfig, AgentProviderIssue, AgentProviderValidation } from '../types/ipc';
 import { isAgentApiKeyEnvVarName, isDeepSeekV4Provider, isLoopbackProviderUrl, normalizeAgentProvider } from './agent-provider';
 
@@ -7,7 +8,7 @@ export const agentProviderSchema = z.object({
   model: z.string().default(''),
   apiKeyEnvVar: z.string().default(''),
   apiKeySource: z.enum(['environment', 'stored']).default('environment'),
-  kind: z.enum(['openai', 'azure-openai', 'openrouter', 'openai-compatible', 'chatgpt']).optional(),
+  kind: z.enum(AGENT_PROVIDER_KINDS).optional(),
   apiMode: z.enum(['chat-completions', 'responses']).optional(),
   auth: z.enum(['none', 'bearer', 'api-key']).optional(),
   reasoning: z.enum(['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
@@ -40,7 +41,7 @@ export function getAgentProviderIssues(value: AgentProviderConfig): AgentProvide
   }
   if (!provider.model) add('model', provider.kind === 'azure-openai' ? 'Enter the Azure deployment name.' : 'Enter the model identifier.');
   if (provider.model.length > 256 || [...provider.model].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) add('model', 'The model identifier is too long or contains control characters.');
-  if ((provider.kind === 'openrouter' || provider.kind === 'openai-compatible') && provider.apiMode !== 'chat-completions') {
+  if (agentProviderUsesChatCompletionsOnly(provider.kind) && provider.apiMode !== 'chat-completions') {
     add('kind', 'This provider uses Chat Completions. Select OpenAI or Azure for the Responses API.');
   }
   if (provider.auth !== 'none' && provider.apiKeySource === 'environment') {
