@@ -171,7 +171,8 @@ jobs:
   # Attaches the unsigned IPA (signed later with iLoader) and publishes the same JS as an OTA update.
   # Installs whose native fingerprint differs ignore the update until they install this IPA.
   release-ios:
-    needs: release
+    # After Linux, so a failed desktop build never leaves phones on an OTA for a draft release.
+    needs: [release, release-linux]
     runs-on: macos-latest
     timeout-minutes: 60
     permissions:

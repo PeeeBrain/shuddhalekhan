@@ -86,7 +86,7 @@ For a small logic change, run the relevant test file from `mobile/`, for example
 
 1. For Swift, native module, or keyboard changes, [build a new unsigned Release IPA](#build-an-ipa). Record its workflow run URL and iOS build number. Native changes require an IPA; Metro and OTA updates cannot replace the native module or keyboard extension.
 2. After the intended run succeeds, share its run URL with the maintainer (`gh run list --workflow mobile-ios.yml --limit 1`). Check it matches the build being tested rather than an older successful run.
-3. Install the IPA through iLoader using the same Apple ID, preserving the keyboard extension and existing app data. Confirm the installed build number with USB app metadata before debugging. Sideloading can rewrite the bundle identifier with a signing-team suffix.
+3. Install the IPA through iLoader using the same Apple ID, preserving the keyboard extension and existing app data. Confirm the installed build number with USB app metadata before debugging; for a release IPA, also check that its version (`CFBundleShortVersionString`) matches the tag, since releases can share a build number. Sideloading can rewrite the bundle identifier with a signing-team suffix.
 4. Start the USB capture below, then ask the maintainer to reproduce on the phone and report when finished and what appeared. Record timestamps and screenshots. Stop the capture by its tracked PID after the attempt.
 5. For keyboard dictation, download Parakeet, enable the keyboard and Full Access, start a session in the foreground app, switch to Notes, Dictate, speak, and Stop and insert. Confirm recording acknowledgement, transcription, and exactly one insertion at the cursor while the app is backgrounded. Try another utterance without restarting the session, then another host app. Report session loss separately from transcription success.
 
@@ -212,7 +212,7 @@ npx --yes eas-cli@latest login
 npx --yes eas-cli@latest update --channel production --environment production --message "Describe the fix"
 ```
 
-The project is linked to `@parthashirolkar/shuddhalekhan-mobile`; a fork runs `npx --yes eas-cli@latest init` and `eas update:configure` to link its own. EAS Update's free tier covers 1,000 monthly active users. Updates are not code-signed, which needs a paid plan, so keep two-factor login on the Expo account that publishes them.
+The project is linked to `@parthashirolkar/shuddhalekhan-mobile`. A fork first removes `owner`, `extra.eas.projectId`, and `updates.url` from `app.json`, runs `npx --yes eas-cli@latest init` and `eas update:configure`, and commits the result before building its first IPA; otherwise that IPA asks the original project for updates. EAS Update's free tier covers 1,000 monthly active users. Updates are not code-signed, which needs a paid plan, so keep two-factor login on the Expo account that publishes them.
 
 To check a published update against an installed IPA, compare the runtime version `eas update` prints with `npx expo-updates fingerprint:generate --platform ios` run on the commit the IPA was built from.
 
