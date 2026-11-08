@@ -117,7 +117,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ios-build-helper
-          path: mobile/scripts/build-ios.sh
+          path: |
+            mobile/scripts/build-ios.sh
+            mobile/scripts/read-ipa-runtime.py
           if-no-files-found: error
 
   release-windows:
@@ -299,10 +301,7 @@ jobs:
       - name: Read OTA runtime from IPA
         id: runtime
         run: |
-          unzip -p mobile/build/ipa/Shuddhalekhan-unsigned.ipa 'Payload/*.app/Expo.plist' > "$RUNNER_TEMP/Expo.plist"
-          runtime=$(/usr/libexec/PlistBuddy -c 'Print :EXUpdatesRuntimeVersion' "$RUNNER_TEMP/Expo.plist")
-          test -n "$runtime"
-          echo "version=$runtime" >> "$GITHUB_OUTPUT"
+          python3 mobile/scripts/read-ipa-runtime.py mobile/build/ipa/Shuddhalekhan-unsigned.ipa >> "$GITHUB_OUTPUT"
 
       - name: Attach IPA to draft release
         run: gh release upload "$RELEASE_TAG" mobile/build/ipa/Shuddhalekhan-unsigned.ipa --clobber
@@ -339,6 +338,13 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Download iOS release helpers for publication retry
+        if: inputs.resume-run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ios-build-helper
+          path: mobile/scripts
+
       - name: Read runtime from the existing IPA for publication retry
         if: inputs.resume-run-id != ''
         id: resume_runtime
@@ -346,18 +352,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release download "$RELEASE_TAG" --pattern Shuddhalekhan-unsigned.ipa --dir "$RUNNER_TEMP/ipa"
-          python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
-          import os, plistlib, zipfile
-          from pathlib import Path
-          with zipfile.ZipFile(Path(os.environ["RUNNER_TEMP"]) / "ipa/Shuddhalekhan-unsigned.ipa") as ipa:
-              plists = [name for name in ipa.namelist() if name.startswith("Payload/") and name.endswith(".app/Expo.plist") and name.count("/") == 2]
-              if len(plists) != 1:
-                  raise ValueError("Expected one app Expo.plist in the IPA")
-              runtime = plistlib.loads(ipa.read(plists[0]))["EXUpdatesRuntimeVersion"]
-              if not isinstance(runtime, str) or not runtime or "\n" in runtime or "\r" in runtime:
-                  raise ValueError("Missing or invalid IPA runtime version")
-              print(f"version={runtime}")
-          PYTHON
+          python3 mobile/scripts/read-ipa-runtime.py "$RUNNER_TEMP/ipa/Shuddhalekhan-unsigned.ipa" >> "$GITHUB_OUTPUT"
 
       - name: Match OTA version and runtime to the IPA
         env:
