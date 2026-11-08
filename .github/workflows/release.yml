@@ -5,8 +5,93 @@ on:
     tags:
       - "v*.*.*"
 
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build with this workflow
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  release:
+  prepare:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release_version.outputs.version }}
+      commit: ${{ steps.release_version.outputs.commit }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag
+        id: release_version
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "Invalid semantic version release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          commit=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes from merged pull requests
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: |
+          previous_tag=$(git describe --tags --abbrev=0 "$RELEASE_TAG^" 2>/dev/null || true)
+          args=(-f "tag_name=$RELEASE_TAG")
+          if [[ -n "$previous_tag" ]]; then
+            args+=(-f "previous_tag_name=$previous_tag")
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" "${args[@]}" --jq .body > release-notes.md
+          jq -n --arg version "$VERSION" --rawfile notes release-notes.md \
+            '{version: $version, notes: $notes}' > release-notes.json
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.release_version.outputs.version }}
+        run: |
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$draft" != true ]]; then
+              echo "Refusing to overwrite published release $RELEASE_TAG." >&2
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "$VERSION"
+          fi
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: |
+            release-notes.json
+            release-notes.md
+          if-no-files-found: error
+
+      # Recovery builds use tagged product source and the build helper from this workflow's revision.
+      - name: Upload iOS build helper
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-build-helper
+          path: mobile/scripts/build-ios.sh
+          if-no-files-found: error
+
+  release-windows:
+    needs: prepare
     runs-on: blacksmith-4vcpu-windows-2025
     permissions:
       contents: write
@@ -15,7 +100,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Setup Bun
         id: bun
@@ -46,69 +131,23 @@ jobs:
         env:
           BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
 
-      - name: Derive application version from release tag
-        id: release_version
-        shell: pwsh
+      - name: Download release notes
+        uses: actions/download-artifact@v8
+        with:
+          name: release-notes
+          path: app
+
+      - name: Set application version
         working-directory: app
-        run: |
-          $tag = $env:GITHUB_REF_NAME
-          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
-            throw "Invalid semantic version release tag: $tag"
-          }
-
-          $version = $Matches[1]
-          bun pm pkg set "version=$version"
-
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Building Shuddhalekhan $version from tag $tag."
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: bun pm pkg set "version=$env:VERSION"
 
       - name: Typecheck, lint, and test
         run: bun run check
 
-      - name: Generate release notes from merged pull requests
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $tag = '${{ steps.release_version.outputs.tag }}'
-          $version = '${{ steps.release_version.outputs.version }}'
-          $previousTag = git describe --tags --abbrev=0 "$tag^" 2>$null
-
-          if ($LASTEXITCODE -ne 0 -or -not $previousTag) {
-            Write-Host 'No previous release tag found; generating notes from full history.'
-            $notes = gh api "repos/${{ github.repository }}/releases/generate-notes" `
-              -f "tag_name=$tag" --jq .body
-          } else {
-            Write-Host "Generating release notes for $previousTag..$tag."
-            $notes = gh api "repos/${{ github.repository }}/releases/generate-notes" `
-              -f "tag_name=$tag" -f "previous_tag_name=$previousTag" --jq .body
-          }
-
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to generate release notes from merged pull requests.'
-          }
-
-          $notesText = $notes -join "`n"
-          $notesFile = Join-Path $env:RUNNER_TEMP 'release-notes.md'
-          Set-Content -Path $notesFile -Value $notesText -Encoding utf8
-          @{ version = $version; notes = $notesText } |
-            ConvertTo-Json |
-            Set-Content -Path 'app/release-notes.json' -Encoding utf8
-
       - name: Build
         run: bun run --cwd app build
-
-      - name: Create draft GitHub release
-        shell: pwsh
-        run: |
-          $tag = '${{ steps.release_version.outputs.tag }}'
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --draft --title '${{ steps.release_version.outputs.version }}'
-          }
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package and publish Electron app
         run: bun run --cwd app dist -- --publish always "-c.electronDownload.cache=${{ runner.temp }}/electron-cache"
@@ -116,21 +155,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
-      - name: Share release notes with later jobs
-        shell: pwsh
-        run: Copy-Item (Join-Path $env:RUNNER_TEMP 'release-notes.md') app/release-notes.md
-
-      - name: Upload release notes
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-notes
-          path: |
-            app/release-notes.json
-            app/release-notes.md
-
-  # Runs after the Windows job so it reuses its checks, draft release, and notes.
   release-linux:
-    needs: release
+    needs: prepare
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
@@ -138,49 +164,75 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Setup Bun
+        id: bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+
+      - name: Cache Bun packages
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/bun-install-cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun.outputs.bun-version }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun.outputs.bun-version }}-
+
+      - name: Cache Electron and installer downloads
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ runner.temp }}/electron-cache
+            ${{ runner.temp }}/electron-builder-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install rpmbuild
         run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+        env:
+          BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache
 
       - name: Download release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
           path: app
 
       - name: Derive application version from release tag
         working-directory: app
-        run: bun pm pkg set "version=${GITHUB_REF_NAME#v}"
+        run: bun pm pkg set "version=${RELEASE_TAG#v}"
 
       - name: Build
         run: bun run --cwd app build
 
       - name: Package and publish deb and rpm
-        run: bun run --cwd app dist -- --linux deb rpm --publish always
+        run: bun run --cwd app dist -- --linux deb rpm --publish always "-c.electronDownload.cache=${{ runner.temp }}/electron-cache"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
 
-  # Attaches the unsigned IPA (signed later with iLoader) and publishes the same JS as an OTA update.
-  # Installs whose native fingerprint differs ignore the update until they install this IPA.
+  # Attaches the unsigned IPA, signed later with iLoader. Finalize publishes the OTA.
   release-ios:
-    # After Linux, so a failed desktop build never leaves phones on an OTA for a draft release.
-    needs: [release, release-linux]
-    runs-on: macos-latest
+    needs: prepare
+    runs-on: blacksmith-6vcpu-macos-latest
     timeout-minutes: 60
+    outputs:
+      runtime-version: ${{ steps.runtime.outputs.version }}
     permissions:
       contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Setup Node.js 24
         uses: actions/setup-node@v6
@@ -198,39 +250,81 @@ jobs:
       # Expo's fingerprint ignores the version, so this does not split the OTA runtime.
       - name: Derive mobile version from release tag
         run: |
-          jq --arg v "${GITHUB_REF_NAME#v}" '.expo.version = $v' mobile/app.json > "$RUNNER_TEMP/app.json"
+          jq --arg v "${RELEASE_TAG#v}" '.expo.version = $v' mobile/app.json > "$RUNNER_TEMP/app.json"
           mv "$RUNNER_TEMP/app.json" mobile/app.json
+
+      - name: Download iOS build helper
+        uses: actions/download-artifact@v8
+        with:
+          name: ios-build-helper
+          path: mobile/scripts
 
       - name: Build unsigned IPA
         run: bash mobile/scripts/build-ios.sh
 
+      # Carry the built native runtime across runners rather than recomputing its fingerprint on Linux.
+      - name: Read OTA runtime from IPA
+        id: runtime
+        run: |
+          unzip -p mobile/build/ipa/Shuddhalekhan-unsigned.ipa 'Payload/*.app/Expo.plist' > "$RUNNER_TEMP/Expo.plist"
+          runtime=$(/usr/libexec/PlistBuddy -c 'Print :EXUpdatesRuntimeVersion' "$RUNNER_TEMP/Expo.plist")
+          test -n "$runtime"
+          echo "version=$runtime" >> "$GITHUB_OUTPUT"
+
       - name: Attach IPA to draft release
-        run: gh release upload "$GITHUB_REF_NAME" mobile/build/ipa/Shuddhalekhan-unsigned.ipa --clobber
+        run: gh release upload "$RELEASE_TAG" mobile/build/ipa/Shuddhalekhan-unsigned.ipa --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish OTA update
-        working-directory: mobile
-        run: npx --yes eas-cli@latest update --channel production --environment production --message "$GITHUB_REF_NAME" --non-interactive
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-
   finalize:
-    needs: [release, release-linux, release-ios]
+    needs: [prepare, release-windows, release-linux, release-ios]
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write
 
     steps:
+      # OTA publication waits for every platform, but runs off the macOS build runner.
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies without lifecycle scripts
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Match OTA version and runtime to the IPA
+        env:
+          RUNTIME_VERSION: ${{ needs.release-ios.outputs.runtime-version }}
+        run: |
+          jq --arg v "${RELEASE_TAG#v}" --arg runtime "$RUNTIME_VERSION" \
+            '.expo.version = $v | .expo.runtimeVersion = $runtime' mobile/app.json > "$RUNNER_TEMP/app.json"
+          mv "$RUNNER_TEMP/app.json" mobile/app.json
+
+      - name: Publish OTA update
+        working-directory: mobile
+        run: npx --yes eas-cli@latest update --channel production --environment production --message "$RELEASE_TAG" --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
       - name: Download release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
 
       - name: Finalize GitHub release metadata
         run: |
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "Shuddhalekhan ${GITHUB_REF_NAME#v}" \
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --title "Shuddhalekhan ${RELEASE_TAG#v}" \
             --notes-file release-notes.md \
             --draft=false
         env:

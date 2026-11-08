@@ -13,7 +13,7 @@ for tool in bun pod xcodebuild swiftc node zip openssl; do
   fi
 done
 
-xcode_version="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
+xcode_version="$(xcodebuild -version | awk '/^Xcode / { print $2 }')"
 if [[ ! "$xcode_version" =~ ^([0-9]+)\.([0-9]+) ]]; then
   echo "Could not read the Xcode version: $xcode_version" >&2
   exit 1
