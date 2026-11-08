@@ -7,7 +7,6 @@
 // pauses into long recordings and fed in real time as 512-sample packets, as the capture worklet sends them.
 // Model files come from SHUDDHALEKHAN_MODEL_DIR or the app's installed models folder. Not part of `bun test`.
 import { readFileSync } from 'fs';
-import { homedir } from 'os';
 import { dirname, join, resolve } from 'path';
 import { parseArgs } from 'util';
 import { z } from 'zod';
@@ -16,6 +15,7 @@ import { decodeManagedLocal } from '../../src/main/managed-local-decode';
 import { getManagedLocalThreadLimits } from '../../src/main/managed-local-threads';
 import { decodePcm16Wave } from '../../src/main/managed-local-wave';
 import { align, normalize } from './score';
+import { installedModelPath } from './installed-model-path';
 
 const RATE = 16_000;
 const PACKET = 512;
@@ -70,8 +70,7 @@ const wholeRecording: CreateDecoder = decode => {
 };
 const createIncrementalDecoder: CreateDecoder = decoderPath
   ? (await import(resolve(decoderPath))).createIncrementalDecoder : wholeRecording;
-const appData = process.platform === 'win32' ? process.env.APPDATA ?? '' : join(homedir(), '.config');
-const modelPath = process.env.SHUDDHALEKHAN_MODEL_DIR ?? join(appData, 'Shuddhalekhan', 'models', MODEL_DIRS[model]);
+const modelPath = installedModelPath(MODEL_DIRS[model]);
 const audioDir = audioOption ?? dirname(manifest);
 
 const load = (file: string) => {

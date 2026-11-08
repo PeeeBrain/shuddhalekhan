@@ -18,6 +18,7 @@ import { getManagedLocalThreadLimits } from '../../src/main/managed-local-thread
 import { decodePcm16Wave } from '../../src/main/managed-local-wave';
 import { accept, scoreClip, totals, type Result } from './score';
 import { modelIdentity, shuffled } from './run-context';
+import { installedModelPath } from './installed-model-path';
 
 type Clip = { id: string; file: string; sha256: string; text: string };
 
@@ -133,8 +134,7 @@ async function runModelLayer(set: string, measureLatency: boolean) {
     const bytes = readFileSync(join(dir, clips[index].file));
     return decodePcm16Wave(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   };
-  const modelPath = process.env.SHUDDHALEKHAN_MODEL_DIR
-    ?? join(process.env.APPDATA ?? '', 'Shuddhalekhan', 'models', `${MANAGED_LOCAL_MODEL.id}-${MANAGED_LOCAL_MODEL.version}`);
+  const modelPath = installedModelPath(`${MANAGED_LOCAL_MODEL.id}-${MANAGED_LOCAL_MODEL.version}`);
   // ponytail: app default thread count; a user-set managedLocalThreads value is not read here.
   const threads = getManagedLocalThreadLimits().defaultThreads;
   const model = modelIdentity(modelPath, MANAGED_LOCAL_MODEL.requiredFiles);

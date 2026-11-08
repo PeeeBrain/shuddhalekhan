@@ -6,11 +6,15 @@ import type { TranscriptionProviderId } from '../types/ipc';
 
 /** Where gcloud keeps Application Default Credentials, in lookup order. */
 export function applicationDefaultCredentialPaths(): string[] {
-  const configDir = process.env.APPDATA
-    || (process.platform === 'win32' ? join(homedir(), 'AppData', 'Roaming') : join(homedir(), '.config'));
+  const configDir = process.env.CLOUDSDK_CONFIG || join(
+    process.platform === 'win32'
+      ? process.env.APPDATA || join(homedir(), 'AppData', 'Roaming')
+      : join(homedir(), '.config'),
+    'gcloud',
+  );
   return [
     process.env.GOOGLE_APPLICATION_CREDENTIALS,
-    join(configDir, 'gcloud', 'application_default_credentials.json'),
+    join(configDir, 'application_default_credentials.json'),
   ].filter((value): value is string => Boolean(value));
 }
 import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '../shared/transcription-features';
