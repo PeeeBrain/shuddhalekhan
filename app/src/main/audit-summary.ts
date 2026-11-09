@@ -10,7 +10,7 @@ export interface AuditSummaryEventRow {
 }
 
 const INTERRUPTED_RUN_GRACE_MS = 5 * 60 * 1000;
-const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interrupted']);
+const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interrupted', 'run_cancelled', 'cancelled']);
 const payloadSchema = z.object({
   transcript: z.string().optional(), response: z.string().optional(), error: z.string().optional(),
   serverId: z.string().optional(), toolName: z.string().optional(),
@@ -77,6 +77,11 @@ export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.
           break;
         case 'run_interrupted':
           summary.status = 'interrupted';
+          break;
+        // Written only by older versions; existing audit databases still contain them.
+        case 'run_cancelled':
+        case 'cancelled':
+          summary.status = 'cancelled';
           break;
         case 'approval_requested':
         case 'mcp_tool_execute_started':
