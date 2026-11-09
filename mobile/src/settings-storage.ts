@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { defaultSettings, mobileSettingsSchema, secretFields, type MobileSettings } from './settings';
+import { defaultSettings, mobileSettingsSchema, type MobileSettings } from './settings';
+import { secretFields } from './secret-fields';
 import { isParakeetLanguage } from './languages';
 
 const metadataKey = 'shuddhalekhan.settings';

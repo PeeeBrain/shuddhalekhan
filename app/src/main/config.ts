@@ -1,4 +1,4 @@
-import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '../shared/agent-provider';
+import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '@shuddhalekhan/shared/agent-prompt';
 import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
 import { DEFAULT_SARVAM_CONFIG, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';

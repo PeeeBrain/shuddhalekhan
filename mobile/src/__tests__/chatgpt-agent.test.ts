@@ -29,7 +29,12 @@ test('ChatGPT sends a streamed developer prompt with JSON bearer auth and no cac
   }, { preconnect: globalThis.fetch.preconnect });
   expect(await run(fetch)).toBe('Final café answer.');
   expect(bodies[0]).toEqual({ model: 'chosen-model', stream: true, store: false, include: ['reasoning.encrypted_content'],
-    input: [{ role: 'developer', content: expect.any(String) }, { role: 'user', content: expect.stringContaining('</runtime_context>\n\nHello.') }] });
+    input: [{ role: 'developer', content: expect.stringContaining('<identity>') }, { role: 'user', content: expect.stringContaining('</runtime_context>\n\nHello.') }] });
+  const basePrompt = bodies[0]?.input[0]?.content;
+  await run(fetch, { customInstructions: '  Reply in French.\n' });
+  expect(bodies[1]?.input[0]?.content).toBe(`${basePrompt}\n\n<user_instructions>\nThe user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.\nReply in French.\n</user_instructions>`);
+  await run(fetch, { customInstructions: ' \n ' });
+  expect(bodies[2]?.input[0]?.content).toBe(basePrompt);
 });
 
 test('ChatGPT parses a split UTF-8 stream and finishes only from response.completed', async () => {

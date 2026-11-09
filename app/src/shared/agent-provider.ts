@@ -1,5 +1,3 @@
-export const AGENT_CUSTOM_INSTRUCTIONS_LIMIT = 4000;
-
 import { isLoopbackUrl as isLoopbackProviderUrl } from '@shuddhalekhan/shared/validation';
 import { isDeepSeekV4Provider } from '@shuddhalekhan/shared/agent-provider';
 export { isLoopbackProviderUrl, isDeepSeekV4Provider };

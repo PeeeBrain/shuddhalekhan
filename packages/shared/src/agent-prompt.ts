@@ -40,6 +40,8 @@ Goal: Get enough context fast, then act.
 - Do not claim a tool action succeeded unless a tool result confirms it.
 </response_style>`;
 
+export const AGENT_CUSTOM_INSTRUCTIONS_LIMIT = 4000;
+
 /**
  * Appends the user's custom instructions after the fixed prompt. Everything here must be
  * deterministic: the system message is the prompt-cache prefix for every provider, so it
@@ -56,19 +58,14 @@ ${userInstructions}
 </user_instructions>`;
 }
 
-const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
-const LOCAL_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "full",
-  timeStyle: "long",
-});
-
+// Resolved per run: a phone can change time zones while the app stays alive.
 export function buildRuntimeContext(now = new Date()): string {
-  const localDateTime = LOCAL_DATE_TIME_FORMATTER.format(now);
+  const localDateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "long" }).format(now);
 
   return `<runtime_context>
 - Current local datetime: ${localDateTime}
 - Current UTC datetime: ${now.toISOString()}
-- Time zone: ${TIME_ZONE}
+- Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}
 - Use this datetime context when interpreting relative dates like today, tomorrow, yesterday, tonight, this week, current year, or latest.
 </runtime_context>`;
 }

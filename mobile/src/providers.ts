@@ -1,7 +1,8 @@
 import type { AgentProviderKind } from '@shuddhalekhan/shared/providers';
-import { clearedSecrets, type MobileSettings } from './settings';
+import type { MobileSettings } from './settings';
+import { clearedSecrets } from './secret-fields';
 import { transcriptionPresets, agentPresets, type TranscriptionProvider } from './provider-presets';
-export { MOBILE_TRANSCRIPTION_PROVIDERS, transcriptionProviders, agentProviders } from './provider-presets';
+export { transcriptionProviders, agentProviders } from './provider-presets';
 
 /** Switching providers clears the old credential so it is never sent to the new service. */
 export function selectTranscriptionProvider(settings: MobileSettings, provider: TranscriptionProvider): MobileSettings {

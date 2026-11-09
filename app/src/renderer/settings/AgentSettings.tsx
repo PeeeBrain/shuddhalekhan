@@ -9,8 +9,8 @@ import { ToggleRow, DraftTextRow, SelectRow, ReadOnlyRow, Tag, type TagTone } fr
 import { CredentialControl } from './ui/CredentialControl';
 import { Disclosure } from './ui/Disclosure';
 import { looksLikeRawApiKey } from './settings-model';
+import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '@shuddhalekhan/shared/agent-prompt';
 import {
-  AGENT_CUSTOM_INSTRUCTIONS_LIMIT,
   getAgentProviderRequestUrl,
   isLoopbackProviderUrl,
   normalizeAgentProvider,

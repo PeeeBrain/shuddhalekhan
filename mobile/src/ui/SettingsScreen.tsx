@@ -9,6 +9,7 @@ import {
   scrollDismissesKeyboard, tag, textContentType, textInputAutocapitalization, tint,
 } from '@expo/ui/swift-ui/modifiers';
 import { SARVAM_MODELS, SARVAM_MODES } from '@shuddhalekhan/shared/sarvam';
+import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '@shuddhalekhan/shared/agent-prompt';
 import type { ChatGptModel } from '../chatgpt';
 import { normalizeLanguage, parakeetLanguages, speechLanguages } from '../languages';
 import { localModelKey, type LocalModelState } from '../on-device';
@@ -167,7 +168,7 @@ export function SettingsScreen({ app, initialPage, onClose }: { app: App; initia
             {draft.agentEnabled ? (
               <Section
                 title="Custom instructions"
-                footer={<Text>{`Added to Shuddhalekhan's built-in instructions. ${draft.customInstructions.length}/4000`}</Text>}
+                footer={<Text>{`Added to Shuddhalekhan's built-in instructions. ${draft.customInstructions.length}/${AGENT_CUSTOM_INSTRUCTIONS_LIMIT}`}</Text>}
               >
                 <Field
                   label="Custom instructions"
@@ -176,7 +177,7 @@ export function SettingsScreen({ app, initialPage, onClose }: { app: App; initia
                   onChange={v => set('customInstructions', v)}
                   multiline
                   prose
-                  maxLength={4000}
+                  maxLength={AGENT_CUSTOM_INSTRUCTIONS_LIMIT}
                 />
               </Section>
             ) : null}

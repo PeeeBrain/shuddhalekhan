@@ -1,4 +1,5 @@
 import { DEFAULT_TOOL_POLICY, toolApprovalPolicySchema } from '@shuddhalekhan/shared/mcp';
+import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '@shuddhalekhan/shared/agent-prompt';
 import { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 import { z } from 'zod';
 import { getSarvamSettingsErrors, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
@@ -9,15 +10,6 @@ import { dictionaryTerms, validateEndpoint } from './validation';
 import { AGENT_PROVIDER_KINDS, agentProviderSupportsCacheBreakpoints, agentProviderUsesChatCompletionsOnly } from '@shuddhalekhan/shared/providers';
 
 const credential = z.string().max(1500, 'Credentials must be at most 1500 characters.').regex(/^[\x21-\x7e]*$/, 'Credentials must contain only printable characters without spaces.');
-export const secretFields = [
-  { field: 'transcriptionKey', ref: 'transcriptionKeyRef', key: 'transcription', scope: 'transcription', legacyOptional: false },
-  { field: 'agentKey', ref: 'agentKeyRef', key: 'agent', scope: 'agent', legacyOptional: false },
-  { field: 'googleServiceAccount', ref: 'googleServiceAccountRef', key: 'google', scope: 'transcription', legacyOptional: true },
-] as const;
-
-export function clearedSecrets(scope: typeof secretFields[number]['scope']) {
-  return Object.fromEntries(secretFields.filter(secret => secret.scope === scope).map(secret => [secret.field, '']));
-}
 export { toolApprovalPolicySchema } from '@shuddhalekhan/shared/mcp';
 const serverSchema = z.object({
   id: z.string().min(1).max(100),
@@ -56,7 +48,7 @@ export const mobileSettingsSchema = z.object({
   agentEndpoint: z.string().trim().max(2048),
   agentModel: z.string().trim().max(200),
   agentKey: credential,
-  customInstructions: z.string().max(4000, 'Custom instructions must be at most 4000 characters.').default(''),
+  customInstructions: z.string().max(AGENT_CUSTOM_INSTRUCTIONS_LIMIT, `Custom instructions must be at most ${AGENT_CUSTOM_INSTRUCTIONS_LIMIT} characters.`).default(''),
   mcpServers: z.array(serverSchema).max(10),
   allowInsecureHTTP: z.boolean(),
 }).superRefine((settings, ctx) => {

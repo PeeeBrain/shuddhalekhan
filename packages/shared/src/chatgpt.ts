@@ -20,7 +20,7 @@ const diagnostics = {
   chatpass_v2_scope_not_authorized: { kind: 'permission', message: 'ChatGPT plan usage is not authorized for this session.', action: 'Sign in with ChatGPT again and allow plan usage.', mobileMessage: 'ChatGPT plan usage is not authorized. Sign in again and allow plan usage.' },
 } as const;
 
-export function chatGptCodeDiagnostic(code: string) {
+function chatGptCodeDiagnostic(code: string) {
   const canonical = code === 'subscription_sharing_user_unavailable' ? 'subscription_sharing_usage_unavailable'
     : code === 'chatpass_v2_invalid_authorization_context' ? 'chatpass_v2_scope_not_authorized' : code;
   return Object.entries(diagnostics).find(([key]) => key === canonical)?.[1];

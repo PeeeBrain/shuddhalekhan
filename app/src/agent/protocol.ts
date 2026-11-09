@@ -1,8 +1,7 @@
-import { MEMORY_BYTE_LIMIT } from '@shuddhalekhan/shared/agent-context';
 import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
 import { z } from 'zod';
 import { agentProviderSchema } from '../shared/agent-provider-validation';
-import { memoryUpdatesSchema, type AgentMemoryCommitResult, type AgentMemoryUpdate, type AgentRunContext } from '../shared/agent-context';
+import { MEMORY_BYTE_LIMIT, memoryUpdatesSchema, type AgentMemoryCommitResult, type AgentMemoryUpdate, type AgentRunContext } from '../shared/agent-context';
 
 export type SidecarReadyEvent = {
   type: 'sidecar:ready';
