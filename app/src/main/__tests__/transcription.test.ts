@@ -3,8 +3,8 @@ import {
   checkServerReachability,
   getSafeTranscriptionFailureMessage,
   TranscriptionFailure,
-  validateLocalWhisperSettings,
 } from '../transcription';
+import { validateLocalWhisperSettings } from '../../shared/transcription-validation';
 
 describe('sanitized failures', () => {
   it('keeps normalized guidance and redacts unknown error material', () => {

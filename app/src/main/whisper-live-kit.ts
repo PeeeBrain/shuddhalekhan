@@ -6,7 +6,6 @@ import WebSocket from 'ws';
 import {
   cleanFillerWords,
   failureForHttpStatus,
-  validateWhisperLiveKitSettings,
   type RecognitionSettings,
   type StreamingTranscriptionRequest,
   type StreamingTranscriptionSession,
@@ -14,8 +13,7 @@ import {
   type Transcriber,
   TranscriptionFailure,
 } from './transcription';
-
-export { validateWhisperLiveKitSettings } from './transcription';
+import { validateWhisperLiveKitSettings } from '../shared/transcription-validation';
 
 export interface WhisperLiveKitEndpoints {
   baseUrl: string;

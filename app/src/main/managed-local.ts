@@ -10,8 +10,6 @@ import { CUDA_SUPPORTED, LOCAL_MODELS, LOCAL_FORMATTING_MODEL, legacyLocalModel 
 import type { ManagedLocalModelSnapshot, ManagedLocalModelState, ManagedLocalTarget } from '../types/ipc';
 import { managedLocalSelectionSchema, resolveManagedLocalSelection } from '../shared/managed-local-selection';
 import { getConfig } from './config';
-import { getPersistentStoreDirectory } from './store-path';
-import { join } from 'path';
 import { getManagedLocalThreadLimits, resolveManagedLocalThreads } from './managed-local-threads';
 
 type ModelManager = ReturnType<typeof createManagedLocalModelManager>;
@@ -40,12 +38,12 @@ export const managedLocalTranscriber = createManagedLocalEngine({
     // Upstream CUDA builds exist for Windows and Linux x64 only; elsewhere a GPU choice runs on CPU.
     const preference = CUDA_SUPPORTED ? settings.devices[settings.model] : 'cpu';
     const candidates: LocalRuntime[] = [];
-    const formatting = getManagedLocalModelManager(modelManagerConfig(), { model: settings.model, backend: 'cpu' }).parts
+    const formatting = getManagedLocalModelManager({ model: settings.model, backend: 'cpu' }).parts
       .find(part => part.manifest.id === LOCAL_FORMATTING_MODEL.id);
     const formattingState = await formatting?.getInstallState();
     const formattingPath = formattingState?.kind === 'ready' ? formattingState.path : undefined;
     if (preference !== 'cpu') {
-      const parts = await Promise.all(getManagedLocalModelManager(modelManagerConfig(), { model: settings.model, backend: 'cuda' }).parts
+      const parts = await Promise.all(getManagedLocalModelManager({ model: settings.model, backend: 'cuda' }).parts
         .filter(part => part.manifest.id !== LOCAL_FORMATTING_MODEL.id)
         .map(async part => { const state = await part.getInstallState(); return state.kind === 'ready' ? state.path : null; }));
       const [modelPath, ...libraryPaths] = parts;
@@ -54,7 +52,7 @@ export const managedLocalTranscriber = createManagedLocalEngine({
       } else if (preference === 'cuda') throw new TranscriptionFailure('model', 'Set up GPU acceleration files for the selected model in Settings, or choose CPU.');
     }
     if (preference !== 'cuda') {
-      const cpu = await getManagedLocalModelManager(modelManagerConfig(), { model: settings.model, backend: 'cpu' }).getState();
+      const cpu = await getManagedLocalModelManager({ model: settings.model, backend: 'cpu' }).getState();
       if (cpu.kind !== 'ready') throw new TranscriptionFailure('model', 'Install CPU files for the selected model in Settings. Auto needs them for fallback.');
       candidates.push({ model: settings.model, backend: 'cpu', modelPath: cpu.path, formattingPath });
     }
@@ -67,7 +65,7 @@ export const managedLocalTranscriber = createManagedLocalEngine({
   onStatus(status, settings) {
     runtimeStatus = status;
     runtimeSettings = selectionKey(settings);
-    void getManagedLocalModelManager(modelManagerConfig()).getState().then(publish).catch(error => console.warn('Could not publish Managed Local status:', error));
+    void getManagedLocalModelManager().getState().then(publish).catch(error => console.warn('Could not publish Managed Local status:', error));
   },
 });
 
@@ -165,22 +163,18 @@ export function managedLocalTarget(value?: unknown): ManagedLocalTarget {
   return { model: settings.model, backend: settings.devices[settings.model] === 'cuda' ? 'cuda' : 'cpu' };
 }
 
-function modelManagerConfig() {
-  return { root: join(getPersistentStoreDirectory(), 'models'), onStateChanged: publish };
-}
-
-export function getManagedLocalModelManager(config: Parameters<typeof configureManagedLocal>[0], target = managedLocalTarget()): Target {
-  configureManagedLocal(config);
+/** Startup calls configureManagedLocal before any lookup. */
+export function getManagedLocalModelManager(target = managedLocalTarget()): Target {
   const manager = targets.get(`${target.model}:${target.backend}`);
   if (!manager) throw new Error('Managed Local is not initialized.');
   return manager;
 }
 
 export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot> {
-  const selected = getManagedLocalModelManager(modelManagerConfig());
+  const selected = getManagedLocalModelManager();
   const catalog = await Promise.all(LOCAL_MODELS.map(async model => {
     const variant = async (backend: ManagedLocalTarget['backend']) => {
-      const manager = getManagedLocalModelManager(modelManagerConfig(), { model: model.key, backend });
+      const manager = getManagedLocalModelManager({ model: model.key, backend });
       const [state, legacy] = await Promise.all([manager.getInstallState(), manager.getLegacy()]);
       // A GPU setup only downloads the parts that are not installed yet.
       const missing = await Promise.all(manager.parts.map(async part =>
@@ -209,11 +203,11 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
 export async function installManagedLocalModel(value?: unknown): Promise<ManagedLocalModelSnapshot> {
   const target = managedLocalTarget(value);
   if (target.backend === 'cuda' && !CUDA_SUPPORTED) throw new Error(GPU_UNAVAILABLE_MESSAGE);
-  await getManagedLocalModelManager(modelManagerConfig(), target).install();
+  await getManagedLocalModelManager(target).install();
   revision++;
   const settings = selection();
   const device = settings.devices[target.model];
-  const cpuReady = (await getManagedLocalModelManager(modelManagerConfig(), { model: target.model, backend: 'cpu' }).getState()).kind === 'ready';
+  const cpuReady = (await getManagedLocalModelManager({ model: target.model, backend: 'cpu' }).getState()).kind === 'ready';
   if (!managedLocalTranscriber.isBusy() && settings.model === target.model
     && (device === target.backend || device === 'auto' && cpuReady)) {
     await managedLocalTranscriber.warmup();
@@ -226,7 +220,7 @@ export async function deleteManagedLocalModel(value?: unknown): Promise<ManagedL
   const target = managedLocalTarget(value);
   const legacy = z.object({ legacy: z.literal(true).optional() }).parse(value ?? {}).legacy;
   await managedLocalTranscriber.shutdown();
-  const manager = getManagedLocalModelManager(modelManagerConfig(), target);
+  const manager = getManagedLocalModelManager(target);
   await (legacy ? manager.deleteLegacy() : manager.delete());
   revision++;
   return managedLocalSnapshot();

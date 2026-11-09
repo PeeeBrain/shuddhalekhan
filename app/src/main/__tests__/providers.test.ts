@@ -2,11 +2,13 @@ import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
   buildOpenAiEndpoint,
-  validateOpenAiModel,
-  validateAzureSpeechSettings,
-  validateCustomOpenAiSettings,
   validateProviderReadiness,
 } from '../transcription';
+import {
+  validateAzureSpeechSettings,
+  validateCustomOpenAiSettings,
+  validateOpenAiModel,
+} from '../../shared/transcription-validation';
 import type { AppConfig } from '../../types/ipc';
 import { installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import { getTranscriptionDictionaryError, resolveRecognitionSettings } from '../../shared/transcription-features';

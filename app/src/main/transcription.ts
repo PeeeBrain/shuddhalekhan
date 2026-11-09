@@ -1,7 +1,6 @@
 import { providerCredentialKind } from '../shared/transcription-credential';
 import { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 import { validateAzureSpeechSettings, validateGoogleCloudSpeechSettings, validateNvidiaSpeechNimSettings, validateWhisperLiveKitSettings, validateLocalWhisperSettings } from '../shared/transcription-validation';
-export { validateOpenAiModel, validateAzureSpeechSettings, validateGoogleCloudSpeechSettings, validateNvidiaSpeechNimSettings, validateCustomOpenAiSettings, validateWhisperLiveKitSettings, validateLocalWhisperSettings } from '../shared/transcription-validation';
 import { getSarvamSettingsErrors } from '@shuddhalekhan/shared/sarvam';
 import { existsSync } from 'fs';
 import { homedir } from 'os';

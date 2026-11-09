@@ -11,7 +11,7 @@ import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
 import { AgentAuditStore } from './audit';
 import { McpRegistry } from './mcp-registry';
 import { AgentMemoryCommitter } from './memory-committer';
-import { SIDECAR_EXIT_TIMEOUT_MS } from '../shared/agent-timeouts';
+import { RUN_SETTLE_TIMEOUT_MS, SIDECAR_EXIT_TIMEOUT_MS } from '../shared/agent-timeouts';
 import type { AgentRunContext } from '../shared/agent-context';
 import {
   AisdkMcpClientFactory,
@@ -363,7 +363,13 @@ async function shutdown(): Promise<void> {
     rejectPendingApproval(activeAgentRunId, 'Agent run was interrupted because the sidecar is shutting down.');
   }
   await configUpdateQueue.catch(() => undefined);
-  await Promise.allSettled(pendingRuns);
+  // The aborted run records its own interruption; a tool that ignores the abort must not hold MCP cleanup hostage.
+  const runningId = activeAgentRunId;
+  const settled = await Promise.race([
+    Promise.allSettled(pendingRuns).then(() => true),
+    new Promise<false>((resolve) => setTimeout(resolve, RUN_SETTLE_TIMEOUT_MS, false).unref()),
+  ]);
+  if (!settled && runningId) auditStore.record(runningId, 'run_interrupted', { reason: 'sidecar_shutdown' });
   await mcpRegistry.close();
   auditStore.close();
 }

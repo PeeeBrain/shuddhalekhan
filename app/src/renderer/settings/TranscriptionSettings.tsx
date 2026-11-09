@@ -1,5 +1,15 @@
 import { providerCredentialKind } from '../../shared/transcription-credential';
-import { validateOpenAiModel, validateLocalWhisperSettings, validateWhisperLiveKitSettings, validateAzureSpeechSettings, validateGoogleProject, validateGoogleLocation } from '../../shared/transcription-validation';
+import {
+  validateAzureSpeechSettings,
+  validateCustomOpenAiSettings,
+  validateGoogleCloudSpeechSettings,
+  validateGoogleLocation,
+  validateGoogleProject,
+  validateLocalWhisperSettings,
+  validateNvidiaSpeechNimSettings,
+  validateOpenAiModel,
+  validateWhisperLiveKitSettings,
+} from '../../shared/transcription-validation';
 import { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -172,6 +182,7 @@ function ProviderSelector({
   );
 }
 
+// Field checks only; credential availability is reported separately.
 function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderId): boolean {
   const providers = config.transcription.providers;
   switch (provider) {
@@ -179,26 +190,19 @@ function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderI
     case 'sarvam':
       return true;
     case 'local-whisper-cpp':
-      return Boolean(providers.localWhisperCpp.endpoint.trim());
+      return validateLocalWhisperSettings(providers.localWhisperCpp).length === 0;
     case 'openai':
-      return Boolean(providers.openai.baseUrl.trim() && providers.openai.model.trim());
+      return Boolean(providers.openai.baseUrl.trim()) && validateOpenAiModel(providers.openai.model).length === 0;
     case 'azure-speech':
-      return Boolean(providers.azureSpeech.endpoint.trim() || providers.azureSpeech.region.trim());
+      return validateAzureSpeechSettings(providers.azureSpeech).length === 0;
     case 'google-cloud-speech-v2':
-      return Boolean(
-        providers.googleCloudSpeech.project.trim()
-        && providers.googleCloudSpeech.location.trim()
-        && providers.googleCloudSpeech.model.trim(),
-      );
+      return validateGoogleCloudSpeechSettings(providers.googleCloudSpeech).length === 0;
     case 'nvidia-speech-nim':
-      return Boolean(providers.nvidiaSpeechNim.endpoint.trim() && providers.nvidiaSpeechNim.model.trim());
+      return validateNvidiaSpeechNimSettings(providers.nvidiaSpeechNim).length === 0;
     case 'custom-open-ai-compatible':
-      return Boolean(
-        providers.customOpenAiCompatible.endpoint.trim()
-        && providers.customOpenAiCompatible.model.trim(),
-      );
+      return validateCustomOpenAiSettings(providers.customOpenAiCompatible).length === 0;
     case 'whisper-live-kit':
-      return Boolean(providers.whisperLiveKit.baseUrl.trim());
+      return validateWhisperLiveKitSettings(providers.whisperLiveKit).length === 0;
   }
 }
 

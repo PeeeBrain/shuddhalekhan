@@ -26,15 +26,15 @@ describe('Managed Local GPU setup', () => {
       for (const file of part.requiredFiles) await writeFile(join(directory(part), file), '');
     }
     configureManagedLocal({ root, onStateChanged: () => {} });
-    const cpu = getManagedLocalModelManager({ root, onStateChanged: () => {} }, { model: 'parakeet', backend: 'cpu' });
+    const cpu = getManagedLocalModelManager({ model: 'parakeet', backend: 'cpu' });
     expect((await cpu.getState()).kind).toBe('ready');
     expect((await cpu.getInstallState()).kind).toBe('missing');
-    const gpu = getManagedLocalModelManager({ root, onStateChanged: () => {} }, { model: 'parakeet', backend: 'cuda' });
+    const gpu = getManagedLocalModelManager({ model: 'parakeet', backend: 'cuda' });
     expect((await gpu.getState()).kind).toBe('ready');
     expect((await gpu.getInstallState()).kind).toBe('missing');
     await mkdir(directory(LOCAL_FORMATTING_MODEL), { recursive: true });
     for (const file of LOCAL_FORMATTING_MODEL.requiredFiles) await writeFile(join(directory(LOCAL_FORMATTING_MODEL), file), '');
-    const state = async (model: 'parakeet' | 'granite') => (await getManagedLocalModelManager({ root, onStateChanged: () => {} }, { model, backend: 'cuda' }).getState()).kind;
+    const state = async (model: 'parakeet' | 'granite') => (await getManagedLocalModelManager({ model, backend: 'cuda' }).getState()).kind;
     expect(await state('parakeet')).toBe('ready');
 
     await deleteManagedLocalModel({ model: 'parakeet', backend: 'cuda' });

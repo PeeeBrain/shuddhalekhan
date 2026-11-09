@@ -5,8 +5,8 @@ import {
   createWhisperLiveKitStreamingSession,
   createWhisperLiveKitTranscriber,
   deriveWhisperLiveKitEndpoints,
-  validateWhisperLiveKitSettings,
 } from '../whisper-live-kit';
+import { validateWhisperLiveKitSettings } from '../../shared/transcription-validation';
 
 class FakeSocket {
   private readonly listeners = new Map<string, Array<(event: Event) => void>>();

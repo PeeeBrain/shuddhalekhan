@@ -15,8 +15,6 @@ import { createAzureSpeechTranscriber } from './azure-speech';
 import { createGoogleCloudSpeechTranscriber } from './google-cloud-speech';
 import { checkWhisperLiveKitReadiness, createWhisperLiveKitTranscriber } from './whisper-live-kit';
 import { getManagedLocalModelManager, managedLocalSnapshot, managedLocalTranscriber } from './managed-local';
-import { join } from 'path';
-import { getPersistentStoreDirectory } from './store-path';
 import type { AppConfig } from '../types/ipc';
 import { resolveTranscriptionFeatures } from '../shared/transcription-features';
 
@@ -276,7 +274,7 @@ export async function checkTranscriptionReadiness(
 ): Promise<import('../types/ipc').TranscriptionReadiness> {
   const provider = config.transcription.activeProvider;
   if (provider === 'managed-local') {
-    const state = await getManagedLocalModelManager({ root: join(getPersistentStoreDirectory(), 'models'), onStateChanged: () => {} }).getState();
+    const state = await getManagedLocalModelManager().getState();
     if (state.kind === 'ready') {
       try {
         await managedLocalTranscriber.warmup();

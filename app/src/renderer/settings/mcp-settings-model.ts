@@ -10,7 +10,8 @@ export function createHttpMcpTransport(): Extract<McpServerConfig['transport'], 
 
 export function createBlankMcpServer(): McpServerConfig {
   return {
-    id: crypto.randomUUID(),
+    // Short on purpose: `${id}__${tool}` must fit providers' 64-character tool-name limit.
+    id: `mcp-${Date.now().toString(36)}`,
     displayName: '',
     enabled: false,
     transport: {
