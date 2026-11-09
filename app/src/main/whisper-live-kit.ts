@@ -291,7 +291,7 @@ export function createWhisperLiveKitStreamingSession(
       terminal = true;
       cleanup();
       closeSocket();
-      resolveFinal(committed);
+      resolveFinal(request.recognition.removeFillerWords ? cleanFillerWords(committed) : committed);
       return;
     }
     publishSnapshot(value);

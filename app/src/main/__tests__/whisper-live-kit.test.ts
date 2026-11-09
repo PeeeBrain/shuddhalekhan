@@ -272,6 +272,34 @@ describe('WhisperLiveKit endpoint contract', () => {
     expect(socket.closed).toBe(true);
   });
 
+  it('removes filler words from the streamed final when enabled', async () => {
+    const socket = new FakeSocket();
+    const session = createWhisperLiveKitStreamingSession(
+      { baseUrl: 'http://127.0.0.1:8000', auth: 'none' },
+      null,
+      {
+        recognition: { language: 'en', task: 'transcribe', dictionary: [], removeFillerWords: true },
+        onSnapshot: () => {},
+      },
+      { webSocketFactory: () => socket as unknown as NodeWebSocket, handshakeTimeoutMs: 100, stalledAudioTimeoutMs: 100, flushTimeoutMs: 100 },
+    );
+    socket.emit('open');
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({ type: 'config', useAudioWorklet: true, mode: 'full' }),
+    }));
+    const finalized = session.finish();
+    await Promise.resolve();
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({
+        status: 'active_transcription',
+        lines: [{ speaker: 1, text: 'Um, ship it, uh, today', start: '0:00:00', end: '0:00:02' }],
+        buffer_transcription: '',
+      }),
+    }));
+    socket.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'ready_to_stop' }) }));
+    expect(await finalized).not.toMatch(/\b(um|uh)\b/i);
+  });
+
   it('preserves word boundaries across silence lines when adjacent segments lack whitespace', async () => {
     const socket = new FakeSocket();
     const snapshots: Array<{ sequence: number; committed: string; tentative: string }> = [];
