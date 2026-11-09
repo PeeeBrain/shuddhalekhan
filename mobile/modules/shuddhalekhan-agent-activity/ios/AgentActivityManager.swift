@@ -65,6 +65,8 @@ final class AgentActivityManager {
   }
 
   func start(maximumSteps: Int) async throws -> String {
+    let publication = ActivityPublication()
+    defer { publication.end() }
     guard UIApplication.shared.applicationState == .active || keyboardSessionActive else { throw AgentRunError.requiresForeground }
     guard (1...34).contains(maximumSteps) else { throw AgentRunError.invalidUpdate }
     guard record?.phase.isTerminal != false else { throw AgentRunError.alreadyRunning }
@@ -101,6 +103,8 @@ final class AgentActivityManager {
   }
 
   func resume(runId: String) async throws {
+    let publication = ActivityPublication()
+    defer { publication.end() }
     guard UIApplication.shared.applicationState == .active else { throw AgentRunError.requiresForeground }
     guard var current = record, current.runId == runId else { throw AgentRunError.unknownRun }
     do { try current.resume() }
@@ -151,6 +155,8 @@ final class AgentActivityManager {
   }
 
   func update(_ update: AgentRunUpdate) async throws {
+    let publication = ActivityPublication()
+    defer { publication.end() }
     guard var current = record, current.runId == update.runId else { return }
     // An expiry has already published interruption; JS acknowledges after abort/cleanup.
     if current.phase == .interrupted && update.phase.isTerminal {
@@ -232,6 +238,8 @@ final class AgentActivityManager {
   }
 
   func clear(runId: String) async throws {
+    let publication = ActivityPublication()
+    defer { publication.end() }
     guard record?.runId == runId else { return }
     guard record?.phase.isTerminal == true else { throw AgentRunError.alreadyRunning }
     try store.clear()
@@ -248,6 +256,12 @@ final class AgentActivityManager {
   func enterBackground() async {
     guard let current = record, current.phase == .running, !canContinueInBackground(runId: current.runId) else { return }
     await interrupt(runId: current.runId)
+  }
+
+  func enterForeground() async {
+    await checkApprovalExpiry()
+    guard let current = record, let id = activityId else { return }
+    await Self.activity(id: id)?.update(content(current))
   }
 
   func checkApprovalExpiry() async {
@@ -338,6 +352,8 @@ final class AgentActivityManager {
   }
 
   private func interrupt(runId: String) async {
+    let publication = ActivityPublication()
+    defer { publication.end() }
     guard var current = record, current.runId == runId, !current.phase.isTerminal else { return }
     current.interrupt()
     record = current
@@ -397,7 +413,8 @@ final class AgentActivityManager {
     guard record?.runId == current.runId else { return }
     let id = activityId
     let keepForSession = id != nil && id == keyboardSessionActivityId && keyboardSessionActive
-    activityId = nil
+    // Retain the adopted session ID so foreground reconciliation can repair a rejected update.
+    if !keepForSession { activityId = nil }
     if !keepForSession, id == keyboardSessionActivityId {
       keyboardSessionActivityId = nil
       keyboardSessionEndsAt = nil

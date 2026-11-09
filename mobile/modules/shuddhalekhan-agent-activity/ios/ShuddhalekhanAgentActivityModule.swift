@@ -35,7 +35,7 @@ public final class ShuddhalekhanAgentActivityModule: Module, @unchecked Sendable
     }
     OnAppBecomesActive {
       Task { @MainActor in
-        await AgentActivityManager.shared.checkApprovalExpiry()
+        await AgentActivityManager.shared.enterForeground()
         AgentActivityManager.shared.onApprovalAction?()
       }
     }

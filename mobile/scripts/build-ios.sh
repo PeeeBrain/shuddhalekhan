@@ -61,6 +61,16 @@ build_dir="$(mktemp -d "${TMPDIR:-/tmp}/shuddhalekhan-ios.XXXXXX")"
 trap 'rm -rf -- "$build_dir"' EXIT
 archive_path="$build_dir/Shuddhalekhan.xcarchive"
 
+swiftc -swift-version 6 -emit-library -emit-module -module-name UIKit \
+  "$mobile_dir/native-checks/activity-publication/UIKit.swift" \
+  -emit-module-path "$build_dir/UIKit.swiftmodule" -o "$build_dir/libUIKit.dylib"
+swiftc -swift-version 6 -I "$build_dir" -L "$build_dir" -lUIKit \
+  -Xlinker -rpath -Xlinker "$build_dir" \
+  "$mobile_dir/modules/shuddhalekhan-agent-activity/ios/ActivityPublication.swift" \
+  "$mobile_dir/native-checks/activity-publication/ActivityPublicationCheck.swift" \
+  -o "$build_dir/check-activity-publication"
+"$build_dir/check-activity-publication"
+
 swiftc -swift-version 6 \
   "$mobile_dir/modules/shuddhalekhan-agent-activity/ios/AgentRunRecord.swift" \
   "$mobile_dir/native-checks/AgentRunCheck.swift" \
