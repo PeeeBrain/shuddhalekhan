@@ -27,10 +27,10 @@ function createClipboardSnapshot(overrides: Partial<ClipboardSnapshot> = {}): Cl
 
 describe('ClipboardTransactionManager', () => {
   let mockClipboardIO: ClipboardIO;
-  let mockForegroundInspector: ForegroundInspector;
-  let mockInputSimulator: InputSimulator;
-  let mockClipboardMonitor: ClipboardMonitor;
-  let mockPasteStrategyResolver: PasteStrategyResolver;
+  let mockForegroundInspector: { captureTarget: ForegroundInspector };
+  let mockInputSimulator: { simulatePaste: InputSimulator };
+  let mockClipboardMonitor: { getSequenceNumber: ClipboardMonitor };
+  let mockPasteStrategyResolver: { resolveStrategy: PasteStrategyResolver };
   let mockDelay: ReturnType<typeof mock>;
 
   beforeEach(() => {
@@ -59,16 +59,14 @@ describe('ClipboardTransactionManager', () => {
     mockDelay = mock(async () => undefined);
   });
 
-  function createManager(options: { stagingDelayMs?: number; pasteDelayMs?: number } = {}) {
+  function createManager() {
     return new ClipboardTransactionManager(
       mockClipboardIO,
-      mockForegroundInspector,
-      mockInputSimulator,
-      mockClipboardMonitor,
-      mockPasteStrategyResolver,
+      () => mockForegroundInspector.captureTarget(),
+      strategy => mockInputSimulator.simulatePaste(strategy),
+      () => mockClipboardMonitor.getSequenceNumber(),
+      executable => mockPasteStrategyResolver.resolveStrategy(executable),
       {
-        stagingDelayMs: options.stagingDelayMs ?? 10,
-        pasteDelayMs: options.pasteDelayMs ?? 10,
         delayFn: mockDelay,
       }
     );
@@ -82,8 +80,8 @@ describe('ClipboardTransactionManager', () => {
     expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
     expect(mockClipboardIO.writeText).toHaveBeenCalledWith('hello');
     expect(mockClipboardMonitor.getSequenceNumber).toHaveBeenCalledTimes(5);
-    expect(mockDelay).toHaveBeenNthCalledWith(1, 10);
-    expect(mockDelay).toHaveBeenNthCalledWith(2, 10);
+    expect(mockDelay).toHaveBeenNthCalledWith(1, 50);
+    expect(mockDelay).toHaveBeenNthCalledWith(2, 100);
     expect(mockInputSimulator.simulatePaste).toHaveBeenCalledWith('ctrl-v');
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
   });

@@ -1,13 +1,13 @@
 import { runAgent, type ToolApproval } from './agent';
 import { parseAgentActivityLink, type AgentActivityPort, type AgentActivityUpdate } from './agent-activity';
 import type { Fetch } from './network';
-import { defaultSettings, mobileSettingsSchema, settingsError, type MobileSettings } from './settings';
-import { transcribe } from './transcription';
+import { defaultSettings, settingsError, type MobileSettings } from './settings';
+import { transcribe, validateTranscript } from './transcription';
 import type { ChatGptAuth } from './chatgpt';
 import type { KeyboardSessionEvent } from './keyboard-session';
 
 export type RecordingIntent = 'dictation' | 'agent';
-export type Phase = 'loading' | 'idle' | 'requestingPermission' | 'recording' | 'transcribing' | 'running' | 'awaitingApproval';
+type Phase = 'loading' | 'idle' | 'requestingPermission' | 'recording' | 'transcribing' | 'running' | 'awaitingApproval';
 type State = {
   settings: MobileSettings; phase: Phase; intent: RecordingIntent; transcript: string; response: string;
   status: string; error: string | null; approval: PendingApproval | null; recordingStartedAt: number | null;
@@ -64,7 +64,7 @@ export class MobileController {
   };
   private async load() {
     let settingsLoaded = false;
-    try { this.update({ settings: mobileSettingsSchema.parse(await this.ports.loadSettings()) }); settingsLoaded = true; }
+    try { this.update({ settings: await this.ports.loadSettings() }); settingsLoaded = true; }
     catch { this.update({ error: 'Saved settings could not be loaded. Close and reopen the app, or reset settings to configure it again. Your saved settings have not been replaced.', status: 'Settings unavailable.' }); }
     let status = 'Ready to record.';
     try {
@@ -96,7 +96,6 @@ export class MobileController {
         catch { this.update({ activityNotice: 'Could not clear the previous agent result.' }); }
       }
       active.signal.throwIfAborted();
-      mobileSettingsSchema.parse(this.state.settings);
       const granted = await this.ports.recorder.requestPermission();
       active.signal.throwIfAborted();
       if (!granted) throw new Error('Microphone access is denied. Enable it for Shuddhalekhan in iOS Settings.');
@@ -117,9 +116,7 @@ export class MobileController {
       let transcript: string;
       if (this.state.settings.transcriptionSource === 'on-device') {
         if (!this.ports.transcribeOnDevice) throw new Error('On-device Parakeet is unavailable in this build.');
-        transcript = (await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim();
-        if (!transcript) throw new Error('No speech was recognized. Record again.');
-        if (transcript.length > 200_000) throw new Error('The local transcript is too large. Record a shorter clip.');
+        transcript = validateTranscript((await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim(), true);
       } else {
         transcript = await transcribe({ audio, settings: this.state.settings, fetch: this.ports.fetch, signal: active.signal, signGoogleJwt: this.ports.signGoogleJwt });
       }
@@ -350,9 +347,8 @@ export class MobileController {
 
   saveSettings = async (settings: MobileSettings) => {
     if (this.state.phase !== 'idle' || this.active) throw new Error('Wait for the current command to finish.');
-    const parsed = mobileSettingsSchema.parse(settings);
     this.update({ phase: 'loading' });
-    try { this.update({ settings: await this.ports.saveSettings(parsed), error: null }); }
+    try { this.update({ settings: await this.ports.saveSettings(settings), error: null }); }
     finally { this.update({ phase: 'idle' }); }
   };
   resetSettings = async () => {

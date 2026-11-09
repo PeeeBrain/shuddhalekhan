@@ -7,6 +7,8 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Tray paste now reports the insertion policy on unsupported Wayland sessions. Linux sessions started with `startx` use X11 shortcuts when `DISPLAY` is set, matching text delivery.
+
 ### Agent
 - Fixed empty desktop Agent History on Linux by reading the same persistent database as the sidecar. Existing recorded runs become visible without moving or deleting them. Custom audit-directory overrides now reach the sidecar as well as History.
 

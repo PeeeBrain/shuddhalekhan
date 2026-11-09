@@ -15,7 +15,6 @@ describe('Linux evdev input', () => {
       'N: Name="Power Button"\nH: Handlers=kbd event2\nB: EV=3',
       'N: Name="AT Translated Set 2 keyboard"\nH: Handlers=sysrq kbd leds event3\nB: EV=120013',
       'N: Name="Logitech USB Receiver Mouse"\nH: Handlers=mouse0 event5\nB: EV=17',
-      'N: Name="Shuddhalekhan virtual keyboard"\nH: Handlers=sysrq kbd leds event9\nB: EV=120003',
     ].join('\n\n');
 
     expect(parseKeyboardDevices(devices)).toEqual(['/dev/input/event3']);

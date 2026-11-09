@@ -1,3 +1,4 @@
+import { hasControlCharacters, isLoopbackHost } from '@shuddhalekhan/shared/validation';
 import type {
   DictationConfig,
   DictationFormatterProfile,
@@ -105,11 +106,7 @@ export function classifyFormatterEndpoint(baseUrl: string): 'local' | 'remote' {
   try {
     const url = new URL(baseUrl);
     const hostname = url.hostname.toLowerCase();
-    const loopback = hostname === 'localhost'
-      || hostname.endsWith('.localhost')
-      || /^127(?:\.\d{1,3}){3}$/.test(hostname)
-      || hostname === '[::1]'
-      || hostname === '::1';
+    const loopback = isLoopbackHost(hostname);
     return loopback ? 'local' : 'remote';
   } catch {
     return 'remote';
@@ -159,10 +156,7 @@ export function getFormatterProfileError(
     return 'Corrected Dictation formatter URLs must use HTTP or HTTPS.';
   }
   const hostname = url.hostname.toLowerCase();
-  const loopback = hostname === 'localhost'
-    || hostname.endsWith('.localhost')
-    || /^127(?:\.\d{1,3}){3}$/.test(hostname)
-    || hostname === '[::1]';
+  const loopback = isLoopbackHost(hostname);
   if (url.protocol === 'http:' && !loopback) {
     return 'Remote Corrected Dictation formatters must use HTTPS.';
   }
@@ -171,12 +165,7 @@ export function getFormatterProfileError(
   if (model.length > 128) {
     return 'Corrected Dictation formatter model is too long.';
   }
-  for (let index = 0; index < model.length; index++) {
-    const code = model.charCodeAt(index);
-    if (code < 32 || code === 127) {
-      return 'Corrected Dictation formatter model contains control characters.';
-    }
-  }
+  if (hasControlCharacters(model)) return 'Corrected Dictation formatter model contains control characters.';
   return null;
 }
 

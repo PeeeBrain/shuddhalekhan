@@ -1,3 +1,4 @@
+import { DESKTOP_LANGUAGE_LOCALES, nimLocale } from '@shuddhalekhan/shared/languages';
 import { createSarvamTranscriber } from './sarvam';
 import {
   buildOpenAiEndpoint,
@@ -258,15 +259,9 @@ function createCustomOpenAiTranscriber(
   };
 }
 
-const NIM_LANGUAGE_CODES: Record<string, string> = {
-  en: 'en-US', hi: 'hi-IN', mr: 'mr-IN', gu: 'gu-IN', bn: 'bn-IN', ta: 'ta-IN',
-  te: 'te-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', fr: 'fr-FR',
-  es: 'es-US', de: 'de-DE', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR', pt: 'pt-BR',
-  ar: 'ar-SA', ru: 'ru-RU',
-};
 
 function mapNimLanguage(language: string): string {
-  return NIM_LANGUAGE_CODES[language] ?? language;
+  return nimLocale(language, DESKTOP_LANGUAGE_LOCALES[language] ?? language);
 }
 
 export async function transcribeOpenAiLike(

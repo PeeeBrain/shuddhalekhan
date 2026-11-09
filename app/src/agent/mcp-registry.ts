@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey, modelToolName } from '@shuddhalekhan/shared/mcp';
 import type { Tool } from 'ai';
 import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../types/ipc';
 import type { AgentRuntimeCallbacks } from './runtime';
@@ -135,11 +136,11 @@ export class McpRegistry {
     for (const server of leasedServers) {
       const serverId = server.config.id;
       for (const [originalName, toolDef] of Object.entries(server.rawTools)) {
-        const policyKey = `${serverId}:${originalName}` as const;
-        const policy = policies.get(policyKey) ?? 'alwaysAsk';
+        const policyKey = makeMcpToolPolicyKey(serverId, originalName);
+        const policy = policies.get(policyKey) ?? DEFAULT_TOOL_POLICY;
         if (policy === 'disabled') continue;
 
-        const modelName = `${serverId}__${originalName}`;
+        const modelName = modelToolName(serverId, originalName);
         tools[modelName] = wrapToolWithPolicy(
           serverId,
           originalName,

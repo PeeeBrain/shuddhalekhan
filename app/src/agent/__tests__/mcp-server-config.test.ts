@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { McpServerConfig } from '../../types/ipc';
-import { getMcpServerConnectionKey, makeMcpToolPolicyKey, normalizeMcpServers } from '../mcp-server-config';
+import { getMcpServerConnectionKey, normalizeMcpServers } from '../mcp-server-config';
 
 describe('MCP server config', () => {
   it('defaults discovered tool policies and server enabled state', () => {
@@ -146,7 +146,6 @@ describe('MCP server config', () => {
       toolPolicies: {},
     };
 
-    expect(makeMcpToolPolicyKey('srv1', 'search')).toBe('srv1:search');
     expect(getMcpServerConnectionKey(server)).toBe(JSON.stringify({
       enabled: true,
       transport: { type: 'stdio', command: 'bun', args: ['run', 'server.ts'], envVarNames: ['TOKEN'] },

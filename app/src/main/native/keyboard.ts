@@ -1,7 +1,8 @@
 import koffi from 'koffi';
 import type { RecordingActivationMode, RecordingIntent, ShortcutBinding, ShortcutModifier } from '../../types/ipc';
 import { modifierForKeyCode } from '../../shared/shortcut-keys';
-import { DEFAULT_SHORTCUTS, normalizeBinding, SHORTCUT_MODIFIER_ORDER } from '../../shared/shortcut-bindings';
+import { DEFAULT_SHORTCUTS, normalizeBinding } from '../../shared/shortcut-bindings';
+import type { DesktopShortcutStatus } from '../../shared/desktop-status';
 import { startEvdevKeyboardReader } from './linux-input';
 import {
   connectLinuxShortcuts,
@@ -9,17 +10,6 @@ import {
   type LinuxShortcutBindings,
   type LinuxShortcutTriggers,
 } from '../desktop/linux-shortcuts';
-
-/**
- * Which Linux activation path is live. `triggers` holds, per bound intent, the
- * chord the desktop actually assigned, or null when it refused (conflict,
- * declined, unassigned). evdev only observes keys, so its chords also reach
- * the focused app.
- */
-export type LinuxShortcutStatus =
-  | { backend: 'portal' | 'x11'; triggers: LinuxShortcutTriggers }
-  | { backend: 'evdev' }
-  | { backend: 'unavailable'; error: string };
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -96,8 +86,8 @@ export class KeyboardHook {
   /** Automatic reconnects left; each may re-prompt on portal desktops, so they are few. */
   private linuxAutoReconnects = 3;
   private linuxReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private linuxStatus: LinuxShortcutStatus | null = null;
-  private linuxStatusListener: ((status: LinuxShortcutStatus) => void) | null = null;
+  private linuxStatus: DesktopShortcutStatus | null = null;
+  private linuxStatusListener: ((status: DesktopShortcutStatus) => void) | null = null;
   /** Desktop-reported chords currently held (portal / X11 backends). */
   private readonly heldIntents = new Set<RecordingIntent>();
   private readonly pressed = new Set<number>();
@@ -173,10 +163,6 @@ export class KeyboardHook {
     if (this.linuxBackend?.kind === 'x11') this.refreshShortcuts();
   }
 
-  isCaptureSuspended(): boolean {
-    return this.captureSuspended;
-  }
-
   /**
    * Linux desktop shortcuts are registered with the desktop, so binding and
    * Agent Mode changes must be pushed: call after either changes. No-op on
@@ -190,7 +176,7 @@ export class KeyboardHook {
   }
 
   /** Receives the current Linux activation status now (if known) and on every change. */
-  setLinuxShortcutStatusListener(listener: ((status: LinuxShortcutStatus) => void) | null): void {
+  setLinuxShortcutStatusListener(listener: ((status: DesktopShortcutStatus) => void) | null): void {
     this.linuxStatusListener = listener;
     if (listener && this.linuxStatus) listener(this.linuxStatus);
   }
@@ -351,7 +337,7 @@ export class KeyboardHook {
     void this.startLinux(this.linuxGeneration, false);
   }
 
-  private publishLinuxStatus(status: LinuxShortcutStatus): void {
+  private publishLinuxStatus(status: DesktopShortcutStatus): void {
     this.linuxStatus = status;
     this.linuxStatusListener?.(status);
   }
@@ -581,5 +567,3 @@ export const keyboardTestKeyCodes = {
   rightWin: VK_RWIN,
   letterA: 0x41,
 };
-
-export { SHORTCUT_MODIFIER_ORDER };

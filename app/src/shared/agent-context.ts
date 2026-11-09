@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const MEMORY_FACT_LIMIT = 50;
-export const MEMORY_BYTE_LIMIT = 8192;
+export { MEMORY_BYTE_LIMIT } from '@shuddhalekhan/shared/agent-context';
 export const memoryFactSchema = z.string().trim().min(1).max(512)
   .refine(text => !/[\r\n]/.test(text), 'Each fact must fit on one line.')
   .refine(text => !/\b(?:sk-[A-Za-z0-9_-]{8,}|Bearer\s+\S+|(?:password|api[_ -]?key|access[_ -]?token)\s*[:=]\s*\S+)/i.test(text), 'Credentials must not be stored in memory.');

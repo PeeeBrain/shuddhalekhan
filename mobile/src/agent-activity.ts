@@ -6,7 +6,7 @@ export const recoveredAgentRunSchema = z.object({
   phase: z.enum(['running', 'awaitingApproval', 'completed', 'failed', 'cancelled', 'interrupted']),
   response: z.string().max(200_000),
 });
-export type RecoveredAgentRun = z.infer<typeof recoveredAgentRunSchema>;
+type RecoveredAgentRun = z.infer<typeof recoveredAgentRunSchema>;
 export const startedAgentRunSchema = z.object({ runId: identifier });
 export const stoppedAgentRunSchema = z.object({ runId: identifier });
 export const agentApprovalActionSchema = z.object({ runId: identifier, approvalId: identifier, action: z.enum(['approve', 'deny', 'review']) });

@@ -12,7 +12,7 @@ import {
   createRecordingPresentationEnvelope,
   getTranscriptionTransportCapabilities,
 } from '../shared/dictation-runtime';
-import { keyboardHook } from './native/keyboard';
+import { keyboardHook, type KeyboardHookStartOptions } from './native/keyboard';
 import { DEFAULT_SHORTCUTS } from '../shared/shortcut-bindings';
 import { captureForegroundTarget } from './native/target';
 import { localWhisperCppTranscriber } from './whisper';
@@ -85,13 +85,7 @@ export interface RuntimeShellBackend extends AudioCapture {
 }
 
 export interface KeyboardHook {
-  start(options: {
-    onStart: (intent: RecordingIntent) => boolean | void;
-    onStop: () => void;
-    isAgentModeEnabled?: () => boolean;
-    getBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
-    getActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
-  }): void;
+  start(options: KeyboardHookStartOptions): void;
   stop(): void;
   recordingEndedExternally?(): void;
 }

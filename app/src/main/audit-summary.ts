@@ -1,3 +1,4 @@
+import { parseModelToolName } from '@shuddhalekhan/shared/mcp';
 import type { AuditRunSummary } from '../types/ipc';
 
 export interface AuditSummaryEventRow {
@@ -84,9 +85,9 @@ export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.
           if (Array.isArray(payload.toolCalls)) {
             for (const tc of payload.toolCalls) {
               if (tc && tc.toolName) {
-                const parts = tc.toolName.split('__');
-                if (parts.length > 1) {
-                  toolsSet.add(`${parts[0]}.${parts.slice(1).join('__')}`);
+                const { serverId, toolName } = parseModelToolName(tc.toolName);
+                if (serverId) {
+                  toolsSet.add(`${serverId}.${toolName}`);
                 } else {
                   toolsSet.add(tc.toolName);
                 }

@@ -1,18 +1,10 @@
 import { clipboard, nativeImage } from 'electron';
-import { simulatePaste, getClipboardSequenceNumber } from './native/clipboard';
-import { captureForegroundTarget } from './native/target';
 import { resolvePasteStrategy } from './paste-strategy';
 import { getConfig } from './config';
 import type {
   ClipboardIO,
   ClipboardSnapshot,
-  ForegroundInspector,
-  InputSimulator,
-  ClipboardMonitor,
-  PasteStrategyResolver,
-  PasteDispatchResult,
 } from './clipboard-transaction-manager';
-import type { DictationTargetSnapshot, PasteStrategy } from '../types/ipc';
 
 const PLAIN_TEXT_FORMAT = 'text/plain';
 const HTML_FORMAT = 'text/html';
@@ -151,27 +143,6 @@ export class ElectronClipboardAdapter implements ClipboardIO {
   }
 }
 
-export class NativeInputSimulator implements InputSimulator {
-  public simulatePaste(strategy: PasteStrategy): PasteDispatchResult {
-    return simulatePaste(strategy);
-  }
-}
-
-export class NativeForegroundInspector implements ForegroundInspector {
-  public captureTarget(): DictationTargetSnapshot | null {
-    return captureForegroundTarget();
-  }
-}
-
-export class NativeClipboardMonitor implements ClipboardMonitor {
-  public getSequenceNumber(): number {
-    return getClipboardSequenceNumber();
-  }
-}
-
-export class ConfigPasteStrategyResolver implements PasteStrategyResolver {
-  public resolveStrategy(executablePath: string | null): PasteStrategy {
-    const config = getConfig().pasteStrategy;
-    return resolvePasteStrategy(executablePath, config);
-  }
+export function resolveConfiguredPasteStrategy(executablePath: string | null) {
+  return resolvePasteStrategy(executablePath, getConfig().pasteStrategy);
 }

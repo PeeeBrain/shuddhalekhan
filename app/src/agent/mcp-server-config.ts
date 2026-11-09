@@ -1,15 +1,8 @@
+import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import type {
-  AgentToolApprovalPolicy,
   McpHttpOAuthConfig,
   McpServerConfig,
-  McpToolPolicyKey,
 } from '../types/ipc';
-
-const DEFAULT_TOOL_POLICY: AgentToolApprovalPolicy = 'alwaysAsk';
-
-export function makeMcpToolPolicyKey(serverId: string, toolName: string): McpToolPolicyKey {
-  return `${serverId}:${toolName}`;
-}
 
 export function normalizeMcpServer(server: McpServerConfig): McpServerConfig {
   const discoveredTools = Array.isArray(server.discoveredTools) ? server.discoveredTools : [];

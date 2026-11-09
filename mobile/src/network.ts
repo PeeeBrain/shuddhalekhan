@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { validateEndpoint } from './settings';
+import { validateEndpoint } from './validation';
 
 export type Fetch = typeof globalThis.fetch;
 
@@ -36,8 +36,8 @@ export async function request<T>({ fetch, endpoint, allowHTTP, signal, init, rea
     // Strip causes from UI errors; native fetch errors may contain credential-bearing URLs.
     // oxlint-disable-next-line preserve-caught-error
     if (timedOut) throw new Error('The endpoint stopped responding. The request timed out.');
-    // oxlint-disable-next-line preserve-caught-error
     // No response means a transport failure. expo/fetch reports these as plain `Error('fetch failed: …')`, not TypeError.
+    // oxlint-disable-next-line preserve-caught-error
     if (!response || error instanceof TypeError) throw new Error('Could not reach the endpoint. Check its URL, TLS certificate, network access, whether it redirects, and that the server listens on this address, not only localhost.');
     throw error;
   } finally {

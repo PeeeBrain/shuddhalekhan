@@ -1,3 +1,4 @@
+import { hasControlCharacters, isLoopbackHost, isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -231,13 +232,7 @@ function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderI
   }
 }
 
-function hasControlCharacters(value: string): boolean {
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) return true;
-  }
-  return false;
-}
+
 
 function validateLocalWhisperEndpoint(value: string): string | null {
   if (!value.trim()) return 'Endpoint URL is required.';
@@ -318,10 +313,7 @@ function validateWhisperLiveKitBaseUrl(value: string): string | null {
       return 'Endpoints must use HTTP or HTTPS.';
     }
     const hostname = parsed.hostname.toLowerCase();
-    const loopback = hostname === 'localhost'
-      || hostname.endsWith('.localhost')
-      || /^127(?:\.\d{1,3}){3}$/.test(hostname)
-      || hostname === '[::1]';
+    const loopback = isLoopbackHost(hostname);
     if (parsed.protocol === 'http:' && !loopback) return 'Remote endpoints must use HTTPS.';
     return null;
   } catch {
@@ -331,7 +323,7 @@ function validateWhisperLiveKitBaseUrl(value: string): string | null {
 
 function validateHeaderName(value: string): string | null {
   if (!value.trim()) return 'Header name is required.';
-  return /^[!#$%&'*+\-.^_`|~\w]+$/.test(value.trim())
+  return isValidHttpFieldName(value.trim())
     ? null
     : 'Header name contains invalid characters.';
 }

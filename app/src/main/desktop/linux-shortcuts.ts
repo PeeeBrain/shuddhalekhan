@@ -1,6 +1,8 @@
 import type { RecordingIntent, ShortcutBinding } from '../../types/ipc';
 import { openGlobalShortcutsPortal } from './global-shortcuts-portal';
 import { openX11Shortcuts } from './x11-shortcuts';
+import { classifyDesktopSession } from '../dictation-delivery-policy';
+import type { DesktopShortcutStatus } from '../../shared/desktop-status';
 
 /**
  * Desktop-owned global shortcuts on Linux. The desktop delivers whole-chord
@@ -23,7 +25,7 @@ export interface LinuxShortcutBackend {
 }
 
 export type LinuxShortcutBindings = Partial<Record<RecordingIntent, ShortcutBinding>>;
-export type LinuxShortcutTriggers = Partial<Record<RecordingIntent, string | null>>;
+export type LinuxShortcutTriggers = Extract<DesktopShortcutStatus, { backend: 'portal' | 'x11' }>['triggers'];
 export type ShortcutEventHandler = (intent: RecordingIntent, isDown: boolean) => void;
 
 export interface LinuxShortcutEvents {
@@ -39,8 +41,8 @@ export interface LinuxShortcutEvents {
  * Rejects when the session has neither, so the caller can fall back to evdev.
  */
 export function connectLinuxShortcuts(events: LinuxShortcutEvents): Promise<LinuxShortcutBackend> {
-  const session = process.env.XDG_SESSION_TYPE;
-  if (session === 'wayland') return openGlobalShortcutsPortal(events);
+  const session = classifyDesktopSession(process.platform, process.env);
+  if (session === 'wayland' || session === 'kde-wayland') return openGlobalShortcutsPortal(events);
   if (session === 'x11') return openX11Shortcuts(events);
   return Promise.reject(new Error(`No desktop shortcut API for session type "${session ?? 'unknown'}".`));
 }

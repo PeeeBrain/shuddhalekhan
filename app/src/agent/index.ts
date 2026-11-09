@@ -1,3 +1,4 @@
+import { APPROVAL_TIMEOUT_MESSAGE } from '@shuddhalekhan/shared/agent-prompt';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import { logSidecar, parseElectronMessage, writeJsonLine } from './protocol';
@@ -36,7 +37,7 @@ const mcpRegistry = new McpRegistry({
 });
 
 const APPROVAL_TIMEOUT_MS = 30_000;
-const APPROVAL_TIMEOUT_MESSAGE = 'Tool approval window expired.';
+
 
 type PendingApproval = {
   agentRunId: string;

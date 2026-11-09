@@ -1,3 +1,4 @@
+import { DESKTOP_LANGUAGE_LOCALES } from '@shuddhalekhan/shared/languages';
 import { createSign } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import type { GoogleCloudSpeechProviderConfig } from '../types/ipc';
@@ -57,12 +58,6 @@ export function buildGoogleRecognizeEndpoint(config: GoogleCloudSpeechProviderCo
   return `https://speech.googleapis.com/v2/projects/${project}/locations/${location}/recognizers/_:recognize`;
 }
 
-const LANGUAGE_CODES: Record<string, string> = {
-  en: 'en-US', hi: 'hi-IN', mr: 'mr-IN', gu: 'gu-IN', bn: 'bn-IN', ta: 'ta-IN',
-  te: 'te-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', fr: 'fr-FR',
-  es: 'es-ES', de: 'de-DE', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR', pt: 'pt-BR',
-  ar: 'ar-SA', ru: 'ru-RU',
-};
 
 export function createGoogleCloudSpeechTranscriber(
   config: GoogleCloudSpeechProviderConfig,
@@ -163,7 +158,7 @@ async function recognize(
     // Shuddhalekhan sends a complete 16 kHz, mono, PCM16 WAV container. Google's
     // preferred WAV path reads those decoding values from the file header.
     autoDecodingConfig: {},
-    languageCodes: [LANGUAGE_CODES[recognition.language] ?? recognition.language],
+    languageCodes: [DESKTOP_LANGUAGE_LOCALES[recognition.language] ?? recognition.language],
     model: config.model.trim(),
     features: { enableAutomaticPunctuation: true },
   };

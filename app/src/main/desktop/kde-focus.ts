@@ -59,7 +59,6 @@ export async function createKdeFocusTracker(onLost?: () => void): Promise<KdeFoc
     bus.close();
     throw error;
   });
-  const pluginName = PLUGIN_NAME;
   let tracking = false;
   let owner = '';
   let windowId = '';
@@ -114,8 +113,8 @@ export async function createKdeFocusTracker(onLost?: () => void): Promise<KdeFoc
     owner = String((await bus.call(BUS, BUS_PATH, BUS, 'GetNameOwner', 's', [KWIN]))[0]);
     const file = join(dir, 'focus.js');
     await writeFile(file, kwinScript(bus.uniqueName), { mode: 0o600 });
-    await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'unloadScript', 's', [pluginName]);
-    const [id] = await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'loadScript', 'ss', [file, pluginName]);
+    await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'unloadScript', 's', [PLUGIN_NAME]);
+    const [id] = await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'loadScript', 'ss', [file, PLUGIN_NAME]);
     if (typeof id !== 'number' || id < 0) throw new Error('KWin refused to load the focus script');
     loaded = true;
     await bus.call(KWIN, `/Scripting/Script${id}`, 'org.kde.kwin.Script', 'run');
@@ -130,7 +129,7 @@ export async function createKdeFocusTracker(onLost?: () => void): Promise<KdeFoc
     await removeDir();
     tracking = true;
   } catch (error) {
-    if (loaded) await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'unloadScript', 's', [pluginName]).catch(() => undefined);
+    if (loaded) await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'unloadScript', 's', [PLUGIN_NAME]).catch(() => undefined);
     lose();
     // oxlint-disable-next-line preserve-caught-error -- the message carries the cause; the ES2020 lib has no Error cause option.
     throw new Error(`KWin focus tracking is unavailable: ${error instanceof Error ? error.message : String(error)}`);
@@ -145,7 +144,7 @@ export async function createKdeFocusTracker(onLost?: () => void): Promise<KdeFoc
       alive = false;
       tracking = false;
       windowId = '';
-      await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'unloadScript', 's', [pluginName]).catch(() => undefined);
+      await bus.call(KWIN, '/Scripting', 'org.kde.kwin.Scripting', 'unloadScript', 's', [PLUGIN_NAME]).catch(() => undefined);
       bus.close();
       await removeDir();
     },

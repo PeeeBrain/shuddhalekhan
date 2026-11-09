@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { useState } from 'react';
 import { ChevronDown, Plus } from 'lucide-react';
 import type {
@@ -452,8 +453,8 @@ function ToolPolicyEditor({
       {open ? (
         <div className="divide-y divide-border/50 border-t border-border/50">
         {server.discoveredTools.map((tool) => {
-          const policyKey = `${server.id}:${tool.name}` as const;
-          const policy = server.toolPolicies[policyKey] ?? 'alwaysAsk';
+          const policyKey = makeMcpToolPolicyKey(server.id, tool.name);
+          const policy = server.toolPolicies[policyKey] ?? DEFAULT_TOOL_POLICY;
 
           return (
             <div key={tool.name} className="grid grid-cols-1 items-start gap-3 py-3 sm:grid-cols-[1fr_160px]">

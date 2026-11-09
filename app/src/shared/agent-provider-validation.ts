@@ -1,3 +1,4 @@
+import { hasControlCharacters } from '@shuddhalekhan/shared/validation';
 import { z } from 'zod';
 import { AGENT_PROVIDER_KINDS, agentProviderUsesChatCompletionsOnly } from '@shuddhalekhan/shared/providers';
 import type { AgentProviderConfig, AgentProviderIssue, AgentProviderValidation } from '../types/ipc';
@@ -40,7 +41,7 @@ export function getAgentProviderIssues(value: AgentProviderConfig): AgentProvide
     }
   }
   if (!provider.model) add('model', provider.kind === 'azure-openai' ? 'Enter the Azure deployment name.' : 'Enter the model identifier.');
-  if (provider.model.length > 256 || [...provider.model].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) add('model', 'The model identifier is too long or contains control characters.');
+  if (provider.model.length > 256 || hasControlCharacters(provider.model)) add('model', 'The model identifier is too long or contains control characters.');
   if (agentProviderUsesChatCompletionsOnly(provider.kind) && provider.apiMode !== 'chat-completions') {
     add('kind', 'This provider uses Chat Completions. Select OpenAI or Azure for the Responses API.');
   }

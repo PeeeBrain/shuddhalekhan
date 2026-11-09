@@ -26,14 +26,7 @@ export const WHISPER_LANGUAGES: Array<{ value: string; label: string }> = [
   { value: 'ru', label: 'Russian' },
 ];
 
-export function isLocalProviderUrl(value: string): boolean {
-  try {
-    const hostname = new URL(value).hostname.toLowerCase();
-    return ['localhost', '127.0.0.1', '::1'].includes(hostname);
-  } catch {
-    return false;
-  }
-}
+export { isLoopbackUrl as isLocalProviderUrl } from '@shuddhalekhan/shared/validation';
 
 export function looksLikeRawApiKey(value: string): boolean {
   return /^sk-[A-Za-z0-9_-]/.test(value.trim());

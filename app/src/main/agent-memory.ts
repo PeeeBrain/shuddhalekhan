@@ -26,7 +26,7 @@ export class AgentMemoryStore {
       if (existsSync(this.path)) {
         const stat = lstatSync(this.path);
         if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Memory must be a regular Markdown file.');
-        if (stat.size > MEMORY_BYTE_LIMIT) throw new Error('Memory exceeds the 8 KiB limit. Shorten agent-memory.md or clear memory.');
+        if (stat.size > MEMORY_BYTE_LIMIT) throw new Error(`Memory exceeds the ${MEMORY_BYTE_LIMIT / 1024} KiB limit. Shorten agent-memory.md or clear memory.`);
         raw = readFileSync(this.path, 'utf8');
       }
       const lines = raw.split(/\r?\n/).filter(line => line.trim() && !/^#{1,6}\s/.test(line));
@@ -34,7 +34,7 @@ export class AgentMemoryStore {
       const facts = memoryFactsSchema.parse(lines.map(line => line.slice(2)));
       if (new Set(facts).size !== facts.length) throw new Error('Memory contains duplicate facts. Remove duplicate bullets or clear memory.');
       const markdown = facts.length ? toMarkdown(facts) : '';
-      if (Buffer.byteLength(markdown) > MEMORY_BYTE_LIMIT) throw new Error('Memory exceeds the 8 KiB limit. Shorten agent-memory.md or clear memory.');
+      if (Buffer.byteLength(markdown) > MEMORY_BYTE_LIMIT) throw new Error(`Memory exceeds the ${MEMORY_BYTE_LIMIT / 1024} KiB limit. Shorten agent-memory.md or clear memory.`);
       return { revision: `${this.generation}:${hash(raw)}`, markdown, facts: facts.map(text => ({ id: hash(text), text })), status: this.status, error: null };
     } catch (error) {
       return { revision: `${this.generation}:${hash(raw)}`, markdown: '', facts: [], status: this.status, error: error instanceof Error ? error.message : 'Memory could not be read.' };
@@ -100,7 +100,7 @@ export class AgentMemoryStore {
   private write(input: string[]): AgentMemorySnapshot {
     const facts = [...new Set(memoryFactsSchema.parse(input))];
     const markdown = toMarkdown(facts);
-    if (Buffer.byteLength(markdown) > MEMORY_BYTE_LIMIT) throw new Error('Memory exceeds the 8 KiB limit. Shorten or remove a fact.');
+    if (Buffer.byteLength(markdown) > MEMORY_BYTE_LIMIT) throw new Error(`Memory exceeds the ${MEMORY_BYTE_LIMIT / 1024} KiB limit. Shorten or remove a fact.`);
     // Never follow a manually substituted memory symlink, including on Clear.
     if (existsSync(this.path) && lstatSync(this.path).isSymbolicLink()) throw new Error('Memory must not be a symbolic link.');
     mkdirSync(this.directory, { recursive: true });

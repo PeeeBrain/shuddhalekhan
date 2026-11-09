@@ -1,3 +1,4 @@
+import { DESKTOP_LANGUAGE_LOCALES } from '@shuddhalekhan/shared/languages';
 import type { AzureSpeechProviderConfig } from '../types/ipc';
 import {
   type RecognitionSettings,
@@ -18,32 +19,10 @@ export const AZURE_SPEECH_CAPABILITIES: TranscriptionCapabilities = {
   maxDurationSeconds: null,
 };
 
-const AZURE_LOCALES: Record<string, string> = {
-  en: 'en-US',
-  hi: 'hi-IN',
-  mr: 'mr-IN',
-  gu: 'gu-IN',
-  bn: 'bn-IN',
-  ta: 'ta-IN',
-  te: 'te-IN',
-  kn: 'kn-IN',
-  ml: 'ml-IN',
-  pa: 'pa-IN',
-  ur: 'ur-IN',
-  fr: 'fr-FR',
-  es: 'es-ES',
-  de: 'de-DE',
-  ja: 'ja-JP',
-  zh: 'zh-CN',
-  ko: 'ko-KR',
-  pt: 'pt-BR',
-  ar: 'ar-SA',
-  ru: 'ru-RU',
-};
 
 export function mapLanguageToAzureLocale(language: string): string | undefined {
   if (!language || language === 'auto') return undefined;
-  return AZURE_LOCALES[language] ?? language;
+  return DESKTOP_LANGUAGE_LOCALES[language] ?? language;
 }
 
 export function buildAzureSpeechEndpoint(config: AzureSpeechProviderConfig): string {

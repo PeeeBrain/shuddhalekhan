@@ -1,3 +1,4 @@
+import type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
 import type { DesktopStatus } from '../shared/desktop-status';
 import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
@@ -34,7 +35,7 @@ export interface ShortcutsConfig {
   agent: IntentShortcutConfig;
 }
 
-export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
+export type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 
 export type McpToolPolicyKey = `${string}:${string}`;
 
@@ -232,7 +233,6 @@ export interface RendererToMainInvokeChannels {
   'config:patch-transcription': (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;
   'transcription:check-server': () => Promise<boolean>;
   'settings:open': () => void;
-  'clipboard:inject-text': (text: string) => Promise<InjectResult>;
   /**
    * Canonical 16 kHz mono PCM16 batch, appended to main's per-recording spool
    * in order. Resolves true once written; false means main dropped the

@@ -1,3 +1,4 @@
+import { hasControlCharacters, isLoopbackHost, isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 import { getSarvamSettingsErrors } from '@shuddhalekhan/shared/sarvam';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
@@ -97,13 +98,7 @@ export function validateOpenAiModel(model: string): string[] {
   const trimmed = model.trim();
   if (!trimmed) return ['Enter a model name.'];
   if (trimmed.length > 128) return ['Model name is too long (max 128 characters).'];
-  // Reject control characters (0x00-0x1F, 0x7F); accept punctuation and free-form slugs
-  for (let i = 0; i < trimmed.length; i++) {
-    const code = trimmed.charCodeAt(i);
-    if (code < 32 || code === 127) {
-      return ['Model name contains control characters.'];
-    }
-  }
+  if (hasControlCharacters(trimmed)) return ['Model name contains control characters.'];
   return [];
 }
 
@@ -205,7 +200,7 @@ export function validateWhisperLiveKitSettings(settings: {
   }
 
   const hostname = parsed.hostname.toLowerCase();
-  const loopback = isLoopbackHostname(hostname);
+  const loopback = isLoopbackHost(hostname);
   if (parsed.protocol === 'http:' && !loopback) {
     return ['Remote WhisperLiveKit endpoints must use HTTPS.'];
   }
@@ -216,11 +211,7 @@ export function validateWhisperLiveKitSettings(settings: {
   return [];
 }
 
-const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~\w]+$/;
-
-export function isValidHttpFieldName(name: string): boolean {
-  return HTTP_TOKEN.test(name);
-}
+export { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 
 export function validateProviderReadiness(
   providerId: TranscriptionProviderId,
@@ -323,16 +314,6 @@ export function validateProviderReadiness(
   }
 
   return errors;
-}
-
-function isLoopbackHostname(hostname: string): boolean {
-  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '[::1]' || hostname === '::1') {
-    return true;
-  }
-  const octets = hostname.split('.');
-  return octets.length === 4
-    && octets[0] === '127'
-    && octets.slice(1).every((octet) => /^(?:0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255);
 }
 
 export function validateLocalWhisperSettings(settings: { endpoint: string }): string[] {

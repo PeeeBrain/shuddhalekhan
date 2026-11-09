@@ -1,3 +1,4 @@
+import { LANGUAGE_LOCALES } from '@shuddhalekhan/shared/languages';
 import { SARVAM_LANGUAGES } from '@shuddhalekhan/shared/sarvam';
 
 /** Parakeet v3's 25 languages. English alone routes to the English-only v2 model. */
@@ -52,20 +53,9 @@ export function isParakeetLanguage(language: string): boolean {
   return !base || parakeetLanguages.some(option => option.value === base);
 }
 
-const locales: Record<string, string> = {
-  bg: 'bg-BG', hr: 'hr-HR', cs: 'cs-CZ', da: 'da-DK', nl: 'nl-NL', en: 'en-US',
-  et: 'et-EE', fi: 'fi-FI', fr: 'fr-FR', de: 'de-DE', el: 'el-GR', hu: 'hu-HU',
-  it: 'it-IT', lv: 'lv-LV', lt: 'lt-LT', mt: 'mt-MT', pl: 'pl-PL', pt: 'pt-BR',
-  ro: 'ro-RO', ru: 'ru-RU', sk: 'sk-SK', sl: 'sl-SI', es: 'es-ES', sv: 'sv-SE', uk: 'uk-UA',
-  hi: 'hi-IN', mr: 'mr-IN', gu: 'gu-IN', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN',
-  kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', ne: 'ne-NP', as: 'as-IN',
-  // Sarvam's Odia code is `od`; BCP 47 providers use `or`.
-  od: 'or-IN',
-  ar: 'ar-SA', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR',
-};
 
 /** Locale for providers that require one (Azure, Google, NVIDIA NIM). An explicit region wins. */
 export function languageLocale(language: string): string {
   const normalized = normalizeLanguage(language);
-  return normalized.includes('-') ? normalized : locales[normalized] ?? normalized;
+  return normalized.includes('-') ? normalized : LANGUAGE_LOCALES[normalized] ?? normalized;
 }

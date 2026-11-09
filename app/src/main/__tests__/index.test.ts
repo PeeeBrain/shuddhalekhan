@@ -683,6 +683,19 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('safe transcript');
   });
 
+  it('reports the Wayland policy error when pasting the last transcript from the tray', async () => {
+    setPlatform('linux');
+    process.env.XDG_SESSION_TYPE = 'wayland';
+    await sessionOptions.onResult({ text: 'saved transcript', intent: 'dictation', targetSnapshot: null });
+    captureForegroundTarget.mockReturnValue(null);
+    await trayHandlers.onPasteLastTranscript?.();
+    expect(electronMock.Notification).toHaveBeenLastCalledWith(expect.objectContaining({
+      title: 'Paste last transcript failed',
+      body: expect.stringContaining('original input context cannot be verified'),
+    }));
+    expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
   describe('KDE Wayland best-effort test mode', () => {
     const originalDesktop = process.env.XDG_CURRENT_DESKTOP;
     beforeEach(async () => {

@@ -1,4 +1,5 @@
 import type { DictationTargetSnapshot, PasteStrategy, InjectResult } from '../types/ipc';
+import { buildPasteStrategyEvents, type PasteDispatchResult } from './paste-strategy';
 
 export interface ClipboardSnapshot {
   wasEmpty: boolean;
@@ -13,43 +14,25 @@ export interface ClipboardSnapshot {
   skippedFormats?: string[];
 }
 
-export interface PasteDispatchResult {
-  acceptedEvents: number;
-  errorCode?: number;
-}
-
 export interface ClipboardIO {
   captureSnapshot(): ClipboardSnapshot;
   restoreSnapshot(snapshot: ClipboardSnapshot): void;
   writeText(text: string): void;
 }
 
-export interface ForegroundInspector {
-  captureTarget(): DictationTargetSnapshot | null;
-}
-
-export interface InputSimulator {
-  simulatePaste(strategy: PasteStrategy): PasteDispatchResult;
-}
-
-export interface ClipboardMonitor {
-  getSequenceNumber(): number;
-}
-
-export interface PasteStrategyResolver {
-  resolveStrategy(executablePath: string | null): PasteStrategy;
-}
+export type ForegroundInspector = () => DictationTargetSnapshot | null;
+export type InputSimulator = (strategy: PasteStrategy) => PasteDispatchResult;
+export type ClipboardMonitor = () => number;
+export type PasteStrategyResolver = (executablePath: string | null) => PasteStrategy;
 
 export interface ClipboardTransactionManagerOptions {
-  stagingDelayMs?: number;
-  pasteDelayMs?: number;
   delayFn?: (ms: number) => Promise<void>;
 }
 
 export function validatePasteTarget(
   startSnapshot: DictationTargetSnapshot | null,
   currentSnapshot: DictationTargetSnapshot | null
-): { allowed: boolean; transition?: boolean; reason?: string } {
+): { allowed: boolean; reason?: string } {
   if (!currentSnapshot) {
     return { allowed: false, reason: 'target-changed: foreground target is missing or invalid' };
   }
@@ -60,7 +43,7 @@ export function validatePasteTarget(
   }
 
   if (!startSnapshot) {
-    return { allowed: true, transition: false };
+    return { allowed: true };
   }
 
   if (startSnapshot.kind !== currentSnapshot.kind || startSnapshot.processId !== currentSnapshot.processId) {
@@ -78,14 +61,12 @@ export function validatePasteTarget(
   if (!sameWindow) {
     return { allowed: false, reason: 'target-changed: the original window is no longer focused' };
   }
-  return { allowed: true, transition: false };
+  return { allowed: true };
 }
 
 export class ClipboardTransactionManager {
   private queue: Promise<unknown> = Promise.resolve();
   private activeCount = 0;
-  private stagingDelayMs: number;
-  private pasteDelayMs: number;
   private delay: (ms: number) => Promise<void>;
 
   constructor(
@@ -96,8 +77,6 @@ export class ClipboardTransactionManager {
     private pasteStrategyResolver: PasteStrategyResolver,
     options: ClipboardTransactionManagerOptions = {}
   ) {
-    this.stagingDelayMs = options.stagingDelayMs ?? 50;
-    this.pasteDelayMs = options.pasteDelayMs ?? 100;
     this.delay = options.delayFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
@@ -141,7 +120,7 @@ export class ClipboardTransactionManager {
     if (signal?.aborted) return { kind: 'input-blocked', acceptedEvents: 0, reason: 'Dictation was cancelled.' };
     let currentSnapshot: DictationTargetSnapshot | null;
     try {
-      currentSnapshot = this.foregroundInspector.captureTarget();
+      currentSnapshot = this.foregroundInspector();
     } catch (error) {
       console.warn('Failed to inspect foreground target:', error);
       return { kind: 'target-changed', reason: 'target-changed: foreground target inspection failed' };
@@ -152,7 +131,7 @@ export class ClipboardTransactionManager {
       return { kind: 'target-changed', reason: targetCheck.reason ?? 'target changed' };
     }
 
-    const strategy = this.pasteStrategyResolver.resolveStrategy(
+    const strategy = this.pasteStrategyResolver(
       currentSnapshot && currentSnapshot.kind !== 'kde-wayland' ? currentSnapshot.executablePath : null);
 
     let snapshot: ClipboardSnapshot | undefined;
@@ -161,28 +140,28 @@ export class ClipboardTransactionManager {
 
     try {
       result = await (async (): Promise<InjectResult> => {
-        const sequenceBeforeCapture = this.clipboardMonitor.getSequenceNumber();
+        const sequenceBeforeCapture = this.clipboardMonitor();
         snapshot = this.clipboardIO.captureSnapshot();
         if (snapshot.skippedFormats?.length) {
           return { kind: 'input-blocked', acceptedEvents: 0,
             reason: 'The current clipboard cannot be fully preserved. Copy the transcript when ready to replace it.' };
         }
-        if (sequenceBeforeCapture !== this.clipboardMonitor.getSequenceNumber()) {
+        if (sequenceBeforeCapture !== this.clipboardMonitor()) {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
         this.clipboardIO.writeText(text);
-        sequenceAfterStage = this.clipboardMonitor.getSequenceNumber();
-        await this.delay(this.stagingDelayMs);
+        sequenceAfterStage = this.clipboardMonitor();
+        await this.delay(50);
         if (signal?.aborted) {
           return { kind: 'input-blocked', acceptedEvents: 0, reason: 'Dictation was cancelled.' };
         }
-        if (sequenceAfterStage !== this.clipboardMonitor.getSequenceNumber()) {
+        if (sequenceAfterStage !== this.clipboardMonitor()) {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
 
         // Staging yields to other apps; validate again at the dispatch boundary.
         try {
-          const dispatchTarget = this.foregroundInspector.captureTarget();
+          const dispatchTarget = this.foregroundInspector();
           const dispatchCheck = validatePasteTarget(currentSnapshot, dispatchTarget);
           if (!dispatchCheck.allowed) return { kind: 'target-changed', reason: dispatchCheck.reason ?? 'target changed' };
         } catch {
@@ -190,11 +169,11 @@ export class ClipboardTransactionManager {
         }
         let dispatchResult: PasteDispatchResult;
         try {
-          dispatchResult = this.inputSimulator.simulatePaste(strategy);
+          dispatchResult = this.inputSimulator(strategy);
         } catch (error) {
           return { kind: 'error', message: this.formatError('Paste dispatch failed', error) };
         }
-        await this.delay(this.pasteDelayMs);
+        await this.delay(100);
 
         return this.buildDispatchResult(dispatchResult, strategy);
       })();
@@ -221,7 +200,7 @@ export class ClipboardTransactionManager {
     dispatchResult: PasteDispatchResult,
     strategy: PasteStrategy
   ): InjectResult {
-    const expectedEvents = strategy === 'ctrl-shift-v' ? 6 : 4;
+    const expectedEvents = buildPasteStrategyEvents(strategy).length;
 
     if (dispatchResult.acceptedEvents === 0) {
       return {
@@ -252,7 +231,7 @@ export class ClipboardTransactionManager {
   ): Promise<'restored' | 'changed' | 'failed'> {
     let sequenceBeforeRestore: number;
     try {
-      sequenceBeforeRestore = this.clipboardMonitor.getSequenceNumber();
+      sequenceBeforeRestore = this.clipboardMonitor();
     } catch {
       return 'failed';
     }

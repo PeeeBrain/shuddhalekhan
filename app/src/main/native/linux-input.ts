@@ -30,17 +30,9 @@ const EVDEV_TO_VK = new Map<number, number>([
 const EV_KEY = 1;
 const EV_REP_BIT = 1 << 20;
 const INPUT_EVENT_SIZE = 24; // struct input_event on 64-bit
-const VIRTUAL_KEYBOARD_NAME = 'Shuddhalekhan virtual keyboard';
-
-export function evdevToVirtualKey(code: number): number | undefined {
-  return EVDEV_TO_VK.get(code);
-}
-
-
-/** Keyboards from /proc/bus/input/devices: `kbd` handler with key repeat (skips power buttons and our own device). */
+/** Keyboards from /proc/bus/input/devices: `kbd` handler with key repeat, excluding power buttons. */
 export function parseKeyboardDevices(procDevices: string): string[] {
   return procDevices.split(/\n\s*\n/).flatMap((block) => {
-    if (block.includes(VIRTUAL_KEYBOARD_NAME)) return [];
     const handlers = /^H: Handlers=(.*)$/m.exec(block)?.[1].split(/\s+/) ?? [];
     const ev = Number.parseInt(/^B: EV=([0-9a-f]+)$/m.exec(block)?.[1] ?? '0', 16);
     const event = handlers.find((handler) => /^event\d+$/.test(handler));

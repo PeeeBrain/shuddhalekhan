@@ -38,6 +38,7 @@ import { resolveRecognitionSettings } from '../shared/transcription-features';
 import { checkWhisperLiveKitReadiness } from './whisper-live-kit';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { McpStatusStore } from './mcp-status-store';
+import { makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { getSidecarConfigAction } from './sidecar-config-policy';
 import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
 import {
@@ -287,48 +288,9 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
 
   setLastTranscript(text, result.targetSnapshot);
 
-  const deliveryError = getAutomaticDeliveryError(process.platform, process.env, waylandDelivery?.isReady() ?? false);
-  if (deliveryError) {
-    markLastTranscriptInjected('failed');
-    runtimeShell.showFailure(sessionId, deliveryError, ['copy-full-transcript']);
-    return;
-  }
-
-  if (!result.targetSnapshot) {
-    markLastTranscriptInjected('failed');
-    runtimeShell.showFailure(sessionId,
-      'The original destination could not be identified when recording began. Copy the transcript to the intended field.',
-      ['copy-full-transcript']);
-    return;
-  }
-
-  if (result.targetSnapshot.kind === 'kde-wayland') {
-    if (!waylandDelivery) return;
-    runtimeShell.finish();
-    const waylandResult = await waylandDelivery.deliver(text, result.targetSnapshot, result.signal);
-    if (result.signal.aborted) return;
-    if (waylandResult.kind === 'input-dispatched') {
-      markLastTranscriptInjected('dispatched');
-      completeOnboarding();
-      if (formatterDegraded) showFormatterDegradedNotice();
-      return;
-    }
-    // Never retried: the clipboard already holds the text, and a second paste could double-insert.
-    markLastTranscriptInjected(waylandResult.kind === 'error' ? 'uncertain' : 'failed');
-    runtimeShell.showFailure(sessionId, getRecoveryMessage(waylandResult), ['copy-full-transcript']);
-    return;
-  }
-
-  const released = await keyboardHook.waitForKeysReleased(result.signal);
-  if (result.signal.aborted) return;
-  if (!released) {
-    markLastTranscriptInjected('failed');
-    runtimeShell.showFailure(sessionId, 'Release the recording shortcut before pasting the transcript.',
-      ['retry-paste', 'copy-full-transcript']);
-    return;
-  }
-  runtimeShell.finish();
-  const injectResult = await injectIntoFocusedApp(text, result.targetSnapshot, undefined, result.signal);
+  const outcome = await deliverTranscript(text, result.targetSnapshot, result.signal, 'recording');
+  if (!outcome) return;
+  const { result: injectResult, actions } = outcome;
   if (result.signal.aborted) return;
   if (injectResult.kind === 'input-dispatched') {
     markLastTranscriptInjected('dispatched');
@@ -337,12 +299,12 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     return;
   }
 
-  markLastTranscriptInjected('failed');
+  markLastTranscriptInjected(result.targetSnapshot?.kind === 'kde-wayland' && injectResult.kind === 'error' ? 'uncertain' : 'failed');
   if (runtimeShell) {
     runtimeShell.showFailure(
       result.recordingSessionId,
       getRecoveryMessage(injectResult),
-      getRecoveryActions(injectResult),
+      actions,
     );
   } else {
     showRecoveryNotification(injectResult);
@@ -369,9 +331,51 @@ async function pasteLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
   if (!transcript) return;
 
-  const result = await injectIntoFocusedApp(transcript.text);
+  const outcome = await deliverTranscript(transcript.text, null, new AbortController().signal, 'tray');
+  if (!outcome) return;
+  const { result } = outcome;
   if (result.kind !== 'input-dispatched') {
     showRecoveryNotification(result, 'Paste last transcript failed');
+  }
+}
+
+async function deliverTranscript(
+  text: string,
+  target: import('../types/ipc').DictationTargetSnapshot | null,
+  signal: AbortSignal,
+  source: 'recording' | 'tray' | 'retry',
+) {
+  const copyOnly: import('../types/ipc').DictationRecoveryAction[] = ['copy-full-transcript'];
+  const blocked = (reason: string) => ({
+    result: { kind: 'input-blocked', acceptedEvents: 0, reason } satisfies InjectResult,
+    actions: copyOnly,
+  });
+  // KDE delivery may have already sent input; replaying the recording could double-insert.
+  if (source === 'retry' && (retryPasteInFlight || target?.kind === 'kde-wayland')) return null;
+  const policyError = getAutomaticDeliveryError(process.platform, process.env, waylandDelivery?.isReady() ?? false);
+  if (policyError) return blocked(policyError);
+  if (source === 'tray') target = waylandDelivery?.capture() ?? null;
+  if (source !== 'tray' && !target) {
+    return blocked('The original destination could not be identified when recording began. Copy the transcript to the intended field.');
+  }
+  if (source === 'retry') retryPasteInFlight = true;
+  try {
+    if (target?.kind === 'kde-wayland') {
+      if (!waylandDelivery) return blocked('Best-effort insertion is no longer set up. Nothing was pasted.');
+      runtimeShell.finish();
+      return { result: await waylandDelivery.deliver(text, target, signal), actions: copyOnly };
+    }
+    if (!await keyboardHook.waitForKeysReleased(signal)) {
+      const result: InjectResult = { kind: 'input-blocked', acceptedEvents: 0,
+        reason: 'Release the recording shortcut before pasting the transcript.' };
+      return { result, actions: getRecoveryActions(result) };
+    }
+    if (signal.aborted) return null;
+    runtimeShell.finish();
+    const result = await injectIntoFocusedApp(text, target, signal);
+    return { result, actions: getRecoveryActions(result) };
+  } finally {
+    if (source === 'retry') retryPasteInFlight = false;
   }
 }
 
@@ -425,21 +429,15 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     return;
   }
   if (action !== 'retry-paste') return;
-  // KDE Wayland best-effort delivery is attempted once per recording.
-  if (retryPasteInFlight || transcript.targetSnapshot?.kind === 'kde-wayland') return;
-  retryPasteInFlight = true;
-  try {
-    runtimeShell.finish();
-    const result = await injectIntoFocusedApp(transcript.text, transcript.targetSnapshot);
-    if (result.kind === 'input-dispatched') {
-      markLastTranscriptInjected('dispatched');
-      return;
-    }
-    markLastTranscriptInjected('failed');
-    runtimeShell.showFailure(null, getRecoveryMessage(result), getRecoveryActions(result));
-  } finally {
-    retryPasteInFlight = false;
+  const outcome = await deliverTranscript(transcript.text, transcript.targetSnapshot, new AbortController().signal, 'retry');
+  if (!outcome) return;
+  const { result, actions } = outcome;
+  if (result.kind === 'input-dispatched') {
+    markLastTranscriptInjected('dispatched');
+    return;
   }
+  markLastTranscriptInjected('failed');
+  runtimeShell.showFailure(null, getRecoveryMessage(result), actions);
 }
 
 // Never leave global shortcut activation suspended after capture ends.
@@ -792,10 +790,6 @@ ipcMain.handle('settings:open', () => {
   openSettingsWindow();
 });
 
-ipcMain.handle('clipboard:inject-text', async (_event, text: string): Promise<InjectResult> => {
-  return injectIntoFocusedApp(text);
-});
-
 ipcMain.handle(
   'agent:approval-decision',
   (_event, agentRunId: string, approvalId: string, decision: AgentApprovalChoice, message?: string) => {
@@ -806,7 +800,7 @@ ipcMain.handle(
     const approval = decision === 'always-allow' ? runtimeShell.getPendingApproval(approvalId) : null;
     if (approval) {
       const config = getConfig();
-      const policyKey: McpToolPolicyKey = `${approval.serverId}:${approval.toolName}`;
+      const policyKey: McpToolPolicyKey = makeMcpToolPolicyKey(approval.serverId, approval.toolName);
       setConfig('agent', {
         ...config.agent,
         mcpServers: config.agent.mcpServers.map((server) => server.id === approval.serverId
@@ -908,7 +902,6 @@ if (!gotSingleInstanceLock) {
     try {
       recordingSession.start();
     } catch (error) {
-      // Linux: keyboards are unreadable until the user joins the `input` group.
       void dialog.showMessageBox({
         type: 'warning',
         title: 'Shortcuts unavailable',

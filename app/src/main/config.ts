@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
 import { DEFAULT_SARVAM_CONFIG, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
 import Store from 'electron-store';
@@ -444,8 +445,8 @@ export function mergeDiscoveredTools(
     }));
     const toolPolicies = { ...server.toolPolicies };
     for (const tool of discoveredTools) {
-      const key = `${server.id}:${tool.name}` as const;
-      if (!toolPolicies[key]) toolPolicies[key] = 'alwaysAsk';
+      const key = makeMcpToolPolicyKey(server.id, tool.name);
+      if (!toolPolicies[key]) toolPolicies[key] = DEFAULT_TOOL_POLICY;
     }
 
     return {

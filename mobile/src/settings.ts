@@ -1,11 +1,24 @@
+import { DEFAULT_TOOL_POLICY, toolApprovalPolicySchema } from '@shuddhalekhan/shared/mcp';
+import { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 import { z } from 'zod';
 import { getSarvamSettingsErrors, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
 import { isParakeetLanguage, languageBase, normalizeLanguage } from './languages';
-import { MOBILE_TRANSCRIPTION_PROVIDERS, transcriptionEndpoint } from './providers';
+import { transcriptionEndpoint } from './providers';
+import { MOBILE_TRANSCRIPTION_PROVIDERS, transcriptionPresets } from './provider-presets';
+import { dictionaryTerms, validateEndpoint } from './validation';
 import { AGENT_PROVIDER_KINDS, agentProviderSupportsCacheBreakpoints, agentProviderUsesChatCompletionsOnly } from '@shuddhalekhan/shared/providers';
 
 const credential = z.string().max(1500, 'Credentials must be at most 1500 characters.').regex(/^[\x21-\x7e]*$/, 'Credentials must contain only printable characters without spaces.');
-export const toolApprovalPolicySchema = z.enum(['disabled', 'alwaysAsk', 'alwaysAllow']);
+export const secretFields = [
+  { field: 'transcriptionKey', ref: 'transcriptionKeyRef', key: 'transcription', scope: 'transcription', legacyOptional: false },
+  { field: 'agentKey', ref: 'agentKeyRef', key: 'agent', scope: 'agent', legacyOptional: false },
+  { field: 'googleServiceAccount', ref: 'googleServiceAccountRef', key: 'google', scope: 'transcription', legacyOptional: true },
+] as const;
+
+export function clearedSecrets(scope: typeof secretFields[number]['scope']) {
+  return Object.fromEntries(secretFields.filter(secret => secret.scope === scope).map(secret => [secret.field, '']));
+}
+export { toolApprovalPolicySchema } from '@shuddhalekhan/shared/mcp';
 const serverSchema = z.object({
   id: z.string().min(1).max(100),
   name: z.string().trim().min(1, 'Give each MCP server a name.').max(100),
@@ -100,14 +113,14 @@ export type MCPServerSettings = MobileSettings['mcpServers'][number];
 
 export function toolApprovalPolicy(server: MCPServerSettings, name: string) {
   const policies = server.toolPolicies;
-  return policies && Object.hasOwn(policies, name) ? policies[name] ?? 'alwaysAsk' : 'alwaysAsk';
+  return policies && Object.hasOwn(policies, name) ? policies[name] ?? DEFAULT_TOOL_POLICY : DEFAULT_TOOL_POLICY;
 }
 
 export const defaultSettings: MobileSettings = mobileSettingsSchema.parse({
   transcriptionSource: 'endpoint',
   transcriptionProvider: 'openai',
-  transcriptionEndpoint: 'https://api.openai.com/v1/audio/transcriptions',
-  transcriptionModel: 'gpt-4o-transcribe',
+  transcriptionEndpoint: transcriptionPresets.openai.endpoint,
+  transcriptionModel: transcriptionPresets.openai.model,
   transcriptionKey: '',
   language: '',
   dictionary: '',
@@ -121,28 +134,8 @@ export const defaultSettings: MobileSettings = mobileSettingsSchema.parse({
   allowInsecureHTTP: false,
 });
 
-export const googleServiceAccountSchema = z.object({
-  type: z.literal('service_account'),
-  client_email: z.email(),
-  private_key: z.string().min(1).max(12000).refine(value => value.includes('-----BEGIN PRIVATE KEY-----')),
-});
-
-export function dictionaryTerms(dictionary: string): string[] {
-  return [...new Set(dictionary.split(/[,\n]/).map(term => term.trim()).filter(Boolean))];
-}
-
 export function validSecretHeader(name: string): boolean {
-  return /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) && !/^(host|content-length|content-type|connection|transfer-encoding|cookie|proxy-authorization)$/i.test(name);
-}
-
-export function validateEndpoint(value: string, allowHTTP: boolean): URL {
-  let url: URL;
-  try { url = new URL(value); } catch { throw new Error('Enter a full HTTPS endpoint URL.'); }
-  if (url.username || url.password || url.hash) throw new Error('Endpoint URLs cannot contain credentials or fragments.');
-  if (url.protocol !== 'https:' && !(allowHTTP && url.protocol === 'http:')) {
-    throw new Error('Use HTTPS, or explicitly allow unencrypted HTTP in Settings.');
-  }
-  return url;
+  return isValidHttpFieldName(name) && !/^(host|content-length|content-type|connection|transfer-encoding|cookie|proxy-authorization)$/i.test(name);
 }
 
 export function settingsError(error: unknown): string {

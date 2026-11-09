@@ -1,28 +1,10 @@
+import { isLoopbackUrl as isLoopbackProviderUrl } from '@shuddhalekhan/shared/validation';
+import { isDeepSeekV4Provider } from '@shuddhalekhan/shared/agent-provider';
+export { isLoopbackProviderUrl, isDeepSeekV4Provider };
 import type {
   AgentProviderConfig, AgentProviderDiagnostic,
   AgentProviderTestResult, AgentProviderValidation,
 } from '../types/ipc';
-
-export function isLoopbackProviderUrl(value: string): boolean {
-  try {
-    const hostname = new URL(value).hostname.toLowerCase();
-    return hostname === 'localhost' || hostname.endsWith('.localhost')
-      || /^127(?:\.\d{1,3}){3}$/.test(hostname) || hostname === '[::1]';
-  } catch {
-    return false;
-  }
-}
-
-export function isDeepSeekV4Provider(baseUrl: string, model: string): boolean {
-  try {
-    const url = new URL(baseUrl);
-    return (url.hostname === 'api.deepseek.com'
-      || (url.hostname === 'opencode.ai' && url.pathname.startsWith('/zen/')))
-      && (model === 'deepseek-v4-flash' || model === 'deepseek-v4-pro');
-  } catch {
-    return false;
-  }
-}
 
 export function isAgentApiKeyEnvVarName(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) && value.length <= 128 && !/^[A-Fa-f0-9]{32,}$/.test(value);

@@ -1,3 +1,4 @@
+import { chatGptDiagnosticFromText } from '@shuddhalekhan/shared/chatgpt';
 import { z } from 'zod';
 import type { AgentProviderDiagnostic } from '../types/ipc';
 import { AgentProviderConfigurationError } from './provider';
@@ -46,27 +47,9 @@ export function providerDiagnostic(error: unknown, apiKey?: string): AgentProvid
   let kind: AgentProviderDiagnostic['kind'] = 'provider';
   let message = 'The model provider could not complete the request.';
   let action = 'Check the technical details and test the configured model again.';
-  if (lower.includes('subscription_sharing_usage_limit_exceeded')) {
-    kind = 'quota'; message = 'Your ChatGPT plan usage limit was reached.';
-    action = 'Check your usage at https://chatgpt.com/settings/usage before retrying.';
-  } else if (lower.includes('subscription_sharing_user_not_eligible')) {
-    kind = 'permission'; message = 'This ChatGPT account is not eligible for plan usage.';
-    action = 'Check the account and plan in ChatGPT, then sign in again.';
-  } else if (/subscription_sharing_(?:usage|user)_unavailable/.test(lower)) {
-    kind = 'provider'; message = 'ChatGPT plan usage is temporarily unavailable.';
-    action = 'Try again later.';
-  } else if (lower.includes('subscription_sharing_unsupported_capability')) {
-    kind = 'unsupported'; message = 'ChatGPT plan usage does not support a requested capability.';
-    action = 'Review the rejected parameter in the technical details and adjust the model settings.';
-  } else if (lower.includes('subscription_sharing_route_not_supported')) {
-    kind = 'endpoint'; message = 'ChatGPT plan usage does not support this request route.';
-    action = 'Use the Responses API with streaming enabled in the ChatGPT provider.';
-  } else if (lower.includes('subscription_sharing_invalid_user')) {
-    kind = 'authentication'; message = 'The ChatGPT account authorization is no longer valid.';
-    action = 'Sign in with ChatGPT again in Settings.';
-  } else if (/chatpass_v2_(?:scope_not_authorized|invalid_authorization_context)/.test(lower)) {
-    kind = 'permission'; message = 'ChatGPT plan usage is not authorized for this session.';
-    action = 'Sign in with ChatGPT again and allow plan usage.';
+  const chatGptDiagnostic = chatGptDiagnosticFromText(lower);
+  if (chatGptDiagnostic) {
+    ({ kind, message, action } = chatGptDiagnostic);
   } else if (statusCode === 401) {
     kind = 'authentication'; message = 'The provider rejected authentication.';
     action = 'Replace the key or check the authentication mode. Azure keys belong to the selected resource.';
