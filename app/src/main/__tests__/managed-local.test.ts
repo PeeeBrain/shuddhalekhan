@@ -5,7 +5,9 @@ import { join } from 'path';
 import { LOCAL_MODELS, LOCAL_FORMATTING_MODEL } from '../managed-local-catalog';
 import type { ManagedLocalModelManifest } from '../managed-local-model';
 import { mockConfigModule } from '../../test/config-mock';
+import { installElectronMock } from '../../test/electron-mock';
 
+installElectronMock();
 mockConfigModule({ getConfig: () => ({ dictionary: [] }) });
 // Main's orchestration tests initialize their own registry; this fixture owns a separate model root.
 const { configureManagedLocal, deleteManagedLocalModel, getManagedLocalModelManager } = await import(`../managed-local?test=${Date.now()}`);

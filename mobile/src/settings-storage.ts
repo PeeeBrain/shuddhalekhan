@@ -1,9 +1,14 @@
 import { z } from 'zod';
 import { defaultSettings, mobileSettingsSchema, type MobileSettings } from './settings';
+import { secretFields } from './secret-fields';
 import { isParakeetLanguage } from './languages';
 
 const metadataKey = 'shuddhalekhan.settings';
-const secretPrefix = 'shuddhalekhan.settings';
+const secretMask = Object.fromEntries(secretFields.map(({ field }) => [field, true])) as Record<typeof secretFields[number]['field'], true>;
+const secretRefs = Object.fromEntries(secretFields.map(({ ref, legacyOptional }) => {
+  const schema = z.string().min(1).nullable();
+  return [ref, legacyOptional ? schema.default(null) : schema];
+})) as Record<typeof secretFields[number]['ref'], z.ZodNullable<z.ZodString> | z.ZodDefault<z.ZodNullable<z.ZodString>>>;
 
 const serverSettingsSchema = mobileSettingsSchema.shape.mcpServers.element
   .omit({ token: true })
@@ -11,15 +16,13 @@ const serverSettingsSchema = mobileSettingsSchema.shape.mcpServers.element
   .strict();
 
 const storedSettingsSchema = z.object(mobileSettingsSchema.shape).omit({
-  transcriptionKey: true, agentKey: true, googleServiceAccount: true, mcpServers: true,
+  ...secretMask, mcpServers: true,
 }).extend({
   // Accept the legacy field, then discard it. It must never become standing instructions.
   systemPrompt: z.unknown().optional(),
   transcriptionProvider: mobileSettingsSchema.shape.transcriptionProvider.removeDefault().optional(),
   mcpServers: z.array(serverSettingsSchema).max(10),
-  transcriptionKeyRef: z.string().min(1).nullable(),
-  agentKeyRef: z.string().min(1).nullable(),
-  googleServiceAccountRef: z.string().min(1).nullable().default(null),
+  ...secretRefs,
 }).strict();
 
 const envelopeSchema = z.object({
@@ -46,7 +49,7 @@ type SettingsStoreOptions = {
 };
 
 function secretKey(generation: string, name: string): string {
-  return `${secretPrefix}.${generation}.${name}`;
+  return `${metadataKey}.${generation}.${name}`;
 }
 
 function readEnvelope(raw: string): Envelope | null {
@@ -57,9 +60,7 @@ function readEnvelope(raw: string): Envelope | null {
     if (envelope.settings.transcriptionProvider === undefined && envelope.settings.transcriptionSource === 'on-device'
       && !isParakeetLanguage(envelope.settings.language)) envelope.settings.language = '';
     const refs = [
-      [envelope.settings.transcriptionKeyRef, secretKey(envelope.generation, 'transcription')],
-      [envelope.settings.agentKeyRef, secretKey(envelope.generation, 'agent')],
-      [envelope.settings.googleServiceAccountRef, secretKey(envelope.generation, 'google')],
+      ...secretFields.map(({ ref, key }) => [envelope.settings[ref], secretKey(envelope.generation, key)]),
       ...envelope.settings.mcpServers.map((server, index) => [server.tokenRef, secretKey(envelope.generation, `mcp-${index}`)]),
     ];
     if (refs.some(([ref, expected]) => ref !== null && ref !== expected)) return null;
@@ -71,9 +72,7 @@ function readEnvelope(raw: string): Envelope | null {
 
 function referencedSecrets(envelope: Envelope): string[] {
   return [
-    envelope.settings.transcriptionKeyRef,
-    envelope.settings.agentKeyRef,
-    envelope.settings.googleServiceAccountRef,
+    ...secretFields.map(({ ref }) => envelope.settings[ref]),
     ...envelope.settings.mcpServers.map(server => server.tokenRef),
   ].filter((ref): ref is string => ref !== null);
 }
@@ -86,7 +85,7 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
     } catch {
       throw new Error('Could not read saved settings.');
     }
-    if (raw === null) return mobileSettingsSchema.parse(defaultSettings);
+    if (raw === null) return { ...defaultSettings, mcpServers: [] };
 
     const envelope = readEnvelope(raw);
     if (!envelope) throw new Error('Saved settings are corrupt or invalid.');
@@ -98,17 +97,13 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
         if (value === null) throw new Error();
         return value;
       };
-      const [transcriptionKey, agentKey, googleServiceAccount, ...serverTokens] = await Promise.all([
-        loadSecret(envelope.settings.transcriptionKeyRef),
-        loadSecret(envelope.settings.agentKeyRef),
-        loadSecret(envelope.settings.googleServiceAccountRef),
-        ...envelope.settings.mcpServers.map(server => loadSecret(server.tokenRef)),
+      const [loadedSecrets, serverTokens] = await Promise.all([
+        Promise.all(secretFields.map(async ({ field, ref }) => [field, await loadSecret(envelope.settings[ref])])),
+        Promise.all(envelope.settings.mcpServers.map(server => loadSecret(server.tokenRef))),
       ]);
       return mobileSettingsSchema.parse({
         ...envelope.settings,
-        transcriptionKey,
-        agentKey,
-        googleServiceAccount,
+        ...Object.fromEntries(loadedSecrets),
         mcpServers: envelope.settings.mcpServers.map((server, index) => ({
           id: server.id,
           name: server.name,
@@ -125,7 +120,7 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
 
   async function saveSettings(settings: MobileSettings): Promise<MobileSettings> {
     const parsed = mobileSettingsSchema.safeParse(settings);
-    if (!parsed.success) throw new Error('Settings are invalid.');
+    if (!parsed.success) throw parsed.error;
 
     let previousRaw: string | null;
     try {
@@ -149,9 +144,12 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
     };
 
     try {
-      const transcriptionKeyRef = await storeSecret('transcription', parsed.data.transcriptionKey);
-      const agentKeyRef = await storeSecret('agent', parsed.data.agentKey);
-      const googleServiceAccountRef = await storeSecret('google', parsed.data.googleServiceAccount);
+      const refs = {} as Record<typeof secretFields[number]['ref'], string | null>;
+      const publicSettings: Omit<MobileSettings, typeof secretFields[number]['field']> & Partial<Pick<MobileSettings, typeof secretFields[number]['field']>> = { ...parsed.data };
+      for (const { field, ref, key } of secretFields) {
+        refs[ref] = await storeSecret(key, parsed.data[field]);
+        delete publicSettings[field];
+      }
       const mcpServers = [];
       for (const [index, server] of parsed.data.mcpServers.entries()) {
         mcpServers.push({
@@ -163,15 +161,12 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
           tokenRef: await storeSecret(`mcp-${index}`, server.token),
         });
       }
-      const { transcriptionKey: _transcriptionKey, agentKey: _agentKey, googleServiceAccount: _googleServiceAccount, mcpServers: _servers, ...publicSettings } = parsed.data;
       const envelope: Envelope = {
         version: 1,
         generation,
         settings: {
           ...publicSettings,
-          transcriptionKeyRef,
-          agentKeyRef,
-          googleServiceAccountRef,
+          ...refs,
           mcpServers,
         },
       };

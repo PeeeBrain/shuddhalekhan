@@ -1,7 +1,7 @@
 import ActivityKit
 import Foundation
 
-// The app and widget targets compile identical copies; ActivityKit matches them by type name and shape.
+// ActivityKit matches app and widget attributes by type name and shape.
 // Phases: keyboardSession, running, awaitingApproval, completed, failed, cancelled, interrupted.
 struct AgentActivityAttributes: ActivityAttributes {
   struct ContentState: Codable, Hashable {

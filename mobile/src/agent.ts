@@ -1,71 +1,12 @@
+import { buildSystemPrompt, buildRuntimeContext } from '@shuddhalekhan/shared/agent-prompt';
+import { isDeepSeekV4Provider, isChatGptIncludeRejection, OPENROUTER_HEADERS } from '@shuddhalekhan/shared/agent-provider';
 import { z } from 'zod';
 import { agentProviderSupportsCacheBreakpoints } from '@shuddhalekhan/shared/providers';
 import { MCPConnection, jsonObjectSchema, type MCPTool } from './mcp';
 import { bearerHeaders, parseResponse, readJSON, request, type Fetch } from './network';
 import { toolApprovalPolicy, type MobileSettings } from './settings';
 import { chatGptEndpoint, chatGptError } from './chatgpt';
-
-// Keep this prefix and assembly identical to desktop app/src/agent/runtime.ts.
-const SYSTEM_PROMPT = `<identity>
-You are Shuddhalekhan Agent, a concise voice-controlled assistant for short, one-off tasks.
-</identity>
-
-<persistence>
-- Keep going until the user's request is resolved or a stop condition is reached.
-- Do not ask clarifying questions when a reasonable assumption is available; proceed and state the assumption briefly in the final response.
-- Stop and hand back to the user when the request requires missing credentials, an unavailable tool, refused consent, or an unsafe/destructive action that was not explicitly requested.
-</persistence>
-
-<context_gathering>
-Goal: Get enough context fast, then act.
-- Use tools when the request depends on current, recent, external, online, web, search, news, factual lookup, URL-specific information, or an external/local integration.
-- Do not use tools for stable knowledge, casual conversation, or requests answerable from the user's message alone.
-- Avoid tangential exploration. Prefer one focused tool attempt; use additional tool calls only when the first result is incomplete, conflicting, or required to finish the task.
-- If no suitable tool is available or no tool was called for a requested lookup/action, say that plainly.
-</context_gathering>
-
-<tool_preambles>
-- Before tool use, briefly state what you are checking or doing.
-- Keep tool preambles short because this is a voice-first workflow.
-- After tool work, summarize the result and any user-relevant next step.
-</tool_preambles>
-
-<approval_handling>
-- Respect tool policies and approval decisions exactly.
-- If a Tool Approval Response is denied with the reason "Tool approval window expired.", stop execution and say the request stopped because tool approval expired.
-- Do not mention deliberate focus unless that exact timeout denial reason was received.
-- If a denied Tool Approval Response contains corrective feedback that changes the target, arguments, or scope, revise the tool call and continue.
-- If a denied Tool Approval Response refuses the action or withholds consent, stop and explain the limitation briefly.
-- Never retry the exact same rejected tool call with the same arguments.
-</approval_handling>
-
-<response_style>
-- Be concise, factual, and calm.
-- Prefer one short paragraph or a few bullets.
-- Do not expose hidden reasoning. Provide conclusions, key facts, assumptions, and caveats only when useful.
-- Do not claim a tool action succeeded unless a tool result confirms it.
-</response_style>`;
-
-function buildSystemPrompt(customInstructions: string): string {
-  const userInstructions = customInstructions.trim();
-  if (!userInstructions) return SYSTEM_PROMPT;
-  return `${SYSTEM_PROMPT}
-
-<user_instructions>
-The user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.
-${userInstructions}
-</user_instructions>`;
-}
-
-function runtimeContext(): string {
-  const now = new Date();
-  return `<runtime_context>
-- Current local datetime: ${new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'long' }).format(now)}
-- Current UTC datetime: ${now.toISOString()}
-- Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}
-- Use this datetime context when interpreting relative dates like today, tomorrow, yesterday, tonight, this week, current year, or latest.
-</runtime_context>`;
-}
+import { agentCredentialsReady } from './providers';
 
 export type ToolApproval = { serverName: string; toolName: string; arguments: string };
 type ToolCall = { id: string; name: string; arguments: string };
@@ -119,7 +60,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
   if (!transcript.trim()) throw new Error('Record a command first.');
   // Custom servers may run without a key even when a header mode is saved; hosted providers never do.
   const chatgpt = settings.agentProvider === 'chatgpt';
-  if (!chatgpt && settings.agentProvider !== 'openai-compatible' && settings.agentAuth !== 'none' && !settings.agentKey) throw new Error('Enter the agent provider API key in Settings.');
+  if (!chatgpt && !agentCredentialsReady(settings)) throw new Error('Enter the agent provider API key in Settings.');
   if (chatgpt && !getChatGptAccessToken) throw new Error('Sign in with ChatGPT in Settings.');
   // Name the failing stage; "could not reach the endpoint" alone doesn't say whether the model or an MCP server failed.
   let completedSteps = 0;
@@ -130,7 +71,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
   });
   const responses = chatgpt || settings.agentApiMode === 'responses';
   const system = buildSystemPrompt(settings.customInstructions);
-  const command = `${runtimeContext()}\n\n${transcript}`;
+  const command = `${buildRuntimeContext()}\n\n${transcript}`;
   const messages: ChatMessage[] = [{ role: 'system', content: system }, { role: 'user', content: command }];
   const input: ResponseInput[] = [{ role: chatgpt ? 'developer' : 'system', content: system }, { role: 'user', content: command }];
   const connections: MCPConnection[] = [];
@@ -166,7 +107,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
       };
       const auth = settings.agentAuth === 'none' ? {} : settings.agentAuth === 'api-key' ? { 'api-key': settings.agentKey } : bearerHeaders(settings.agentKey);
       const openRouter: Record<string, string> = settings.agentProvider === 'openrouter'
-        ? { 'HTTP-Referer': 'https://github.com/parthashirolkar/shuddhalekhan', 'X-OpenRouter-Title': 'Shuddhalekhan' } : {};
+        ? OPENROUTER_HEADERS : {};
       const data = await stage('Agent model endpoint', chatgpt && getChatGptAccessToken
         ? requestChatGpt({ fetch, body, signal, token: await getChatGptAccessToken() })
         : request({ fetch, endpoint: settings.agentEndpoint, allowHTTP: settings.allowInsecureHTTP, signal,
@@ -267,7 +208,7 @@ async function requestChatGpt({ fetch, body, signal, token }: {
     response = await send();
     if (response.status === 400 && body.include !== undefined) {
       const rejection = chatGptRejectionSchema.safeParse(await readJSON(response).catch(() => null));
-      if (rejection.success && /^include(?:\[|\.|$)/.test(rejection.data.error.param ?? '')) {
+      if (rejection.success && isChatGptIncludeRejection(rejection.data.error.param ?? '')) {
         delete body.include;
         await response.body?.cancel().catch(() => {});
         response = await send();
@@ -339,12 +280,8 @@ async function readChatGptStream(response: Response, signal: AbortSignal): Promi
 }
 
 function isDeepSeekV4(settings: MobileSettings): boolean {
-  try {
-    const url = new URL(settings.agentEndpoint);
-    return settings.agentProvider === 'openai-compatible'
-      && (url.hostname === 'api.deepseek.com' || (url.hostname === 'opencode.ai' && url.pathname.startsWith('/zen/')))
-      && (settings.agentModel === 'deepseek-v4-flash' || settings.agentModel === 'deepseek-v4-pro');
-  } catch { return false; }
+  return settings.agentProvider === 'openai-compatible'
+    && isDeepSeekV4Provider(settings.agentEndpoint, settings.agentModel);
 }
 
 function nativeCache(settings: MobileSettings): boolean {

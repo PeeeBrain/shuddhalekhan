@@ -20,7 +20,8 @@ export function SetupChecklist({
   persistence,
   transcriptionStep,
 }: SetupChecklistProps) {
-  const micComplete = config.selectedDeviceId !== null && config.selectedDeviceId !== '';
+  // Picking "Default" in the tray still completes setup; only a never-touched selection is incomplete.
+  const micComplete = Boolean(config.selectedDeviceId);
 
   const items: Array<{
     label: string;

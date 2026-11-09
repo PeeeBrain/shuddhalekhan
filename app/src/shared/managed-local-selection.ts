@@ -1,13 +1,16 @@
 import { z } from 'zod';
-import type { ManagedLocalSelection } from '../types/ipc';
+export const managedLocalModelSchema = z.enum(['parakeet', 'granite']);
+export const managedLocalDeviceSchema = z.enum(['auto', 'cpu', 'cuda']);
 
 export const managedLocalSelectionSchema = z.object({
-  model: z.enum(['parakeet', 'granite']),
+  model: managedLocalModelSchema,
   devices: z.object({
-    parakeet: z.enum(['auto', 'cpu', 'cuda']),
-    granite: z.enum(['auto', 'cpu', 'cuda']),
+    parakeet: managedLocalDeviceSchema,
+    granite: managedLocalDeviceSchema,
   }),
 });
+
+export type ManagedLocalSelection = z.infer<typeof managedLocalSelectionSchema>;
 
 export const DEFAULT_MANAGED_LOCAL: ManagedLocalSelection = {
   model: 'parakeet',
@@ -16,4 +19,8 @@ export const DEFAULT_MANAGED_LOCAL: ManagedLocalSelection = {
 
 export function resolveManagedLocalSelection(value: unknown): ManagedLocalSelection {
   return managedLocalSelectionSchema.safeParse(value).data ?? structuredClone(DEFAULT_MANAGED_LOCAL);
+}
+
+export function managedLocalSupportsDictionary(model: ManagedLocalSelection['model']): boolean {
+  return model === 'parakeet';
 }

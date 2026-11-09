@@ -1,22 +1,18 @@
+import { CHATGPT_AUTH as AUTH, CHATGPT_RESOURCE as RESOURCE, CHATGPT_PLAN_SCOPE as PLAN_SCOPE, expiredGrantCodes, chatGptTokenSchema as tokenSchema } from '@shuddhalekhan/shared/chatgpt';
 import { createHash, createPublicKey, randomBytes, randomUUID, verify } from 'node:crypto';
 import { createServer } from 'node:http';
 import { z } from 'zod';
 import type { ChatGptAccountStatus, ChatGptModel } from '../types/ipc';
 import type { CredentialVault } from './credential-vault';
 
-const AUTH = 'https://auth.openai.com';
-const RESOURCE = 'https://api.openai.com/v1';
+
 const VAULT_ID = 'chatgpt-account';
-const PLAN_SCOPE = 'chatgpt.tokens.use.direct';
-const expiredGrantCodes = new Set(['invalid_grant', 'invalid_refresh_token', 'token_expired',
-  'refresh_token_expired', 'refresh_token_invalidated', 'refresh_token_reused']);
+
+
 class AuthError extends Error {
   constructor(message: string, readonly code?: string) { super(message); }
 }
-const tokenSchema = z.object({
-  access_token: z.string().min(1), refresh_token: z.string().min(1),
-  expires_in: z.number().positive().finite(), scope: z.string(), id_token: z.string().optional(),
-});
+
 const registrationSchema = z.object({ clientId: z.string().min(1).refine(id => id !== 'dynamic_agent_client') });
 const accountSchema = registrationSchema.extend({
   issuer: z.string(), subject: z.string(), email: z.string(),
@@ -220,7 +216,7 @@ export class ChatGptAuth {
         ...(previous ? { login_hint: previous.email } : {}),
         ...(previous?.tokens?.idToken ? { id_token_hint: previous.tokens.idToken } : {}),
         response_type: 'code', redirect_uri: redirectUri,
-        scope: 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct',
+        scope: `openid profile email offline_access resource.invoke ${PLAN_SCOPE}`,
         resource: RESOURCE, state, nonce, code_challenge_method: 'S256',
         code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       }).toString();

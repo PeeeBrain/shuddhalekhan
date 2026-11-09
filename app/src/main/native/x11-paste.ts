@@ -1,8 +1,6 @@
 import koffi from 'koffi';
-import { buildPasteStrategyEvents } from '../paste-strategy';
+import { buildPasteStrategyEvents, PASTE_KEYSYMS } from '../paste-strategy';
 import type { PasteStrategy } from '../../types/ipc';
-
-const KEYSYM = new Map([[0x11, 0xffe3], [0x10, 0xffe1], [0x56, 0x76], [0x2d, 0xff63]]);
 
 /** XTEST dispatch uses the server's current keymap, with no uinput device or input-group access. */
 export function simulateX11Paste(strategy: PasteStrategy): { acceptedEvents: number } {
@@ -30,7 +28,7 @@ export function simulateX11Paste(strategy: PasteStrategy): { acceptedEvents: num
       const perKey = header[1];
       if (perKey === 0 || header.readUInt32LE(4) !== count * perKey) return { acceptedEvents };
       const bytes = Buffer.from(koffi.decode(pointer, 'uint8_t', 32 + count * perKey * 4));
-      for (const [vk, keysym] of KEYSYM) {
+      for (const [vk, keysym] of PASTE_KEYSYMS) {
         for (let key = 0; key < count; key += 1) {
           if (bytes.readUInt32LE(32 + key * perKey * 4) === keysym) {
             keycodes.set(vk, first + key);
@@ -54,7 +52,7 @@ export function simulateX11Paste(strategy: PasteStrategy): { acceptedEvents: num
       for (const event of events) {
         const key = keycodes.get(event.vk);
         if (key === undefined) break;
-        const up = (event.flags & 2) !== 0;
+        const up = event.up;
         if (!send(key, up)) break;
         if (up) down.delete(key);
         else down.add(key);

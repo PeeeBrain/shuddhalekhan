@@ -17,6 +17,10 @@ const { Database } = require('bun:sqlite') as {
 };
 
 describe('sanitizeAuditPayload', () => {
+  it('redacts credential assignments embedded in audit text', () => {
+    expect(sanitizeAuditPayload({ text: 'password=hunter2 access_token=private id_token=jwt' }))
+      .toEqual({ text: 'password=[redacted] access_token=[redacted] id_token=[redacted]' });
+  });
   it('redacts secret-looking keys and bearer values', () => {
     expect(
       sanitizeAuditPayload({

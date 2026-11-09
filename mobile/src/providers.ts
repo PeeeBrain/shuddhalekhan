@@ -1,50 +1,22 @@
-import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
+import type { AgentProviderKind } from '@shuddhalekhan/shared/providers';
 import type { MobileSettings } from './settings';
-
-type Preset = { label: string; endpoint: string; model: string; placeholder: string };
-/** Managed Local runs models on the computer; iOS transcribes locally with on-device Parakeet instead. */
-type TranscriptionProvider = Exclude<TranscriptionProviderId, 'managed-local'>;
-
-/**
- * Desktop's remote providers, in picker order. `placeholder` shows the full URL this phone must reach.
- * A new shared provider fails typecheck here until it gets a preset or is excluded above.
- */
-const transcriptionPresets = {
-  openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1/audio/transcriptions', model: 'gpt-4o-transcribe', placeholder: '' },
-  sarvam: { label: 'Sarvam AI', endpoint: '', model: 'saaras:v4', placeholder: '' },
-  'azure-speech': { label: 'Azure Speech', endpoint: '', model: '', placeholder: 'https://<resource>.cognitiveservices.azure.com' },
-  'google-cloud-speech-v2': { label: 'Google Cloud Speech v2', endpoint: '', model: 'chirp_3', placeholder: '' },
-  'nvidia-speech-nim': { label: 'NVIDIA Speech NIM', endpoint: '', model: '', placeholder: 'http://192.168.1.20:9000/v1/audio/transcriptions' },
-  'local-whisper-cpp': { label: 'whisper.cpp server', endpoint: '', model: '', placeholder: 'http://192.168.1.20:8080/inference' },
-  'whisper-live-kit': { label: 'WhisperLiveKit', endpoint: '', model: '', placeholder: 'http://192.168.1.20:8000/v1/audio/transcriptions' },
-  'custom-open-ai-compatible': { label: 'Custom OpenAI-compatible', endpoint: '', model: '', placeholder: 'https://example.com/v1/audio/transcriptions' },
-} satisfies Record<TranscriptionProvider, Preset>;
-
-const agentPresets = {
-  chatgpt: { label: 'ChatGPT plan', endpoint: 'https://api.openai.com/v1/responses', model: '', placeholder: '' },
-  openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1/responses', model: 'gpt-4.1-mini', placeholder: '' },
-  'azure-openai': { label: 'Azure OpenAI', endpoint: '', model: '', placeholder: 'https://<resource>.openai.azure.com/openai/v1/responses' },
-  openrouter: { label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', model: '', placeholder: '' },
-  'openai-compatible': { label: 'Custom OpenAI-compatible', endpoint: '', model: '', placeholder: 'http://192.168.1.20:11434/v1/chat/completions' },
-} satisfies Record<AgentProviderKind, Preset>;
-
-export const MOBILE_TRANSCRIPTION_PROVIDERS = Object.keys(transcriptionPresets) as TranscriptionProvider[];
-export const transcriptionProviders = MOBILE_TRANSCRIPTION_PROVIDERS.map(value => ({ value, ...transcriptionPresets[value] }));
-export const agentProviders = (Object.keys(agentPresets) as AgentProviderKind[]).map(value => ({ value, ...agentPresets[value] }));
+import { clearedSecrets } from './secret-fields';
+import { transcriptionPresets, agentPresets, type TranscriptionProvider } from './provider-presets';
+export { transcriptionProviders, agentProviders } from './provider-presets';
 
 /** Switching providers clears the old credential so it is never sent to the new service. */
 export function selectTranscriptionProvider(settings: MobileSettings, provider: TranscriptionProvider): MobileSettings {
   if (settings.transcriptionProvider === provider) return settings;
   const preset = transcriptionPresets[provider];
   return { ...settings, transcriptionProvider: provider, transcriptionEndpoint: preset.endpoint, transcriptionModel: preset.model,
-    transcriptionKey: '', googleServiceAccount: '',
+    ...clearedSecrets('transcription'),
     transcriptionAuth: provider === 'openai' || provider === 'custom-open-ai-compatible' ? 'bearer' : 'none' };
 }
 
 export function selectAgentProvider(settings: MobileSettings, provider: AgentProviderKind): MobileSettings {
   if (settings.agentProvider === provider) return settings;
   const preset = agentPresets[provider];
-  return { ...settings, agentProvider: provider, agentEndpoint: preset.endpoint, agentModel: preset.model, agentKey: '',
+  return { ...settings, agentProvider: provider, agentEndpoint: preset.endpoint, agentModel: preset.model, ...clearedSecrets('agent'),
     agentAuth: provider === 'azure-openai' ? 'api-key' : provider === 'openai-compatible' || provider === 'chatgpt' ? 'none' : 'bearer',
     agentApiMode: provider === 'openai' || provider === 'azure-openai' || provider === 'chatgpt' ? 'responses' : 'chat-completions',
     agentReasoning: 'default', agentCache: false };
@@ -78,12 +50,27 @@ export function transcriptionEndpoint(settings: MobileSettings): string {
   return settings.transcriptionEndpoint;
 }
 
-/** Sarvam's REST API takes 30 s of audio; Google's synchronous recognize takes about a minute. */
-export function recordingLimitSeconds(settings: MobileSettings): number {
+const standardRecordingLimits = { seconds: 300, maxBytes: 15_000_000 };
+export const recordingLimits = {
+  openai: standardRecordingLimits,
   // Leave two seconds for the one-second UI timer and recorder stop latency before Sarvam's hard limit.
-  if (settings.transcriptionSource === 'endpoint' && settings.transcriptionProvider === 'sarvam') return 28;
-  if (settings.transcriptionSource === 'endpoint' && settings.transcriptionProvider === 'google-cloud-speech-v2') return 55;
-  return 300;
+  sarvam: { seconds: 28, maxBytes: 964_000 },
+  'google-cloud-speech-v2': { seconds: 55, maxBytes: 1_900_000 },
+  'azure-speech': standardRecordingLimits,
+  'nvidia-speech-nim': standardRecordingLimits,
+  'local-whisper-cpp': standardRecordingLimits,
+  'whisper-live-kit': standardRecordingLimits,
+  'custom-open-ai-compatible': standardRecordingLimits,
+  'on-device': standardRecordingLimits,
+} satisfies Record<TranscriptionProvider | 'on-device', typeof standardRecordingLimits>;
+
+export function recordingLimitSeconds(settings: MobileSettings): number {
+  return recordingLimits[settings.transcriptionSource === 'on-device' ? 'on-device' : settings.transcriptionProvider].seconds;
+}
+
+/** Custom servers may run without a key even when a header mode is saved. */
+export function agentCredentialsReady(settings: MobileSettings): boolean {
+  return settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey;
 }
 
 /** Whether a remote provider has what its requests need; Settings validates the rest on save. */

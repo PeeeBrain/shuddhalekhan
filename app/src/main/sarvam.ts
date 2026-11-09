@@ -12,10 +12,6 @@ export function createSarvamTranscriber(
   return {
     id: 'sarvam',
     capabilities: {
-      translation: true,
-      automaticLanguageDetection: true,
-      dictionaryHints: config.model === 'saaras:v4',
-      authentication: 'required',
       maxDurationSeconds: 30,
     },
     async transcribe({ audio, recognition, signal }) {

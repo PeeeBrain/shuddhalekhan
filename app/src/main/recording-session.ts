@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { ipcMain } from 'electron';
+import { ipcMain, type IpcMainEvent } from 'electron';
 import type {
   DictationConfig,
   DictationTargetSnapshot,
@@ -12,22 +12,14 @@ import {
   createRecordingPresentationEnvelope,
   getTranscriptionTransportCapabilities,
 } from '../shared/dictation-runtime';
-import { keyboardHook } from './native/keyboard';
-import { DEFAULT_SHORTCUTS } from '../shared/shortcut-bindings';
-import { captureForegroundTarget } from './native/target';
-import { localWhisperCppTranscriber } from './whisper';
 import {
   TranscriptionFailure,
-  cleanFillerWords,
   type RecognitionSettings,
   type StreamingTranscriptionSession,
   type Transcriber,
 } from './transcription';
 import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from './streaming-transcript';
-import { RuntimeShell } from './runtime-shell';
-
-/** Matches Managed Local's per-request bound; recording length itself is not capped here. */
-const RECOGNITION_TIMEOUT_MS = 120_000;
+import { RECOGNITION_TIMEOUT_MS } from './managed-local-runtime';
 
 /** Main-process-only settings and resolved formatter credential, pinned at Begin. */
 export interface DictationDeliveryContext {
@@ -42,77 +34,35 @@ export interface RecordingResult {
   intent: RecordingIntent;
   targetSnapshot: DictationTargetSnapshot | null;
   recordingSessionId: string;
-  sequence: number;
-  revision: number;
-  capabilities: RecordingPresentationEnvelope['capabilities'];
   outcome: NonNullable<RecordingPresentationEnvelope['outcome']>;
   dictation: DictationDeliveryContext | null;
   signal: AbortSignal;
 }
 
-export interface AudioCapture {
-  prepare(): void;
-  beginCapture(envelope?: RecordingPresentationEnvelope): void;
-  endCapture(): boolean | void;
-  cancelCapture(): void;
-  setSelectedDevice(deviceId: string | null): void;
-  destroy?(): void;
-  markReady?(): void;
-  markCrashed?(reason: string): void;
-  getWebContents?(): import('electron').WebContents | null;
-}
+type RuntimeShellBackend = Pick<import('./runtime-shell').RuntimeShell,
+  'prepare' | 'beginCapture' | 'endCapture' | 'cancelCapture' | 'setSelectedDevice' |
+  'destroy' | 'markReady' | 'getWebContents' | 'show' | 'hide' | 'showProcessing' |
+  'finish' | 'updateDurationWarning' | 'showStreamingPreview' |
+  'markCaptureReady' | 'acceptsAudioEvent' | 'consumeAudioEvent' | 'setRecordingHandlers'>;
 
-export interface RuntimeShellBackend extends AudioCapture {
-  show(
-    intent: RecordingIntent,
-    recordingSessionId?: string,
-    envelope?: RecordingPresentationEnvelope,
-  ): void;
-  hide(): void;
-  showProcessing(recordingSessionId: string): void;
-  showFailure(
-    recordingSessionId: string | null,
-    message: string,
-    recoveryActions?: import('../types/ipc').DictationRecoveryAction[],
-  ): void;
-  finish(): void;
-  updateDurationWarning(remainingSeconds: number | null): void;
-  updateAudioLevel(level: number): void;
-  showStreamingPreview?(recordingSessionId: string, committed: string, tentative: string): void;
-  markCaptureReady?(recordingSessionId: string): void;
-  acceptsAudioEvent?(generation: number, recordingSessionId: string, sequence: number): boolean;
-  consumeAudioEvent(generation: number, recordingSessionId: string, sequence: number): boolean;
-}
-
-export interface KeyboardHook {
-  start(options: {
-    onStart: (intent: RecordingIntent) => boolean | void;
-    onStop: () => void;
-    isAgentModeEnabled?: () => boolean;
-    getBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
-    getActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
-  }): void;
-  stop(): void;
-  recordingEndedExternally?(): void;
-}
+type KeyboardHook = Pick<import('./native/keyboard').KeyboardHook, 'start' | 'stop' | 'recordingEndedExternally'>;
 
 export interface RecordingSessionOptions {
   isAgentModeEnabled: () => boolean;
-  getRecordingActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
-  getShortcutBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
-  getSelectedDeviceId?: () => string | null;
-  getRecognitionSettings?: (intent: RecordingIntent) => RecognitionSettings;
-  getDictationContext?: () => DictationDeliveryContext;
-  getReadinessError?: (intent: RecordingIntent) => Error | null;
-  onResult?: (result: RecordingResult | null) => void | Promise<void>;
-  onError?: (error: Error) => void;
+  getRecordingActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
+  getShortcutBinding: (intent: RecordingIntent) => ShortcutBinding | null;
+  getSelectedDeviceId: () => string | null;
+  getRecognitionSettings: (intent: RecordingIntent) => RecognitionSettings;
+  getDictationContext: () => DictationDeliveryContext;
+  getReadinessError: (intent: RecordingIntent) => Error | null;
+  onResult: (result: RecordingResult | null) => void | Promise<void>;
+  onError: (error: Error) => void;
   onBegin?: (intent: RecordingIntent) => void;
 
-  runtimeShell?: RuntimeShellBackend;
-  keyboardHook?: KeyboardHook;
-  transcriber?: Transcriber;
-  getTranscriber?: () => Transcriber;
-  captureTarget?: () => DictationTargetSnapshot | null;
+  runtimeShell: RuntimeShellBackend;
+  keyboardHook: KeyboardHook;
+  getTranscriber: () => Transcriber;
+  captureTarget: () => DictationTargetSnapshot | null;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
 }
@@ -150,72 +100,45 @@ export class RecordingSession {
   private isAgentModeEnabled: () => boolean;
   private getRecordingActivationMode: (intent: RecordingIntent) => RecordingActivationMode;
   private getShortcutBinding: (intent: RecordingIntent) => ShortcutBinding | null;
-  private audioCapture: AudioCapture;
   private keyboardHook: KeyboardHook;
   private getTranscriber: () => Transcriber;
   private getRecognitionSettings: (intent: RecordingIntent) => RecognitionSettings;
   private getDictationContext: () => DictationDeliveryContext;
   private getReadinessError: (intent: RecordingIntent) => Error | null;
   private captureTarget: () => DictationTargetSnapshot | null;
-  private showRecordingPillFn: (
-    intent: RecordingIntent,
-    recordingSessionId?: string,
-    envelope?: RecordingPresentationEnvelope,
-  ) => void;
-  private hideRecordingPillFn: () => void;
-  private updateDurationWarningFn: (remainingSeconds: number | null) => void;
-  private preparePresentationFn: () => void;
-  private updateAudioLevelFn: (level: number) => void;
-  private showProcessingFn: ((recordingSessionId: string) => void) | null;
-  private finishPresentationFn: (() => void) | null;
-  private showFailureFn: ((recordingSessionId: string | null, message: string) => void) | null;
-  private runtimeShellBackend: RuntimeShellBackend | null;
+  private runtimeShell: RuntimeShellBackend;
   private setTimeoutFn: typeof setTimeout;
   private clearTimeoutFn: typeof clearTimeout;
   private durationTimers: Array<ReturnType<typeof setTimeout>> = [];
   private captureStartupTimer: ReturnType<typeof setTimeout> | null = null;
-  private onResultCallback?: (result: RecordingResult | null) => void | Promise<void>;
-  private onErrorCallback?: (error: Error) => void;
+  private onResultCallback: (result: RecordingResult | null) => void | Promise<void>;
+  private onErrorCallback: (error: Error) => void;
   private onBeginCallback?: (intent: RecordingIntent) => void;
-  private getSelectedDeviceId?: () => string | null;
+  private getSelectedDeviceId: () => string | null;
   private pendingDeviceUpdate: { deviceId: string | null } | null = null;
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
-    this.getRecordingActivationMode = options.getRecordingActivationMode ?? (() => 'push-to-talk');
-    this.getShortcutBinding = options.getShortcutBinding ?? ((intent) => DEFAULT_SHORTCUTS[intent].binding);
-    const runtimeShell = options.runtimeShell
-      ?? new RuntimeShell((reason) => this.handleAudioRendererCrash(reason));
-    this.audioCapture = runtimeShell;
-    this.keyboardHook = options.keyboardHook ?? keyboardHook;
-    const defaultTranscriber = options.transcriber ?? localWhisperCppTranscriber;
-    this.getTranscriber = options.getTranscriber ?? (() => defaultTranscriber);
-    this.getRecognitionSettings = options.getRecognitionSettings ?? (() => ({
-      language: 'auto',
-      task: 'transcribe',
-      dictionary: [],
-      removeFillerWords: false,
-    }));
-    this.getDictationContext = options.getDictationContext ?? (() => ({
-      config: { mode: 'batch', formatter: null }, language: 'auto', protectedTerms: [], formatterApiKey: null,
-    }));
-    this.getReadinessError = options.getReadinessError ?? (() => null);
-    this.captureTarget = options.captureTarget ?? captureForegroundTarget;
-    this.showRecordingPillFn = runtimeShell.show.bind(runtimeShell);
-    this.hideRecordingPillFn = runtimeShell.hide.bind(runtimeShell);
-    this.updateDurationWarningFn = runtimeShell.updateDurationWarning.bind(runtimeShell);
-    this.preparePresentationFn = runtimeShell.prepare.bind(runtimeShell);
-    this.updateAudioLevelFn = runtimeShell.updateAudioLevel.bind(runtimeShell);
-    this.showProcessingFn = runtimeShell.showProcessing.bind(runtimeShell);
-    this.finishPresentationFn = runtimeShell.finish.bind(runtimeShell);
-    this.showFailureFn = runtimeShell.showFailure.bind(runtimeShell);
-    this.runtimeShellBackend = runtimeShell;
+    this.getRecordingActivationMode = options.getRecordingActivationMode;
+    this.getShortcutBinding = options.getShortcutBinding;
+    this.runtimeShell = options.runtimeShell;
+    this.keyboardHook = options.keyboardHook;
+    this.getTranscriber = options.getTranscriber;
+    this.getRecognitionSettings = options.getRecognitionSettings;
+    this.getDictationContext = options.getDictationContext;
+    this.getReadinessError = options.getReadinessError;
+    this.captureTarget = options.captureTarget;
     this.setTimeoutFn = options.setTimeoutFn ?? setTimeout;
     this.clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout;
     this.onResultCallback = options.onResult;
     this.onErrorCallback = options.onError;
     this.onBeginCallback = options.onBegin;
     this.getSelectedDeviceId = options.getSelectedDeviceId;
+    this.runtimeShell.setRecordingHandlers({
+      onCrash: reason => this.handleAudioRendererCrash(reason),
+      onAudioData: this.handleRuntimeAudioDataReady,
+      onAudioFailed: this.handleRuntimeAudioFailed,
+    });
   }
 
   begin(intent: RecordingIntent = 'dictation', recordingSessionId: string = randomUUID()): boolean {
@@ -224,7 +147,7 @@ export class RecordingSession {
     }
     const readinessError = this.getReadinessError(intent);
     if (readinessError) {
-      this.onErrorCallback?.(readinessError);
+      this.onErrorCallback(readinessError);
       return false;
     }
     const targetSnapshot = intent === 'dictation' ? this.captureTarget() : null;
@@ -249,24 +172,24 @@ export class RecordingSession {
 
     this.onBeginCallback?.(intent);
 
-    const deviceId = this.getSelectedDeviceId?.();
+    const deviceId = this.getSelectedDeviceId();
     console.log(`Starting recording session. Device: ${deviceId ?? 'default'}`);
 
     const presentation = this.createPresentationEnvelope(run);
-    this.audioCapture.prepare();
+    this.runtimeShell.prepare();
     if (this.pendingDeviceUpdate) {
-      this.audioCapture.setSelectedDevice(this.pendingDeviceUpdate.deviceId);
+      this.runtimeShell.setSelectedDevice(this.pendingDeviceUpdate.deviceId);
       this.pendingDeviceUpdate = null;
     }
-    this.audioCapture.beginCapture(presentation);
-    this.showRecordingPillFn(
+    this.runtimeShell.beginCapture(presentation);
+    this.runtimeShell.show(
       intent,
       run.id,
       presentation,
     );
     this.captureStartupTimer = this.setTimeoutFn(() => {
       if (this.activeRun !== run || run.state !== 'recording' || run.captureReady) return;
-      this.audioCapture.cancelCapture();
+      this.runtimeShell.cancelCapture();
       this.failActiveCapture(new TranscriptionFailure('unknown', 'Microphone did not start in time. Check the input device and try again.'));
     }, 30_000);
     return true;
@@ -278,17 +201,13 @@ export class RecordingSession {
 
     this.clearDurationTimers();
     run.state = 'stopping';
-    if (this.showProcessingFn) {
-      this.showProcessingFn(run.id);
-    } else {
-      this.hideRecordingPillFn();
-    }
+    this.runtimeShell.showProcessing(run.id);
     return new Promise((resolve, reject) => {
       run.pendingEnd = { resolve, reject };
-      if (this.audioCapture.endCapture() === false) {
+      if (this.runtimeShell.endCapture() === false) {
         this.cancelStreaming(run);
         run.pendingEnd = null;
-        this.finishPresentationFn?.();
+        this.runtimeShell.finish();
         if (this.activeRun === run) this.activeRun = null;
         resolve(null);
       }
@@ -298,9 +217,9 @@ export class RecordingSession {
   async cancel(): Promise<void> {
     this.clearDurationTimers();
     const run = this.activeRun;
-    this.hideRecordingPillFn();
-    this.finishPresentationFn?.();
-    this.audioCapture.cancelCapture();
+    this.runtimeShell.hide();
+    this.runtimeShell.finish();
+    this.runtimeShell.cancelCapture();
     if (run) {
       run.abort.abort();
       this.cancelStreaming(run);
@@ -309,30 +228,22 @@ export class RecordingSession {
     }
   }
 
-  isActive(): boolean {
-    return this.activeRun !== null && this.activeRun.state === 'recording';
-  }
-
   isBusy(): boolean {
     return this.activeRun !== null;
   }
 
-  markRuntimeShellCrashed(reason: string): void {
-    this.handleAudioRendererCrash(reason);
-  }
-
-  private handleAudioRendererCrash(reason: string): void {
+  handleAudioRendererCrash(reason: string): void {
     const error = new Error(`Audio window crashed: ${reason}`);
     this.clearDurationTimers();
     const run = this.activeRun;
-    this.hideRecordingPillFn();
+    this.runtimeShell.hide();
     if (run) {
       run.abort.abort();
       this.cancelStreaming(run);
       run.pendingEnd?.reject(error);
       this.activeRun = null;
     }
-    this.onErrorCallback?.(error);
+    this.onErrorCallback(error);
   }
 
   async complete(audioData: Uint8Array<ArrayBuffer>): Promise<RecordingResult | null> {
@@ -359,8 +270,7 @@ export class RecordingSession {
       run.streaming = null;
       audioData.fill(0);
       pendingEnd?.reject(error);
-      if (this.onErrorCallback) this.onErrorCallback(error);
-      else this.showFailureFn?.(run.id, error.message);
+      this.onErrorCallback(error);
       this.activeRun = null;
       return null;
     }
@@ -369,7 +279,7 @@ export class RecordingSession {
     try {
       const recognized = await this.recognizeWithinDeadline(run, transcriber, audioData);
       if (recognized === null || this.activeRun !== run) return null;
-      const text = run.recognition.removeFillerWords ? cleanFillerWords(recognized) : recognized;
+      const text = recognized;
       if (!text.trim()) {
         // Content-free level summary so a silent mic is distinguishable from a decoder miss.
         const pcm = new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
@@ -389,11 +299,10 @@ export class RecordingSession {
             : 'Check the microphone input level and selected device.';
         throw new TranscriptionFailure('unknown', `No speech was recognized. ${hint} Then try again.`);
       }
-      const result = this.createRecordingResult(run, transcriber, text, { kind: 'completed' });
+      const result = this.createRecordingResult(run, text, { kind: 'completed' });
       run.state = 'delivering';
-      await this.onResultCallback?.(result);
+      await this.onResultCallback(result);
       if (this.activeRun !== run) return null;
-      if (!this.onResultCallback) this.finishPresentationFn?.();
       pendingEnd?.resolve(result);
       return result;
     } catch (error) {
@@ -401,35 +310,32 @@ export class RecordingSession {
       const err = error instanceof Error ? error : new Error(String(error));
       if (run.state === 'delivering') {
         pendingEnd?.reject(err);
-        this.onErrorCallback?.(err);
+        this.onErrorCallback(err);
         return null;
       }
       const recognizedSoFar = run.streaming?.ledger.current().committed;
       if (recognizedSoFar) {
         const result = this.createRecordingResult(
           run,
-          transcriber,
           recognizedSoFar,
           { kind: 'failed', message: err.message },
         );
         run.state = 'delivering';
         try {
-          await this.onResultCallback?.(result);
+          await this.onResultCallback(result);
         } catch (deliveryError) {
           if (this.activeRun !== run) return null;
           const failure = deliveryError instanceof Error ? deliveryError : new Error(String(deliveryError));
           pendingEnd?.reject(failure);
-          this.onErrorCallback?.(failure);
+          this.onErrorCallback(failure);
           return null;
         }
         if (this.activeRun !== run) return null;
-        if (!this.onResultCallback) this.finishPresentationFn?.();
         pendingEnd?.resolve(result);
         return result;
       }
       pendingEnd?.reject(err);
-      if (this.onErrorCallback) this.onErrorCallback(err);
-      else this.showFailureFn?.(run.id, 'Transcription failed.');
+      this.onErrorCallback(err);
       if (!pendingEnd) {
         throw err;
       }
@@ -443,18 +349,10 @@ export class RecordingSession {
     }
   }
 
-  startKeyboardHook(onResult?: (result: RecordingResult | null) => void | Promise<void>): void {
+  startKeyboardHook(): void {
     this.keyboardHook.start({
-      onStart: (intent) => {
-        return this.begin(intent);
-      },
-      onStop: () => {
-        void this.end().then((result) => {
-          if (onResult && !this.onResultCallback) {
-            void onResult(result);
-          }
-        }).catch(() => undefined);
-      },
+      onStart: (intent) => this.begin(intent),
+      onStop: () => { void this.end().catch(() => undefined); },
       isAgentModeEnabled: this.isAgentModeEnabled,
       getBinding: this.getShortcutBinding,
       getActivationMode: this.getRecordingActivationMode,
@@ -468,15 +366,13 @@ export class RecordingSession {
   start(): void {
     // Prewarm the hidden renderer before installing the global hook. Audio can
     // still start immediately if the user invokes a shortcut during loading.
-    this.preparePresentationFn();
+    this.runtimeShell.prepare();
 
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.on('runtime:audio-ready', this.handleRuntimeAudioReady);
+    ipcMain.on('runtime:audio-failed', this.handleRendererAudioFailed);
     ipcMain.on('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.on('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
-    ipcMain.on('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
-    ipcMain.on('runtime:audio-failed', this.handleRuntimeAudioFailed);
-    ipcMain.on('audio-level-changed', this.handleAudioLevelChanged);
 
     this.startKeyboardHook();
   }
@@ -485,25 +381,19 @@ export class RecordingSession {
     this.clearDurationTimers();
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.off('runtime:audio-ready', this.handleRuntimeAudioReady);
+    ipcMain.off('runtime:audio-failed', this.handleRendererAudioFailed);
     ipcMain.off('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.off('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
-    ipcMain.off('runtime:audio-data-ready', this.handleRuntimeAudioDataReady);
-    ipcMain.off('runtime:audio-failed', this.handleRuntimeAudioFailed);
-    ipcMain.off('audio-level-changed', this.handleAudioLevelChanged);
 
     void this.cancel();
     this.stopKeyboardHook();
-    this.audioCapture.destroy?.();
+    this.runtimeShell.destroy();
   }
 
   updateDevice(deviceId: string | null): void {
     // A device edit applies to the next recording, never its in-flight capture.
     if (this.activeRun) this.pendingDeviceUpdate = { deviceId };
-    else this.audioCapture.setSelectedDevice(deviceId);
-  }
-
-  getAudioWebContents(): import('electron').WebContents | null {
-    return this.audioCapture.getWebContents?.() ?? null;
+    else this.runtimeShell.setSelectedDevice(deviceId);
   }
 
   private canStartLiveStreaming(transcriber: Transcriber): boolean {
@@ -525,7 +415,7 @@ export class RecordingSession {
             this.disableStreaming(run);
             return;
           }
-          this.runtimeShellBackend?.showStreamingPreview?.(
+          this.runtimeShell.showStreamingPreview(
             run.id,
             update.committed,
             update.tentative,
@@ -634,20 +524,15 @@ export class RecordingSession {
 
   private createRecordingResult(
     run: RecordingRunContext,
-    transcriber: Transcriber,
     text: string,
     outcome: RecordingResult['outcome'],
   ): RecordingResult {
-    const envelope = this.createPresentationEnvelope(run, transcriber, outcome);
     return {
       text,
       intent: run.intent,
       targetSnapshot: run.targetSnapshot,
-      recordingSessionId: envelope.recordingSessionId,
-      sequence: envelope.sequence,
-      revision: envelope.revision,
-      capabilities: envelope.capabilities,
-      outcome: envelope.outcome ?? outcome,
+      recordingSessionId: run.id,
+      outcome,
       dictation: run.dictation,
       signal: run.abort.signal,
     };
@@ -655,8 +540,6 @@ export class RecordingSession {
 
   private createPresentationEnvelope(
     run: RecordingRunContext,
-    transcriber: Transcriber = run.transcriber,
-    outcome?: import('../types/ipc').RecordingTerminalOutcome,
   ): RecordingPresentationEnvelope {
     run.sequence += 1;
     run.revision += 1;
@@ -664,10 +547,9 @@ export class RecordingSession {
       recordingSessionId: run.id,
       sequence: run.sequence,
       revision: run.revision,
-      capabilities: transcriber.transportCapabilities
-        ?? getTranscriptionTransportCapabilities(transcriber.id),
+      capabilities: run.transcriber.transportCapabilities
+        ?? getTranscriptionTransportCapabilities(run.transcriber.id),
       streamingActive: run.streaming !== null && !run.streaming.failed,
-      outcome,
     });
   }
 
@@ -679,12 +561,12 @@ export class RecordingSession {
     for (let elapsed = warningStart; elapsed < maxDurationSeconds; elapsed++) {
       const remaining = maxDurationSeconds - elapsed;
       this.durationTimers.push(this.setTimeoutFn(() => {
-        if (this.activeRun?.state === 'recording') this.updateDurationWarningFn(remaining);
+        if (this.activeRun?.state === 'recording') this.runtimeShell.updateDurationWarning(remaining);
       }, elapsed * 1000));
     }
     this.durationTimers.push(this.setTimeoutFn(() => {
       if (this.activeRun?.state !== 'recording') return;
-      this.keyboardHook.recordingEndedExternally?.();
+      this.keyboardHook.recordingEndedExternally();
       void this.end().catch(() => undefined);
     }, maxDurationSeconds * 1000));
   }
@@ -694,11 +576,11 @@ export class RecordingSession {
     this.captureStartupTimer = null;
     for (const timer of this.durationTimers) this.clearTimeoutFn(timer);
     this.durationTimers = [];
-    this.updateDurationWarningFn(null);
+    this.runtimeShell.updateDurationWarning(null);
   }
 
   private handleAudioStreamReady = (): void => {
-    this.audioCapture.markReady?.();
+    this.runtimeShell.markReady();
   };
 
   private handleRuntimeAudioReady = (
@@ -710,10 +592,10 @@ export class RecordingSession {
     const run = this.activeRun;
     if (!run || run.id !== recordingSessionId || run.sequence !== sequence
       || run.state !== 'recording' || run.captureReady) return;
-    if (!event.sender || event.sender !== this.audioCapture.getWebContents?.()) return;
-    if (!this.runtimeShellBackend?.acceptsAudioEvent?.(generation, recordingSessionId, sequence)) return;
+    if (!event.sender || event.sender !== this.runtimeShell.getWebContents()) return;
+    if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
     run.captureReady = true;
-    this.runtimeShellBackend.markCaptureReady?.(run.id);
+    this.runtimeShell.markCaptureReady(run.id);
     this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
   };
 
@@ -728,9 +610,7 @@ export class RecordingSession {
     const pcm = new Uint8Array(audioData);
     const run = this.activeRun;
     const streaming = run?.streaming;
-    const acceptedIdentity = this.runtimeShellBackend?.acceptsAudioEvent
-      ? this.runtimeShellBackend.acceptsAudioEvent(generation, recordingSessionId, commandSequence)
-      : run?.id === recordingSessionId && run.sequence === commandSequence;
+    const acceptedIdentity = this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, commandSequence);
     if (!run || !streaming || !acceptedIdentity || chunkSequence !== streaming.expectedChunkSequence) {
       pcm.fill(0);
       if (streaming && run?.id === recordingSessionId) this.disableStreaming(run);
@@ -742,7 +622,7 @@ export class RecordingSession {
       try {
         await streaming.session.send(pcm);
         if (this.activeRun === run && !streaming.failed) {
-          this.audioCapture.getWebContents?.()?.send(
+          this.runtimeShell.getWebContents()?.send(
             'runtime:audio-chunk-accepted',
             generation,
             recordingSessionId,
@@ -768,9 +648,7 @@ export class RecordingSession {
   ): void => {
     const run = this.activeRun;
     if (!run?.streaming) return;
-    const acceptedIdentity = this.runtimeShellBackend?.acceptsAudioEvent
-      ? this.runtimeShellBackend.acceptsAudioEvent(generation, recordingSessionId, commandSequence)
-      : run.id === recordingSessionId && run.sequence === commandSequence;
+    const acceptedIdentity = this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, commandSequence);
     if (acceptedIdentity) this.disableStreaming(run);
   };
 
@@ -782,7 +660,7 @@ export class RecordingSession {
     audioData: ArrayBuffer,
   ): Promise<void> => {
     const data = new Uint8Array(audioData);
-    if (!this.runtimeShellBackend?.consumeAudioEvent(generation, recordingSessionId, sequence)) {
+    if (!this.runtimeShell.consumeAudioEvent(generation, recordingSessionId, sequence)) {
       data.fill(0);
       return;
     }
@@ -793,13 +671,23 @@ export class RecordingSession {
     }
   };
 
+  private handleRendererAudioFailed = (
+    event: IpcMainEvent,
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
+  ): void => {
+    if (event.sender !== this.runtimeShell.getWebContents()) return;
+    this.handleRuntimeAudioFailed(event, generation, recordingSessionId, sequence);
+  };
+
   private handleRuntimeAudioFailed = (
     _event: unknown,
     generation: number,
     recordingSessionId: string,
     sequence: number,
   ): void => {
-    if (!this.runtimeShellBackend?.consumeAudioEvent(generation, recordingSessionId, sequence)) return;
+    if (!this.runtimeShell.consumeAudioEvent(generation, recordingSessionId, sequence)) return;
     this.failActiveCapture();
   };
 
@@ -810,16 +698,11 @@ export class RecordingSession {
     if (!run) return;
     this.cancelStreaming(run);
     this.clearDurationTimers();
-    this.keyboardHook.recordingEndedExternally?.();
+    this.keyboardHook.recordingEndedExternally();
     run.pendingEnd?.reject(error);
-    if (this.onErrorCallback) this.onErrorCallback(error);
-    else this.showFailureFn?.(run.id, error.message);
+    this.onErrorCallback(error);
     if (this.activeRun === run) this.activeRun = null;
   }
 
-  private handleAudioLevelChanged = (_event: unknown, level: number): void => {
-    this.updateAudioLevelFn(level);
-  };
 }
-
 

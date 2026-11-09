@@ -2,27 +2,28 @@ import { isStepCount, streamText, tool } from 'ai';
 import { z } from 'zod';
 import type { AgentProviderConfig, AgentProviderTestResult } from '../types/ipc';
 import { failedProviderTest, normalizeAgentProvider } from '../shared/agent-provider';
-import { resolveAgentProviderKey } from '../shared/agent-provider-validation';
 import { createAgentProvider } from './provider';
 import { providerDiagnostic, redactProviderText } from './provider-diagnostic';
 
-export const PROVIDER_TEST_DEADLINE_MS = 75_000;
+import { PROVIDER_TEST_DEADLINE_MS } from '../shared/agent-timeouts';
+import { providerTestCancelled, providerTestTimedOut } from '../shared/agent-provider-test';
 
 export async function testAgentProvider(
   provider: AgentProviderConfig,
   signal: AbortSignal,
   storedApiKey?: string,
 ): Promise<AgentProviderTestResult> {
-  const { validation, apiKey } = resolveAgentProviderKey(provider, storedApiKey, process.env);
-  const result = failedProviderTest({ kind: 'configuration', message: 'Correct the provider settings before testing.', action: validation.issues[0]?.message ?? 'Check credentials.' }, validation);
-  if (validation.issues.length) return result;
+  const profile = normalizeAgentProvider(provider);
+  const result = failedProviderTest({ kind: 'provider', message: 'The model test did not complete.', action: 'Retry the model test.' },
+    { issues: [], credentials: profile.auth === 'none' ? 'not-required' : 'available' });
+  let apiKey = storedApiKey;
   delete result.diagnostic;
   const deadline = AbortSignal.timeout(PROVIDER_TEST_DEADLINE_MS);
   const abortSignal = AbortSignal.any([signal, deadline]);
   let stage: 'streaming' | 'tools' = 'streaming';
   try {
     const client = createAgentProvider(provider, storedApiKey, 'provider-check');
-    const profile = normalizeAgentProvider(provider);
+    apiKey = client.apiKey;
     const nativeChat = profile.apiMode === 'chat-completions' && (profile.kind === 'openai' || profile.kind === 'azure-openai');
     const settings = {
       model: client.model,
@@ -96,9 +97,9 @@ export async function testAgentProvider(
     const interruption = abortSignal.aborted && (error === abortSignal.reason
       || (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')));
     result.diagnostic = interruption && signal.aborted && abortSignal.reason === signal.reason
-      ? { kind: 'cancelled', message: 'The model test was cancelled.', action: 'Run Test model when ready.' }
+      ? providerTestCancelled
       : interruption && deadline.aborted && abortSignal.reason === deadline.reason
-        ? { kind: 'timeout', message: 'The model test timed out.', action: 'Check server availability or local model loading, then retry.' }
+        ? providerTestTimedOut
         : providerDiagnostic(error, apiKey);
   } finally {
     result.checkedAt = new Date().toISOString();

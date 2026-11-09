@@ -1,7 +1,5 @@
 import type { McpServerConfig } from '../../types/ipc';
 
-type IdFactory = () => string;
-
 export function createHttpMcpTransport(): Extract<McpServerConfig['transport'], { type: 'http' }> {
   return {
     type: 'http',
@@ -12,7 +10,8 @@ export function createHttpMcpTransport(): Extract<McpServerConfig['transport'], 
 
 export function createBlankMcpServer(): McpServerConfig {
   return {
-    id: makeServerId('mcp'),
+    // Short on purpose: `${id}__${tool}` must fit providers' 64-character tool-name limit.
+    id: `mcp-${Date.now().toString(36)}`,
     displayName: '',
     enabled: false,
     transport: {
@@ -29,7 +28,6 @@ export function createBlankMcpServer(): McpServerConfig {
 export function normalizeDraftServer(
   server: McpServerConfig,
   existingId: string | null,
-  makeId: IdFactory = () => makeServerId('mcp')
 ): McpServerConfig {
   let transport = server.transport;
   if (transport.type === 'http' && transport.oauth) {
@@ -40,7 +38,7 @@ export function normalizeDraftServer(
   }
   return {
     ...server,
-    id: existingId ?? makeId(),
+    id: existingId ?? server.id,
     displayName: server.displayName.trim() || 'MCP Server',
     transport,
   };
@@ -57,8 +55,4 @@ export function splitCommaList(value: string): string[] {
 
 export function splitList(value: string): string[] {
   return value.split(/\s+/).map((item) => item.trim()).filter(Boolean);
-}
-
-function makeServerId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}`;
 }

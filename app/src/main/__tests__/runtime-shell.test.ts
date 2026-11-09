@@ -84,6 +84,8 @@ describe('Batch Dictation runtime shell', () => {
     shell.markCaptureReady('obsolete-session');
     shell.markCaptureReady('session-1');
     shell.markCaptureReady('session-1');
+    shell.updateDurationWarning(10);
+    expect(send).toHaveBeenLastCalledWith('runtime:snapshot', expect.objectContaining({ durationWarningSeconds: 10 }));
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showProcessing('session-1');
@@ -97,9 +99,9 @@ describe('Batch Dictation runtime shell', () => {
       .filter((call: unknown[]) => call[0] === 'runtime:snapshot')
       .map((call: unknown[]) => call[1] as { kind: string; revision: number; captureStartedAt?: number | null });
     expect(snapshots.map((snapshot: { kind: string }) => snapshot.kind)).toEqual([
-      'recording', 'recording', 'recording', 'processing', 'failure', 'idle',
+      'recording', 'recording', 'recording', 'recording', 'processing', 'failure', 'idle',
     ]);
-    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(snapshots[0].captureStartedAt).toBeNull();
     expect(snapshots[1].captureStartedAt).toEqual(expect.any(Number));
     expect(snapshots[2].captureStartedAt).toBe(snapshots[1].captureStartedAt);
@@ -187,7 +189,7 @@ describe('Batch Dictation runtime shell', () => {
     };
     electronMock.BrowserWindow.mockImplementation(() => window);
     const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-hide-before-insertion`);
-    const shell = new RuntimeShell(undefined, { setTimeoutFn, clearTimeoutFn: vi.fn() });
+    const shell = new RuntimeShell({ setTimeoutFn, clearTimeoutFn: vi.fn() });
     shell.prepare();
 
     shell.finish();
@@ -245,6 +247,9 @@ describe('Batch Dictation runtime shell', () => {
     const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-spool`);
     const { defaultSpoolDir } = await import('../audio-spool');
     const shell = new RuntimeShell();
+    const onAudioData = vi.fn(async () => {});
+    const onAudioFailed = vi.fn();
+    shell.setRecordingHandlers({ onAudioData, onAudioFailed, onCrash: vi.fn() });
     const handler = (calls: unknown[][], channel: string) => calls
       .filter((call) => call[0] === channel).at(-1)?.[1] as (...args: unknown[]) => unknown;
     const spool = handler(electronMock.ipcMain.handle.mock.calls as unknown[][], 'runtime:audio-spool');
@@ -279,10 +284,9 @@ describe('Batch Dictation runtime shell', () => {
     expect(ownSpools()).toHaveLength(1);
     end(event, generation, 'take', 1, 2, 3);
 
-    const delivered = (electronMock.ipcMain.emit.mock.calls as unknown[][])
-      .find((call) => call[0] === 'runtime:audio-data-ready');
-    expect(delivered?.slice(2, 5)).toEqual([generation, 'take', 1]);
-    const wav = delivered?.[5] as ArrayBuffer;
+    const delivered = onAudioData.mock.calls[0] as unknown as unknown[];
+    expect(delivered.slice(1, 4)).toEqual([generation, 'take', 1]);
+    const wav = delivered[4] as ArrayBuffer;
     expect(Array.from(new Int16Array(wav.slice(44)))).toEqual([1, 2, 3]);
     expect(shell.acceptsAudioEvent(generation, 'take', 1)).toBe(false);
     expect(ownSpools()).toEqual([]);
@@ -291,10 +295,9 @@ describe('Batch Dictation runtime shell', () => {
     const second = begin(2);
     spool(event, second, 'take', 2, 0, pcm(4));
     end(event, second, 'take', 2, 2, 2);
-    expect(electronMock.ipcMain.emit).toHaveBeenCalledWith('runtime:audio-failed', event, second, 'take', 2);
+    expect(onAudioFailed).toHaveBeenCalledWith(event, second, 'take', 2);
     expect(send).toHaveBeenCalledWith('runtime:audio-cancel', expect.objectContaining({ generation: second, sequence: 2 }));
-    expect((electronMock.ipcMain.emit.mock.calls as unknown[][])
-      .filter((call) => call[0] === 'runtime:audio-data-ready')).toHaveLength(1);
+    expect(onAudioData).toHaveBeenCalledTimes(1);
     expect(ownSpools()).toEqual([]);
 
     // Cancel discards a partially spooled recording without producing audio.
@@ -303,8 +306,7 @@ describe('Batch Dictation runtime shell', () => {
     shell.cancelCapture();
     expect(ownSpools()).toEqual([]);
     end(event, third, 'take', 3, 1, 1);
-    expect((electronMock.ipcMain.emit.mock.calls as unknown[][])
-      .filter((call) => call[0] === 'runtime:audio-data-ready')).toHaveLength(1);
+    expect(onAudioData).toHaveBeenCalledTimes(1);
 
     // Disk full: the write is refused, the recording fails once, and nothing is left behind.
     const fourth = begin(4);
@@ -317,7 +319,7 @@ describe('Batch Dictation runtime shell', () => {
     } finally {
       write.mockRestore();
     }
-    expect(electronMock.ipcMain.emit).toHaveBeenCalledWith('runtime:audio-failed', event, fourth, 'take', 4);
+    expect(onAudioFailed).toHaveBeenCalledWith(event, fourth, 'take', 4);
     expect(send).toHaveBeenCalledWith('runtime:audio-cancel', expect.objectContaining({ generation: fourth, sequence: 4 }));
     expect(ownSpools()).toEqual([]);
     expect(spool(event, fourth, 'take', 4, 2, pcm(8))).toBe(false);
@@ -346,7 +348,8 @@ describe('Batch Dictation runtime shell', () => {
       return window;
     });
     const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-crash`);
-    const shell = new RuntimeShell(onCrash);
+    const shell = new RuntimeShell();
+    shell.setRecordingHandlers({ onCrash, onAudioData: async () => {}, onAudioFailed: () => {} });
     shell.prepare();
     shell.markReady();
     shell.beginCapture({
@@ -404,7 +407,7 @@ describe('Agent Mode runtime shell presentation', () => {
   }
 
   function createShell(moduleSuffix: string, timers?: { setTimeoutFn: typeof setTimeout; clearTimeoutFn: typeof clearTimeout }) {
-    return import(`../runtime-shell?test=${Date.now()}-${moduleSuffix}`).then(({ RuntimeShell }) => new RuntimeShell(undefined, timers));
+    return import(`../runtime-shell?test=${Date.now()}-${moduleSuffix}`).then(({ RuntimeShell }) => new RuntimeShell(timers));
   }
 
   it('projects agent status as a transient snapshot and returns to idle after the status window', async () => {

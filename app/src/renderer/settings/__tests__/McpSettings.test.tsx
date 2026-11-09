@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { McpSettings } from '../McpSettings';
 import type { McpServerConfig } from '../../../types/ipc';
 
@@ -27,7 +27,7 @@ describe('McpSettings HTTP redirect policy', () => {
         statuses={{}}
         agentEnabled
         onChange={onChange}
-        onTest={() => undefined}
+        onTest={async () => undefined}
       />,
     );
 
@@ -67,7 +67,7 @@ function makeServer(
 
 function renderSettings(servers: McpServerConfig[], agentEnabled = true) {
   const onChange = mock(() => undefined);
-  render(<McpSettings servers={servers} statuses={{}} agentEnabled={agentEnabled} onChange={onChange} onTest={() => undefined} />);
+  render(<McpSettings servers={servers} statuses={{}} agentEnabled={agentEnabled} onChange={onChange} onTest={async () => undefined} />);
   return onChange;
 }
 
@@ -140,4 +140,17 @@ describe('McpSettings tool policy collapse', () => {
     expect(screen.getByRole('combobox', { name: 'Approval policy for tool-a' })).toBeDefined();
     expect(screen.getByRole('combobox', { name: 'Approval policy for tool-b' })).toBeDefined();
   });
+});
+
+it('reports a rejected server reconnect instead of leaving an unhandled rejection', async () => {
+  const failure = new Error('bridge unavailable');
+  const log = spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    render(<McpSettings servers={[makeServer(httpTransport)]} statuses={{}} agentEnabled
+      onChange={() => {}} onTest={async () => { throw failure; }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+    await waitFor(() => expect(log).toHaveBeenCalledWith('Failed to test MCP server:', failure));
+  } finally {
+    log.mockRestore();
+  }
 });

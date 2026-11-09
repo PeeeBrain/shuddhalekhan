@@ -1,12 +1,11 @@
+import { CHATGPT_AUTH as AUTH, CHATGPT_RESOURCE as RESOURCE, CHATGPT_PLAN_SCOPE as PLAN_SCOPE, expiredGrantCodes as expiredGrants, chatGptTokenSchema as tokenSchema, chatGptError } from '@shuddhalekhan/shared/chatgpt';
 import { z } from 'zod';
 import type { Fetch } from './network';
 
-const AUTH = 'https://auth.openai.com';
-const RESOURCE = 'https://api.openai.com/v1';
+
 export const chatGptEndpoint = `${RESOURCE}/responses`;
-const PLAN_SCOPE = 'chatgpt.tokens.use.direct';
-const expiredGrants = new Set(['invalid_grant', 'invalid_refresh_token', 'token_expired',
-  'refresh_token_expired', 'refresh_token_invalidated', 'refresh_token_reused']);
+
+
 const accountSchema = z.object({
   issuer: z.literal(AUTH), subject: z.string().min(1), email: z.email(),
   refreshToken: z.string().min(1), scopes: z.array(z.string()),
@@ -18,8 +17,7 @@ const savedSchema = z.object({
   identity: z.object({ issuer: z.literal(AUTH), subject: z.string().min(1), email: z.email() }).nullable(),
   account: accountSchema.nullable(),
 });
-const tokenSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1),
-  expires_in: z.number().positive().finite(), scope: z.string(), id_token: z.string().optional() });
+
 const providerErrorSchema = z.object({ error: z.union([z.string(), z.object({ code: z.string().optional(), param: z.string().optional() })]) });
 type Saved = z.infer<typeof savedSchema>;
 export type ChatGptStatus = {
@@ -261,14 +259,4 @@ export class ChatGptAuth {
   }
 }
 
-export function chatGptError(status: number, code?: string): string {
-  if (status === 401 || code === 'subscription_sharing_invalid_user' || expiredGrants.has(code ?? '')) return 'The ChatGPT account authorization is no longer valid. Sign in with ChatGPT again in Settings.';
-  if (status === 429 || code === 'subscription_sharing_usage_limit_exceeded') return 'Your ChatGPT plan usage limit was reached. Manage usage at https://chatgpt.com/settings/usage before retrying.';
-  if (code === 'subscription_sharing_user_not_eligible') return 'This ChatGPT account is not eligible for plan usage. Check your account and plan, then sign in again.';
-  if (/^subscription_sharing_(usage|user)_unavailable$/.test(code ?? '')) return 'ChatGPT plan usage is temporarily unavailable. Try again later.';
-  if (code === 'subscription_sharing_unsupported_capability') return 'ChatGPT plan usage does not support a requested capability. Review the model settings.';
-  if (code === 'subscription_sharing_route_not_supported') return 'ChatGPT plan usage requires the Responses API with streaming enabled.';
-  if (/^chatpass_v2_(scope_not_authorized|invalid_authorization_context)$/.test(code ?? '')) return 'ChatGPT plan usage is not authorized. Sign in again and allow plan usage.';
-  if (code === 'invalid_client') return 'ChatGPT registration is invalid. Check the app configuration and sign in again.';
-  return `ChatGPT could not complete the request (HTTP ${status}). Try again or sign in again.`;
-}
+export { chatGptError } from '@shuddhalekhan/shared/chatgpt';

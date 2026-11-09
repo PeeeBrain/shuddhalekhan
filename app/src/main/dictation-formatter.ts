@@ -1,3 +1,4 @@
+import { hasControlCharacters } from '@shuddhalekhan/shared/validation';
 import type { DictationFormatterProfile } from '../types/ipc';
 import { classifyFormatterEndpoint } from '../shared/dictation-runtime';
 
@@ -94,15 +95,6 @@ function hasWrongLanguageShift(rawText: string, correctedText: string, language:
   return false;
 }
 
-function hasControlCharacters(text: string): boolean {
-  for (let index = 0; index < text.length; index++) {
-    const code = text.charCodeAt(index);
-    if (code < 32 && code !== 9 && code !== 10 && code !== 13) return true;
-    if (code === 127) return true;
-  }
-  return false;
-}
-
 export function validateFormatterOutput(
   rawText: string,
   correctedText: string,
@@ -112,7 +104,7 @@ export function validateFormatterOutput(
   const trimmed = correctedText.trim();
   if (!trimmed) return 'Formatter output was empty.';
 
-  if (hasControlCharacters(correctedText)) {
+  if (hasControlCharacters(correctedText.replace(/[\t\n\r]/g, ''))) {
     return 'Formatter output contained control characters.';
   }
 

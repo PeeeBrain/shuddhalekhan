@@ -1,11 +1,14 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 const vi = { fn: mock, mock: mock.module, spyOn };
-import { cleanFillerWords, transcribe } from '../whisper';
+import { createLocalWhisperCppTranscriber } from '../whisper';
+import { cleanFillerWords } from '../transcription';
 import { TranscriptionFailure } from '../transcription';
 import type { AppConfig } from '../../types/ipc';
 
 const config: AppConfig = {
+  managedLocal: structuredClone(DEFAULT_MANAGED_LOCAL),
   whisperUrl: 'http://whisper.test/inference',
   transcription: {
     activeProvider: 'local-whisper-cpp',
@@ -45,6 +48,11 @@ const config: AppConfig = {
   },
 };
 
+function transcribe(audio: Uint8Array<ArrayBuffer>, settings = config) {
+  return createLocalWhisperCppTranscriber(settings.transcription.providers.localWhisperCpp.endpoint)
+    .transcribe({ audio, recognition: settings });
+}
+
 describe('cleanFillerWords', () => {
   it('removes common filler words and repairs spacing around punctuation', () => {
     expect(cleanFillerWords('Um, this is uh a test ah. Done !')).toBe('this is a test. Done!');
@@ -72,6 +80,8 @@ describe('transcribe', () => {
     expect(fetchMock).toHaveBeenCalledWith(config.whisperUrl, {
       method: 'POST',
       body: expect.any(FormData) as BodyInit,
+      headers: {},
+      signal: undefined,
     });
     const body = fetchMock.mock.calls[0]?.[1]?.body as FormData;
     expect(body.get('temperature')).toBe('0.2');

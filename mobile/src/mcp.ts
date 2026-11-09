@@ -3,7 +3,7 @@ import { bearerHeaders, parseResponse, readJSON, request, type Fetch } from './n
 import type { MCPServerSettings } from './settings';
 
 export const jsonObjectSchema = z.record(z.string(), z.json());
-export type JSONObject = z.infer<typeof jsonObjectSchema>;
+type JSONObject = z.infer<typeof jsonObjectSchema>;
 const envelopeSchema = z.object({
   jsonrpc: z.literal('2.0'),
   id: z.union([z.number(), z.string(), z.null()]).optional(),

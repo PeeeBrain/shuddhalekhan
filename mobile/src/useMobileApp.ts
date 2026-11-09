@@ -5,8 +5,10 @@ import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
 import { MobileController, type Recorder } from './controller';
 import { chatGptAuth, loadSettings, saveSettings } from './native-settings';
-import { localModelKey, signGoogleJwt, transcribeOnDevice, useKeyboardSession, useOnDeviceModel } from './on-device';
-import { recordingLimitSeconds } from './providers';
+import { localModelKey, transcribeOnDevice, useOnDeviceModel } from './on-device';
+import { signGoogleJwt } from './native-google-auth';
+import { useKeyboardSession } from './useKeyboardSession';
+import { agentCredentialsReady, recordingLimitSeconds, recordingLimits } from './providers';
 import { agentActivity, onAgentApprovalAction, onAgentRunStopped } from './native-agent-activity';
 
 const recordingOptions: RecordingOptions = {
@@ -67,7 +69,7 @@ export function useMobileApp() {
           if (!recorder.uri) throw new Error();
           recordingFile = new File(recorder.uri);
           if (!recordingFile.exists || recordingFile.size <= 44) throw new Error();
-          if (recordingFile.size > 15_000_000) throw new Error('Recording is too large. Keep it under five minutes.');
+          if (recordingFile.size > recordingLimits['on-device'].maxBytes) throw new Error('Recording is too large. Keep it under five minutes.');
           return recordingFile;
         } catch { throw new Error('Could not read the recording. Record again and speak for at least a second.'); }
       },
@@ -108,7 +110,7 @@ export function useMobileApp() {
       await chatGptAuth.initialize();
       return settings.agentEnabled && agentActivity !== undefined &&
         (settings.agentProvider === 'chatgpt' ? chatGptAuth.getSnapshot().status === 'signed-in' && chatGptAuth.getSnapshot().planUsage :
-          settings.agentProvider === 'openai-compatible' || settings.agentAuth === 'none' || !!settings.agentKey);
+          agentCredentialsReady(settings));
     });
   };
   // Links arrive in a mount-time listener; it calls the latest start, not the first render's.

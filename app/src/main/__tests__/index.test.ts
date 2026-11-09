@@ -129,7 +129,6 @@ const recordingSessionBegin = vi.fn();
 const recordingSessionEnd = vi.fn(() => Promise.resolve({ text: 'transcribed text', intent: 'dictation', targetSnapshot: null }));
 const recordingSessionCancel = vi.fn(() => Promise.resolve());
 const recordingSessionUpdateDevice = vi.fn();
-const recordingSessionGetAudioWebContents = vi.fn();
 let sessionOptions: any = null;
 
 installElectronMock();
@@ -257,7 +256,6 @@ mock.module('../recording-session', () => ({
     end = recordingSessionEnd;
     cancel = recordingSessionCancel;
     updateDevice = recordingSessionUpdateDevice;
-    getAudioWebContents = recordingSessionGetAudioWebContents;
     markRuntimeShellCrashed = vi.fn();
   }
 }));
@@ -412,7 +410,6 @@ describe('main process IPC orchestration', () => {
     recordingSessionBegin.mockClear();
     recordingSessionEnd.mockClear();
     recordingSessionUpdateDevice.mockClear();
-    recordingSessionGetAudioWebContents.mockClear();
     sessionOptions = null;
 
     await import(`../index?test=${Date.now()}-${Math.random()}`);
@@ -683,6 +680,19 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.clipboard.writeText).toHaveBeenCalledWith('safe transcript');
   });
 
+  it('reports the Wayland policy error when pasting the last transcript from the tray', async () => {
+    setPlatform('linux');
+    process.env.XDG_SESSION_TYPE = 'wayland';
+    await sessionOptions.onResult({ text: 'saved transcript', intent: 'dictation', targetSnapshot: null });
+    captureForegroundTarget.mockReturnValue(null);
+    await trayHandlers.onPasteLastTranscript?.();
+    expect(electronMock.Notification).toHaveBeenLastCalledWith(expect.objectContaining({
+      title: 'Paste last transcript failed',
+      body: expect.stringContaining('original input context cannot be verified'),
+    }));
+    expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
   describe('KDE Wayland best-effort test mode', () => {
     const originalDesktop = process.env.XDG_CURRENT_DESKTOP;
     beforeEach(async () => {
@@ -719,6 +729,13 @@ describe('main process IPC orchestration', () => {
       expect(remoteKeyboard.paste).toHaveBeenCalledTimes(1);
       expect(simulatePaste).not.toHaveBeenCalled();
       expect(runtimeShellShowFailure).not.toHaveBeenCalled();
+
+      recordingSessionIsBusy.mockReturnValue(true);
+      runtimeShellFinish.mockClear();
+      remoteKeyboard.paste.mockClear();
+      await trayHandlers.onPasteLastTranscript?.();
+      expect(remoteKeyboard.paste).toHaveBeenCalledTimes(1);
+      expect(runtimeShellFinish).not.toHaveBeenCalled();
     });
 
     it('keeps Wayland blocked and the setting off when keyboard control is declined', async () => {
@@ -908,7 +925,7 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
     const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
 
-    expect(runtimeShellBeginAgentRun).toHaveBeenCalledTimes(1);
+    expect(runtimeShellClearAgentRun).toHaveBeenCalledTimes(1);
 
     agentEventHandler?.({
       type: 'approval:requested',
@@ -989,7 +1006,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('proxies config, device, update, and recording pill events without restarting sidecar for audio config', async () => {
-    recordingSessionGetAudioWebContents.mockReturnValue({ send: vi.fn() });
     
     expect(ipcHandlers.get('config:get')?.({})).toEqual(getConfig());
     await expect(ipcHandlers.get('app:get-info')?.({})).resolves.toEqual({
@@ -1000,7 +1016,6 @@ describe('main process IPC orchestration', () => {
     expect(ipcHandlers.get('updater:get-status')?.({})).toEqual(getUpdateStatus());
     ipcHandlers.get('config:set')?.({}, 'whisperUrl', 'http://new');
     ipcHandlers.get('mcp:test-server')?.({}, 'missing-server');
-    ipcHandlers.get('settings:open')?.({});
     ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-1', 'denied', 'no');
     ipcHandlers.get('audio:select-device')?.({}, 'mic-1');
     ipcHandlers.get('updater:check')?.({});
@@ -1010,7 +1025,6 @@ describe('main process IPC orchestration', () => {
     expect(agentStart).not.toHaveBeenCalled();
     expect(agentStop).not.toHaveBeenCalled();
     expect(agentTestMcpServer).not.toHaveBeenCalled();
-    expect(openSettingsWindow).toHaveBeenCalled();
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
     expect(recordingSessionUpdateDevice).toHaveBeenCalledWith('mic-1');
@@ -1018,7 +1032,11 @@ describe('main process IPC orchestration', () => {
     expect(updateAudioDevices).toHaveBeenCalledWith([{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
   });
 
-  it('applies sidecar lifecycle policy for Agent Mode config changes', async () => {
+  it('updates Agent Mode hotkey enablement without reading config per keypress', async () => {
+    getConfig.mockClear();
+    expect(sessionOptions.isAgentModeEnabled()).toBe(false);
+    expect(getConfig).not.toHaveBeenCalled();
+
     const enabledConfig = {
       ...baseConfig,
       agent: {
@@ -1030,10 +1048,16 @@ describe('main process IPC orchestration', () => {
     getConfig.mockReturnValueOnce(baseConfig).mockReturnValueOnce(enabledConfig);
     await ipcHandlers.get('config:set')?.({}, 'agent', enabledConfig.agent);
     expect(agentStart).toHaveBeenCalledWith(enabledConfig, undefined);
+    getConfig.mockClear();
+    expect(sessionOptions.isAgentModeEnabled()).toBe(true);
+    expect(getConfig).not.toHaveBeenCalled();
 
     getConfig.mockReturnValueOnce(enabledConfig).mockReturnValueOnce(baseConfig);
     await ipcHandlers.get('config:set')?.({}, 'agent', baseConfig.agent);
     expect(agentStop).toHaveBeenCalled();
+    getConfig.mockClear();
+    expect(sessionOptions.isAgentModeEnabled()).toBe(false);
+    expect(getConfig).not.toHaveBeenCalled();
   });
 
   it('tests an MCP server through a targeted sidecar reconnect', async () => {
@@ -1303,6 +1327,19 @@ describe('main process IPC orchestration', () => {
 
     expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('transcribed text');
     expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('pastes the last transcript from the tray without clearing an active recording', async () => {
+    await sessionOptions.onResult({ text: 'previous words', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
+    recordingSessionIsBusy.mockReturnValue(true);
+    runtimeShellFinish.mockClear();
+    simulatePaste.mockClear();
+
+    await trayHandlers.onPasteLastTranscript?.();
+
+    expect(simulatePaste).toHaveBeenCalledTimes(1);
+    expect(runtimeShellFinish).not.toHaveBeenCalled();
+    expect(recordingSessionCancel).not.toHaveBeenCalled();
   });
 
   it('notifies when tray paste-last-transcript fails again', async () => {

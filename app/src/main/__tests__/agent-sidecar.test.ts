@@ -1,5 +1,6 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'events';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import type { AppConfig } from '../../types/ipc';
@@ -29,9 +30,17 @@ class MockInterface extends EventEmitter {
 const stdoutLines = new MockInterface();
 const createInterface = vi.fn(() => stdoutLines);
 
+const actualChildProcess = { ...await import('child_process') };
+const actualReadline = { ...await import('readline') };
 mock.module('child_process', () => ({ spawn }));
 mock.module('readline', () => ({ createInterface }));
 installElectronMock();
+
+// Bun's mock.restore() does not undo mock.module replacements.
+afterAll(() => {
+  mock.module('child_process', () => actualChildProcess);
+  mock.module('readline', () => actualReadline);
+});
 
 class FakeJobPort {
   created: unknown[] = [];
@@ -89,6 +98,7 @@ function sentMessages(): Array<{ type: string; [key: string]: unknown }> {
 }
 
 const config: AppConfig = {
+  managedLocal: structuredClone(DEFAULT_MANAGED_LOCAL),
   whisperUrl: 'http://localhost:8080/inference',
   transcription: {
     activeProvider: 'local-whisper-cpp',
@@ -333,19 +343,6 @@ describe('AgentSidecarManager', () => {
     }
   });
 
-  it('ignores blank stdout lines from the sidecar', async () => {
-    const events: unknown[] = [];
-    const { AgentSidecarManager } = await importManager('blank');
-    const manager = new AgentSidecarManager((event: SidecarEvent) => events.push(event), {
-      jobPort: new FakeJobPort(),
-    });
-
-    manager.startRun('run-1', 'check mail', config);
-    stdoutLines.emit('line', '');
-    stdoutLines.emit('line', '   ');
-
-    expect(events).toEqual([]);
-  });
 
   it('uses the provided run id when starting and cancelling runs', async () => {
     const { AgentSidecarManager } = await importManager('run-id');

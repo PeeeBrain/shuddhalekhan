@@ -1,3 +1,6 @@
+import { parseGoogleServiceAccount, type GoogleServiceAccount } from '../shared/google-service-account';
+export { parseGoogleServiceAccount } from '../shared/google-service-account';
+import { DESKTOP_LANGUAGE_LOCALES } from '@shuddhalekhan/shared/languages';
 import { createSign } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import type { GoogleCloudSpeechProviderConfig } from '../types/ipc';
@@ -7,25 +10,8 @@ import {
   failureForHttpStatus,
   type RecognitionSettings,
   type Transcriber,
-  type TranscriptionCapabilities,
   TranscriptionFailure,
 } from './transcription';
-
-export const GOOGLE_CLOUD_SPEECH_CAPABILITIES: TranscriptionCapabilities = {
-  translation: false,
-  automaticLanguageDetection: false,
-  dictionaryHints: true,
-  authentication: 'required',
-  maxDurationSeconds: 55,
-};
-
-export interface GoogleServiceAccount {
-  type: 'service_account';
-  client_email: string;
-  private_key: string;
-  token_uri: string;
-  project_id?: string;
-}
 
 type AuthorizedUser = {
   type: 'authorized_user';
@@ -35,34 +21,11 @@ type AuthorizedUser = {
   token_uri?: string;
 };
 
-export function parseGoogleServiceAccount(value: string): GoogleServiceAccount {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error('Select a valid Google service-account JSON document.');
-  }
-  if (!parsed || typeof parsed !== 'object') throw new Error('Select a valid Google service-account JSON document.');
-  const candidate = parsed as Partial<GoogleServiceAccount>;
-  if (candidate.type !== 'service_account' || !candidate.client_email?.trim()
-    || !candidate.private_key?.includes('BEGIN PRIVATE KEY') || !candidate.token_uri?.startsWith('https://')) {
-    throw new Error('The document must contain a service-account type, client_email, private_key, and HTTPS token_uri.');
-  }
-  return candidate as GoogleServiceAccount;
-}
-
 export function buildGoogleRecognizeEndpoint(config: GoogleCloudSpeechProviderConfig): string {
   const project = encodeURIComponent(config.project.trim());
   const location = encodeURIComponent(config.location.trim());
   return `https://speech.googleapis.com/v2/projects/${project}/locations/${location}/recognizers/_:recognize`;
 }
-
-const LANGUAGE_CODES: Record<string, string> = {
-  en: 'en-US', hi: 'hi-IN', mr: 'mr-IN', gu: 'gu-IN', bn: 'bn-IN', ta: 'ta-IN',
-  te: 'te-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', fr: 'fr-FR',
-  es: 'es-ES', de: 'de-DE', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR', pt: 'pt-BR',
-  ar: 'ar-SA', ru: 'ru-RU',
-};
 
 export function createGoogleCloudSpeechTranscriber(
   config: GoogleCloudSpeechProviderConfig,
@@ -71,7 +34,7 @@ export function createGoogleCloudSpeechTranscriber(
   const adc = config.credentialSource === 'adc' ? loadApplicationDefaultCredential() : null;
   return {
     id: 'google-cloud-speech-v2',
-    capabilities: GOOGLE_CLOUD_SPEECH_CAPABILITIES,
+    capabilities: { maxDurationSeconds: 55 },
     async transcribe({ audio, recognition, signal }) {
       if (recognition.task === 'translate') {
         throw new TranscriptionFailure('model', 'Google Cloud Speech-to-Text v2 synchronous recognition does not translate audio.');
@@ -163,7 +126,7 @@ async function recognize(
     // Shuddhalekhan sends a complete 16 kHz, mono, PCM16 WAV container. Google's
     // preferred WAV path reads those decoding values from the file header.
     autoDecodingConfig: {},
-    languageCodes: [LANGUAGE_CODES[recognition.language] ?? recognition.language],
+    languageCodes: [DESKTOP_LANGUAGE_LOCALES[recognition.language] ?? recognition.language],
     model: config.model.trim(),
     features: { enableAutomaticPunctuation: true },
   };

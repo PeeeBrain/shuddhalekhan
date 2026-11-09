@@ -1,7 +1,7 @@
 import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
 import { z } from 'zod';
 import { agentProviderSchema } from '../shared/agent-provider-validation';
-import { memoryUpdatesSchema, type AgentMemoryCommitResult, type AgentMemoryUpdate, type AgentRunContext } from '../shared/agent-context';
+import { MEMORY_BYTE_LIMIT, memoryUpdatesSchema, type AgentMemoryCommitResult, type AgentMemoryUpdate, type AgentRunContext } from '../shared/agent-context';
 
 export type SidecarReadyEvent = {
   type: 'sidecar:ready';
@@ -167,7 +167,7 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
     }
     case 'agent:start': {
       const result = z.object({ type: z.literal('agent:start'), agentRunId: z.string().min(1), transcript: z.string(), context: z.object({
-        skillsDirectory: z.string().min(1), memory: z.object({ revision: z.string(), markdown: z.string().max(8192) }).nullable(),
+        skillsDirectory: z.string().min(1), memory: z.object({ revision: z.string(), markdown: z.string().max(MEMORY_BYTE_LIMIT) }).nullable(),
       }).optional() }).safeParse(parsed);
       return result.success ? result.data : null;
     }

@@ -7,10 +7,18 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Desktop Agent Mode hotkey checks reuse the enabled state instead of rereading saved config on every keypress.
+
+- Desktop microphone capture errors release the active recording so the next hotkey works. Tray paste preserves an ongoing recording.
+
+- Desktop Sarvam verbatim transcription now preserves filler words when filler removal is enabled.
+- Tray paste now reports the insertion policy on unsupported Wayland sessions. Linux sessions started with `startx` use X11 shortcuts when `DISPLAY` is set, matching text delivery.
+
 ### Agent
 - Fixed empty desktop Agent History on Linux by reading the same persistent database as the sidecar. Existing recorded runs become visible without moving or deleting them. Custom audit-directory overrides now reach the sidecar as well as History.
 
 ### Mobile
+- Keyboard Agent Mode requests short background time to publish Live Activity progress and completion, and refreshes the latest state when reopening the app.
 - Added per-tool approval policies for each MCP server: Ask every time, Always allow, or Disabled. New tools still ask. The iOS 26 system activity now receives a final-answer preview instead of a generic completion subtitle.
 - Added iOS Agent Mode progress and saved final answers. iOS 26 uses the system background-processing activity without a duplicate custom card. Tool approvals arrive as notifications with authenticated Approve once, Deny, and Review arguments actions; interrupted runs never replay automatically. Final answers render as Markdown in the app. Earlier iOS versions retain the custom Live Activity and require foreground execution.
 - Fixed keyboard transcription cancellation and serialized model replacement with inference. Listener startup callbacks and timeouts now stop with their session. Failed temporary audio cleanup and startup scans are logged and retried before recording again.

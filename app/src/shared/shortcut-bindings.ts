@@ -1,4 +1,4 @@
-import type { ShortcutBinding, ShortcutModifier, ShortcutsConfig } from '../types/ipc';
+import type { PasteStrategy, ShortcutBinding, ShortcutModifier, ShortcutsConfig } from '../types/ipc';
 import {
   DELETE_KEY_CODE,
   ESCAPE_KEY_CODE,
@@ -57,12 +57,11 @@ export function formatBinding(binding: ShortcutBinding | null): string {
   return parts.length > 0 ? parts.join(' + ') : 'Not assigned';
 }
 
-/** Chords simulatePaste sends: Ctrl+V, Shift+Insert, Ctrl+Shift+V (see main/paste-strategy). */
-const PASTE_CHORDS: ShortcutBinding[] = [
-  { keyCode: 0x56, modifiers: ['ctrl'] },
-  { keyCode: 0x2d, modifiers: ['shift'] },
-  { keyCode: 0x56, modifiers: ['ctrl', 'shift'] },
-];
+export const PASTE_CHORDS = {
+  'ctrl-v': { keyCode: 0x56, modifiers: ['ctrl'] },
+  'shift-insert': { keyCode: 0x2d, modifiers: ['shift'] },
+  'ctrl-shift-v': { keyCode: 0x56, modifiers: ['ctrl', 'shift'] },
+} satisfies Record<PasteStrategy, ShortcutBinding>;
 
 export type BindingVerdict =
   | { status: 'ok' }
@@ -114,7 +113,8 @@ export function assessBinding(
   }
 
   // Our own synthetic paste would trigger the shortcut instead of reaching the app (X11 grabs, Windows hook).
-  const pasteChord = PASTE_CHORDS.find((chord) => binding.keyCode === null
+  const pasteChords: ShortcutBinding[] = Object.values(PASTE_CHORDS);
+  const pasteChord = pasteChords.find((chord) => binding.keyCode === null
     ? binding.modifiers.every((modifier) => chord.modifiers.includes(modifier))
     : bindingsEqual(binding, chord));
   if (pasteChord) {

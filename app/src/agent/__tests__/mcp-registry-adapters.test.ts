@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
 
 const createMCPClient = mock();
 const writeJsonLine = mock();
@@ -19,12 +19,13 @@ class FakeOAuthProvider {
   }
 }
 
-mock.module('../protocol', () => ({ writeJsonLine, logSidecar }));
+const actualProtocol = { ...await import('../protocol') };
+mock.module('../protocol', () => ({ ...actualProtocol, writeJsonLine, logSidecar }));
+afterAll(() => mock.module('../protocol', () => actualProtocol));
 import {
   AisdkMcpClientFactory,
   type McpOAuthProviderResolver,
   SidecarOAuthRedirectFactory,
-  StdoutSidecarMessageTransporter,
 } from '../mcp-registry-adapters';
 import { ManagedStdioMcpTransport } from '../managed-stdio-transport';
 
@@ -194,22 +195,4 @@ describe('MCP registry production adapters', () => {
     );
   });
 
-  it('serializes registry status and discovery events through the sidecar protocol', () => {
-    const transporter = new StdoutSidecarMessageTransporter();
-
-    transporter.sendStatus('srv1', 'connecting');
-    transporter.sendDiscoveredTools('srv1', [{ name: 'search', description: 'Search the web', inputSchema: {} }]);
-
-    expect(writeJsonLine).toHaveBeenNthCalledWith(1, {
-      type: 'mcp:server-status',
-      serverId: 'srv1',
-      status: 'connecting',
-      message: undefined,
-    });
-    expect(writeJsonLine).toHaveBeenNthCalledWith(2, {
-      type: 'mcp:tools-discovered',
-      serverId: 'srv1',
-      tools: [{ name: 'search', description: 'Search the web', inputSchema: {} }],
-    });
-  });
 });

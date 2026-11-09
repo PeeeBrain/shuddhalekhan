@@ -6,17 +6,14 @@ import WebSocket from 'ws';
 import {
   cleanFillerWords,
   failureForHttpStatus,
-  validateWhisperLiveKitSettings,
   type RecognitionSettings,
   type StreamingTranscriptionRequest,
   type StreamingTranscriptionSession,
   type StreamingTranscriptSnapshot,
   type Transcriber,
-  type TranscriptionCapabilities,
   TranscriptionFailure,
 } from './transcription';
-
-export { validateWhisperLiveKitSettings } from './transcription';
+import { validateWhisperLiveKitSettings } from '../shared/transcription-validation';
 
 export interface WhisperLiveKitEndpoints {
   baseUrl: string;
@@ -24,14 +21,6 @@ export interface WhisperLiveKitEndpoints {
   health: string;
   websocket: string;
 }
-
-export const WHISPER_LIVE_KIT_CAPABILITIES: TranscriptionCapabilities = {
-  translation: false,
-  automaticLanguageDetection: true,
-  dictionaryHints: false,
-  authentication: 'optional',
-  maxDurationSeconds: null,
-};
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
@@ -302,7 +291,7 @@ export function createWhisperLiveKitStreamingSession(
       terminal = true;
       cleanup();
       closeSocket();
-      resolveFinal(committed);
+      resolveFinal(request.recognition.removeFillerWords ? cleanFillerWords(committed) : committed);
       return;
     }
     publishSnapshot(value);
@@ -359,7 +348,7 @@ export function createWhisperLiveKitTranscriber(
 ): Transcriber {
   return {
     id: 'whisper-live-kit',
-    capabilities: WHISPER_LIVE_KIT_CAPABILITIES,
+    capabilities: { maxDurationSeconds: null },
     transportCapabilities: { batch: true, streaming: true },
     startStreaming(request) {
       return createWhisperLiveKitStreamingSession(config, savedBearerToken, request);

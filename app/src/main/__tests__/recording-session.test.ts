@@ -1,8 +1,10 @@
+import { EventEmitter } from 'node:events';
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { DEFAULT_SHORTCUTS } from '../../shared/shortcut-bindings';
 import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
 import type { StreamingTranscriptionRequest, Transcriber } from '../transcription';
 import { installElectronMock, resetElectronMock, electronMock } from '../../test/electron-mock';
-import type { RecordingSession } from '../recording-session';
+import type { RecordingSession, RecordingSessionOptions } from '../recording-session';
 
 const vi = { fn: mock };
 let RecordingSessionCtor: typeof RecordingSession;
@@ -15,10 +17,6 @@ function createTranscriber(transcribe: Transcriber['transcribe']): Transcriber {
   return {
     id: 'local-whisper-cpp',
     capabilities: {
-      translation: true,
-      automaticLanguageDetection: true,
-      dictionaryHints: true,
-      authentication: 'none',
       maxDurationSeconds: null,
     },
     transcribe,
@@ -34,7 +32,7 @@ function createRuntimeShellMock() {
     setSelectedDevice: vi.fn(),
     destroy: vi.fn(),
     markReady: vi.fn(),
-    markCrashed: vi.fn(),
+    setRecordingHandlers: vi.fn(),
     getWebContents: vi.fn(),
     markCaptureReady: vi.fn(),
     show: vi.fn(),
@@ -63,6 +61,29 @@ describe('RecordingSession', () => {
   let getRecordingActivationMode: ReturnType<typeof vi.fn>;
   let session: RecordingSession;
 
+  function createSession(options: Partial<Omit<RecordingSessionOptions, 'runtimeShell' | 'keyboardHook'>> & { keyboardHook?: Partial<RecordingSessionOptions['keyboardHook']>; runtimeShell?: Partial<RecordingSessionOptions['runtimeShell']>; transcriber?: Transcriber }) {
+    return new RecordingSessionCtor({
+      getRecordingActivationMode,
+      getShortcutBinding: intent => DEFAULT_SHORTCUTS[intent].binding,
+      getSelectedDeviceId: () => null,
+      getRecognitionSettings: () => ({ language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: false }),
+      getDictationContext: () => ({ config: { mode: 'batch', formatter: null }, language: 'auto', protectedTerms: [], formatterApiKey: null }),
+      getReadinessError: () => null,
+      getTranscriber: () => options.transcriber ?? createTranscriber(({ audio }) => transcribe(audio)),
+      captureTarget,
+      isAgentModeEnabled,
+      onResult: () => (options.runtimeShell ?? audioStream).finish(),
+      onError: () => {},
+      ...options,
+      keyboardHook: { start: keyboardStart, stop: keyboardStop, recordingEndedExternally: vi.fn(), ...options.keyboardHook },
+      runtimeShell: { ...createRuntimeShellMock(), ...(options.runtimeShell ?? audioStream),
+        setRecordingHandlers: handlers => {
+          audioStream.setRecordingHandlers(handlers);
+        },
+      },
+    });
+  }
+
   afterAll(() => {
     mock.restore();
   });
@@ -88,7 +109,7 @@ describe('RecordingSession', () => {
     }));
     isAgentModeEnabled = vi.fn(() => false);
     getRecordingActivationMode = vi.fn(() => 'toggle' satisfies RecordingActivationMode);
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: {
@@ -99,6 +120,23 @@ describe('RecordingSession', () => {
       isAgentModeEnabled,
       getRecordingActivationMode,
     });
+  });
+
+  it('preserves Sarvam verbatim fillers through recording completion', async () => {
+    const { createSarvamTranscriber } = await import('../sarvam');
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = mock(async () => new Response(JSON.stringify({ transcript: 'um keep uh every word' }))) as unknown as typeof fetch;
+    try {
+      session = createSession({
+        transcriber: createSarvamTranscriber({ model: 'saaras:v4', mode: 'verbatim' }, 'key'),
+        getRecognitionSettings: () => ({ language: 'auto', task: 'transcribe', dictionary: [], removeFillerWords: true }),
+      });
+      session.begin();
+      const result = await session.complete(new Uint8Array(64));
+      expect(result?.text).toBe('um keep uh every word');
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 
   it('prepares the audio stream and begins capture when recording starts', () => {
@@ -115,12 +153,12 @@ describe('RecordingSession', () => {
         capabilities: { batch: true, streaming: false },
       }),
     );
-    expect(session.isActive()).toBe(true);
+    expect(session.isBusy()).toBe(true);
   });
 
   it('notifies the owner after a recording start is accepted', () => {
     const onBegin = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -144,7 +182,7 @@ describe('RecordingSession', () => {
       language: 'mr', protectedTerms: ['Shuddhalekhan'], formatterApiKey: 'original-secret',
     };
     const onResult = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream, transcriber: createTranscriber(async () => 'finished'),
       keyboardHook: { start: keyboardStart, stop: keyboardStop }, isAgentModeEnabled,
       getDictationContext: () => context, onResult,
@@ -170,7 +208,7 @@ describe('RecordingSession', () => {
     const delivering = new Promise<void>(resolve => { started = resolve; });
     const delivery = new Promise<void>(resolve => { release = resolve; });
     const onResult = vi.fn(async () => { started(); await delivery; });
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream, transcriber: createTranscriber(transcribe),
       keyboardHook: { start: keyboardStart, stop: keyboardStop }, isAgentModeEnabled, onResult,
     });
@@ -196,7 +234,7 @@ describe('RecordingSession', () => {
     const delivering = new Promise<void>(resolve => { started = resolve; });
     const delivery = new Promise<void>(resolve => { release = resolve; });
     let signal: AbortSignal | undefined;
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream, transcriber: createTranscriber(transcribe),
       keyboardHook: { start: keyboardStart, stop: keyboardStop }, isAgentModeEnabled,
       onResult: async result => { signal = result?.signal; started(); await delivery; },
@@ -211,7 +249,7 @@ describe('RecordingSession', () => {
     expect(session.begin('dictation', 'replacement')).toBe(true);
     release();
     expect(await completion).toBeNull();
-    expect(session.isActive()).toBe(true);
+    expect(session.isBusy()).toBe(true);
     await session.cancel();
   });
 
@@ -219,12 +257,12 @@ describe('RecordingSession', () => {
     let publish!: StreamingTranscriptionRequest['onSnapshot'];
     const onResult = vi.fn();
     const batch = vi.fn(async () => 'unexpected batch');
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: { ...createTranscriber(batch),
         startStreaming: request => {
           publish = request.onSnapshot;
-          return { send: async () => undefined, finish: async () => 'um final words', cancel: vi.fn() };
+          return { send: async () => undefined, finish: async () => 'final words', cancel: vi.fn() };
         },
       },
       captureTarget: () => null, getRecordingActivationMode: () => 'push-to-talk',
@@ -252,8 +290,7 @@ describe('RecordingSession', () => {
         recordingSessionId: expect.any(String),
         sequence: 1,
         revision: 1,
-        capabilities: { batch: true, streaming: false },
-      }),
+        }),
     );
     const envelope = showRecordingPill.mock.calls[0]?.[2] as { recordingSessionId: string };
     expect(showRecordingPill.mock.calls[0]?.[1]).toBe(envelope.recordingSessionId);
@@ -262,7 +299,7 @@ describe('RecordingSession', () => {
   it('prevents keyboard-triggered recording when the active provider is not ready', () => {
     const readinessError = new Error('OpenAI model is not configured.');
     const onError = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       getReadinessError: () => readinessError,
@@ -281,23 +318,19 @@ describe('RecordingSession', () => {
     expect(onError).toHaveBeenCalledWith(readinessError);
     expect(audioStream.beginCapture).not.toHaveBeenCalled();
     expect(showRecordingPill).not.toHaveBeenCalled();
-    expect(session.isActive()).toBe(false);
+    expect(session.isBusy()).toBe(false);
   });
 
   it('pins recognition settings when recording starts even if Settings changes before completed audio arrives', async () => {
     const providerTranscriber: Transcriber = {
       id: 'local-whisper-cpp',
       capabilities: {
-        translation: true,
-        automaticLanguageDetection: true,
-        dictionaryHints: true,
-        authentication: 'none',
         maxDurationSeconds: null,
       },
       transcribe: vi.fn(async () => 'provider text'),
     };
     const recognition = { language: 'mr', task: 'translate' as const, dictionary: ['Shuddhalekhan'], removeFillerWords: true };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: providerTranscriber,
       getRecognitionSettings: () => recognition,
@@ -339,22 +372,19 @@ describe('RecordingSession', () => {
       intent: 'agent' satisfies RecordingIntent,
       targetSnapshot: null,
       recordingSessionId: expect.any(String),
-      sequence: 2,
-      revision: 2,
-      capabilities: { batch: true, streaming: false },
       outcome: { kind: 'completed' },
     });
     expect(audioStream.showProcessing).toHaveBeenCalledTimes(1);
     expect(captureTarget).not.toHaveBeenCalled();
     expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
     expect(transcribe).toHaveBeenCalledWith(new Uint8Array(64));
-    expect(session.isActive()).toBe(false);
+    expect(session.isBusy()).toBe(false);
   });
 
   it.each(['', '   '])('reports an empty recognition result instead of silently dismissing the recording (%j)', async (text: string) => {
     const onError = vi.fn();
     const onResult = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream, transcriber: createTranscriber(async () => text),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget, isAgentModeEnabled, onError, onResult,
@@ -372,7 +402,7 @@ describe('RecordingSession', () => {
   });
 
   it('tells the user a no-speech recording was clipping rather than too quiet', async () => {
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream, transcriber: createTranscriber(async () => ''),
       keyboardHook: { start: keyboardStart, stop: keyboardStop }, captureTarget, isAgentModeEnabled,
     });
@@ -396,7 +426,7 @@ describe('RecordingSession', () => {
     const getTranscriber = vi.fn()
       .mockReturnValueOnce(firstTranscriber)
       .mockReturnValue(secondTranscriber);
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       getTranscriber,
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -414,9 +444,6 @@ describe('RecordingSession', () => {
     await expect(resultPromise).resolves.toMatchObject({
       text: 'first provider',
       recordingSessionId: 'opaque-session',
-      sequence: 2,
-      revision: 2,
-      capabilities: { batch: true, streaming: true },
       outcome: { kind: 'completed' },
     });
   });
@@ -445,7 +472,7 @@ describe('RecordingSession', () => {
 
   it('reports an empty WAV payload as a capture failure', async () => {
     const onError = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -479,7 +506,7 @@ describe('RecordingSession', () => {
 
   it('aborts in-flight batch recognition when the recording is cancelled', async () => {
     let signal: AbortSignal | undefined;
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber((request) => {
         signal = request.signal;
@@ -501,7 +528,7 @@ describe('RecordingSession', () => {
   });
 
   it('releases the session and scrubs the WAV when cancelled under a provider that ignores abort', async () => {
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(() => new Promise(() => undefined)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -527,7 +554,7 @@ describe('RecordingSession', () => {
       return new Promise<string>(() => undefined);
     });
     const onError = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(transcribeHung),
       setTimeoutFn: ((callback: () => void, delay: number) =>
@@ -559,15 +586,15 @@ describe('RecordingSession', () => {
 
     expect(hideRecordingPill).toHaveBeenCalled();
     expect(audioStream.cancelCapture).toHaveBeenCalledTimes(1);
-    expect(session.isActive()).toBe(false);
+    expect(session.isBusy()).toBe(false);
   });
 
   it('clears recording state when the runtime shell crashes', () => {
     session.begin('dictation', 'crashed-session');
-    session.markRuntimeShellCrashed('render-process-gone');
+    session.handleAudioRendererCrash('render-process-gone');
 
     expect(hideRecordingPill).toHaveBeenCalled();
-    expect(session.isActive()).toBe(false);
+    expect(session.isBusy()).toBe(false);
 
     session.begin('dictation', 'replacement-session');
     expect(showRecordingPill).toHaveBeenLastCalledWith(
@@ -582,9 +609,7 @@ describe('RecordingSession', () => {
   });
 
   it('owns keyboard hook lifecycle', () => {
-    const onResult = vi.fn();
-
-    session.startKeyboardHook(onResult);
+    session.startKeyboardHook();
     const options = keyboardStart.mock.calls[0] as unknown as [
       {
         onStart: (intent: RecordingIntent) => void;
@@ -613,7 +638,7 @@ describe('RecordingSession', () => {
       intent === 'dictation' ? { keyCode: 0x52, modifiers: [] } : null);
     const getMode = vi.fn((intent: RecordingIntent) =>
       (intent === 'dictation' ? 'toggle' : 'push-to-talk') as RecordingActivationMode);
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -660,11 +685,11 @@ describe('RecordingSession', () => {
       finish: vi.fn(),
       destroy: vi.fn(),
       markReady: vi.fn(),
-      markCrashed: vi.fn(),
+      setRecordingHandlers: vi.fn(),
       getWebContents: vi.fn(() => null),
       consumeAudioEvent: vi.fn(() => true),
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -694,44 +719,11 @@ describe('RecordingSession', () => {
     expect(runtimeShell.finish).toHaveBeenCalledTimes(1);
   });
 
-  it('registers IPC listeners on start() and unregisters them on stop()', () => {
-    session.start();
-
-    const registeredChannels = (electronMock.ipcMain.on as any).mock.calls.map((call: any) => call[0]);
-    expect(registeredChannels).toContain('audio-stream-ready');
-    expect(registeredChannels).toContain('audio-level-changed');
-    expect(registeredChannels).not.toContain('audio-window-ready');
-    expect(registeredChannels).not.toContain('audio-data-ready');
-    expect(registeredChannels).not.toContain('audio-capture-failed');
-
-    session.stop();
-
-    const unregisteredChannels = (electronMock.ipcMain.off as any).mock.calls.map((call: any) => call[0]);
-    expect(unregisteredChannels).toContain('audio-stream-ready');
-    expect(unregisteredChannels).toContain('audio-level-changed');
-    expect(unregisteredChannels).not.toContain('audio-window-ready');
-    expect(unregisteredChannels).not.toContain('audio-data-ready');
-    expect(unregisteredChannels).not.toContain('audio-capture-failed');
-  });
-
-  it('forwards audio-level-changed events to the runtime shell', () => {
-    session.start();
-
-    const audioLevelCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'audio-level-changed'
-    );
-    expect(audioLevelCall).toBeDefined();
-    const listener = audioLevelCall[1];
-
-    listener({}, 0.5);
-
-    expect(audioStream.updateAudioLevel).toHaveBeenCalledWith(0.5);
-  });
 
   it('calls onResult when runtime audio arrives and transcription succeeds', async () => {
     const onResult = vi.fn();
     const onError = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -744,9 +736,7 @@ describe('RecordingSession', () => {
     session.start();
     session.begin('dictation');
 
-    const audioDataReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-data-ready'
-    );
+    const audioDataReadyCall = [null, audioStream.setRecordingHandlers.mock.calls.at(-1)?.[0].onAudioData];
     expect(audioDataReadyCall).toBeDefined();
     const listener = audioDataReadyCall[1];
 
@@ -765,9 +755,6 @@ describe('RecordingSession', () => {
       intent: 'dictation',
       targetSnapshot: expect.any(Object),
       recordingSessionId: expect.any(String),
-      sequence: 2,
-      revision: 2,
-      capabilities: { batch: true, streaming: false },
       outcome: { kind: 'completed' },
     }));
     expect(onError).not.toHaveBeenCalled();
@@ -778,7 +765,7 @@ describe('RecordingSession', () => {
     const onError = vi.fn();
     const failingTranscribe = vi.fn(() => Promise.reject(new Error('Whisper offline')));
 
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => failingTranscribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -791,9 +778,7 @@ describe('RecordingSession', () => {
     session.start();
     session.begin('dictation');
 
-    const audioDataReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-data-ready'
-    );
+    const audioDataReadyCall = [null, audioStream.setRecordingHandlers.mock.calls.at(-1)?.[0].onAudioData];
     const listener = audioDataReadyCall[1];
 
     const endPromise = session.end();
@@ -811,47 +796,42 @@ describe('RecordingSession', () => {
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 
-  it('terminates the correlated run when runtime microphone capture fails', async () => {
-    const onError = vi.fn();
-    const runtimeShell = {
-      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
-      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
-      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
-      destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(), getWebContents: vi.fn(() => null),
-      consumeAudioEvent: vi.fn(() => true),
-    };
-    session = new RecordingSessionCtor({
-      runtimeShell,
-      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
-      keyboardHook: { start: keyboardStart, stop: keyboardStop },
-      captureTarget,
-      isAgentModeEnabled,
-      onError,
+  for (const intent of ['dictation', 'agent'] as const) {
+    it(`releases a stopping ${intent} run after renderer microphone failure over IPC`, async () => {
+      const ipc = new EventEmitter();
+      electronMock.ipcMain.on.mockImplementation(ipc.on.bind(ipc));
+      electronMock.ipcMain.off.mockImplementation(ipc.off.bind(ipc));
+      electronMock.ipcMain.emit.mockImplementation(ipc.emit.bind(ipc));
+      const sender = {};
+      audioStream.getWebContents.mockReturnValue(sender);
+      audioStream.endCapture.mockReturnValue(true);
+      const onError = vi.fn();
+      session = createSession({ runtimeShell: audioStream, onError, isAgentModeEnabled: () => true });
+      try {
+        session.start();
+        session.begin(intent, 'failed-capture');
+        const command = audioStream.beginCapture.mock.calls[0]?.[0] as { recordingSessionId: string; sequence: number };
+        const ended = session.end();
+        void ended.catch(() => {});
+        electronMock.ipcMain.emit('runtime:audio-failed', { sender: {} }, 1, command.recordingSessionId, command.sequence);
+        expect(session.isBusy()).toBe(true);
+        expect(onError).not.toHaveBeenCalled();
+
+        electronMock.ipcMain.emit('runtime:audio-failed', { sender }, 1, command.recordingSessionId, command.sequence);
+
+        expect(session.isBusy()).toBe(false);
+        await expect(ended).rejects.toThrow('Microphone capture failed');
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(session.begin(intent, 'recovered')).toBe(true);
+      } finally { session.stop(); }
     });
-    session.start();
-    session.begin('dictation', 'failed-capture');
-    const command = runtimeShell.beginCapture.mock.calls[0]?.[0] as {
-      recordingSessionId: string;
-      sequence: number;
-    };
-    const failedCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-failed',
-    );
-
-    failedCall[1]({}, 1, command.recordingSessionId, command.sequence);
-
-    expect(runtimeShell.consumeAudioEvent).toHaveBeenCalledWith(1, 'failed-capture', command.sequence);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Microphone capture failed. Check the selected input device and try again.',
-    }));
-    expect(session.begin('dictation', 'recovered')).toBe(true);
-  });
+  }
 
   it('fails a capture whose renderer never becomes ready, releases the shortcut, and accepts a new recording', async () => {
     const timers: Array<() => void> = [];
     const onError = vi.fn();
     const recordingEndedExternally = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(async () => 'unused'),
       keyboardHook: { start: keyboardStart, stop: keyboardStop, recordingEndedExternally },
@@ -883,14 +863,10 @@ describe('RecordingSession', () => {
       ...createTranscriber(async () => 'limited result'),
       id: 'google-cloud-speech-v2',
       capabilities: {
-        translation: false,
-        automaticLanguageDetection: false,
-        dictionaryHints: true,
-        authentication: 'required',
         maxDurationSeconds: 55,
       },
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: limitedTranscriber,
       setTimeoutFn: ((callback: () => void, delay: number) => {
@@ -936,7 +912,7 @@ describe('RecordingSession', () => {
     expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
     expect(recordingEndedExternally).toHaveBeenCalledTimes(1);
     expect(audioStream.showProcessing).toHaveBeenCalledTimes(1);
-    expect(session.isActive()).toBe(false);
+    expect(session.isBusy()).toBe(true);
     ready({ sender }, 1, command.recordingSessionId, command.sequence);
     expect(audioStream.markCaptureReady).toHaveBeenCalledTimes(1);
     session.begin('agent');
@@ -945,7 +921,7 @@ describe('RecordingSession', () => {
 
   it('does not double-invoke onResult when triggered via keyboard hook', async () => {
     const onResult = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -962,9 +938,7 @@ describe('RecordingSession', () => {
     onStop();
 
     // Trigger runtime audio completion
-    const audioDataReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-data-ready'
-    );
+    const audioDataReadyCall = [null, audioStream.setRecordingHandlers.mock.calls.at(-1)?.[0].onAudioData];
     const listener = audioDataReadyCall[1];
 
     const command = audioStream.beginCapture.mock.calls[0]?.[0] as {
@@ -1006,10 +980,6 @@ describe('RecordingSession', () => {
     const streamingTranscriber: Transcriber = {
       id: 'whisper-live-kit',
       capabilities: {
-        translation: false,
-        automaticLanguageDetection: true,
-        dictionaryHints: false,
-        authentication: 'optional',
         maxDurationSeconds: null,
       },
       transportCapabilities: { batch: true, streaming: true },
@@ -1020,7 +990,7 @@ describe('RecordingSession', () => {
       }),
     };
     const onResult = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber: streamingTranscriber,
       getRecordingActivationMode,
@@ -1056,9 +1026,7 @@ describe('RecordingSession', () => {
     );
 
     const ending = session.end();
-    const audioReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-data-ready',
-    );
+    const audioReadyCall = [null, audioStream.setRecordingHandlers.mock.calls.at(-1)?.[0].onAudioData];
     await audioReadyCall[1]({}, 1, 'live-session', 1, new Uint8Array(128).buffer);
 
     await expect(ending).resolves.toMatchObject({
@@ -1082,10 +1050,6 @@ describe('RecordingSession', () => {
     const streamingTranscriber: Transcriber = {
       id: 'whisper-live-kit',
       capabilities: {
-        translation: false,
-        automaticLanguageDetection: true,
-        dictionaryHints: false,
-        authentication: 'optional',
         maxDurationSeconds: null,
       },
       transportCapabilities: { batch: true, streaming: true },
@@ -1104,7 +1068,7 @@ describe('RecordingSession', () => {
       getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
       acceptsAudioEvent: vi.fn(() => true),
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber: streamingTranscriber,
       getRecordingActivationMode,
@@ -1128,7 +1092,7 @@ describe('RecordingSession', () => {
   it('captures no live audio for an offline Managed Local recording and decodes the completed WAV once', async () => {
     const batchTranscribe = vi.fn(async () => 'whole recording transcript');
     const runtimeShell = createRuntimeShellMock();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber: { ...createTranscriber(batchTranscribe), id: 'managed-local' },
       getRecordingActivationMode,
@@ -1179,7 +1143,7 @@ describe('RecordingSession', () => {
         cancel: cancelStream,
       })),
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber: streamingTranscriber,
       getRecordingActivationMode,
@@ -1238,7 +1202,7 @@ describe('RecordingSession', () => {
         cancel: cancelStream,
       })),
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber: streamingTranscriber,
       getRecordingActivationMode,
@@ -1285,7 +1249,7 @@ describe('RecordingSession', () => {
         cancel: cancelStream,
       })),
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber,
       getRecordingActivationMode,
@@ -1331,7 +1295,7 @@ describe('RecordingSession', () => {
         };
       }),
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber,
       getRecordingActivationMode,
@@ -1378,7 +1342,7 @@ describe('RecordingSession', () => {
       }),
     };
     const onResult = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber,
       setTimeoutFn: ((callback: () => void, delay: number) =>
@@ -1429,7 +1393,7 @@ describe('RecordingSession', () => {
         cancel: cancelStream,
       })),
     };
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell,
       transcriber: streamingTranscriber,
       getRecordingActivationMode,
@@ -1450,17 +1414,13 @@ describe('RecordingSession', () => {
     const providerTranscriber: Transcriber = {
       id: 'whisper-live-kit',
       capabilities: {
-        translation: false,
-        automaticLanguageDetection: true,
-        dictionaryHints: false,
-        authentication: 'optional',
         maxDurationSeconds: null,
       },
       transportCapabilities: { batch: true, streaming: true },
       transcribe: vi.fn(async () => 'WhisperLiveKit batch result'),
     };
     const onResult = vi.fn();
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: providerTranscriber,
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -1471,9 +1431,7 @@ describe('RecordingSession', () => {
 
     session.start();
     session.begin('dictation');
-    const audioDataReadyCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'runtime:audio-data-ready',
-    );
+    const audioDataReadyCall = [null, audioStream.setRecordingHandlers.mock.calls.at(-1)?.[0].onAudioData];
     const listener = audioDataReadyCall?.[1] as (
       _event: unknown,
       generation: number,
@@ -1496,7 +1454,6 @@ describe('RecordingSession', () => {
     );
     expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
       text: 'WhisperLiveKit batch result',
-      capabilities: { batch: true, streaming: true },
     }));
   });
 
@@ -1507,7 +1464,7 @@ describe('RecordingSession', () => {
     );
     const slowTranscriber = createTranscriber(slowTranscribe);
 
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: slowTranscriber,
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -1536,8 +1493,6 @@ describe('RecordingSession', () => {
       text: 'alpha transcription completed',
       intent: 'dictation',
       recordingSessionId: 'session-alpha',
-      sequence: 2,
-      revision: 2,
     });
     expect(endResult).toEqual(result);
     expect(session.isBusy()).toBe(false);
@@ -1553,7 +1508,7 @@ describe('RecordingSession', () => {
       vi.fn(() => Promise.reject(new Error('Network error during transcription'))),
     );
 
-    session = new RecordingSessionCtor({
+    session = createSession({
       runtimeShell: audioStream,
       transcriber: failingTranscriber,
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
@@ -1575,6 +1530,6 @@ describe('RecordingSession', () => {
     const result = await session.complete(new Uint8Array(64));
     expect(result).toBeNull();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Network error during transcription' }));
-    expect(session.isActive()).toBe(false);
+    expect(session.isBusy()).toBe(false);
   });
 });

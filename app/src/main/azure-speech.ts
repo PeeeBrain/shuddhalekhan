@@ -1,8 +1,8 @@
+import { DESKTOP_LANGUAGE_LOCALES } from '@shuddhalekhan/shared/languages';
 import type { AzureSpeechProviderConfig } from '../types/ipc';
 import {
   type RecognitionSettings,
   type Transcriber,
-  type TranscriptionCapabilities,
   cleanFillerWords,
   failureForHttpStatus,
   TranscriptionFailure,
@@ -10,40 +10,9 @@ import {
 
 export const AZURE_SPEECH_API_VERSION = '2025-10-15';
 
-export const AZURE_SPEECH_CAPABILITIES: TranscriptionCapabilities = {
-  translation: false,
-  automaticLanguageDetection: true,
-  dictionaryHints: true,
-  authentication: 'required',
-  maxDurationSeconds: null,
-};
-
-const AZURE_LOCALES: Record<string, string> = {
-  en: 'en-US',
-  hi: 'hi-IN',
-  mr: 'mr-IN',
-  gu: 'gu-IN',
-  bn: 'bn-IN',
-  ta: 'ta-IN',
-  te: 'te-IN',
-  kn: 'kn-IN',
-  ml: 'ml-IN',
-  pa: 'pa-IN',
-  ur: 'ur-IN',
-  fr: 'fr-FR',
-  es: 'es-ES',
-  de: 'de-DE',
-  ja: 'ja-JP',
-  zh: 'zh-CN',
-  ko: 'ko-KR',
-  pt: 'pt-BR',
-  ar: 'ar-SA',
-  ru: 'ru-RU',
-};
-
 export function mapLanguageToAzureLocale(language: string): string | undefined {
   if (!language || language === 'auto') return undefined;
-  return AZURE_LOCALES[language] ?? language;
+  return DESKTOP_LANGUAGE_LOCALES[language] ?? language;
 }
 
 export function buildAzureSpeechEndpoint(config: AzureSpeechProviderConfig): string {
@@ -63,7 +32,7 @@ export function createAzureSpeechTranscriber(
 ): Transcriber {
   return {
     id: 'azure-speech',
-    capabilities: AZURE_SPEECH_CAPABILITIES,
+    capabilities: { maxDurationSeconds: null },
     async transcribe({ audio, recognition, signal }) {
       if (!apiKey) {
         throw new TranscriptionFailure(

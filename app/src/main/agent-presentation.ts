@@ -26,7 +26,6 @@ export interface AgentPresenter {
 }
 
 interface RuntimeShellPresenterTarget {
-  beginAgentRun(): void;
   clearAgentRun(): void;
   showAgentStatus(agentRunId: string | null, message: string): void;
   showAgentStreaming(agentRunId: string, response: string): void;
@@ -37,7 +36,7 @@ interface RuntimeShellPresenterTarget {
 
 export function createRuntimeShellPresenter(shell: RuntimeShellPresenterTarget): AgentPresenter {
   return {
-    beginRun: () => shell.beginAgentRun(),
+    beginRun: () => shell.clearAgentRun(),
     status: (agentRunId, message) => shell.showAgentStatus(agentRunId, message),
     streaming: (agentRunId, response) => shell.showAgentStreaming(agentRunId, response),
     approval: (request) => shell.showAgentApproval(request),

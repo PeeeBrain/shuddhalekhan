@@ -96,7 +96,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
   return {
     getConfig: () => requireElectronApi(electronAPI).invoke('config:get'),
     setConfig: async (key, value) => {
-      await electronAPI?.invoke('config:set', key, value);
+      await requireElectronApi(electronAPI).invoke('config:set', key, value);
     },
     patchTranscriptionConfig: (patch) => requireElectronApi(electronAPI).invoke('config:patch-transcription', patch),
     getAppInfo: () => requireElectronApi(electronAPI).invoke('app:get-info'),
@@ -104,7 +104,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     getUpdateStatus: () => requireElectronApi(electronAPI).invoke('updater:get-status'),
     checkForUpdates: () => requireElectronApi(electronAPI).invoke('updater:check'),
     testMcpServer: async (serverId) => {
-      await electronAPI?.invoke('mcp:test-server', serverId);
+      await requireElectronApi(electronAPI).invoke('mcp:test-server', serverId);
     },
     getMcpStatusSnapshot: () => requireElectronApi(electronAPI).invoke('mcp:get-status-snapshot'),
     checkTranscriptionServer: () => requireElectronApi(electronAPI).invoke('transcription:check-server'),
@@ -117,37 +117,37 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     endShortcutCapture: async () => {
       await requireElectronApi(electronAPI).invoke('shortcuts:end-capture');
     },
-    onShortcutsPausedChanged: (callback) => electronAPI?.subscribe('shortcuts:paused-changed', callback),
+    onShortcutsPausedChanged: (callback) => requireElectronApi(electronAPI).subscribe('shortcuts:paused-changed', callback),
     getDesktopStatus: () => requireElectronApi(electronAPI).invoke('desktop:get-status'),
     setWaylandInsertion: (enabled) => requireElectronApi(electronAPI).invoke('desktop:set-wayland-insertion', enabled),
-    onDesktopStatusChanged: (callback) => electronAPI?.subscribe('desktop:status-changed', callback),
-    onUpdateStatusChanged: (callback) => electronAPI?.subscribe('updater:status-changed', callback),
-    onNavigateRequested: (callback) => electronAPI?.subscribe('settings:navigate', callback),
-    onMcpStatusSnapshot: (callback) => electronAPI?.subscribe('mcp:status-snapshot', callback),
-    onTranscriptionReadinessChanged: (callback) => electronAPI?.subscribe('transcription:readiness-changed', callback),
+    onDesktopStatusChanged: (callback) => requireElectronApi(electronAPI).subscribe('desktop:status-changed', callback),
+    onUpdateStatusChanged: (callback) => requireElectronApi(electronAPI).subscribe('updater:status-changed', callback),
+    onNavigateRequested: (callback) => requireElectronApi(electronAPI).subscribe('settings:navigate', callback),
+    onMcpStatusSnapshot: (callback) => requireElectronApi(electronAPI).subscribe('mcp:status-snapshot', callback),
+    onTranscriptionReadinessChanged: (callback) => requireElectronApi(electronAPI).subscribe('transcription:readiness-changed', callback),
     getManagedLocalModel: () => requireElectronApi(electronAPI).invoke('managed-local:get-model'),
     installManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:install-model', target),
     deleteManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:delete-model', target),
-    onManagedLocalModelStateChanged: (callback) => electronAPI?.subscribe('managed-local:model-state-changed', callback),
-    onOnboardingCompleted: (callback) => electronAPI?.subscribe('onboarding:completed', callback),
+    onManagedLocalModelStateChanged: (callback) => requireElectronApi(electronAPI).subscribe('managed-local:model-state-changed', callback),
+    onOnboardingCompleted: (callback) => requireElectronApi(electronAPI).subscribe('onboarding:completed', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),
-    onAuditRunUpdated: (callback) => electronAPI?.subscribe('audit:run-updated', callback),
-    onCredentialChanged: (callback) => electronAPI?.subscribe('credential:changed', callback),
+    onAuditRunUpdated: (callback) => requireElectronApi(electronAPI).subscribe('audit:run-updated', callback),
+    onCredentialChanged: (callback) => requireElectronApi(electronAPI).subscribe('credential:changed', callback),
     getCredentialStatus: (credential) => requireElectronApi(electronAPI).invoke('credential:get-status', credential),
     saveCredential: (credential, value) => requireElectronApi(electronAPI).invoke('credential:save', credential, value),
     removeCredential: (credential) => requireElectronApi(electronAPI).invoke('credential:remove', credential),
     validateAgentProvider: (provider) => requireElectronApi(electronAPI).invoke('agent:validate-provider', provider),
     testAgentProvider: (provider) => requireElectronApi(electronAPI).invoke('agent:test-provider', provider),
     cancelAgentProviderTest: async () => {
-      await electronAPI?.invoke('agent:cancel-provider-test');
+      await requireElectronApi(electronAPI).invoke('agent:cancel-provider-test');
     },
-    onAgentProviderInvalidated: (callback) => electronAPI?.subscribe('agent:provider-invalidated', callback),
+    onAgentProviderInvalidated: (callback) => requireElectronApi(electronAPI).subscribe('agent:provider-invalidated', callback),
     getChatGptStatus: () => requireElectronApi(electronAPI).invoke('chatgpt:get-status'),
     signInChatGpt: () => requireElectronApi(electronAPI).invoke('chatgpt:sign-in'),
     signOutChatGpt: () => requireElectronApi(electronAPI).invoke('chatgpt:sign-out'),
     listChatGptModels: () => requireElectronApi(electronAPI).invoke('chatgpt:list-models'),
-    onChatGptChanged: (callback) => electronAPI?.subscribe('chatgpt:changed', callback),
+    onChatGptChanged: (callback) => requireElectronApi(electronAPI).subscribe('chatgpt:changed', callback),
     listSkills: () => requireElectronApi(electronAPI).invoke('skills:list'),
     readSkill: (name) => requireElectronApi(electronAPI).invoke('skills:read', name),
     saveSkill: (document) => requireElectronApi(electronAPI).invoke('skills:save', document),
@@ -159,7 +159,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     editMemoryFact: (revision, id, text) => requireElectronApi(electronAPI).invoke('memory:edit', revision, id, text),
     removeMemoryFact: (revision, id) => requireElectronApi(electronAPI).invoke('memory:remove', revision, id),
     clearMemory: (revision) => requireElectronApi(electronAPI).invoke('memory:clear', revision),
-    onMemoryChanged: (callback) => electronAPI?.subscribe('memory:changed', callback),
+    onMemoryChanged: (callback) => requireElectronApi(electronAPI).subscribe('memory:changed', callback),
   };
 }
 

@@ -20,10 +20,8 @@ export const AGENT_AUDIT_SCHEMA_SQL = `
   );
 `;
 
-export function resolveAuditDbPath(fallbackBaseDir: string): string {
-  const baseDir =
-    process.env.SHUDDHALEKHAN_AUDIT_DIR ||
-    (process.env.APPDATA ? join(process.env.APPDATA, 'Shuddhalekhan') : fallbackBaseDir);
-
+export function resolveAuditDbPath(directory?: string): string {
+  const baseDir = process.env.SHUDDHALEKHAN_AUDIT_DIR || directory;
+  if (!baseDir) throw new Error('SHUDDHALEKHAN_AUDIT_DIR must be set by Electron main.');
   return join(baseDir, AGENT_AUDIT_DB_FILENAME);
 }

@@ -1,8 +1,10 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { describe, expect, it } from 'bun:test';
 import type { AppConfig } from '../../types/ipc';
 import { getSidecarConfigAction } from '../sidecar-config-policy';
 
 const baseConfig: AppConfig = {
+  managedLocal: structuredClone(DEFAULT_MANAGED_LOCAL),
   whisperUrl: 'http://localhost:8080/inference',
   transcription: {
     activeProvider: 'local-whisper-cpp',

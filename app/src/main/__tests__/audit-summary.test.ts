@@ -13,6 +13,7 @@ describe('summarizeAuditEvents', () => {
         { agent_run_id: 'run-failed', event_type: 'run_failed', payload_json: JSON.stringify({ error: 'Boom' }), created_at: '2026-06-25T09:00:01.000Z' },
         { agent_run_id: 'run-interrupted', event_type: 'run_started', payload_json: JSON.stringify({ transcript: 'Stop' }), created_at: '2026-06-25T08:00:00.000Z' },
         { agent_run_id: 'run-interrupted', event_type: 'run_interrupted', payload_json: JSON.stringify({ reason: 'shutdown' }), created_at: '2026-06-25T08:00:01.000Z' },
+        // Older versions wrote run_cancelled; existing audit databases still hold it.
         { agent_run_id: 'run-cancelled', event_type: 'run_started', payload_json: JSON.stringify({ transcript: 'Cancel' }), created_at: '2026-06-25T07:00:00.000Z' },
         { agent_run_id: 'run-cancelled', event_type: 'run_cancelled', payload_json: JSON.stringify({ reason: 'user' }), created_at: '2026-06-25T07:00:01.000Z' },
         { agent_run_id: 'run-active', event_type: 'run_started', payload_json: JSON.stringify({ transcript: 'Still running' }), created_at: '2026-06-25T11:00:00.000Z' },

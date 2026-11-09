@@ -150,6 +150,7 @@ function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnap
           key={snapshot.recordingSessionId}
           intent={snapshot.intent}
           captureStartedAt={snapshot.captureStartedAt}
+          remainingSeconds={snapshot.durationWarningSeconds}
         />
       </div>
       {/* Provisional only: nothing is typed until the recording stops. Static text, no motion. */}

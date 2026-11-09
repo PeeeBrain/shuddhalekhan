@@ -3,6 +3,8 @@ import { buildPasteStrategyEvents } from '../paste-strategy';
 import type { PasteStrategy } from '../../types/ipc';
 import { openX11ClipboardMonitor } from './x11-clipboard';
 import { simulateX11Paste } from './x11-paste';
+import { classifyDesktopSession } from '../dictation-delivery-policy';
+import type { PasteDispatchResult } from '../paste-strategy';
 
 const INPUT_KEYBOARD = 1;
 
@@ -29,11 +31,6 @@ function win32() {
   return win32Api;
 }
 
-export interface PasteDispatchResult {
-  acceptedEvents: number;
-  errorCode?: number;
-}
-
 function buildKeyboardInput(vk: number, flags: number): Buffer {
   const buf = Buffer.alloc(INPUT_SIZE);
   buf.writeUInt32LE(INPUT_KEYBOARD, 0);
@@ -47,8 +44,7 @@ function buildKeyboardInput(vk: number, flags: number): Buffer {
 
 export function getClipboardSequenceNumber(): number {
   if (process.platform !== 'win32') {
-    if (process.platform !== 'linux' || process.env.XDG_SESSION_TYPE === 'wayland'
-      || process.env.WAYLAND_DISPLAY || !process.env.DISPLAY) {
+    if (classifyDesktopSession(process.platform, process.env) !== 'x11') {
       throw new Error('Clipboard ownership tracking is unavailable on this desktop.');
     }
     if (!x11Monitor) {
@@ -81,14 +77,13 @@ export function getClipboardSequenceNumber(): number {
 export function simulatePaste(strategy: PasteStrategy = 'ctrl-v'): PasteDispatchResult {
   const events = buildPasteStrategyEvents(strategy);
   if (process.platform !== 'win32') {
-    if (process.platform === 'linux' && process.env.DISPLAY
-      && process.env.XDG_SESSION_TYPE !== 'wayland' && !process.env.WAYLAND_DISPLAY) {
+    if (classifyDesktopSession(process.platform, process.env) === 'x11') {
       return simulateX11Paste(strategy);
     }
     return { acceptedEvents: 0 };
   }
   const { SendInput, GetLastError } = win32();
-  const inputs = Buffer.concat(events.map((event) => buildKeyboardInput(event.vk, event.flags)));
+  const inputs = Buffer.concat(events.map((event) => buildKeyboardInput(event.vk, event.up ? 2 : 0)));
 
   const acceptedEvents = Number(SendInput(events.length, inputs, INPUT_SIZE));
   if (acceptedEvents < events.length) {

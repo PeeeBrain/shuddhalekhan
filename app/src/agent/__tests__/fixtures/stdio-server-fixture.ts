@@ -16,7 +16,7 @@ if (floodStderr) {
   pump();
 }
 
-process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, result: { ready: true } })}\n`);
+process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, result: { ready: true, pid: process.pid } })}\n`);
 
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', (line) => {

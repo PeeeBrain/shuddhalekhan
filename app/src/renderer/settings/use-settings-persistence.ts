@@ -33,7 +33,7 @@ function transcriptionSlice(config: AppConfig): TranscriptionSettingsPatch {
   return { transcription, managedLocal, language, task, dictionary, removeFillerWords, dictation, shortcuts };
 }
 
-export const SAVE_TOAST_DURATION_MS = 2500;
+const SAVE_TOAST_DURATION_MS = 2500;
 const SAVE_TOAST_MESSAGE = 'Settings saved';
 const IPC_ERROR_PREFIX = /^Error invoking remote method '[^']+': (?:\w*Error: )?/;
 
@@ -101,7 +101,10 @@ export function useSettingsPersistence(
           ...current,
           [fieldId]: ipcErrorMessage(error, 'Could not save this setting.'),
         }));
-        await settingsIpc.getConfig().then(saved => applyConfig({ [key]: saved[key] })).catch(() => undefined);
+        await settingsIpc.getConfig().then(saved => applyConfig({ [key]: saved[key] })).catch((reloadError) => {
+          console.error('Failed to reload saved settings:', reloadError);
+          showToast('error', 'Could not reload saved settings. Reopen Settings to see the saved state.');
+        });
       }
     },
     [applyConfig, clearFieldError, showToast, settingsIpc],
@@ -128,7 +131,10 @@ export function useSettingsPersistence(
             .then((saved) => {
               if (revision === transcriptionRevision.current) applyConfig(transcriptionSlice(saved));
             })
-            .catch(() => undefined);
+            .catch((reloadError) => {
+          console.error('Failed to reload saved settings:', reloadError);
+          showToast('error', 'Could not reload saved settings. Reopen Settings to see the saved state.');
+        });
         }
         return null;
       }

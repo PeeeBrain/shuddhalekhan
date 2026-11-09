@@ -1,4 +1,5 @@
 import type { PasteStrategy } from '../../types/ipc';
+import { buildPasteStrategyEvents, PASTE_KEYSYMS, type PasteDispatchResult } from '../paste-strategy';
 import { DBusConnection, type DBusMessage, type Variant } from './dbus';
 
 const PORTAL = 'org.freedesktop.portal.Desktop';
@@ -10,28 +11,8 @@ const BUS_PATH = '/org/freedesktop/DBus';
 const APP_ID = 'shuddhalekhan';
 const KEYBOARD = 1;
 
-// X11 keysyms. The compositor resolves each through the active layout, so `v`
-// needs a layout that has a `v` key (Latin layouts; not e.g. a lone Cyrillic one).
-const XK_SHIFT_L = 0xffe1;
-const XK_CONTROL_L = 0xffe3;
-const XK_INSERT = 0xff63;
-const XK_V = 0x0076;
-
-/** Keys pressed in order and released in reverse, mirroring `buildPasteStrategyEvents`. */
-const PASTE_KEYS: Record<PasteStrategy, number[]> = {
-  'ctrl-v': [XK_CONTROL_L, XK_V],
-  'shift-insert': [XK_SHIFT_L, XK_INSERT],
-  'ctrl-shift-v': [XK_CONTROL_L, XK_SHIFT_L, XK_V],
-};
-
 /** Already user-readable; setup() rethrows it as-is instead of wrapping it. */
 class RemoteDesktopError extends Error {}
-
-export interface PasteResult {
-  /** Notify calls the portal accepted, releases included. Says nothing about what the target app did. */
-  acceptedEvents: number;
-  error?: string;
-}
 
 /**
  * Keyboard-only xdg-desktop-portal RemoteDesktop session for pasting on Wayland.
@@ -160,7 +141,7 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
      * and `validateTarget` before every press; on any stop it releases every key it
      * pressed and returns the error. Never retries and never starts a session.
      */
-    async paste(strategy: PasteStrategy, signal: AbortSignal, validateTarget: () => boolean): Promise<PasteResult> {
+    async paste(strategy: PasteStrategy, signal: AbortSignal, validateTarget: () => boolean): Promise<PasteDispatchResult> {
       if (!ready || !bus || !session) return { acceptedEvents: 0, error: 'Remote desktop session is not ready' };
       if (pasting) return { acceptedEvents: 0, error: 'A paste is already in progress' };
       pasting = true;
@@ -168,7 +149,8 @@ export function createRemoteDesktopKeyboard(onLost?: () => void) {
       const handle = session;
       const notify = (keysym: number, pressed: boolean) =>
         connection.call(PORTAL, PORTAL_PATH, REMOTE_DESKTOP, 'NotifyKeyboardKeysym', 'oa{sv}iu', [handle, {}, keysym, pressed ? 1 : 0]);
-      const keys = PASTE_KEYS[strategy];
+      // The compositor resolves keysyms through the active layout, which must contain a Latin v.
+      const keys = buildPasteStrategyEvents(strategy).filter(event => !event.up).map(event => PASTE_KEYSYMS.get(event.vk)!);
       const held: number[] = [];
       let acceptedEvents = 0;
       let error: string | undefined;

@@ -1,6 +1,7 @@
 import koffi from 'koffi';
 import type { DictationTargetSnapshot } from '../../types/ipc';
 import { captureX11Target } from './x11-target';
+import { classifyDesktopSession } from '../dictation-delivery-policy';
 
 export interface TargetCaptureDeps {
   getForegroundWindow: () => bigint;
@@ -129,7 +130,7 @@ let captureWin32Target: (() => DictationTargetSnapshot | null) | null = null;
 
 export function captureForegroundTarget(): DictationTargetSnapshot | null {
   if (process.platform === 'linux') {
-    if (process.env.XDG_SESSION_TYPE === 'wayland' || process.env.WAYLAND_DISPLAY || !process.env.DISPLAY) return null;
+    if (classifyDesktopSession(process.platform, process.env) !== 'x11') return null;
     return captureX11Target();
   }
   if (process.platform !== 'win32') return null;

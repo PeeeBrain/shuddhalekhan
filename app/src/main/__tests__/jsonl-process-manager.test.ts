@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'events';
 
 const vi = { fn: mock, mock: mock.module };
@@ -24,8 +24,16 @@ class MockInterface extends EventEmitter {
 const stdoutLines = new MockInterface();
 const createInterface = vi.fn(() => stdoutLines);
 
+const actualChildProcess = { ...await import('child_process') };
+const actualReadline = { ...await import('readline') };
 mock.module('child_process', () => ({ spawn }));
 mock.module('readline', () => ({ createInterface }));
+
+// Bun's mock.restore() does not undo mock.module replacements.
+afterAll(() => {
+  mock.module('child_process', () => actualChildProcess);
+  mock.module('readline', () => actualReadline);
+});
 
 describe('JsonlProcessManager', () => {
   beforeEach(() => {
@@ -85,5 +93,17 @@ describe('JsonlProcessManager', () => {
 
     expect(onSpawn).toHaveBeenCalledTimes(1);
     expect(manager.getChildPid()).toBeTypeOf('number');
+  });
+
+  it('does not label a message handler failure as malformed JSONL', async () => {
+    const malformed = vi.fn();
+    const failure = new Error('handler failed');
+    const { JsonlProcessManager } = await import('../jsonl-process-manager');
+    const manager = new JsonlProcessManager({
+      onMessage: () => { throw failure; }, onMalformedMessage: malformed,
+    });
+    manager.start({ command: 'worker.exe', args: [] });
+    expect(() => stdoutLines.emit('line', '{"type":"pong"}')).toThrow(failure);
+    expect(malformed).not.toHaveBeenCalled();
   });
 });

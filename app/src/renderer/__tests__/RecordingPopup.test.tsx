@@ -23,10 +23,6 @@ function mockElectronAPI() {
   };
 }
 
-function emit(channel: string, ...args: unknown[]) {
-  (listeners[channel] ?? []).forEach((l) => l(...args));
-}
-
 /** Controls Date.now and collects interval ticks so the clock moves only when a test says so. */
 function fakeClock(start: number) {
   const clock = { now: start, ticks: [] as Array<() => void> };
@@ -55,9 +51,7 @@ describe('RecordingPopup', () => {
   it('shows an accessible restrained duration warning from provider orchestration', async () => {
     fakeClock(1_000_000);
     mockElectronAPI();
-    render(<RecordingPopup intent="dictation" captureStartedAt={1_000_000} />);
-
-    act(() => emit('recording:duration-warning', 10));
+    render(<RecordingPopup intent="dictation" captureStartedAt={1_000_000} remainingSeconds={10} />);
 
     expect(await screen.findByText('10s left')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAttribute('aria-label', expect.stringContaining('Recording stops in 10 seconds'));

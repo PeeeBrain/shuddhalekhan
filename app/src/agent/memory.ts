@@ -36,7 +36,7 @@ export async function learnAgentMemory(args: {
     });
     signal.throwIfAborted();
     callbacks.onAudit?.('memory_usage', { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens });
-    const updates = memoryUpdatesSchema.parse(result.output.updates);
+    const updates = result.output.updates;
     const outcome = await callbacks.commitMemory(memory.revision, updates);
     callbacks.onAudit?.('memory_commit', { outcome, updates });
     if (!outcome.saved) return `Memory was not saved: ${outcome.message}`;

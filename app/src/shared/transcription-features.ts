@@ -1,15 +1,13 @@
+import { managedLocalSupportsDictionary } from './managed-local-selection';
+import { hasControlCharacters as hasDictionaryControlCharacters } from '@shuddhalekhan/shared/validation';
+export { hasDictionaryControlCharacters };
 import type { AppConfig, TranscriptionSettingsPatch } from '../types/ipc';
 import { getTranscriptionTransportCapabilities } from './dictation-runtime';
 import { SARVAM_LANGUAGES, sarvamLanguageCode } from '@shuddhalekhan/shared/sarvam';
 
 type FeatureConfig = Pick<AppConfig, 'transcription' | 'managedLocal' | 'task'>;
 
-export function hasDictionaryControlCharacters(term: string): boolean {
-  return [...term].some(character => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127;
-  });
-}
+
 
 export function resolveTranscriptionFeatures(config: FeatureConfig, localLanguages?: readonly string[]) {
   const provider = config.transcription.activeProvider;
@@ -25,7 +23,7 @@ export function resolveTranscriptionFeatures(config: FeatureConfig, localLanguag
   let dictionaryMaxTermLength: number | null = null;
   switch (provider) {
     case 'managed-local':
-      dictionaryHints = (config.managedLocal?.model ?? 'parakeet') === 'parakeet';
+      dictionaryHints = managedLocalSupportsDictionary(config.managedLocal.model);
       dictionaryMaxTerms = 64;
       dictionaryMaxTermLength = 128;
       break;

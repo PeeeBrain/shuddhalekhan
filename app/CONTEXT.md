@@ -243,6 +243,8 @@ Electron main and the agent sidecar communicate over a stdio JSONL protocol in v
 
 Sidecar stdout is reserved for JSONL protocol messages only. Human-readable process logs go to stderr or the application log directory, and agent audit events go to the sidecar-owned SQLite database. Electron treats malformed stdout lines as protocol errors.
 
+The runtime alone records terminal run audit events. Electron supplies the audit directory through `SHUDDHALEKHAN_AUDIT_DIR`; the sidecar does not infer it from its working directory. History and its development Bun fallback share the same queries. Shutdown waits for interrupted runs before closing MCP clients, with outer termination budgets longer than the managed stdio close budget.
+
 Agent Mode also needs post-tool-use observation so Shuddhalekhan can display what happened, persist an audit trail, and let the active turn continue with the tool result. Post-tool-use hooks are not a substitute for approval because they run after external side effects may already have occurred.
 
 ### Text Injection
@@ -260,7 +262,7 @@ Transcription Settings and main share a provider/model capability resolver. `con
 
 ### Audio Stream
 
-The runtime renderer acquires the selected microphone for each recording and stops every track at the terminal path. It observes the `AudioContext` sample rate, downmixes input to mono, and converts it to ordered 320-sample PCM16 chunks at 16 kHz. The same converted samples produce the retained final WAV. The renderer and `AudioContext` stay warm, but the microphone does not.
+The runtime renderer acquires the selected microphone for each recording and stops every track at the terminal path. It observes the `AudioContext` sample rate, downmixes input to mono, and converts it to ordered 320-sample PCM16 chunks at 16 kHz. The same converted samples produce the retained final WAV. The renderer and `AudioContext` stay warm, but the microphone does not. Audio levels reach the pill through a renderer-local subscription without IPC. Duration warnings travel in the main-owned recording snapshot.
 
 ### Whisper Client
 HTTP client that sends recorded WAV audio to a configurable Whisper API endpoint (e.g., a local `whisper.cpp` server) and returns transcribed text.
@@ -273,4 +275,4 @@ Terminal result card displayed in the runtime shell that shows the Agent's final
 
 ## Sarvam transcription
 
-Sarvam uses the synchronous `/speech-to-text` REST endpoint for Dictation and Agent Mode audio. Its API key is stored in the Electron credential vault. Saaras v4 is the default; v3 remains selectable. Both support transcription, English translation, verbatim, transliteration, and code-mixed output. The shared translation task overrides the provider output mode. Verbatim preserves fillers. Only v4 sends dictionary entries as JSON keyterms (up to 50 distinct terms, 64 characters each). The existing recording duration controller warns and stops at 30 seconds. This integration supports Batch and Corrected Dictation; Sarvam streaming and asynchronous jobs are not implemented.
+Sarvam uses the synchronous `/speech-to-text` REST endpoint for Dictation and Agent Mode audio. Its API key is stored in the Electron credential vault. Saaras v4 is the default; v3 remains selectable. Both support transcription, English translation, verbatim, transliteration, and code-mixed output. The shared translation task overrides the provider output mode. Verbatim preserves fillers. Each transcription provider owns final filler cleanup; the recording session forwards its result unchanged. Only v4 sends dictionary entries as JSON keyterms (up to 50 distinct terms, 64 characters each). The existing recording duration controller warns and stops at 30 seconds. This integration supports Batch and Corrected Dictation; Sarvam streaming and asynchronous jobs are not implemented.

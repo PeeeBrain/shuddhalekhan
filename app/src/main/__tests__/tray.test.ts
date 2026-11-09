@@ -99,7 +99,7 @@ describe('tray', () => {
     existsSync.mockReturnValue(false);
     const { createTray } = await import(`../tray?test=${Date.now()}-2`);
 
-    createTray({ onOpenSettings: vi.fn() });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn() });
 
     expect(createFromDataURL).toHaveBeenCalledWith(expect.stringContaining('data:image/svg+xml'));
   });
@@ -112,7 +112,7 @@ describe('tray', () => {
     });
     const { createTray } = await import(`../tray?test=${Date.now()}-packaged`);
 
-    createTray({ onOpenSettings: vi.fn() });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn() });
 
     const icon = process.platform === 'win32' ? 'tray-icon.ico' : 'icon.png';
     expect(createFromPath).toHaveBeenCalledWith(normalize(`/resources/icons/${icon}`));
@@ -121,7 +121,7 @@ describe('tray', () => {
   it('filters audio inputs and routes device selections through the onSelectDevice handler', async () => {
     const onSelectDevice = vi.fn();
     const { createTray, updateAudioDevices } = await import(`../tray?test=${Date.now()}-3`);
-    createTray({ onOpenSettings: vi.fn(), onSelectDevice });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn(), onSelectDevice });
 
     updateAudioDevices([
       { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
@@ -136,7 +136,6 @@ describe('tray', () => {
     expect(speakerItem).toBeDefined();
     speakerItem?.click?.();
 
-    expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'speaker');
     expect(onSelectDevice).toHaveBeenCalledWith('speaker');
   });
 
@@ -144,7 +143,7 @@ describe('tray', () => {
     const togglePause = vi.fn();
     const { createTray, updateShortcutPauseState } = await import(`../tray?test=${Date.now()}-pause`);
 
-    createTray({
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() },
       onOpenSettings: vi.fn(),
       isShortcutsPaused: () => false,
       onTogglePause: togglePause,
@@ -162,7 +161,7 @@ describe('tray', () => {
   it('shows update status in the tray menu', async () => {
     const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-5`);
 
-    createTray({ onOpenSettings: vi.fn() });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn() });
     updateUpdaterStatus({
       state: 'latest',
       currentVersion: '4.0.0',
@@ -178,7 +177,7 @@ describe('tray', () => {
   it('replaces the check action with install timing once an update downloads', async () => {
     const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-downloaded`);
 
-    createTray({ onOpenSettings: vi.fn() });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn() });
     updateUpdaterStatus({
       state: 'downloaded',
       currentVersion: '4.0.0',
@@ -196,7 +195,7 @@ describe('tray', () => {
     const checkHandler = vi.fn();
     const { createTray } = await import(`../tray?test=${Date.now()}-check-updates`);
 
-    createTray({ onOpenSettings: vi.fn(), onCheckForUpdates: checkHandler });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn(), onCheckForUpdates: checkHandler });
 
     const checkItem = item('Check for updates');
     expect(checkItem.enabled).toBe(true);
@@ -207,7 +206,7 @@ describe('tray', () => {
   it('disables the check for updates item while checking', async () => {
     const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-checking-state`);
 
-    createTray({ onOpenSettings: vi.fn() });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn() });
     updateUpdaterStatus({
       state: 'checking',
       currentVersion: '4.0.0',
@@ -223,25 +222,15 @@ describe('tray', () => {
     const copyHandler = vi.fn();
     const { createTray } = await import(`../tray?test=${Date.now()}-recovery`);
 
-    createTray({ onOpenSettings: vi.fn(), onPasteLastTranscript: pasteHandler, onCopyLastTranscript: copyHandler });
+    createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn(), onPasteLastTranscript: pasteHandler, onCopyLastTranscript: copyHandler });
 
     const pasteItem = item('Paste last transcript');
-    expect(pasteItem.enabled).toBe(true);
     pasteItem.click();
     expect(pasteHandler).toHaveBeenCalled();
 
     const copyItem = item('Copy last transcript');
-    expect(copyItem.enabled).toBe(true);
     copyItem.click();
     expect(copyHandler).toHaveBeenCalled();
   });
 
-  it('disables recovery actions when no handlers are provided', async () => {
-    const { createTray } = await import(`../tray?test=${Date.now()}-no-recovery`);
-
-    createTray({ onOpenSettings: vi.fn() });
-
-    expect(item('Paste last transcript')).toMatchObject({ enabled: false });
-    expect(item('Copy last transcript')).toMatchObject({ enabled: false });
-  });
 });

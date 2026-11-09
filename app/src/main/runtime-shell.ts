@@ -1,5 +1,6 @@
+import { handle } from './typed-ipc';
 import { ipcMain, screen } from 'electron';
-import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
+import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { AudioSpool, sweepOrphanedSpools } from './audio-spool';
 import type {
   DictationRecoveryAction,
@@ -58,11 +59,10 @@ interface AgentApprovalFact {
 
 /** How the run ended; survives Dictation preemption and renderer crashes. */
 type AgentTerminalFact =
-  | { phase: 'completed'; order: number; agentRunId: string; response: string; toolSummary: string[] }
-  | { phase: 'failed'; order: number; agentRunId: string | null; message: string };
+  | { phase: 'completed'; agentRunId: string; response: string; toolSummary: string[] }
+  | { phase: 'failed'; agentRunId: string | null; message: string };
 
 interface DictationFailureFact {
-  order: number;
   recordingSessionId: string | null;
   message: string;
   recoveryActions: DictationRecoveryAction[];
@@ -73,6 +73,12 @@ interface WindowGeometry {
   height: number;
   focusable: boolean;
   interactive: boolean;
+}
+
+export interface RecordingHandlers {
+  onCrash(reason: string): void;
+  onAudioData(event: unknown, generation: number, recordingSessionId: string, sequence: number, audio: ArrayBuffer): Promise<void>;
+  onAudioFailed(event: unknown, generation: number, recordingSessionId: string, sequence: number): void;
 }
 
 /** Startup-warmed renderer shared by Batch Dictation capture and presentation. */
@@ -92,7 +98,6 @@ export class RuntimeShell {
   private agentStream: AgentStreamFact | null = null;
   private agentApproval: AgentApprovalFact | null = null;
   private agentTerminal: AgentTerminalFact | null = null;
-  private nextFactOrder = 1;
   private agentResponseHeight = AGENT_RESPONSE_BASE_HEIGHT;
   private lastPresentedKey: string | null = null;
   private lastGeometry: WindowGeometry | null = null;
@@ -102,8 +107,9 @@ export class RuntimeShell {
   private hideTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly windows;
 
+  private recordingHandlers: RecordingHandlers | null = null;
+
   constructor(
-    private onCrash?: (reason: string) => void,
     private readonly timers: {
       setTimeoutFn: typeof setTimeout;
       clearTimeoutFn: typeof clearTimeout;
@@ -143,16 +149,16 @@ export class RuntimeShell {
       },
     });
     sweepOrphanedSpools();
-    ipcMain.handle('runtime:audio-spool', this.handleAudioSpool);
+    handle('runtime:audio-spool', this.handleAudioSpool);
     ipcMain.on('runtime:audio-end', this.handleAudioEnd);
   }
 
   prepare(): void {
-    this.position(this.windows.create());
+    this.resize(this.windows.create(), { width: SHELL_WIDTH, height: SHELL_HEIGHT, focusable: false, interactive: false });
   }
 
-  setCrashHandler(handler: (reason: string) => void): void {
-    this.onCrash = handler;
+  setRecordingHandlers(handlers: RecordingHandlers): void {
+    this.recordingHandlers = handlers;
   }
 
   markReady(): void {
@@ -162,10 +168,6 @@ export class RuntimeShell {
       this.pendingBegin = null;
       this.startAudio(envelope);
     }
-  }
-
-  markCrashed(reason: string): void {
-    this.handleCrash(reason);
   }
 
   beginCapture(envelope?: RecordingPresentationEnvelope): void {
@@ -206,7 +208,6 @@ export class RuntimeShell {
     // cards cannot resurface once the recording ends.
     if (intent === 'agent') this.invalidateAgentPresentation();
     const win = this.windows.create();
-    this.position(win);
     if (recordingSessionId && envelope) {
       this.activeRecording = {
         kind: 'recording',
@@ -220,8 +221,7 @@ export class RuntimeShell {
     this.republish();
     const publish = () => {
       if (win.isDestroyed()) return;
-      win.webContents.send('recording:pill-show', recordingSessionId, envelope);
-      win.webContents.send('recording:mode-changed', intent);
+      win.webContents.send('recording:pill-show');
       if (!win.isVisible()) win.showInactive();
       win.setAlwaysOnTop(true, 'screen-saver');
     };
@@ -274,7 +274,6 @@ export class RuntimeShell {
     this.processingSessionId = null;
     this.send('recording:pill-hide');
     this.dictationFailure = {
-      order: this.nextFactOrder++,
       recordingSessionId,
       message,
       recoveryActions,
@@ -288,12 +287,6 @@ export class RuntimeShell {
     this.processingSessionId = null;
     this.dictationFailure = null;
     this.send('recording:pill-hide');
-    this.republish();
-  }
-
-  /** Invalidates any surviving Agent presentation before a new run starts. */
-  beginAgentRun(): void {
-    this.invalidateAgentPresentation();
     this.republish();
   }
 
@@ -387,7 +380,6 @@ export class RuntimeShell {
     this.agentResponseHeight = AGENT_RESPONSE_BASE_HEIGHT;
     this.agentTerminal = {
       phase: 'completed',
-      order: this.nextFactOrder++,
       agentRunId,
       response,
       toolSummary,
@@ -403,7 +395,6 @@ export class RuntimeShell {
     this.agentResponseHeight = AGENT_RESPONSE_BASE_HEIGHT;
     this.agentTerminal = {
       phase: 'failed',
-      order: this.nextFactOrder++,
       agentRunId,
       message,
     };
@@ -447,11 +438,9 @@ export class RuntimeShell {
   }
 
   updateDurationWarning(remainingSeconds: number | null): void {
-    this.send('recording:duration-warning', remainingSeconds);
-  }
-
-  updateAudioLevel(level: number): void {
-    this.send('audio:level-changed', level);
+    if (!this.activeRecording) return;
+    this.activeRecording.durationWarningSeconds = remainingSeconds;
+    this.republish();
   }
 
   getWebContents(): WebContents | null {
@@ -538,38 +527,14 @@ export class RuntimeShell {
   }
 
   private newestTerminal(): RuntimePresentationState | null {
-    const candidates: Array<{ order: number; state: RuntimePresentationState }> = [];
-    if (this.dictationFailure) {
-      candidates.push({
-        order: this.dictationFailure.order,
-        state: {
-          kind: 'failure',
-          recordingSessionId: this.dictationFailure.recordingSessionId,
-          message: this.dictationFailure.message,
-          recoveryActions: this.dictationFailure.recoveryActions,
-        },
-      });
-    }
     const agent = this.agentTerminal;
     if (agent?.phase === 'completed') {
-      candidates.push({
-        order: agent.order,
-        state: {
-          kind: 'agent-completed',
-          agentRunId: agent.agentRunId,
-          response: agent.response,
-          toolSummary: agent.toolSummary,
-        },
-      });
+      return { kind: 'agent-completed', agentRunId: agent.agentRunId, response: agent.response, toolSummary: agent.toolSummary };
     }
     if (agent?.phase === 'failed') {
-      candidates.push({
-        order: agent.order,
-        state: { kind: 'agent-failed', agentRunId: agent.agentRunId, message: agent.message },
-      });
+      return { kind: 'agent-failed', agentRunId: agent.agentRunId, message: agent.message };
     }
-    if (candidates.length === 0) return null;
-    return candidates.reduce((newest, candidate) => (candidate.order > newest.order ? candidate : newest)).state;
+    return null;
   }
 
   /**
@@ -687,13 +652,6 @@ export class RuntimeShell {
     win.setAlwaysOnTop(true, 'screen-saver');
   }
 
-  private position(win: Pick<BrowserWindow, 'setPosition'>): void {
-    const { workArea, workAreaSize } = screen.getPrimaryDisplay();
-    const x = workArea.x + Math.max(0, (workAreaSize.width - SHELL_WIDTH) / 2);
-    const y = workArea.y + Math.max(0, workAreaSize.height - SHELL_HEIGHT - BOTTOM_MARGIN);
-    win.setPosition(Math.round(x), Math.round(y));
-  }
-
   private cancelPendingHide(): void {
     if (!this.hideTimer) return;
     this.timers.clearTimeoutFn(this.hideTimer);
@@ -781,8 +739,7 @@ export class RuntimeShell {
 
   /**
    * The renderer's acknowledged end boundary. Only a spool holding exactly the
-   * declared chunks/samples becomes a WAV; it is delivered on the existing
-   * `runtime:audio-data-ready` main-process boundary.
+   * declared chunks/samples becomes a WAV delivered to the recording session.
    */
   private readonly handleAudioEnd = (
     event: IpcMainEvent,
@@ -804,7 +761,7 @@ export class RuntimeShell {
       this.spool = null;
     }
     const command = this.activeCommand;
-    ipcMain.emit('runtime:audio-data-ready', event, generation, recordingSessionId, commandSequence, wav.buffer);
+    void this.recordingHandlers?.onAudioData(event, generation, recordingSessionId, commandSequence, wav.buffer);
     // The end boundary retires the command even if no consumer claimed it.
     if (this.activeCommand === command) this.clearCommand();
   };
@@ -817,7 +774,7 @@ export class RuntimeShell {
     this.spool?.discard();
     this.spool = null;
     this.send('runtime:audio-cancel', command);
-    ipcMain.emit('runtime:audio-failed', event, command.generation, command.recordingSessionId, command.sequence);
+    this.recordingHandlers?.onAudioFailed(event, command.generation, command.recordingSessionId, command.sequence);
     if (this.activeCommand === command) this.clearCommand();
   }
 
@@ -847,6 +804,6 @@ export class RuntimeShell {
     this.windows.destroy();
     this.prepare();
     if (this.derive().kind !== 'idle') this.republish();
-    this.onCrash?.(reason);
+    this.recordingHandlers?.onCrash(reason);
   }
 }

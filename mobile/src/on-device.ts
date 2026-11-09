@@ -1,45 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { requireOptionalNativeModule } from 'expo';
 import { isParakeetLanguage, languageBase } from './languages';
-import { keyboardSessionSchema, type KeyboardSessionEvent } from './keyboard-session';
-
-type Progress = { phase: 'downloading' | 'installing'; fraction: number };
-type NativeSpeech = {
-  getModelState(language: string): Promise<'missing' | 'ready'>;
-  prepareModel(language: string): Promise<void>;
-  installModel(language: string): Promise<void>;
-  transcribe(uri: string, language: string): Promise<string>;
-  signGoogleJwt(privateKey: string, input: string): Promise<string>;
-  getKeyboardSession(): Promise<NativeKeyboardSession>;
-  startKeyboardSession(minutes: number, language: string, agentReady: boolean): Promise<NativeKeyboardSession>;
-  resolveKeyboardAgentRequest(id: string, error: string | null): Promise<void>;
-  stopKeyboardSession(): Promise<void>;
-  addListener(event: 'onModelProgress', listener: (progress: Progress) => void): { remove(): void };
-  addListener(event: 'onKeyboardSession', listener: (session: NativeKeyboardSession) => void): { remove(): void };
-};
-/** endsAt is epoch ms, 0 when no session; error explains why native ended a session early. */
-type NativeKeyboardSession = KeyboardSessionEvent;
+import { speech, checkedLocalLanguage } from './native-speech';
 
 export type LocalModelState =
   | { kind: 'unavailable' | 'checking' | 'missing' | 'ready' }
   | { kind: 'downloading' | 'installing'; fraction: number }
   | { kind: 'error'; message: string };
 
-const speech = requireOptionalNativeModule<NativeSpeech>('ShuddhalekhanSpeech');
-
 export function localModelKey(language: string): 'english' | 'multilingual' {
   return languageBase(language) === 'en' ? 'english' : 'multilingual';
-}
-
-function checkedLocalLanguage(language: string): string {
-  if (!isParakeetLanguage(language)) throw new Error('Parakeet does not support this language. Choose a supported language or use an endpoint.');
-  return languageBase(language);
-}
-
-export async function signGoogleJwt(privateKey: string, input: string): Promise<string> {
-  if (!speech) throw new Error('Google service-account authentication requires the updated native app build.');
-  try { return await speech.signGoogleJwt(privateKey, input); }
-  catch { throw new Error('Could not sign with this Google service-account key. Check its private key.'); }
 }
 
 export async function transcribeOnDevice(uri: string, signal: AbortSignal, language: string): Promise<string> {
@@ -86,11 +55,12 @@ export function useOnDeviceModel(preloadLanguage: string | null) {
   const preloadKey = preloadLanguage === null ? null : localModelKey(preloadLanguage);
   const preloadReady = preloadKey !== null && localModels[preloadKey].kind === 'ready';
   useEffect(() => {
-    if (preloadLanguage === null || !isParakeetLanguage(preloadLanguage) || !preloadReady || !speech || prepared.current === preloadKey) return;
+    const nativeSpeech = speech;
+    if (preloadLanguage === null || !isParakeetLanguage(preloadLanguage) || !preloadReady || !nativeSpeech || prepared.current === preloadKey) return;
     prepared.current = preloadKey;
     setPreparingModel(true);
     // Preparation shares native's existing load task; it never downloads or opens the microphone.
-    void Promise.resolve().then(() => speech.prepareModel(checkedLocalLanguage(preloadLanguage))).catch(() => {
+    void Promise.resolve().then(() => nativeSpeech.prepareModel(checkedLocalLanguage(preloadLanguage))).catch(() => {
       // A session or transcription retries preparation and reports failure when explicitly requested.
       prepared.current = null;
     }).finally(() => {
@@ -112,69 +82,4 @@ export function useOnDeviceModel(preloadLanguage: string | null) {
     } finally { installing.current = null; }
   };
   return { localModels, installLocalModel, preparingModel };
-}
-
-export const keyboardSessionMinutes = 10;
-
-/**
- * Native owns the keyboard session (mic, timer, Parakeet) so it keeps working while this JS is in the
- * background. Agent handoffs are handled directly in the native listener, independently of rendering.
- */
-export function useKeyboardSession(onSession: (event: KeyboardSessionEvent) => Promise<void>) {
-  const [session, setSession] = useState<NativeKeyboardSession>({ endsAt: 0, phase: 'idle', agentReady: false });
-  const [now, setNow] = useState(Date.now);
-  const [starting, setStarting] = useState(false);
-  useEffect(() => {
-    let handedOff: string | undefined;
-    const receive = (value: unknown) => {
-      const parsed = keyboardSessionSchema.safeParse(value);
-      if (!parsed.success) return;
-      const event = parsed.data;
-      setSession(event);
-      if (event.mode === 'agent' && event.phase === 'done' && event.requestId) {
-        if (handedOff === event.requestId) return;
-        handedOff = event.requestId;
-        const id = event.requestId;
-        void onSession(event).then(
-          () => speech?.resolveKeyboardAgentRequest(id, null),
-          error => speech?.resolveKeyboardAgentRequest(id, error instanceof Error ? error.message : 'The agent could not start.'),
-        ).catch(() => {});
-      } else { void onSession(event).catch(() => {}); }
-    };
-    // A listener event is newer than the initial read; a late snapshot must not overwrite it.
-    let heard = false;
-    const subscription = speech?.addListener('onKeyboardSession', (value: unknown) => { heard = true; receive(value); });
-    void speech?.getKeyboardSession().then(value => { if (!heard) receive(value); }).catch(() => {});
-    return () => subscription?.remove();
-  }, [onSession]);
-  const active = session.endsAt !== 0;
-  useEffect(() => {
-    if (session.endsAt === 0) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [session.endsAt]);
-
-  // `starting` is claimed before the first await so in-app recording stays disabled while the session prepares.
-  const startKeyboardSession = async (language: string, agentReady: () => Promise<boolean>) => {
-    if (!speech || starting) return;
-    const selected = checkedLocalLanguage(language);
-    setStarting(true);
-    try {
-      const ready = await agentReady();
-      setSession(keyboardSessionSchema.parse(await speech.startKeyboardSession(keyboardSessionMinutes, selected, ready)));
-    } catch { throw new Error('Could not start the keyboard session. Check microphone access and that Parakeet is downloaded, then try again.'); }
-    finally { setStarting(false); }
-  };
-  return {
-    keyboardSession: {
-      available: speech !== null, active, starting,
-      // Native may hold the session past zero while a started utterance finishes.
-      remainingSeconds: Math.max(0, Math.ceil((session.endsAt - now) / 1000)),
-      busy: session.phase === 'recording' || session.phase === 'transcribing',
-      endedReason: session.endsAt === 0 ? session.error ?? null : null,
-    },
-    startKeyboardSession,
-    stopKeyboardSession: async () => { await speech?.stopKeyboardSession(); },
-  };
 }

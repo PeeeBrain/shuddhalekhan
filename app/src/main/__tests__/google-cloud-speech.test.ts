@@ -5,7 +5,6 @@ import type { GoogleCloudSpeechProviderConfig } from '../../types/ipc';
 import {
   buildGoogleRecognizeEndpoint,
   createGoogleCloudSpeechTranscriber,
-  GOOGLE_CLOUD_SPEECH_CAPABILITIES,
   parseGoogleServiceAccount,
 } from '../google-cloud-speech';
 
@@ -61,7 +60,6 @@ describe('Google Cloud Speech-to-Text v2', () => {
     expect(buildGoogleRecognizeEndpoint(CONFIG)).toBe(
       'https://speech.googleapis.com/v2/projects/sample-project-123/locations/global/recognizers/_:recognize',
     );
-    expect(GOOGLE_CLOUD_SPEECH_CAPABILITIES.maxDurationSeconds).toBe(55);
   });
 
   it('authorizes internally and sends WAV recognition config, language, model, and inline hints', async () => {

@@ -1,16 +1,10 @@
 import { Tray, Menu, app } from 'electron';
 import { loadAppIcon } from './app-icon';
-import { getConfig, setConfig } from './config';
+import { getConfig } from './config';
 import type { AudioDevice, UpdateStatus } from '../types/ipc';
 
 let tray: Tray | null = null;
-let openSettingsHandler: (() => void) | null = null;
-let pasteLastTranscriptHandler: (() => void) | null = null;
-let copyLastTranscriptHandler: (() => void) | null = null;
-let checkForUpdatesHandler: (() => void) | null = null;
-let selectDeviceHandler: ((deviceId: string) => void) | null = null;
-let isShortcutsPausedHandler: (() => boolean) | null = null;
-let toggleShortcutsPauseHandler: ((paused: boolean) => void) | null = null;
+let handlers: TrayHandlers;
 let shortcutsPaused = false;
 let audioDevices: AudioDevice[] = [];
 let updateStatus: UpdateStatus = {
@@ -22,23 +16,17 @@ let updateStatus: UpdateStatus = {
 
 export interface TrayHandlers {
   onOpenSettings: () => void;
-  onPasteLastTranscript?: () => void;
-  onCopyLastTranscript?: () => void;
-  onCheckForUpdates?: () => void;
-  onSelectDevice?: (deviceId: string) => void;
-  isShortcutsPaused?: () => boolean;
-  onTogglePause?: (paused: boolean) => void;
+  onPasteLastTranscript: () => void;
+  onCopyLastTranscript: () => void;
+  onCheckForUpdates: () => void;
+  onSelectDevice: (deviceId: string) => void;
+  isShortcutsPaused: () => boolean;
+  onTogglePause: (paused: boolean) => void;
 }
 
-export function createTray(handlers: TrayHandlers): Tray {
-  openSettingsHandler = handlers.onOpenSettings;
-  pasteLastTranscriptHandler = handlers.onPasteLastTranscript ?? null;
-  copyLastTranscriptHandler = handlers.onCopyLastTranscript ?? null;
-  checkForUpdatesHandler = handlers.onCheckForUpdates ?? null;
-  selectDeviceHandler = handlers.onSelectDevice ?? null;
-  isShortcutsPausedHandler = handlers.isShortcutsPaused ?? null;
-  toggleShortcutsPauseHandler = handlers.onTogglePause ?? null;
-  shortcutsPaused = isShortcutsPausedHandler?.() ?? false;
+export function createTray(callbacks: TrayHandlers): Tray {
+  handlers = callbacks;
+  shortcutsPaused = handlers.isShortcutsPaused();
 
   const icon = loadAppIcon();
   
@@ -63,13 +51,11 @@ export function updateTrayMenu(): void {
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Paste last transcript',
-      enabled: !!pasteLastTranscriptHandler,
-      click: () => pasteLastTranscriptHandler?.(),
+      click: () => handlers.onPasteLastTranscript(),
     },
     {
       label: 'Copy last transcript',
-      enabled: !!copyLastTranscriptHandler,
-      click: () => copyLastTranscriptHandler?.(),
+      click: () => handlers.onCopyLastTranscript(),
     },
     { type: 'separator' },
     {
@@ -81,12 +67,12 @@ export function updateTrayMenu(): void {
       type: 'checkbox',
       checked: shortcutsPaused,
       click: () => {
-        toggleShortcutsPauseHandler?.(!shortcutsPaused);
+        handlers.onTogglePause(!shortcutsPaused);
       },
     },
     {
       label: 'Settings…',
-      click: () => openSettingsHandler?.(),
+      click: () => handlers.onOpenSettings(),
     },
     { type: 'separator' },
     {
@@ -96,7 +82,7 @@ export function updateTrayMenu(): void {
     ...(canCheckForUpdates ? [{
       label: updateStatus.state === 'checking' ? 'Checking for updates…' : 'Check for updates',
       enabled: updateStatus.state !== 'checking',
-      click: () => checkForUpdatesHandler?.(),
+      click: () => handlers.onCheckForUpdates(),
     }] : []),
     { type: 'separator' },
     {
@@ -132,8 +118,7 @@ function buildDeviceSubmenu(
     type: 'radio',
     checked: device.deviceId === currentDeviceId || (!currentDeviceId && device.deviceId === 'default'),
     click: () => {
-      setConfig('selectedDeviceId', device.deviceId);
-      selectDeviceHandler?.(device.deviceId);
+      handlers.onSelectDevice(device.deviceId);
       updateTrayMenu();
     },
   }));
@@ -165,8 +150,3 @@ function getUpdateStatusLabel(status: UpdateStatus): string {
       return '';
   }
 }
-
-export function getTray(): Tray | null {
-  return tray;
-}
-

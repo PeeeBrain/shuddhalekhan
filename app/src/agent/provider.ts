@@ -1,3 +1,4 @@
+import { isChatGptIncludeRejection, OPENROUTER_HEADERS } from '@shuddhalekhan/shared/agent-provider';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAzure } from '@ai-sdk/azure';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -53,7 +54,7 @@ export function createAgentProvider(value: AgentProviderConfig, storedApiKey?: s
     if (response.status === 400 && body.include !== undefined) {
       const rejection = z.object({ error: z.object({ param: z.string().optional() }) })
         .safeParse(await response.clone().json().catch(() => null));
-      if (rejection.success && /^include(?:\[|\.|$)/.test(rejection.data.error.param ?? '')) {
+      if (rejection.success && isChatGptIncludeRejection(rejection.data.error.param ?? '')) {
         delete body.include;
         return send();
       }
@@ -64,7 +65,7 @@ export function createAgentProvider(value: AgentProviderConfig, storedApiKey?: s
   const headers: Record<string, string> | undefined = hostname === 'opencode.ai'
     ? { 'x-opencode-session': sessionId, 'User-Agent': 'shuddhalekhan-agent/1.0' }
     : hostname === 'openrouter.ai'
-      ? { 'HTTP-Referer': 'https://github.com/parthashirolkar/shuddhalekhan', 'X-OpenRouter-Title': 'Shuddhalekhan' }
+      ? OPENROUTER_HEADERS
       : undefined;
   const settings = {
     baseURL: provider.baseUrl, apiKey: apiKey ?? 'unused', headers, fetch: authenticatedFetch,

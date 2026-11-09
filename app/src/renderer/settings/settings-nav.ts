@@ -1,58 +1,70 @@
-export type SettingsSectionId =
-  | 'home'
-  | 'transcription'
-  | 'shortcuts'
-  | 'agent'
-  | 'mcp'
-  | 'skills'
-  | 'memory'
-  | 'history'
-  | 'about';
+import { createElement, type ComponentType } from 'react';
+import { BookOpen, Bot, Brain, FileText, History, House, Info, Keyboard, Plug } from 'lucide-react';
+import { HomeSettings } from './HomeSettings';
+import { TranscriptionSettings } from './TranscriptionSettings';
+import { ShortcutsSettings } from './ShortcutsSettings';
+import { AgentSettings } from './AgentSettings';
+import { McpSettings } from './McpSettings';
+import { SkillsSettings } from './SkillsSettings';
+import { MemorySettings } from './MemorySettings';
+import { AuditHistorySettings } from './AuditHistorySettings';
+import { AboutSettings } from './AboutSettings';
+import type { SettingsSectionProps } from './settings-section-props';
 
-export type SettingsNavGroupId = 'general' | 'agent' | 'system';
-
-export interface SettingsNavSection {
-  id: SettingsSectionId;
-  label: string;
-  group: SettingsNavGroupId;
+export interface SettingsPageProps extends SettingsSectionProps {
+  onOpenRun: (id: string) => void;
+  initialRunId: string | null;
 }
 
-export interface SettingsNavGroup {
-  id: SettingsNavGroupId;
-  label: string;
-  sections: SettingsNavSection[];
+function McpPage(props: SettingsPageProps) {
+  return createElement(McpSettings, {
+    servers: props.config.agent.mcpServers,
+    statuses: props.mcpStatuses,
+    agentEnabled: props.config.agent.enabled,
+    saveError: props.persistence.fieldErrors['mcp-servers'],
+    onChange: (mcpServers) => { void props.persistence.commit('agent', { ...props.config.agent, mcpServers }, 'mcp-servers'); },
+    onTest: props.settingsIpc.testMcpServer,
+  });
 }
 
-export const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
+export const SETTINGS_NAV_GROUPS = [
   {
     id: 'general',
     label: 'General',
     sections: [
-      { id: 'home', label: 'Home', group: 'general' },
-      { id: 'transcription', label: 'Transcription', group: 'general' },
-      { id: 'shortcuts', label: 'Shortcuts', group: 'general' },
+      { id: 'home', label: 'Home', icon: House, component: HomeSettings },
+      { id: 'transcription', label: 'Transcription', icon: FileText, component: TranscriptionSettings },
+      { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, component: ShortcutsSettings },
     ],
   },
   {
     id: 'agent',
     label: 'Agent',
     sections: [
-      { id: 'agent', label: 'Agent', group: 'agent' },
-      { id: 'mcp', label: 'MCP Servers', group: 'agent' },
-      { id: 'skills', label: 'Skills', group: 'agent' },
-      { id: 'memory', label: 'Memory', group: 'agent' },
-      { id: 'history', label: 'History', group: 'agent' },
+      { id: 'agent', label: 'Agent', icon: Bot, component: AgentSettings },
+      { id: 'mcp', label: 'MCP Servers', icon: Plug, component: McpPage },
+      { id: 'skills', label: 'Skills', icon: BookOpen, component: SkillsSettings },
+      { id: 'memory', label: 'Memory', icon: Brain, component: MemorySettings },
+      { id: 'history', label: 'History', icon: History, component: AuditHistorySettings },
     ],
   },
   {
     id: 'system',
     label: 'System',
-    sections: [{ id: 'about', label: 'About', group: 'system' }],
+    sections: [{ id: 'about', label: 'About', icon: Info, component: AboutSettings }],
   },
-];
+] as const satisfies ReadonlyArray<{
+  id: string;
+  label: string;
+  sections: ReadonlyArray<{ id: string; label: string; icon: typeof House; component: ComponentType<SettingsPageProps> }>;
+}>;
 
-export const SETTINGS_NAV_SECTIONS: SettingsNavSection[] =
-  SETTINGS_NAV_GROUPS.flatMap((group) => group.sections);
+export type SettingsNavGroupId = typeof SETTINGS_NAV_GROUPS[number]['id'];
+export type SettingsNavSection = typeof SETTINGS_NAV_GROUPS[number]['sections'][number];
+export type SettingsSectionId = SettingsNavSection['id'];
+
+export const SETTINGS_NAV_SECTIONS: readonly SettingsNavSection[] =
+  SETTINGS_NAV_GROUPS.flatMap<SettingsNavSection>((group) => group.sections);
 
 export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'home';
 

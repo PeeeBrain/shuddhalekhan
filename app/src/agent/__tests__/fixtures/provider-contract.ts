@@ -117,7 +117,6 @@ assert.equal(chatgpt.body.stream, true);
 const chatgptInput = z.array(z.object({ role: z.string().optional() })).parse(chatgpt.body.input);
 assert.ok(chatgptInput.some(item => item.role === 'developer'));
 assert.ok(chatgptInput.every(item => item.role !== 'system'));
-assert.throws(() => createAgentProvider(chatgptProfile), /Sign in with ChatGPT/);
 const chatgptCheck = await testAgentProvider(chatgptProfile, new AbortController().signal, 'plan-token');
 assert.equal(chatgptCheck.streaming.status, 'passed');
 for (const request of captures) {

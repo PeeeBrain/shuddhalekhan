@@ -1,3 +1,4 @@
+import { hasChosenMicrophone } from '../../shared/microphone-selection';
 import { useEffect, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { AuditRunSummary, TranscriptionReadiness } from '../../types/ipc';
@@ -40,7 +41,7 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
 
   const servers = config.agent.mcpServers;
   const connected = servers.filter((server) => mcpStatuses[server.id]?.status === 'connected').length;
-  const hasChosenMic = Boolean(config.selectedDeviceId) && config.selectedDeviceId !== 'default';
+  const hasChosenMic = hasChosenMicrophone(config.selectedDeviceId);
   const dictation = activeTrigger(desktopStatus, 'dictation', config.shortcuts.dictation.binding);
   const agent = activeTrigger(desktopStatus, 'agent', config.shortcuts.agent.binding);
   const delivery = desktopStatus?.delivery;

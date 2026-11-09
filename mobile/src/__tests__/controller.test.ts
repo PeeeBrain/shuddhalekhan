@@ -52,7 +52,7 @@ describe('mobile command lifecycle', () => {
       },
         fetch,
         loadSettings: async () => ({ ...defaultSettings, transcriptionSource: 'on-device',
-          language: 'English',
+          language: 'en',
           allowInsecureHTTP: true, transcriptionEndpoint: `http://127.0.0.1:${server.port}/inference` }),
         saveSettings: async value => value,
         transcribeOnDevice: async (_signal, language) => { selectedLanguage = language; return '  Local speech.  '; },

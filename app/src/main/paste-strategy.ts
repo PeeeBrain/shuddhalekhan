@@ -1,46 +1,24 @@
 import type { PasteStrategy, PasteStrategyConfig } from '../types/ipc';
+import { PASTE_CHORDS } from '../shared/shortcut-bindings';
 
-export const PASTE_STRATEGIES: PasteStrategy[] = ['ctrl-v', 'shift-insert', 'ctrl-shift-v'];
+const MODIFIER_KEYS = { ctrl: 0x11, shift: 0x10 };
+export const PASTE_KEYSYMS = new Map([[0x11, 0xffe3], [0x10, 0xffe1], [0x56, 0x76], [0x2d, 0xff63]]);
 
-const KEYEVENTF_KEYUP = 0x0002;
-
-// Virtual-key codes used by paste strategies
-const VK_CONTROL = 0x11;
-const VK_SHIFT = 0x10;
-const VK_V = 0x56;
-const VK_INSERT = 0x2d;
+export interface PasteDispatchResult {
+  acceptedEvents: number;
+  errorCode?: number;
+  error?: string;
+}
 
 export interface KeyEvent {
   vk: number;
-  flags: number;
+  up: boolean;
 }
 
 export function buildPasteStrategyEvents(strategy: PasteStrategy): KeyEvent[] {
-  switch (strategy) {
-    case 'ctrl-v':
-      return [
-        { vk: VK_CONTROL, flags: 0 },
-        { vk: VK_V, flags: 0 },
-        { vk: VK_V, flags: KEYEVENTF_KEYUP },
-        { vk: VK_CONTROL, flags: KEYEVENTF_KEYUP },
-      ];
-    case 'shift-insert':
-      return [
-        { vk: VK_SHIFT, flags: 0 },
-        { vk: VK_INSERT, flags: 0 },
-        { vk: VK_INSERT, flags: KEYEVENTF_KEYUP },
-        { vk: VK_SHIFT, flags: KEYEVENTF_KEYUP },
-      ];
-    case 'ctrl-shift-v':
-      return [
-        { vk: VK_CONTROL, flags: 0 },
-        { vk: VK_SHIFT, flags: 0 },
-        { vk: VK_V, flags: 0 },
-        { vk: VK_V, flags: KEYEVENTF_KEYUP },
-        { vk: VK_SHIFT, flags: KEYEVENTF_KEYUP },
-        { vk: VK_CONTROL, flags: KEYEVENTF_KEYUP },
-      ];
-  }
+  const chord = PASTE_CHORDS[strategy];
+  const keys = [...chord.modifiers.map(modifier => MODIFIER_KEYS[modifier]), chord.keyCode];
+  return [...keys.map(vk => ({ vk, up: false })), ...keys.reverse().map(vk => ({ vk, up: true }))];
 }
 
 /**
@@ -63,8 +41,4 @@ export function resolvePasteStrategy(
   const executableName = executablePath.split(/[\\/]/).pop()?.toLowerCase() ?? '';
   return config.overrides[executableName]
     ?? (CTRL_SHIFT_V_TERMINALS.has(executableName) ? 'ctrl-shift-v' : config.default);
-}
-
-export function isValidPasteStrategy(value: unknown): value is PasteStrategy {
-  return PASTE_STRATEGIES.includes(value as PasteStrategy);
 }

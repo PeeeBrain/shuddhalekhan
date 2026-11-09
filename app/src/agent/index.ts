@@ -1,3 +1,4 @@
+import { APPROVAL_TIMEOUT_MESSAGE } from '@shuddhalekhan/shared/agent-prompt';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
 import { logSidecar, parseElectronMessage, writeJsonLine } from './protocol';
@@ -10,6 +11,7 @@ import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
 import { AgentAuditStore } from './audit';
 import { McpRegistry } from './mcp-registry';
 import { AgentMemoryCommitter } from './memory-committer';
+import { RUN_SETTLE_TIMEOUT_MS, SIDECAR_EXIT_TIMEOUT_MS } from '../shared/agent-timeouts';
 import type { AgentRunContext } from '../shared/agent-context';
 import {
   AisdkMcpClientFactory,
@@ -21,6 +23,7 @@ let config: AppConfig | null = null;
 let agentApiKey: string | undefined;
 let activeAgentRunId: string | null = null;
 let activeAbortController: AbortController | null = null;
+const pendingRuns = new Set<Promise<void>>();
 let providerTest: { requestId: string; controller: AbortController } | null = null;
 let pendingApproval: PendingApproval | null = null;
 let approvalQueue: Promise<void> = Promise.resolve();
@@ -36,7 +39,7 @@ const mcpRegistry = new McpRegistry({
 });
 
 const APPROVAL_TIMEOUT_MS = 30_000;
-const APPROVAL_TIMEOUT_MESSAGE = 'Tool approval window expired.';
+
 
 type PendingApproval = {
   agentRunId: string;
@@ -44,6 +47,19 @@ type PendingApproval = {
   timeout: ReturnType<typeof setTimeout>;
   resolve: (decision: ToolApprovalDecision) => void;
 };
+
+function clearActiveRun(): void {
+  activeAgentRunId = null;
+  activeAbortController = null;
+}
+
+function exitWithGroup(): void {
+  auditStore.close();
+  if (process.platform !== 'win32') {
+    try { process.kill(-process.pid, 'SIGKILL'); } catch { /* not a group leader */ }
+  }
+  process.exit(0);
+}
 
 function main(): void {
   writeJsonLine({
@@ -62,15 +78,8 @@ function main(): void {
   // outlives the app. On POSIX we lead our own process group (detached spawn)
   // and Electron may not be alive to kill it, so the last step kills the group:
   // any MCP server or tool process that ignored EOF dies with us.
-  const exitWithGroup = () => {
-    auditStore.close();
-    if (process.platform !== 'win32') {
-      try { process.kill(-process.pid, 'SIGKILL'); } catch { /* not a group leader */ }
-    }
-    process.exit(0);
-  };
   input.on('close', () => {
-    setTimeout(exitWithGroup, 3000).unref();
+    setTimeout(exitWithGroup, SIDECAR_EXIT_TIMEOUT_MS).unref();
     void beginShutdown(false).finally(exitWithGroup);
   });
 
@@ -122,7 +131,11 @@ function handleLine(line: string): void {
       configUpdateQueue = configUpdateQueue.then(() => mcpRegistry.updateConfig(message.config));
       break;
     case 'agent:start':
-      void handleAgentStart(message.agentRunId, message.transcript, message.context);
+      {
+        const run = handleAgentStart(message.agentRunId, message.transcript, message.context);
+        pendingRuns.add(run);
+        void run.finally(() => pendingRuns.delete(run));
+      }
       break;
     case 'memory:commit-result':
       memoryCommitter.accept(message);
@@ -152,7 +165,6 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
   if (previousAgentRunId && previousAbortController) {
     previousAbortController.abort();
     rejectPendingApproval(previousAgentRunId, 'Agent run was interrupted.');
-    auditStore.record(previousAgentRunId, 'run_interrupted', { reason: 'replaced_by_new_run', replacementAgentRunId: agentRunId });
     writeJsonLine({ type: 'agent:cancelled', agentRunId: previousAgentRunId });
   }
 
@@ -164,8 +176,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
   const currentAgentApiKey = agentApiKey;
   if (!currentConfig) {
     writeJsonLine({ type: 'agent:failed', agentRunId, error: 'No config available' });
-    activeAgentRunId = null;
-    activeAbortController = null;
+    clearActiveRun();
     return;
   }
 
@@ -180,7 +191,6 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
       writeJsonLine({ type: 'agent:status', agentRunId, status });
     }
     const toolSnapshot = mcpRegistry.createRunSnapshot(
-      (request) => requestToolApproval(agentRunId, request),
       (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
       (tool) => {
         if (activeAgentRunId !== agentRunId) return;
@@ -204,23 +214,18 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
         onCompleted: (response, toolSummary) => {
           if (activeAgentRunId !== agentRunId) return;
           writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary });
-          activeAgentRunId = null;
-          activeAbortController = null;
+          clearActiveRun();
         },
         onFailed: (error) => {
           if (activeAgentRunId !== agentRunId) return;
-          auditStore.record(agentRunId, 'failed', { error });
           writeJsonLine({ type: 'agent:failed', agentRunId, error });
-          activeAgentRunId = null;
-          activeAbortController = null;
+          clearActiveRun();
         },
         onCancelled: () => {
           if (activeAgentRunId !== agentRunId) return;
           rejectPendingApproval(agentRunId, 'Agent run was interrupted.');
-          auditStore.record(agentRunId, 'run_interrupted');
           writeJsonLine({ type: 'agent:cancelled', agentRunId });
-          activeAgentRunId = null;
-          activeAbortController = null;
+          clearActiveRun();
         },
         requestToolApproval: (request) => requestToolApproval(agentRunId, request),
         onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
@@ -236,14 +241,12 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
   } catch (err) {
     if (activeAgentRunId !== agentRunId) return;
     logSidecar('unhandled agent start error', err);
-    auditStore.record(agentRunId, 'failed', { error: err instanceof Error ? err.message : String(err) });
     writeJsonLine({
       type: 'agent:failed',
       agentRunId,
       error: err instanceof Error ? err.message : String(err),
     });
-    activeAgentRunId = null;
-    activeAbortController = null;
+    clearActiveRun();
   }
 }
 
@@ -251,9 +254,7 @@ function handleAgentCancel(agentRunId: string): void {
   if (activeAgentRunId === agentRunId && activeAbortController) {
     activeAbortController.abort();
     rejectPendingApproval(agentRunId, 'Agent run was interrupted.');
-    auditStore.record(agentRunId, 'run_interrupted', { reason: 'requested' });
-    activeAgentRunId = null;
-    activeAbortController = null;
+    clearActiveRun();
   }
   writeJsonLine({
     type: 'agent:cancelled',
@@ -359,10 +360,16 @@ async function shutdown(): Promise<void> {
   providerTest?.controller.abort();
   activeAbortController?.abort();
   if (activeAgentRunId) {
-    auditStore.record(activeAgentRunId, 'run_interrupted', { reason: 'sidecar_shutdown' });
     rejectPendingApproval(activeAgentRunId, 'Agent run was interrupted because the sidecar is shutting down.');
   }
   await configUpdateQueue.catch(() => undefined);
+  // The aborted run records its own interruption; a tool that ignores the abort must not hold MCP cleanup hostage.
+  const runningId = activeAgentRunId;
+  const settled = await Promise.race([
+    Promise.allSettled(pendingRuns).then(() => true),
+    new Promise<false>((resolve) => setTimeout(resolve, RUN_SETTLE_TIMEOUT_MS, false).unref()),
+  ]);
+  if (!settled && runningId) auditStore.record(runningId, 'run_interrupted', { reason: 'sidecar_shutdown' });
   await mcpRegistry.close();
   auditStore.close();
 }
@@ -382,13 +389,10 @@ function beginShutdown(acknowledge: boolean): Promise<void> {
 }
 
 process.once('SIGINT', () => {
-  void beginShutdown(false).finally(() => process.exit(0));
+  void beginShutdown(false).finally(exitWithGroup);
 });
 process.once('SIGTERM', () => {
-  void beginShutdown(false).finally(() => process.exit(0));
-});
-process.once('exit', () => {
-  auditStore.close();
+  void beginShutdown(false).finally(exitWithGroup);
 });
 
 main();

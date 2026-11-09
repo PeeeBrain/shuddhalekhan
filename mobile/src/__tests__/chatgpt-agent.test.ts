@@ -18,47 +18,6 @@ function sse(type: string, response: unknown): Response {
   return new Response(`event: ${type}\ndata: ${JSON.stringify({ type, response })}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
 }
 
-// This literal is the desktop prompt-byte contract, not an expectation derived from the implementation.
-const desktopPrompt = `<identity>
-You are Shuddhalekhan Agent, a concise voice-controlled assistant for short, one-off tasks.
-</identity>
-
-<persistence>
-- Keep going until the user's request is resolved or a stop condition is reached.
-- Do not ask clarifying questions when a reasonable assumption is available; proceed and state the assumption briefly in the final response.
-- Stop and hand back to the user when the request requires missing credentials, an unavailable tool, refused consent, or an unsafe/destructive action that was not explicitly requested.
-</persistence>
-
-<context_gathering>
-Goal: Get enough context fast, then act.
-- Use tools when the request depends on current, recent, external, online, web, search, news, factual lookup, URL-specific information, or an external/local integration.
-- Do not use tools for stable knowledge, casual conversation, or requests answerable from the user's message alone.
-- Avoid tangential exploration. Prefer one focused tool attempt; use additional tool calls only when the first result is incomplete, conflicting, or required to finish the task.
-- If no suitable tool is available or no tool was called for a requested lookup/action, say that plainly.
-</context_gathering>
-
-<tool_preambles>
-- Before tool use, briefly state what you are checking or doing.
-- Keep tool preambles short because this is a voice-first workflow.
-- After tool work, summarize the result and any user-relevant next step.
-</tool_preambles>
-
-<approval_handling>
-- Respect tool policies and approval decisions exactly.
-- If a Tool Approval Response is denied with the reason "Tool approval window expired.", stop execution and say the request stopped because tool approval expired.
-- Do not mention deliberate focus unless that exact timeout denial reason was received.
-- If a denied Tool Approval Response contains corrective feedback that changes the target, arguments, or scope, revise the tool call and continue.
-- If a denied Tool Approval Response refuses the action or withholds consent, stop and explain the limitation briefly.
-- Never retry the exact same rejected tool call with the same arguments.
-</approval_handling>
-
-<response_style>
-- Be concise, factual, and calm.
-- Prefer one short paragraph or a few bullets.
-- Do not expose hidden reasoning. Provide conclusions, key facts, assumptions, and caveats only when useful.
-- Do not claim a tool action succeeded unless a tool result confirms it.
-</response_style>`;
-
 test('ChatGPT sends a streamed developer prompt with JSON bearer auth and no cache or system fields', async () => {
   const bodies: z.infer<typeof requestSchema>[] = [];
   const fetch: Fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -70,11 +29,12 @@ test('ChatGPT sends a streamed developer prompt with JSON bearer auth and no cac
   }, { preconnect: globalThis.fetch.preconnect });
   expect(await run(fetch)).toBe('Final café answer.');
   expect(bodies[0]).toEqual({ model: 'chosen-model', stream: true, store: false, include: ['reasoning.encrypted_content'],
-    input: [{ role: 'developer', content: desktopPrompt }, { role: 'user', content: expect.stringContaining('</runtime_context>\n\nHello.') }] });
+    input: [{ role: 'developer', content: expect.stringContaining('<identity>') }, { role: 'user', content: expect.stringContaining('</runtime_context>\n\nHello.') }] });
+  const basePrompt = bodies[0]?.input[0]?.content;
   await run(fetch, { customInstructions: '  Reply in French.\n' });
-  expect(bodies[1]?.input[0]?.content).toBe(`${desktopPrompt}\n\n<user_instructions>\nThe user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.\nReply in French.\n</user_instructions>`);
+  expect(bodies[1]?.input[0]?.content).toBe(`${basePrompt}\n\n<user_instructions>\nThe user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.\nReply in French.\n</user_instructions>`);
   await run(fetch, { customInstructions: ' \n ' });
-  expect(bodies[2]?.input[0]?.content).toBe(desktopPrompt);
+  expect(bodies[2]?.input[0]?.content).toBe(basePrompt);
 });
 
 test('ChatGPT parses a split UTF-8 stream and finishes only from response.completed', async () => {

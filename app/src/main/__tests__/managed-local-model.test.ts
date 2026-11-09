@@ -117,7 +117,7 @@ describe('managed local model lifecycle', () => {
     const installed = await install(wheel);
     expect(await readFile(join(installed, 'libx.so.1'), 'utf8')).toBe('lib');
     await expect(access(join(installed, '__init__.py'))).rejects.toThrow();
-    await expect(install(linked)).rejects.toThrow('unsupported links');
+    await expect(install(linked)).rejects.toThrow(/(?:unsupported|unsafe) links?/);
   });
 
   it('rejects archive entries that could escape the staging directory', () => {

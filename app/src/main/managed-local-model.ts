@@ -1,3 +1,4 @@
+import type { ManagedLocalTarget } from '../types/ipc';
 import { createHash } from 'crypto';
 import { spawn } from 'child_process';
 import { createReadStream, readFileSync, writeFileSync } from 'fs';
@@ -55,7 +56,7 @@ const ORT_SESSION_OPTIONS = [
 ].join('\n');
 
 /** Recognizer settings shared by the local STT worker and the eval harness, so evals measure what users run. */
-export function managedLocalRecognizerConfig(modelPath: string, numThreads: number, backend: 'cpu' | 'cuda' = 'cpu', contextual = false): OfflineRecognizerConfig {
+export function managedLocalRecognizerConfig(modelPath: string, numThreads: number, backend: ManagedLocalTarget['backend'] = 'cpu', contextual = false): OfflineRecognizerConfig {
   // sherpa-onnx reads session options only from a file named by the provider string.
   const sessionOptions = join(modelPath, 'ort-session.cfg');
   writeFileSync(sessionOptions, backend === 'cpu' ? ORT_SESSION_OPTIONS : `${ORT_SESSION_OPTIONS}\nLogSeverityLevel=0\narena_extend_strategy=kSameAsRequested\ncudnn_conv_use_max_workspace=0\ncudnn_conv_algo_search=HEURISTIC`);

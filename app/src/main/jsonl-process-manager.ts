@@ -79,10 +79,13 @@ export class JsonlProcessManager<TReceive, TSend> {
   private handleStdoutLine(line: string): void {
     if (!line.trim()) return;
 
+    let message: TReceive;
     try {
-      this.handlers.onMessage(JSON.parse(line) as TReceive);
+      message = JSON.parse(line) as TReceive;
     } catch (error) {
       this.handlers.onMalformedMessage?.(line, error);
+      return;
     }
+    this.handlers.onMessage(message);
   }
 }

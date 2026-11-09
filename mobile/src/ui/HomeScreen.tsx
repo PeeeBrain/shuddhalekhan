@@ -22,7 +22,7 @@ const busyLabel: Partial<Record<App['phase'], string>> = {
   awaitingApproval: 'Waiting for your approval…',
 };
 // Statuses that only restate "nothing is happening" stay off screen.
-const restStatus = new Set(['Ready to record.', 'Settings saved.', 'Done.']);
+const restStatus = new Set(['Ready to record.', 'Done.']);
 
 export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App; onOpenSettings: (page?: SettingsPage) => void; onReviewApproval: () => void }) {
   const { settings, phase, transcript, response, status, error } = app;

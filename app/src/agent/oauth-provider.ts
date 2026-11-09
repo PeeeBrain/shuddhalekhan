@@ -71,20 +71,6 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
     await this.startCallbackServer();
   }
 
-  async ensureAuthenticated(): Promise<void> {
-    if (this.tokens()?.access_token) return;
-
-    await this.startCallbackServer();
-    const result = await this.authenticate(this, {
-      serverUrl: this.server.transport.type === 'http' ? this.server.transport.url : '',
-      fetchFn: this.fetchFn,
-    });
-
-    if (result !== 'AUTHORIZED' && !this.tokens()?.access_token) {
-      throw new Error('OAuth authorization did not complete.');
-    }
-  }
-
   tokens(): OAuthTokens | undefined {
     return this.readTokenFile().tokens;
   }

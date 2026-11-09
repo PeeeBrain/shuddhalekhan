@@ -1,3 +1,5 @@
+import type { ManagedLocalSelection } from '../shared/managed-local-selection';
+import type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
 import type { DesktopStatus } from '../shared/desktop-status';
 import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
@@ -34,27 +36,20 @@ export interface ShortcutsConfig {
   agent: IntentShortcutConfig;
 }
 
-export type AgentToolApprovalPolicy = 'disabled' | 'alwaysAsk' | 'alwaysAllow';
+export type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 
 export type McpToolPolicyKey = `${string}:${string}`;
 
 /** Approval card choices; 'always-allow' approves and saves an alwaysAllow tool policy. */
 export type AgentApprovalChoice = 'approved' | 'denied' | 'always-allow';
 
-export type CredentialKind =
-  | 'agent-api-key'
-  | 'transcription-api-key'
-  | 'custom-secret-header'
-  | 'google-service-account'
-  | 'openai-api-key'
-  | 'custom-open-ai-compatible-bearer'
-  | 'custom-open-ai-compatible-header'
-  | 'sarvam-api-key'
-  | 'azure-speech-key'
-  | 'nvidia-nim-bearer'
-  | 'nvidia-nim-header'
-  | 'whisper-live-kit-bearer'
-  | 'dictation-formatter-api-key';
+export const CREDENTIAL_KINDS = [
+  'agent-api-key', 'transcription-api-key', 'custom-secret-header', 'google-service-account',
+  'openai-api-key', 'custom-open-ai-compatible-bearer', 'custom-open-ai-compatible-header',
+  'sarvam-api-key', 'azure-speech-key', 'nvidia-nim-bearer', 'nvidia-nim-header',
+  'whisper-live-kit-bearer', 'dictation-formatter-api-key',
+] as const;
+export type CredentialKind = typeof CREDENTIAL_KINDS[number];
 
 export type FormatterApiKeySource = 'environment' | 'stored';
 
@@ -166,7 +161,6 @@ export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
   'surface-paint-proxy': (surface: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
-  'audio-level-changed': (level: number) => void;
   'runtime:audio-ready': (generation: number, recordingSessionId: string, commandSequence: number) => void;
   'runtime:audio-chunk': (
     generation: number,
@@ -225,14 +219,11 @@ export interface RendererToMainInvokeChannels {
   'memory:edit': (revision: string, id: string, text: string) => Promise<AgentMemorySnapshot>;
   'memory:remove': (revision: string, id: string) => Promise<AgentMemorySnapshot>;
   'memory:clear': (revision: string) => Promise<AgentMemorySnapshot>;
-  'audio:get-devices': () => Promise<AudioDevice[]>;
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
-  'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
+  'config:set': (key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => Promise<void>;
   'config:patch-transcription': (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;
   'transcription:check-server': () => Promise<boolean>;
-  'settings:open': () => void;
-  'clipboard:inject-text': (text: string) => Promise<InjectResult>;
   /**
    * Canonical 16 kHz mono PCM16 batch, appended to main's per-recording spool
    * in order. Resolves true once written; false means main dropped the
@@ -282,11 +273,8 @@ export interface MainToRendererChannels {
   'chatgpt:changed': (status: ChatGptAccountStatus) => void;
   'memory:changed': (snapshot: AgentMemorySnapshot) => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
-  'recording:mode-changed': (intent: RecordingIntent) => void;
-  'recording:pill-show': (recordingSessionId?: string, envelope?: RecordingPresentationEnvelope) => void;
+  'recording:pill-show': () => void;
   'recording:pill-hide': () => void;
-  'recording:duration-warning': (remainingSeconds: number | null) => void;
-  'audio:level-changed': (level: number) => void;
   'mcp:status-snapshot': (snapshot: McpStatusSnapshot) => void;
   'credential:changed': (credential: CredentialKind) => void;
   'agent:provider-invalidated': () => void;
@@ -483,15 +471,12 @@ export interface ManagedLocalModelSnapshot {
   gpu: { name: string | null; message: string };
 }
 
-export type ManagedLocalModelId = 'parakeet' | 'granite';
-export type ManagedLocalDevice = 'auto' | 'cpu' | 'cuda';
-export interface ManagedLocalSelection {
-  model: ManagedLocalModelId;
-  devices: Record<ManagedLocalModelId, ManagedLocalDevice>;
-}
+export type { ManagedLocalSelection } from '../shared/managed-local-selection';
+export type ManagedLocalModelId = ManagedLocalSelection['model'];
+export type ManagedLocalDevice = ManagedLocalSelection['devices'][ManagedLocalModelId];
 export interface ManagedLocalTarget {
   model: ManagedLocalModelId;
-  backend: 'cpu' | 'cuda';
+  backend: Exclude<ManagedLocalDevice, 'auto'>;
 }
 /** `legacy: true` deletes a previous release's files for this target instead of the current ones. */
 export type ManagedLocalDeleteTarget = ManagedLocalTarget & { legacy?: true };
@@ -549,7 +534,7 @@ export interface AppConfig {
   transcription: TranscriptionConfig;
   /** Missing/null keeps the automatic Managed Local CPU thread default. */
   managedLocalThreads?: number | null;
-  managedLocal?: ManagedLocalSelection;
+  managedLocal: ManagedLocalSelection;
   selectedDeviceId: string | null;
   removeFillerWords: boolean;
   language: string;

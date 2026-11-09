@@ -27,10 +27,10 @@ function createClipboardSnapshot(overrides: Partial<ClipboardSnapshot> = {}): Cl
 
 describe('ClipboardTransactionManager', () => {
   let mockClipboardIO: ClipboardIO;
-  let mockForegroundInspector: ForegroundInspector;
-  let mockInputSimulator: InputSimulator;
-  let mockClipboardMonitor: ClipboardMonitor;
-  let mockPasteStrategyResolver: PasteStrategyResolver;
+  let mockForegroundInspector: { captureTarget: ForegroundInspector };
+  let mockInputSimulator: { simulatePaste: InputSimulator };
+  let mockClipboardMonitor: { getSequenceNumber: ClipboardMonitor };
+  let mockPasteStrategyResolver: { resolveStrategy: PasteStrategyResolver };
   let mockDelay: ReturnType<typeof mock>;
 
   beforeEach(() => {
@@ -59,16 +59,14 @@ describe('ClipboardTransactionManager', () => {
     mockDelay = mock(async () => undefined);
   });
 
-  function createManager(options: { stagingDelayMs?: number; pasteDelayMs?: number } = {}) {
+  function createManager() {
     return new ClipboardTransactionManager(
       mockClipboardIO,
-      mockForegroundInspector,
-      mockInputSimulator,
-      mockClipboardMonitor,
-      mockPasteStrategyResolver,
+      () => mockForegroundInspector.captureTarget(),
+      strategy => mockInputSimulator.simulatePaste(strategy),
+      () => mockClipboardMonitor.getSequenceNumber(),
+      executable => mockPasteStrategyResolver.resolveStrategy(executable),
       {
-        stagingDelayMs: options.stagingDelayMs ?? 10,
-        pasteDelayMs: options.pasteDelayMs ?? 10,
         delayFn: mockDelay,
       }
     );
@@ -82,8 +80,8 @@ describe('ClipboardTransactionManager', () => {
     expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
     expect(mockClipboardIO.writeText).toHaveBeenCalledWith('hello');
     expect(mockClipboardMonitor.getSequenceNumber).toHaveBeenCalledTimes(5);
-    expect(mockDelay).toHaveBeenNthCalledWith(1, 10);
-    expect(mockDelay).toHaveBeenNthCalledWith(2, 10);
+    expect(mockDelay).toHaveBeenNthCalledWith(1, 50);
+    expect(mockDelay).toHaveBeenNthCalledWith(2, 100);
     expect(mockInputSimulator.simulatePaste).toHaveBeenCalledWith('ctrl-v');
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
   });
@@ -122,6 +120,18 @@ describe('ClipboardTransactionManager', () => {
       reason: 'target-changed: focus moved to a different process',
     });
     expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('blocks paste when the original process ID is reused by a new process', async () => {
+    mockForegroundInspector.captureTarget = mock(() => ({
+      ...defaultTarget, processCreationTime: '2026-01-01T00:00:01.000Z',
+    }));
+
+    const result = await createManager().inject('private transcript', { target: defaultTarget });
+
+    expect(result.kind).toBe('target-changed');
+    expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
+    expect(mockClipboardIO.writeText).not.toHaveBeenCalled();
   });
 
   it('blocks injection into another window within the same process', async () => {

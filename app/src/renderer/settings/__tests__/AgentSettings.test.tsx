@@ -379,6 +379,7 @@ describe('AgentSettings ChatGPT plan', () => {
     });
     expect(screen.queryByRole('textbox', { name: 'Base URL' })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Authentication' })).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('combobox', { name: 'API' }).length).toBe(0);
     expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeInTheDocument();
   });
 
@@ -399,7 +400,7 @@ describe('AgentSettings ChatGPT plan', () => {
   });
 
   it('shows why sign-in failed and lets the user try again', async () => {
-    await renderAgent({ provider: CHATGPT, signIn: () => Promise.reject(new Error('You declined access.')) });
+    await renderAgent({ provider: CHATGPT, signIn: () => Promise.reject(new Error("Error invoking remote method 'chatgpt:sign-in': Error: You declined access.")) });
 
     await click(await screen.findByRole('button', { name: 'Continue with ChatGPT' }));
 

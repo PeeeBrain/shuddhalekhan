@@ -1,8 +1,10 @@
+import { nimLocale as sharedNimLocale } from '@shuddhalekhan/shared/languages';
 import { z } from 'zod';
 import { bearerHeaders, parseResponse, readJSON, request, type Fetch } from './network';
-import { dictionaryTerms, googleServiceAccountSchema, validSecretHeader, type MobileSettings } from './settings';
+import { validSecretHeader, type MobileSettings } from './settings';
+import { dictionaryTerms, googleServiceAccountSchema } from './validation';
 import { languageBase, languageLocale, normalizeLanguage } from './languages';
-import { transcriptionEndpoint } from './providers';
+import { transcriptionEndpoint, recordingLimits } from './providers';
 import { sarvamLanguageCode } from '@shuddhalekhan/shared/sarvam';
 
 type SignGoogleJwt = (privateKey: string, input: string) => Promise<string>;
@@ -29,7 +31,7 @@ export async function transcribe({ audio, settings, signal, fetch, signGoogleJwt
   if (provider === 'google-cloud-speech-v2') {
     if (!language) throw new Error('Google Cloud Speech needs an explicit spoken language.');
     // Allow recorder latency after the 55-second stop point, staying below Google's one-minute limit.
-    if (audio.size > 1_900_000) throw new Error('Keep Google Cloud Speech recordings under 55 seconds.');
+    if (audio.size > recordingLimits[provider].maxBytes) throw new Error('Keep Google Cloud Speech recordings under 55 seconds.');
     const token = await googleAccessToken({ settings, signal, fetch, signGoogleJwt });
     const content = base64(new Uint8Array(await audio.arrayBuffer()));
     const data = await send(JSON.stringify({ config: {
@@ -47,7 +49,7 @@ export async function transcribe({ audio, settings, signal, fetch, signGoogleJwt
     const data = await send(form, { 'Ocp-Apim-Subscription-Key': requireKey() });
     text = parseResponse(z.object({ combinedPhrases: z.array(z.object({ text: z.string() })) }), data).combinedPhrases.map(phrase => phrase.text).join('\n');
   } else if (provider === 'sarvam') {
-    if (audio.size > 964_000) throw new Error('Keep Sarvam recordings under 30 seconds.');
+    if (audio.size > recordingLimits[provider].maxBytes) throw new Error('Keep Sarvam recordings under 30 seconds.');
     const code = language ? sarvamLanguageCode(languageBase(language)) : undefined;
     if (language && !code) throw new Error('Choose a language supported by Sarvam, or Auto-detect.');
     const form = new FormData();
@@ -78,14 +80,18 @@ export async function transcribe({ audio, settings, signal, fetch, signGoogleJwt
     const data = await send(form, headers);
     text = parseResponse(z.object({ text: z.string().max(200_000) }), data).text;
   }
+  return validateTranscript(text);
+}
+
+export function validateTranscript(text: string, local = false): string {
   if (!text.trim()) throw new Error('No speech was recognized. Record again.');
-  if (text.length > 200_000) throw new Error('The transcript is too large. Record a shorter clip.');
+  if (text.length > 200_000) throw new Error(local ? 'The local transcript is too large. Record a shorter clip.' : 'The transcript is too large. Record a shorter clip.');
   return text.trim();
 }
 
 /** NVIDIA Riva names Spanish and Portuguese by their American locales. */
 function nimLocale(language: string): string {
-  return language === 'es' ? 'es-US' : languageLocale(language);
+  return sharedNimLocale(language, languageLocale(language));
 }
 
 /** Exchanges a natively signed service-account JWT for a one-hour token. */

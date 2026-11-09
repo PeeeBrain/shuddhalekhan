@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
-  buildPasteStrategyEvents,
   resolvePasteStrategy,
-  isValidPasteStrategy,
 } from '../paste-strategy';
 import type { PasteStrategyConfig } from '../../types/ipc';
 
@@ -45,47 +43,4 @@ describe('paste strategy resolver', () => {
     expect(resolvePasteStrategy('org.kde.kate', config)).toBe('ctrl-v');
   });
 
-  it('validates known paste strategies', () => {
-    expect(isValidPasteStrategy('ctrl-v')).toBe(true);
-    expect(isValidPasteStrategy('shift-insert')).toBe(true);
-    expect(isValidPasteStrategy('ctrl-shift-v')).toBe(true);
-    expect(isValidPasteStrategy('unknown')).toBe(false);
-  });
-});
-
-describe('paste strategy input builder', () => {
-  it('generates ctrl-v key events in down/up order', () => {
-    const events = buildPasteStrategyEvents('ctrl-v');
-
-    expect(events.map((e) => ({ vk: e.vk, up: e.flags !== 0 }))).toEqual([
-      { vk: 0x11, up: false },
-      { vk: 0x56, up: false },
-      { vk: 0x56, up: true },
-      { vk: 0x11, up: true },
-    ]);
-  });
-
-  it('generates shift-insert key events in down/up order', () => {
-    const events = buildPasteStrategyEvents('shift-insert');
-
-    expect(events.map((e) => ({ vk: e.vk, up: e.flags !== 0 }))).toEqual([
-      { vk: 0x10, up: false },
-      { vk: 0x2d, up: false },
-      { vk: 0x2d, up: true },
-      { vk: 0x10, up: true },
-    ]);
-  });
-
-  it('generates ctrl-shift-v key events in correct nested order', () => {
-    const events = buildPasteStrategyEvents('ctrl-shift-v');
-
-    expect(events.map((e) => ({ vk: e.vk, up: e.flags !== 0 }))).toEqual([
-      { vk: 0x11, up: false },
-      { vk: 0x10, up: false },
-      { vk: 0x56, up: false },
-      { vk: 0x56, up: true },
-      { vk: 0x10, up: true },
-      { vk: 0x11, up: true },
-    ]);
-  });
 });

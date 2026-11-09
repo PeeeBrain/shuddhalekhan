@@ -2,25 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AppConfig,
   AppInfo,
-  McpServerConfig,
   McpServerRuntimeStatus,
   McpStatusSnapshot,
   UpdateStatus,
   VersionReleaseNotes,
 } from '../types/ipc';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  BookOpen,
-  Bot,
-  Brain,
-  FileText,
-  History as HistoryIcon,
-  House,
-  Info,
-  Keyboard,
-  Plug,
-  Search,
-} from 'lucide-react';
+import { Search } from 'lucide-react';
 import { createSettingsIpc } from './settings/settings-ipc';
 import {
   DEFAULT_SETTINGS_SECTION,
@@ -29,19 +17,11 @@ import {
   getNavSectionIndex,
   type SettingsNavGroupId,
   type SettingsSectionId,
+  type SettingsNavSection,
 } from './settings/settings-nav';
 import { isListboxNavKey, getNextListboxIndex } from './settings/audit-history-nav';
 import { useSettingsPersistence } from './settings/use-settings-persistence';
 import { SaveToast } from './settings/SaveToast';
-import { TranscriptionSettings } from './settings/TranscriptionSettings';
-import { ShortcutsSettings } from './settings/ShortcutsSettings';
-import { AgentSettings } from './settings/AgentSettings';
-import { AboutSettings } from './settings/AboutSettings';
-import { McpSettings } from './settings/McpSettings';
-import { SkillsSettings } from './settings/SkillsSettings';
-import { MemorySettings } from './settings/MemorySettings';
-import { AuditHistorySettings } from './settings/AuditHistorySettings';
-import { HomeSettings } from './settings/HomeSettings';
 import { CommandPalette } from './settings/CommandPalette';
 import type { SettingsIpc } from './settings/settings-ipc';
 import { Onboarding } from './settings/Onboarding';
@@ -49,18 +29,6 @@ import { Onboarding } from './settings/Onboarding';
 interface SettingsWindowProps {
   settingsIpc?: SettingsIpc;
 }
-
-const NAV_ICONS: Record<SettingsSectionId, React.ElementType> = {
-  home: House,
-  transcription: FileText,
-  shortcuts: Keyboard,
-  agent: Bot,
-  mcp: Plug,
-  skills: BookOpen,
-  memory: Brain,
-  history: HistoryIcon,
-  about: Info,
-};
 
 export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = {}) {
   const settingsIpc = useMemo(
@@ -116,11 +84,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       setActiveSection(section);
     });
     const offOnboarding = settingsIpc.onOnboardingCompleted(() => {
-      setConfigState((current) => current ? {
-        ...current,
-        onboarding: { status: 'complete' },
-        setupChecklistDismissed: true,
-      } : current);
+      settingsIpc.getConfig().then(setConfigState).catch((error) => {
+        console.error('Failed to reload completed onboarding config:', error);
+      });
     });
 
     const handlePaletteShortcut = (event: KeyboardEvent) => {
@@ -182,10 +148,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     if (next) selectSection(next.id);
   };
 
-  const updateMcpServers = (mcpServers: McpServerConfig[]) =>
-    persistence.commit('agent', { ...config.agent, mcpServers }, 'mcp-servers');
-
   const sectionProps = {
+    onOpenRun: openRun,
+    initialRunId: historyRunId,
     config,
     appInfo,
     updateStatus,
@@ -196,6 +161,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     onNavigate: selectSection,
     onUpdateStatusChange: setUpdateStatus,
   };
+
+  const active = SETTINGS_NAV_SECTIONS.find((section) => section.id === activeSection)!;
+  const Section = active.component;
 
   return (
     <main className="settings-root relative flex h-full overflow-hidden bg-background text-foreground">
@@ -252,45 +220,13 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
                 description="Review past agent runs, tool activity, and responses."
               />
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-10 pb-8">
-                <AuditHistorySettings key={historyRunId ?? 'latest'} settingsIpc={settingsIpc} initialRunId={historyRunId} />
+                <Section key={historyRunId ?? 'latest'} {...sectionProps} />
               </div>
             </div>
           ) : (
             <ScrollArea className="h-full min-h-0 flex-1">
               <div className="mx-auto w-full max-w-3xl px-10 py-9">
-                {activeSection === 'home' ? (
-                  <HomeSettings {...sectionProps} onOpenRun={openRun} />
-                ) : null}
-                {activeSection === 'transcription' ? (
-                  <TranscriptionSettings {...sectionProps} />
-                ) : null}
-                {activeSection === 'shortcuts' ? (
-                  <ShortcutsSettings {...sectionProps} />
-                ) : null}
-                {activeSection === 'agent' ? (
-                  <AgentSettings {...sectionProps} />
-                ) : null}
-                {activeSection === 'mcp' ? (
-                  <McpSettings
-                    servers={config.agent.mcpServers}
-                    statuses={mcpStatuses}
-                    agentEnabled={config.agent.enabled}
-                    saveError={persistence.fieldErrors['mcp-servers']}
-                    onChange={updateMcpServers}
-                    onTest={(serverId) => {
-                      settingsIpc.testMcpServer(serverId);
-                    }}
-                  />
-                ) : null}
-                {activeSection === 'skills' ? (
-                  <SkillsSettings {...sectionProps} />
-                ) : null}
-                {activeSection === 'memory' ? (
-                  <MemorySettings {...sectionProps} />
-                ) : null}
-                {activeSection === 'about' ? (
-                  <AboutSettings {...sectionProps} />
-                ) : null}
+                <Section {...sectionProps} />
               </div>
             </ScrollArea>
           )}
@@ -313,7 +249,7 @@ interface NavGroupProps {
   group: {
     id: SettingsNavGroupId;
     label: string;
-    sections: Array<{ id: SettingsSectionId; label: string }>;
+    sections: readonly SettingsNavSection[];
   };
   activeSection: SettingsSectionId;
   tabRefs: React.MutableRefObject<Array<HTMLButtonElement | null>>;
@@ -345,7 +281,7 @@ function NavGroup({
         {group.sections.map((section) => {
           const isActive = activeSection === section.id;
           const index = getNavSectionIndex(section.id);
-          const Icon = NAV_ICONS[section.id];
+          const Icon = section.icon;
           return (
             <button
               key={section.id}

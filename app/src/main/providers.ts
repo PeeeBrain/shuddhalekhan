@@ -1,39 +1,24 @@
+import { DESKTOP_LANGUAGE_LOCALES, nimLocale } from '@shuddhalekhan/shared/languages';
 import { createSarvamTranscriber } from './sarvam';
 import {
   buildOpenAiEndpoint,
-  cleanFillerWords,
-  failureForHttpStatus,
+  checkServerReachability,
+  getSafeTranscriptionFailureMessage,
+  validateProviderReadiness,
+  transcribeOpenAiLike,
   isValidHttpFieldName,
-  type RecognitionSettings,
   type Transcriber,
-  type TranscriptionCapabilities,
   TranscriptionFailure,
 } from './transcription';
 import { createLocalWhisperCppTranscriber } from './whisper';
 import { createAzureSpeechTranscriber } from './azure-speech';
 import { createGoogleCloudSpeechTranscriber } from './google-cloud-speech';
-import { createWhisperLiveKitTranscriber } from './whisper-live-kit';
-import { managedLocalTranscriber } from './managed-local';
+import { checkWhisperLiveKitReadiness, createWhisperLiveKitTranscriber } from './whisper-live-kit';
+import { getManagedLocalModelManager, managedLocalSnapshot, managedLocalTranscriber } from './managed-local';
 import type { AppConfig } from '../types/ipc';
 import { resolveTranscriptionFeatures } from '../shared/transcription-features';
 
 type CredentialReader = { read: (id: string) => string | null };
-
-export const OPENAI_CAPABILITIES: TranscriptionCapabilities = {
-  translation: true,
-  automaticLanguageDetection: true,
-  dictionaryHints: true,
-  authentication: 'required',
-  maxDurationSeconds: null,
-};
-
-export const CUSTOM_OPENAI_CAPABILITIES: TranscriptionCapabilities = {
-  translation: true,
-  automaticLanguageDetection: true,
-  dictionaryHints: true,
-  authentication: 'optional',
-  maxDurationSeconds: null,
-};
 
 /**
  * Resolves provider settings and saved credentials now, so a recording keeps
@@ -79,10 +64,7 @@ export function getTranscriber(
   }
 
   if (provider === 'whisper-live-kit') {
-    const whisperLiveKit = config.transcription.providers.whisperLiveKit ?? {
-      baseUrl: 'http://localhost:8000',
-      auth: 'none' as const,
-    };
+    const whisperLiveKit = config.transcription.providers.whisperLiveKit;
     return createWhisperLiveKitTranscriber(
       whisperLiveKit,
       whisperLiveKit.auth === 'bearer' ? vault.read('whisper-live-kit-bearer') : null,
@@ -101,7 +83,7 @@ function createOpenAiTranscriber(
   const apiKey = vault.read('openai-api-key');
   return {
     id: 'openai',
-    capabilities: { ...OPENAI_CAPABILITIES, translation: features.translation, dictionaryHints: features.dictionaryHints },
+    capabilities: { maxDurationSeconds: null },
     async transcribe({ audio, recognition, signal }) {
       if (recognition.task === 'translate' && !features.translation) {
         throw new TranscriptionFailure('model', 'The selected OpenAI model does not support file translation.');
@@ -137,10 +119,6 @@ function createNvidiaSpeechNimTranscriber(
   return {
     id: 'nvidia-speech-nim',
     capabilities: {
-      translation: nim.supportsTranslation,
-      automaticLanguageDetection: nim.supportsAutomaticLanguageDetection,
-      dictionaryHints: nim.supportsDictionaryHints,
-      authentication: 'optional',
       maxDurationSeconds: null,
     },
     async transcribe({ audio, recognition, signal }) {
@@ -180,8 +158,7 @@ function createCustomOpenAiTranscriber(
     : customConfig.auth === 'header' ? vault.read('custom-open-ai-compatible-header') : null;
   return {
     id: 'custom-open-ai-compatible',
-    capabilities: { ...CUSTOM_OPENAI_CAPABILITIES, translation: features.translation,
-      automaticLanguageDetection: features.automaticLanguageDetection, dictionaryHints: features.dictionaryHints },
+    capabilities: { maxDurationSeconds: null },
     async transcribe({ audio, recognition, signal }) {
       if (recognition.task === 'translate' && !features.translation) {
         throw new TranscriptionFailure('model', 'Translation is not enabled for this custom endpoint.');
@@ -258,119 +235,97 @@ function createCustomOpenAiTranscriber(
   };
 }
 
-const NIM_LANGUAGE_CODES: Record<string, string> = {
-  en: 'en-US', hi: 'hi-IN', mr: 'mr-IN', gu: 'gu-IN', bn: 'bn-IN', ta: 'ta-IN',
-  te: 'te-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', fr: 'fr-FR',
-  es: 'es-US', de: 'de-DE', ja: 'ja-JP', zh: 'zh-CN', ko: 'ko-KR', pt: 'pt-BR',
-  ar: 'ar-SA', ru: 'ru-RU',
-};
-
 function mapNimLanguage(language: string): string {
-  return NIM_LANGUAGE_CODES[language] ?? language;
+  return nimLocale(language, DESKTOP_LANGUAGE_LOCALES[language] ?? language);
 }
 
-export async function transcribeOpenAiLike(
-  audioData: Uint8Array<ArrayBuffer>,
-  recognition: RecognitionSettings,
-  endpoint: string,
-  model: string | undefined,
-  auth: 'none' | 'bearer' | 'header',
-  apiKey: string | null | undefined,
-  headerName: string | undefined,
-  contract: 'openai' | 'nvidia-nim' = 'openai',
-  signal?: AbortSignal,
-): Promise<string> {
-  const { removeFillerWords, language, task, dictionary } = recognition;
+export async function checkTranscriptionServer(config: AppConfig): Promise<boolean> {
+  const provider = config.transcription.activeProvider;
 
-  // Route to correct endpoint for translation vs transcription
-  const effectiveEndpoint = task === 'translate' && !endpoint.endsWith('/audio/translations')
-    ? endpoint.replace(/\/audio\/transcriptions$/, '/audio/translations')
-    : endpoint;
-
-  const form = new FormData();
-  const blob = new Blob([audioData], { type: 'audio/wav' });
-  form.append('file', blob, 'audio.wav');
-
-  if (model) {
-    form.append('model', model);
+  if (provider === 'local-whisper-cpp') {
+    return checkServerReachability(config.transcription.providers.localWhisperCpp.endpoint);
   }
 
-  form.append('response_format', 'json');
+  // OpenAI Cloud: local-only, zero fetches
+  if (provider === 'openai') {
+    return false;
+  }
 
-  if (task === 'translate') {
-    if (contract === 'nvidia-nim') {
-      if (language && language !== 'auto') form.append('language', language);
-      form.append('target_language', 'en-US');
-    } else {
-      form.append('language', 'en');
+  if (provider === 'nvidia-speech-nim') {
+    const { endpoint, auth } = config.transcription.providers.nvidiaSpeechNim;
+    if (auth !== 'none') return false;
+    return checkServerReachability(endpoint);
+  }
+
+  // Custom with auth: local-only, zero fetches
+  if (provider === 'custom-open-ai-compatible') {
+    const { endpoint, auth } = config.transcription.providers.customOpenAiCompatible;
+    if (auth !== 'none') return false;
+    return checkServerReachability(endpoint);
+  }
+
+  return false;
+}
+
+export async function checkTranscriptionReadiness(
+  config: AppConfig,
+  credentialVault: CredentialReader,
+  onReadiness: (readiness: import('../types/ipc').TranscriptionReadiness) => void,
+): Promise<import('../types/ipc').TranscriptionReadiness> {
+  const provider = config.transcription.activeProvider;
+  if (provider === 'managed-local') {
+    const state = await getManagedLocalModelManager().getState();
+    if (state.kind === 'ready') {
+      try {
+        await managedLocalTranscriber.warmup();
+        const snapshot = await managedLocalSnapshot();
+        return { providerId: provider, state: 'ready' as const,
+          message: snapshot.runtime.status === 'ready'
+            ? snapshot.runtime.message || `Running on ${snapshot.runtime.backend === 'cuda' ? 'NVIDIA GPU' : 'CPU'}.` :'Model files are installed. Changes apply to the next recording.',
+          checkedAt: new Date().toISOString() };
+      } catch (error) {
+        return { providerId: provider, state: 'unavailable' as const,
+          message: getSafeTranscriptionFailureMessage(error), checkedAt: new Date().toISOString() };
+      }
     }
-  } else if (language && language !== 'auto') {
-    form.append('language', language);
+    return {
+      providerId: provider,
+      state: 'unavailable' as const,
+      message: state.kind === 'error'
+          ? state.message
+          : 'Install the recommended local speech model to start Dictation.',
+      checkedAt: new Date().toISOString(),
+    };
+  }
+  if (provider !== 'whisper-live-kit') {
+    const error = validateProviderReadiness(provider, config, credentialVault)[0];
+    return {
+      providerId: provider,
+      state: error ? 'unavailable' as const : 'ready' as const,
+      message: error ?? 'Settings are complete. Provider connectivity has not been checked.',
+      checkedAt: new Date().toISOString(),
+    };
   }
 
-  let promptText = '';
-  if (dictionary && dictionary.length > 0) {
-    promptText += `Glossary: ${dictionary.join(', ')}. `;
-  }
-  if (removeFillerWords) {
-    promptText += 'The following is a clear, formal transcript without any stutters, repetitions, or filler words like um and ah.';
-  }
-  if (promptText) {
-    form.append('prompt', promptText.trim());
-  }
+  const checking = {
+    providerId: provider,
+    state: 'checking' as const,
+    message: 'Checking WhisperLiveKit health and PCM WebSocket readiness...',
+    checkedAt: null,
+  };
+  onReadiness(checking);
 
-  const headers: Record<string, string> = {};
-  if (auth === 'bearer' && apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  } else if (auth === 'header' && apiKey && headerName) {
-    headers[headerName] = apiKey;
+  const providerConfig = config.transcription.providers.whisperLiveKit;
+  const readiness = await checkWhisperLiveKitReadiness(
+    providerConfig,
+    providerConfig.auth === 'bearer' ? credentialVault.read('whisper-live-kit-bearer') : null,
+  );
+  onReadiness(readiness);
+  return readiness;
+}
+
+export async function releaseUnusedTranscriber(previous: AppConfig, next: AppConfig): Promise<void> {
+  if (previous.transcription.activeProvider === 'managed-local' && next.transcription.activeProvider !== 'managed-local') {
+    await managedLocalTranscriber.shutdown().catch(error => console.warn('Managed Local shutdown failed:', error));
   }
-
-  let response: Response;
-  try {
-    response = await fetch(effectiveEndpoint, {
-      method: 'POST',
-      headers,
-      body: form as unknown as BodyInit,
-      signal,
-    });
-  } catch {
-    throw new TranscriptionFailure(
-      'network',
-      'Could not reach the transcription provider. Check the endpoint and network connection.',
-    );
-  }
-
-  if (!response.ok) {
-    throw failureForHttpStatus(response.status);
-  }
-
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new TranscriptionFailure(
-      'malformed-response',
-      'The transcription provider returned an invalid response.',
-    );
-  }
-
-  const rawText = typeof data === 'object' && data !== null && 'text' in data
-    ? (data as { text?: unknown }).text
-    : undefined;
-
-  if (typeof rawText !== 'string') {
-    throw new TranscriptionFailure(
-      'malformed-response',
-      'The transcription provider returned an invalid response.',
-    );
-  }
-
-  let text = rawText.trim();
-
-  if (removeFillerWords) {
-    text = cleanFillerWords(text);
-  }
-
-  return text;
 }

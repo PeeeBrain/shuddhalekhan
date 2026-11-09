@@ -41,7 +41,7 @@ What happens to audio and text during a session:
 - When the timer runs out, the app finishes any utterance already started, then releases the microphone. The session also ends visibly on a call, Siri, a microphone change, or an iOS audio reset. The keyboard shows the reason.
 - Music pauses while a session runs. Recording in the app itself is disabled until the session stops.
 - Sessions use on-device Parakeet only. Remote transcription remains available from Home. **Ask the agent** is available when Agent Mode and its credentials are configured at session start. A busy agent or a failed handoff shows an error in the keyboard; "Sent to the agent" means the controller admitted the run.
-- Keyboard commands use the same agent, tool approvals, saved result, and notification path as Home. Allow notifications when starting the session. iOS cannot create a Live Activity or request continued processing from the background, so the app creates a keyboard-session Live Activity while it is still open. It shows the session countdown, and each keyboard command takes it over to show status, approvals, and the answer. It ends with the session, or with the last command still running when the session ends. Background-started runs use the open microphone session for execution time. If that session ends while the run is backgrounded without another execution grant, the run stops visibly. Open the app to review or approve tools. Starting a new session refreshes Agent Mode availability after settings changes.
+- Keyboard commands use the same agent, tool approvals, saved result, and notification path as Home. Allow notifications when starting the session. iOS cannot create a Live Activity or request continued processing from the background, so the app creates a keyboard-session Live Activity while it is still open. It shows the session countdown, and each keyboard command takes it over to show status, approvals, and the answer. It ends with the session, or with the last command still running when the session ends. Background-started runs use the open microphone session for execution time. Live Activity updates request a separate, short UIKit background grant because audio execution alone cannot publish them. If iOS declines an update, reopening the app refreshes the adopted activity from the latest run state. If that session ends while the run is backgrounded without another execution grant, the run stops visibly. Open the app to review or approve tools. Starting a new session refreshes Agent Mode availability after settings changes.
 
 Cancelling an utterance discards its result and requests native cancellation. If an inference step cannot stop immediately, subsequent transcription and model preparation wait for it to release the engine. Changing languages cannot load a second encoder during inference.
 
@@ -65,6 +65,8 @@ References: [LM Studio network setup](https://lmstudio.ai/docs/developer/core/se
 The monorepo uses Bun's hoisted linker and a shared React 19.3 version to keep native modules deduplicated. Keep the committed root `bunfig.toml` when installing or building.
 
 ## Verification
+
+The [PR 255 verification checklist](docs/verification/pr-255.md) covers the shared-contract refactor, native source ownership, and pending phone checks.
 
 ### Local checks on Windows
 

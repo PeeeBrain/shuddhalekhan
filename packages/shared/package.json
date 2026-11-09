@@ -4,6 +4,12 @@
   "version": "0.0.0-development",
   "type": "module",
   "exports": {
+    "./chatgpt": "./src/chatgpt.ts",
+    "./validation": "./src/validation.ts",
+    "./agent-prompt": "./src/agent-prompt.ts",
+    "./agent-provider": "./src/agent-provider.ts",
+    "./mcp": "./src/mcp.ts",
+    "./languages": "./src/languages.ts",
     "./providers": "./src/providers.ts",
     "./sarvam": "./src/sarvam.ts"
   },

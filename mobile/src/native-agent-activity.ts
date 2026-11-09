@@ -17,19 +17,19 @@ const native = requireOptionalNativeModule<NativeAgentActivity>('ShuddhalekhanAg
 
 export const agentActivity: AgentActivityPort | undefined = native ? {
   async start(maximumSteps) { return startedAgentRunSchema.parse(await native.start(maximumSteps)); },
-  resume: runId => native.resume(runId),
-  prepareApproval: update => native.prepareApproval(update),
+  resume: native.resume.bind(native),
+  prepareApproval: native.prepareApproval.bind(native),
   async takeApprovalAction() {
     const result = await native.takeApprovalAction();
     return result === null ? null : agentApprovalActionSchema.parse(result);
   },
-  canContinueInBackground: runId => native.canContinueInBackground(runId),
-  update: update => native.update(update),
+  canContinueInBackground: native.canContinueInBackground.bind(native),
+  update: native.update.bind(native),
   async recover() {
     const result = await native.recover();
     return result === null ? null : recoveredAgentRunSchema.parse(result);
   },
-  clear: runId => native.clear(runId),
+  clear: native.clear.bind(native),
 } : undefined;
 
 export function onAgentRunStopped(listener: (runId: string) => void): { remove(): void } | undefined {

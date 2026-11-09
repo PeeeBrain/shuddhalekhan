@@ -6,7 +6,7 @@ describe('credential IPC', () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     let saved = false;
     const status = { available: true, exists: true } as const;
-    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, {
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, (...args) => Reflect.apply(handler, undefined, args)) }, {
       status: () => status, save: () => { saved = true; return status; }, remove: () => status,
     }, () => { throw new Error('Notification failed.'); });
     expect(() => handlers.get('credential:save')?.({}, 'agent-api-key', 'new-agent-secret')).toThrow('Notification failed.');
@@ -21,7 +21,7 @@ describe('credential IPC', () => {
     };
 
     const changes: string[] = [];
-    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault, kind => changes.push(kind));
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, (...args) => Reflect.apply(handler, undefined, args)) }, vault, kind => changes.push(kind));
 
     const save = handlers.get('credential:save');
     const result = save?.({}, 'agent-api-key', 'new-agent-secret');
@@ -47,7 +47,7 @@ describe('credential IPC', () => {
       save: () => { saved = true; return ({ available: true, exists: true }) as const; },
       remove: () => ({ available: true, exists: false }) as const,
     };
-    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault);
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, (...args) => Reflect.apply(handler, undefined, args)) }, vault);
 
     expect(() => handlers.get('credential:save')?.({}, 'google-service-account', '{"private_key":"secret"}')).toThrow();
     expect(saved).toBe(false);
@@ -63,7 +63,7 @@ describe('credential IPC', () => {
       remove: () => ({ available: true, exists: false }) as const,
     };
 
-    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, vault);
+    registerCredentialIpcHandlers({ handle: (channel, handler) => handlers.set(channel, (...args) => Reflect.apply(handler, undefined, args)) }, vault);
 
     const save = handlers.get('credential:save');
     const result = save?.({}, 'agent-api-key', 'new-agent-secret');

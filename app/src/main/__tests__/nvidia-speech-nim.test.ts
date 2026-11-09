@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { AppConfig } from '../../types/ipc';
 import { installElectronMock } from '../../test/electron-mock';
@@ -13,7 +14,8 @@ const { getTranscriber } = await import('../providers');
 
 function config(auth: 'none' | 'bearer' | 'header' = 'none'): AppConfig {
   return {
-    whisperUrl: 'http://localhost:8080/inference',
+    managedLocal: structuredClone(DEFAULT_MANAGED_LOCAL),
+  whisperUrl: 'http://localhost:8080/inference',
     transcription: {
       activeProvider: 'nvidia-speech-nim',
       providers: {
@@ -75,15 +77,6 @@ describe('NVIDIA Speech NIM', () => {
     expect(fetchMock.mock.calls[1]?.[1]?.headers).toEqual({ 'X-API-Key': 'header-secret' });
   });
 
-  it('derives recognition capabilities from the selected deployment configuration', () => {
-    const configured = config();
-    configured.transcription.providers.nvidiaSpeechNim.supportsTranslation = true;
-    configured.transcription.providers.nvidiaSpeechNim.supportsAutomaticLanguageDetection = true;
-    const transcriber = getTranscriber(configured, { read: () => null });
-    expect(transcriber.capabilities).toMatchObject({
-      translation: true, automaticLanguageDetection: true, dictionaryHints: true, authentication: 'optional',
-    });
-  });
 
   it('validates endpoint, model, capability, and credential readiness locally', () => {
     const bearer = config('bearer');

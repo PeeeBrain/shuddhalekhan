@@ -1,3 +1,4 @@
+import { managedLocalSupportsDictionary } from '../shared/managed-local-selection';
 import { execFile } from 'child_process';
 import { z } from 'zod';
 import { TranscriptionFailure } from './transcription';
@@ -7,7 +8,7 @@ import { createManagedLocalEngine, type LocalRuntime } from './managed-local-eng
 import { startLocalRuntimeProcess } from './managed-local-process';
 import { CUDA_SUPPORTED, LOCAL_MODELS, LOCAL_FORMATTING_MODEL, legacyLocalModel } from './managed-local-catalog';
 import type { ManagedLocalModelSnapshot, ManagedLocalModelState, ManagedLocalTarget } from '../types/ipc';
-import { resolveManagedLocalSelection } from '../shared/managed-local-selection';
+import { managedLocalSelectionSchema, resolveManagedLocalSelection } from '../shared/managed-local-selection';
 import { getConfig } from './config';
 import { getManagedLocalThreadLimits, resolveManagedLocalThreads } from './managed-local-threads';
 
@@ -18,6 +19,7 @@ type Target = Pick<ModelManager, 'getState' | 'getInstallState' | 'getLegacy' | 
   parts: ModelManager[];
 };
 
+const GPU_UNAVAILABLE_MESSAGE = 'GPU acceleration is available on Windows and Linux x64 only.';
 const targets = new Map<string, Target>();
 const cpuParts = new Set<ModelManager>();
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
@@ -26,11 +28,12 @@ let publish: (state: ManagedLocalModelState) => void = () => {};
 let runtimeStatus: ManagedLocalModelSnapshot['runtime'] = { status: 'idle', backend: null, message: '' };
 let runtimeSettings = '';
 const selection = () => resolveManagedLocalSelection(getConfig().managedLocal);
-const selectionKey = () => JSON.stringify({ selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads) });
+const selectionKey = (settings = { selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads) }) =>
+  JSON.stringify({ selection: settings.selection, numThreads: settings.numThreads });
 
 export const managedLocalTranscriber = createManagedLocalEngine({
   getSettings: () => ({ selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads), revision,
-    contextual: selection().model === 'parakeet' && getConfig().dictionary.length > 0 }),
+    contextual: managedLocalSupportsDictionary(selection().model) && getConfig().dictionary.length > 0 }),
   async getCandidates(settings) {
     // Upstream CUDA builds exist for Windows and Linux x64 only; elsewhere a GPU choice runs on CPU.
     const preference = CUDA_SUPPORTED ? settings.devices[settings.model] : 'cpu';
@@ -56,13 +59,13 @@ export const managedLocalTranscriber = createManagedLocalEngine({
     return candidates;
   },
   createWorker: (runtime, numThreads) => createManagedLocalTranscriber({
-    getModelPath: async () => runtime.modelPath, getNumThreads: () => numThreads, runtime,
+    getModelPath: async () => runtime.modelPath, numThreads, runtime,
     startProcess: () => startLocalRuntimeProcess(runtime),
   }),
   onStatus(status, settings) {
     runtimeStatus = status;
-    runtimeSettings = JSON.stringify({ selection: settings.selection, numThreads: settings.numThreads });
-    void getManagedLocalModelManager().getState().then(publish).catch(() => {});
+    runtimeSettings = selectionKey(settings);
+    void getManagedLocalModelManager().getState().then(publish).catch(error => console.warn('Could not publish Managed Local status:', error));
   },
 });
 
@@ -153,13 +156,14 @@ function modelTarget(id: string, name: string, languages: string[], parts: Model
   return target;
 }
 
-const targetSchema = z.object({ model: z.enum(['parakeet', 'granite']), backend: z.enum(['cpu', 'cuda']) });
+const targetSchema = z.object({ model: managedLocalSelectionSchema.shape.model, backend: managedLocalSelectionSchema.shape.devices.shape.parakeet.exclude(['auto']) });
 export function managedLocalTarget(value?: unknown): ManagedLocalTarget {
   if (value !== undefined) return targetSchema.parse(value);
   const settings = selection();
   return { model: settings.model, backend: settings.devices[settings.model] === 'cuda' ? 'cuda' : 'cpu' };
 }
 
+/** Startup calls configureManagedLocal before any lookup. */
 export function getManagedLocalModelManager(target = managedLocalTarget()): Target {
   const manager = targets.get(`${target.model}:${target.backend}`);
   if (!manager) throw new Error('Managed Local is not initialized.');
@@ -169,7 +173,7 @@ export function getManagedLocalModelManager(target = managedLocalTarget()): Targ
 export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot> {
   const selected = getManagedLocalModelManager();
   const catalog = await Promise.all(LOCAL_MODELS.map(async model => {
-    const variant = async (backend: 'cpu' | 'cuda') => {
+    const variant = async (backend: ManagedLocalTarget['backend']) => {
       const manager = getManagedLocalModelManager({ model: model.key, backend });
       const [state, legacy] = await Promise.all([manager.getInstallState(), manager.getLegacy()]);
       // A GPU setup only downloads the parts that are not installed yet.
@@ -198,7 +202,7 @@ export async function managedLocalSnapshot(): Promise<ManagedLocalModelSnapshot>
 
 export async function installManagedLocalModel(value?: unknown): Promise<ManagedLocalModelSnapshot> {
   const target = managedLocalTarget(value);
-  if (target.backend === 'cuda' && !CUDA_SUPPORTED) throw new Error('GPU acceleration is available on Windows and Linux x64 only.');
+  if (target.backend === 'cuda' && !CUDA_SUPPORTED) throw new Error(GPU_UNAVAILABLE_MESSAGE);
   await getManagedLocalModelManager(target).install();
   revision++;
   const settings = selection();
@@ -225,7 +229,7 @@ export async function deleteManagedLocalModel(value?: unknown): Promise<ManagedL
 let gpu: Promise<ManagedLocalModelSnapshot['gpu']> | null = null;
 function gpuInfo(): Promise<ManagedLocalModelSnapshot['gpu']> {
   return gpu ??= new Promise(resolve => {
-    if (!CUDA_SUPPORTED) return resolve({ name: null, message: 'GPU acceleration is available on Windows and Linux x64 only.' });
+    if (!CUDA_SUPPORTED) return resolve({ name: null, message: GPU_UNAVAILABLE_MESSAGE });
     execFile('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true, timeout: 3000 }, (error, stdout) => {
       const name = !error ? stdout.trim().split(/\r?\n/)[0] : null;
       resolve({ name, message: name ? '' : 'No NVIDIA GPU detected.' });

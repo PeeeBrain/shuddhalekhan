@@ -1,3 +1,4 @@
+import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { useState } from 'react';
 import { ChevronDown, Plus } from 'lucide-react';
 import type {
@@ -41,7 +42,7 @@ export function McpSettings({
   statuses: Record<string, McpServerRuntimeStatus>;
   agentEnabled: boolean;
   onChange: (servers: McpServerConfig[]) => void;
-  onTest: (serverId: string) => void;
+  onTest: (serverId: string) => Promise<void>;
   saveError?: string;
 }) {
   const [draft, setDraft] = useState<McpServerConfig>(() => createBlankMcpServer());
@@ -63,7 +64,7 @@ export function McpSettings({
   const saveDraft = () => {
     const server = normalizeDraftServer(draft, editingServerId);
     if (editingServerId) {
-      onChange(servers.map((item) => (item.id === editingServerId ? { ...server, id: editingServerId } : item)));
+      onChange(servers.map((item) => (item.id === editingServerId ? server : item)));
     } else {
       onChange([...servers, server]);
     }
@@ -360,7 +361,7 @@ function ConfiguredMcpServer({
   canReconnect: boolean;
   onEdit: () => void;
   onRemove: () => void;
-  onTest: () => void;
+  onTest: () => Promise<void>;
   onPolicyChange: (server: McpServerConfig) => void;
 }) {
   const statusLabel = !server.enabled ? 'disabled' : status?.status ?? 'not tested';
@@ -387,7 +388,7 @@ function ConfiguredMcpServer({
             type="button"
             variant="ghost"
             size="sm"
-            onClick={onTest}
+            onClick={() => { void onTest().catch((error) => console.error('Failed to test MCP server:', error)); }}
             disabled={!canReconnect}
             title={!canReconnect ? 'Enable Agent Mode and this server to reconnect.' : undefined}
           >
@@ -452,8 +453,8 @@ function ToolPolicyEditor({
       {open ? (
         <div className="divide-y divide-border/50 border-t border-border/50">
         {server.discoveredTools.map((tool) => {
-          const policyKey = `${server.id}:${tool.name}` as const;
-          const policy = server.toolPolicies[policyKey] ?? 'alwaysAsk';
+          const policyKey = makeMcpToolPolicyKey(server.id, tool.name);
+          const policy = server.toolPolicies[policyKey] ?? DEFAULT_TOOL_POLICY;
 
           return (
             <div key={tool.name} className="grid grid-cols-1 items-start gap-3 py-3 sm:grid-cols-[1fr_160px]">

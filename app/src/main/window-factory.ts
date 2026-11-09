@@ -8,7 +8,7 @@ export interface SingletonWindowController {
 }
 
 interface SingletonWindowConfig {
-  route: string | (() => string);
+  route: string;
   options: Electron.BrowserWindowConstructorOptions;
   onCreated?: (window: BrowserWindow) => void;
   onClosed?: () => void;
@@ -37,7 +37,7 @@ export function createSingletonWindow(config: SingletonWindowConfig): SingletonW
     });
     installExternalLinkHandling(window);
     config.onCreated?.(window);
-    loadRendererRoute(window, resolveRoute(config.route));
+    loadRendererRoute(window, config.route);
     window.on('closed', () => {
       window = null;
       config.onClosed?.();
@@ -54,10 +54,6 @@ export function createSingletonWindow(config: SingletonWindowConfig): SingletonW
   }
 
   return { get, create, destroy };
-}
-
-function resolveRoute(route: string | (() => string)): string {
-  return typeof route === 'function' ? route() : route;
 }
 
 /** App surfaces never navigate away from their route; links open in the browser. */
