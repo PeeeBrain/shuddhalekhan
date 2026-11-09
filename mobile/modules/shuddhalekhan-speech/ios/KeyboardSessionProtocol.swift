@@ -1,7 +1,7 @@
 import Foundation
 
-// Both targets compile identical copies (build-ios.sh checks). The foreground app publishes only a
-// loopback port and session secret to a team-scoped named pasteboard. All commands and results use TCP:
+// The foreground app publishes only a loopback port and session secret to a team-scoped named
+// pasteboard. All commands and results use TCP:
 // iOS denies the containing app pasteboard access while it records in the background.
 enum KeyboardSession {
   enum Mode: String, Codable, Sendable { case dictate, agent }

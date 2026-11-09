@@ -60,6 +60,7 @@
           }
         }
       ],
+      "./plugins/with-shared-native-contracts",
       "@bacons/apple-targets"
     ],
     "runtimeVersion": {

@@ -40,3 +40,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Swift contracts generated from the local Expo modules during prebuild
+/targets/transcript-keyboard/KeyboardSessionProtocol.swift
+/targets/transcript-keyboard/KeyboardSessionChannel.swift
+/targets/agent-activity/AgentActivityAttributes.swift

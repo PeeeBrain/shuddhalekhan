@@ -66,6 +66,8 @@ The monorepo uses Bun's hoisted linker and a shared React 19.3 version to keep n
 
 ## Verification
 
+The [PR 255 verification checklist](docs/verification/pr-255.md) covers the shared-contract refactor, native source ownership, and pending phone checks.
+
 ### Local checks on Windows
 
 Install workspace dependencies from the repository root without running the Electron install hooks:

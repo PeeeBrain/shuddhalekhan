@@ -61,13 +61,6 @@ build_dir="$(mktemp -d "${TMPDIR:-/tmp}/shuddhalekhan-ios.XXXXXX")"
 trap 'rm -rf -- "$build_dir"' EXIT
 archive_path="$build_dir/Shuddhalekhan.xcarchive"
 
-# Both targets must compile the same wire format and TCP framing.
-for shared in KeyboardSessionProtocol.swift KeyboardSessionChannel.swift; do
-  cmp "$mobile_dir/targets/transcript-keyboard/$shared" \
-    "$mobile_dir/modules/shuddhalekhan-speech/ios/$shared"
-done
-cmp "$mobile_dir/targets/agent-activity/AgentActivityAttributes.swift" \
-  "$mobile_dir/modules/shuddhalekhan-agent-activity/ios/AgentActivityAttributes.swift"
 swiftc -swift-version 6 \
   "$mobile_dir/modules/shuddhalekhan-agent-activity/ios/AgentRunRecord.swift" \
   "$mobile_dir/native-checks/AgentRunCheck.swift" \
