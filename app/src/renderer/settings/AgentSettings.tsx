@@ -346,7 +346,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
                 />
               </>
             )}
-            {!agentProviderUsesChatCompletionsOnly(provider.kind) ? (
+            {!isChatGpt && !agentProviderUsesChatCompletionsOnly(provider.kind) ? (
               <SelectRow
                 label="API"
                 value={provider.apiMode}

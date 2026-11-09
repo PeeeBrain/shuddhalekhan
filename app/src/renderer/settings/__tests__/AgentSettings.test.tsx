@@ -379,6 +379,7 @@ describe('AgentSettings ChatGPT plan', () => {
     });
     expect(screen.queryByRole('textbox', { name: 'Base URL' })).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Authentication' })).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('combobox', { name: 'API' }).length).toBe(0);
     expect(screen.getByRole('button', { name: 'Continue with ChatGPT' })).toBeInTheDocument();
   });
 
