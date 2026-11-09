@@ -116,6 +116,7 @@ async function setWaylandInsertion(enabled: boolean): Promise<void> {
   if (outcome !== 'superseded') setConfig('waylandBestEffortInsertion', outcome === 'ready');
 }
 
+let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
 let providerTestRevision = 0;
 let retryPasteInFlight = false;
@@ -188,7 +189,7 @@ const chatGptAuth = new ChatGptAuth({
 const recordingSession = new RecordingSession({
   runtimeShell,
   keyboardHook,
-  isAgentModeEnabled: () => getConfig().agent.enabled,
+  isAgentModeEnabled: () => cachedAgentEnabled,
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   onBegin: (intent) => {
     if (intent === 'agent') invalidateActiveAgentRun();
@@ -658,6 +659,7 @@ handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof
     invalidateProviderTest();
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
+  cachedAgentEnabled = config.agent.enabled;
   if (key === 'shortcuts' || key === 'agent') keyboardHook.refreshShortcuts();
   await releaseUnusedTranscriber(previousConfig, config);
   const sidecarAction = getSidecarConfigAction(previousConfig, config);
@@ -816,6 +818,7 @@ if (!gotSingleInstanceLock) {
     });
 
     const startupConfig = getConfig();
+    cachedAgentEnabled = startupConfig.agent.enabled;
     if (startupConfig.agent.enabled) {
       resetMcpStatusSnapshot();
       agentSidecar.start(

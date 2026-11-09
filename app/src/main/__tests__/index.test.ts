@@ -1032,7 +1032,11 @@ describe('main process IPC orchestration', () => {
     expect(updateAudioDevices).toHaveBeenCalledWith([{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
   });
 
-  it('applies sidecar lifecycle policy for Agent Mode config changes', async () => {
+  it('updates Agent Mode hotkey enablement without reading config per keypress', async () => {
+    getConfig.mockClear();
+    expect(sessionOptions.isAgentModeEnabled()).toBe(false);
+    expect(getConfig).not.toHaveBeenCalled();
+
     const enabledConfig = {
       ...baseConfig,
       agent: {
@@ -1044,10 +1048,16 @@ describe('main process IPC orchestration', () => {
     getConfig.mockReturnValueOnce(baseConfig).mockReturnValueOnce(enabledConfig);
     await ipcHandlers.get('config:set')?.({}, 'agent', enabledConfig.agent);
     expect(agentStart).toHaveBeenCalledWith(enabledConfig, undefined);
+    getConfig.mockClear();
+    expect(sessionOptions.isAgentModeEnabled()).toBe(true);
+    expect(getConfig).not.toHaveBeenCalled();
 
     getConfig.mockReturnValueOnce(enabledConfig).mockReturnValueOnce(baseConfig);
     await ipcHandlers.get('config:set')?.({}, 'agent', baseConfig.agent);
     expect(agentStop).toHaveBeenCalled();
+    getConfig.mockClear();
+    expect(sessionOptions.isAgentModeEnabled()).toBe(false);
+    expect(getConfig).not.toHaveBeenCalled();
   });
 
   it('tests an MCP server through a targeted sidecar reconnect', async () => {

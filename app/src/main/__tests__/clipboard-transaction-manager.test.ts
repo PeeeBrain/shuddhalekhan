@@ -122,6 +122,18 @@ describe('ClipboardTransactionManager', () => {
     expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
   });
 
+  it('blocks paste when the original process ID is reused by a new process', async () => {
+    mockForegroundInspector.captureTarget = mock(() => ({
+      ...defaultTarget, processCreationTime: '2026-01-01T00:00:01.000Z',
+    }));
+
+    const result = await createManager().inject('private transcript', { target: defaultTarget });
+
+    expect(result.kind).toBe('target-changed');
+    expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
+    expect(mockClipboardIO.writeText).not.toHaveBeenCalled();
+  });
+
   it('blocks injection into another window within the same process', async () => {
     mockForegroundInspector.captureTarget = mock(() => ({
       ...defaultTarget,

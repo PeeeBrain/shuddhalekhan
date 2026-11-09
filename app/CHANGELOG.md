@@ -7,6 +7,8 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Desktop Agent Mode hotkey checks reuse the enabled state instead of rereading saved config on every keypress.
+
 - Desktop microphone capture errors release the active recording so the next hotkey works. Tray paste preserves an ongoing recording.
 
 - Desktop Sarvam verbatim transcription now preserves filler words when filler removal is enabled.
