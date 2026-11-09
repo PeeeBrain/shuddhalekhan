@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -9,6 +9,8 @@ import type { AuditRunSummary } from '../../types/ipc';
 const spawnSync = mock();
 const originalAppData = process.env.APPDATA;
 const originalAuditDir = process.env.SHUDDHALEKHAN_AUDIT_DIR;
+const actualChildProcess = { ...await import('child_process') };
+const actualSqlite = { ...await import('better-sqlite3') };
 
 mock.module('better-sqlite3', () => ({
   default: class BrokenDatabase {
@@ -19,6 +21,12 @@ mock.module('better-sqlite3', () => ({
 }));
 mock.module('child_process', () => ({ spawnSync }));
 installElectronMock();
+
+// Bun's mock.restore() does not undo mock.module replacements.
+afterAll(() => {
+  mock.module('child_process', () => actualChildProcess);
+  mock.module('better-sqlite3', () => actualSqlite);
+});
 
 describe('audit-db Bun fallback', () => {
   let appData: string;

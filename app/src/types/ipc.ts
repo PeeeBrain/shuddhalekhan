@@ -161,7 +161,6 @@ export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
   'surface-paint-proxy': (surface: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
-  'audio-level-changed': (level: number) => void;
   'runtime:audio-ready': (generation: number, recordingSessionId: string, commandSequence: number) => void;
   'runtime:audio-chunk': (
     generation: number,
@@ -222,7 +221,7 @@ export interface RendererToMainInvokeChannels {
   'memory:clear': (revision: string) => Promise<AgentMemorySnapshot>;
   'audio:select-device': (deviceId: string) => void;
   'config:get': () => Promise<AppConfig>;
-  'config:set': (key: keyof AppConfig, value: unknown) => Promise<void>;
+  'config:set': (key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => Promise<void>;
   'config:patch-transcription': (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;
   'transcription:check-server': () => Promise<boolean>;
   /**
@@ -274,10 +273,8 @@ export interface MainToRendererChannels {
   'chatgpt:changed': (status: ChatGptAccountStatus) => void;
   'memory:changed': (snapshot: AgentMemorySnapshot) => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
-  'recording:pill-show': (recordingSessionId?: string, envelope?: RecordingPresentationEnvelope) => void;
+  'recording:pill-show': () => void;
   'recording:pill-hide': () => void;
-  'recording:duration-warning': (remainingSeconds: number | null) => void;
-  'audio:level-changed': (level: number) => void;
   'mcp:status-snapshot': (snapshot: McpStatusSnapshot) => void;
   'credential:changed': (credential: CredentialKind) => void;
   'agent:provider-invalidated': () => void;

@@ -1,4 +1,6 @@
-import { hasControlCharacters, isLoopbackHost, isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
+import { providerCredentialKind } from '../../shared/transcription-credential';
+import { validateOpenAiModel, validateLocalWhisperSettings, validateWhisperLiveKitSettings, validateAzureSpeechSettings, validateGoogleProject, validateGoogleLocation } from '../../shared/transcription-validation';
+import { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -170,38 +172,6 @@ function ProviderSelector({
   );
 }
 
-function providerCredentialKind(
-  config: AppConfig,
-  provider: TranscriptionProviderId,
-): CredentialKind | null {
-  if (provider === 'openai') return 'openai-api-key';
-  if (provider === 'sarvam') return 'sarvam-api-key';
-  if (provider === 'azure-speech') return 'azure-speech-key';
-  if (provider === 'google-cloud-speech-v2') {
-    return config.transcription.providers.googleCloudSpeech.credentialSource === 'service-account'
-      ? 'google-service-account'
-      : null;
-  }
-  if (provider === 'nvidia-speech-nim') {
-    const auth = config.transcription.providers.nvidiaSpeechNim.auth;
-    return auth === 'bearer' ? 'nvidia-nim-bearer' : auth === 'header' ? 'nvidia-nim-header' : null;
-  }
-  if (provider === 'custom-open-ai-compatible') {
-    const auth = config.transcription.providers.customOpenAiCompatible.auth;
-    return auth === 'bearer'
-      ? 'custom-open-ai-compatible-bearer'
-      : auth === 'header'
-        ? 'custom-open-ai-compatible-header'
-        : null;
-  }
-  if (provider === 'whisper-live-kit') {
-    return config.transcription.providers.whisperLiveKit?.auth === 'bearer'
-      ? 'whisper-live-kit-bearer'
-      : null;
-  }
-  return null;
-}
-
 function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderId): boolean {
   const providers = config.transcription.providers;
   switch (provider) {
@@ -228,98 +198,13 @@ function providerFieldsReady(config: AppConfig, provider: TranscriptionProviderI
         && providers.customOpenAiCompatible.model.trim(),
       );
     case 'whisper-live-kit':
-      return Boolean(providers.whisperLiveKit?.baseUrl?.trim());
+      return Boolean(providers.whisperLiveKit.baseUrl.trim());
   }
 }
 
-
-
-function validateLocalWhisperEndpoint(value: string): string | null {
-  if (!value.trim()) return 'Endpoint URL is required.';
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return 'Endpoint must use HTTP or HTTPS.';
-    }
-    return null;
-  } catch {
-    return 'Enter a valid URL (e.g. http://localhost:8080/inference).';
-  }
-}
-
-function validateOpenAiBaseUrl(value: string): string | null {
-  if (!value.trim()) return 'Base URL is required.';
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return 'Base URL must use HTTP or HTTPS.';
-    }
-    return null;
-  } catch {
-    return 'Enter a valid URL (e.g. https://api.openai.com/v1).';
-  }
-}
-
-function validateModelName(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return 'Model name is required.';
-  if (trimmed.length > 128) return 'Model name is too long (max 128 characters).';
-  return hasControlCharacters(trimmed) ? 'Model name contains control characters.' : null;
-}
-
-function validateGoogleModelSlug(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return 'This field is required.';
-  if (trimmed.length > 128) return 'Value is too long (max 128 characters).';
-  return hasControlCharacters(trimmed) ? 'Value contains control characters.' : null;
-}
-
-function validateNvidiaModelName(value: string): string | null {
-  if (!value.trim()) return 'Model name is required.';
-  if (value.trim().length > 128) return 'Model name is too long (max 128 characters).';
-  return hasControlCharacters(value) ? 'Model name contains control characters.' : null;
-}
-
-function validateNvidiaEndpoint(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:'
-      ? null
-      : 'Endpoint must use HTTP or HTTPS.';
-  } catch {
-    return 'Enter a valid NVIDIA Speech NIM transcription endpoint.';
-  }
-}
-
-function validateCustomEndpoint(value: string): string | null {
-  if (!value.trim()) return 'Endpoint URL is required.';
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return 'Endpoint must use HTTP or HTTPS.';
-    }
-    return null;
-  } catch {
-    return 'Enter a valid URL (e.g. http://localhost:8000/v1/audio/transcriptions).';
-  }
-}
-
-function validateWhisperLiveKitBaseUrl(value: string): string | null {
-  if (!value.trim()) return 'Base URL is required.';
-  try {
-    const parsed = new URL(value);
-    if (parsed.username || parsed.password) return 'Endpoint URLs cannot contain credentials.';
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return 'Endpoints must use HTTP or HTTPS.';
-    }
-    const hostname = parsed.hostname.toLowerCase();
-    const loopback = isLoopbackHost(hostname);
-    if (parsed.protocol === 'http:' && !loopback) return 'Remote endpoints must use HTTPS.';
-    return null;
-  } catch {
-    return 'Enter a valid URL (e.g. http://localhost:8000).';
-  }
-}
+const validateHttpEndpoint = (value: string) => validateLocalWhisperSettings({ endpoint: value })[0] ?? null;
+const validateModelName = (value: string) => validateOpenAiModel(value)[0] ?? null;
+const validateWhisperLiveKitBaseUrl = (value: string) => validateWhisperLiveKitSettings({ baseUrl: value, auth: 'none' })[0] ?? null;
 
 function validateHeaderName(value: string): string | null {
   if (!value.trim()) return 'Header name is required.';
@@ -386,9 +271,9 @@ export function TranscriptionSettings({
   const credentialReady = useCredentialReady(providerCredentialKind(config, provider), settingsIpc);
   const status = providerStatus(config, credentialReady, localSnapshot ? localSnapshot.state.kind === 'ready' : null);
   const engineLabel = provider === 'managed-local'
-    ? localSnapshot?.catalog?.find((item) => item.key === localSelection.model)?.name ?? localSnapshot?.model.name ?? 'Managed Local'
+    ? localSnapshot?.catalog.find((item) => item.key === localSelection.model)?.name ?? localSnapshot?.model.name ?? 'Managed Local'
     : provider === 'sarvam'
-      ? config.transcription.providers.sarvam.model === 'saaras:v3' ? 'Saaras v3' : 'Saaras v4'
+      ? SARVAM_MODEL_LABELS[config.transcription.providers.sarvam.model].replace(' (recommended)', '')
       : providerLabel(provider);
 
   /** Every dependent transcription change goes through main in one step; main may normalize it. */
@@ -730,8 +615,9 @@ function useCredentialReady(kind: CredentialKind | null, settingsIpc: SettingsSe
         .then((status) => {
           if (current && request === revision) setResult({ kind, ready: status.available && status.exists });
         })
-        .catch(() => {
-          if (current && request === revision) setResult({ kind, ready: false });
+        .catch((error) => {
+          console.error('Failed to check credential status:', error);
+          if (current && request === revision) setResult(null);
         });
     };
     const off = settingsIpc.onCredentialChanged((credential) => {
@@ -762,7 +648,6 @@ function providerStatus(config: AppConfig, credentialReady: boolean | null, loca
     : credentialReady ? { label: 'Configured', tone: 'success' } : { label: 'Credential required', tone: 'warning' };
 }
 
-// Only the non-obvious behavior gets words: Auto's fallback and the GPU option's lack of one.
 const DEVICE_DESCRIPTIONS: Record<ManagedLocalDevice, string> = {
   auto: 'Uses the GPU once its files are installed, otherwise the CPU.',
   cpu: '',
@@ -796,11 +681,9 @@ function ManagedLocalSection({ config, persistence, settingsIpc, local, transiti
     void persistence.commit('managedLocalThreads', next, FIELD_ID_LOCAL_THREADS);
   };
 
-  // Older snapshots have no catalog: fall back to the single primary model view.
   const catalog = snapshot?.catalog;
   const entry = catalog?.find((item) => item.key === selection.model);
-  const cpu: ManagedLocalArtifact | null = entry?.cpu
-    ?? (snapshot ? { downloadBytes: snapshot.model.downloadBytes, installedBytes: snapshot.model.installedBytes, state: snapshot.state } : null);
+  const cpu: ManagedLocalArtifact | null = entry?.cpu ?? null;
   const gpu = entry?.cuda;
   const runtime = snapshot?.runtime;
   const showGpuFiles = device !== 'cpu' || (gpu !== undefined && gpu.state.kind !== 'missing');
@@ -811,7 +694,7 @@ function ManagedLocalSection({ config, persistence, settingsIpc, local, transiti
     devices: { ...selection.devices, [selection.model]: next },
   }, FIELD_ID_LOCAL_DEVICE);
 
-  // ponytail: one artifact action at a time; allow parallel CPU/GPU downloads if main supports it.
+  // shortcut: artifact actions are serial; allow parallel downloads if main supports them.
   const runAction = async (backend: ManagedLocalTarget['backend'], action: 'install' | 'delete' | 'delete-legacy') => {
     const target = entry ? { model: selection.model, backend } : undefined;
     setError('');
@@ -1199,7 +1082,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
 
   const testConnection = async () => {
     const candidate = draft;
-    const error = validateLocalWhisperEndpoint(candidate);
+    const error = validateHttpEndpoint(candidate);
     setValidationError(error);
     if (error) return;
     if (candidate !== localEndpoint) {
@@ -1235,7 +1118,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
         }}
         onBlur={() => {
           if (draft === localEndpoint) return;
-          const error = validateLocalWhisperEndpoint(draft);
+          const error = validateHttpEndpoint(draft);
           setValidationError(error);
           if (!error) {
             commit('transcription', {
@@ -1267,7 +1150,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
           type="button"
           variant="secondary"
           size="sm"
-          disabled={testState === 'checking' || validateLocalWhisperEndpoint(draft) !== null}
+          disabled={testState === 'checking' || validateHttpEndpoint(draft) !== null}
           onClick={testConnection}
         >
           {testState === 'checking' ? 'Checking…' : 'Check server'}
@@ -1301,7 +1184,7 @@ function OpenAiSection({ config, persistence, settingsIpc, transition }: Props &
         description="The /audio/transcriptions endpoint is appended automatically."
         errorId={useId()}
         error={fieldErrors[FIELD_ID_OPENAI_BASE_URL]}
-        validate={validateOpenAiBaseUrl}
+        validate={validateHttpEndpoint}
         onCommit={(value) => commit('transcription', {
           ...config.transcription,
           providers: { ...config.transcription.providers, openai: { ...openai, baseUrl: value } },
@@ -1390,25 +1273,8 @@ function AzureSpeechSection({ config, persistence, settingsIpc }: Props) {
   const { commit, fieldErrors } = persistence;
   const azure = config.transcription.providers.azureSpeech;
 
-  const validateEndpoint = (value: string): string | null => {
-    if (!value.trim()) {
-      return azure.region.trim() ? null : 'Enter a resource endpoint or region.';
-    }
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === 'https:' ? null : 'Azure resource endpoint must use HTTPS.';
-    } catch {
-      return 'Enter a valid endpoint, e.g. https://my-resource.cognitiveservices.azure.com.';
-    }
-  };
-
-  const validateRegion = (value: string): string | null => {
-    const trimmed = value.trim();
-    if (!trimmed) return azure.endpoint.trim() ? null : 'Enter a resource endpoint or region.';
-    return /^[a-z0-9-]{2,64}$/i.test(trimmed)
-      ? null
-      : 'Region may contain only letters, numbers, and hyphens.';
-  };
+  const validateEndpoint = (value: string) => validateAzureSpeechSettings({ endpoint: value, region: azure.region })[0] ?? null;
+  const validateRegion = (value: string) => validateAzureSpeechSettings({ endpoint: azure.endpoint, region: value })[0] ?? null;
 
   return (
     <>
@@ -1472,18 +1338,18 @@ function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
       <DraftTextRow label="Project ID" value={google.project} placeholder="my-google-cloud-project"
         description="Google Cloud project that owns the Speech-to-Text request."
         errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_PROJECT]}
-        validate={(value) => /^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(value.trim()) ? null : 'Enter a valid Google Cloud project ID.'}
+        validate={validateGoogleProject}
         onCommit={(value) => save({ ...google, project: value.trim() }, FIELD_ID_GOOGLE_PROJECT)}
         clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_PROJECT)} />
       <DraftTextRow label="Location" value={google.location} placeholder="global"
         description="Recognizer location, for example global, us, or europe-west4."
         errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_LOCATION]}
-        validate={(value) => /^[a-z0-9-]{1,63}$/.test(value.trim()) ? null : 'Enter a valid Google Cloud location.'}
+        validate={validateGoogleLocation}
         onCommit={(value) => save({ ...google, location: value.trim() }, FIELD_ID_GOOGLE_LOCATION)}
         clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_LOCATION)} />
       <DraftTextRow label="Model" value={google.model} placeholder="short"
         description="Free-form Google recognition model slug. No model is selected automatically."
-        errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_MODEL]} validate={validateGoogleModelSlug}
+        errorId={useId()} error={fieldErrors[FIELD_ID_GOOGLE_MODEL]} validate={validateModelName}
         onCommit={(value) => save({ ...google, model: value.trim() }, FIELD_ID_GOOGLE_MODEL)}
         clearError={() => persistence.clearFieldError(FIELD_ID_GOOGLE_MODEL)} />
       {google.credentialSource === 'service-account' ? (
@@ -1520,12 +1386,12 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc, transition }
     <>
       <DraftTextRow label="Endpoint" value={nim.endpoint} placeholder="http://localhost:9000/v1/audio/transcriptions"
         description="Complete OpenAI-compatible offline transcription endpoint on your NIM deployment."
-        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_ENDPOINT]} validate={validateNvidiaEndpoint}
+        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_ENDPOINT]} validate={validateHttpEndpoint}
         onCommit={(value) => save({ ...nim, endpoint: value.trim() }, FIELD_ID_NVIDIA_ENDPOINT)}
         clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_ENDPOINT)} />
       <DraftTextRow label="Model" value={nim.model} placeholder="nvidia/parakeet-ctc-1.1b-asr"
         description="Free-form model slug exposed by your NIM server."
-        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_MODEL]} validate={validateNvidiaModelName}
+        errorId={useId()} error={fieldErrors[FIELD_ID_NVIDIA_MODEL]} validate={validateModelName}
         onCommit={(value) => save({ ...nim, model: value.trim() }, FIELD_ID_NVIDIA_MODEL)}
         clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_MODEL)} />
       <SelectRow label="Authentication" value={nim.auth} options={AUTH_OPTIONS} errorId={useId()}
@@ -1535,13 +1401,13 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc, transition }
         <>
           <DraftTextRow label="Header name" value={nim.headerName} placeholder="X-API-Key"
             description="Secret header used by your reverse proxy." errorId={headerErrorId} error={fieldErrors[FIELD_ID_NVIDIA_HEADER_NAME]}
-            validate={(value) => /^[!#$%&'*+\-.^_`|~\w]+$/.test(value.trim()) ? null : 'Header name contains invalid characters.'}
+            validate={(value) => isValidHttpFieldName(value.trim()) ? null : 'Header name contains invalid characters.'}
             onCommit={(value) => save({ ...nim, headerName: value.trim() }, FIELD_ID_NVIDIA_HEADER_NAME)}
             clearError={() => persistence.clearFieldError(FIELD_ID_NVIDIA_HEADER_NAME)} />
           <CredentialControl credential="nvidia-nim-header" label="Secret header value" settingsIpc={settingsIpc} />
         </>
       ) : null}
-      {nim.auth === 'none' ? <CheckServerTest provider="nvidia-speech-nim" settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} /> : null}
+      {nim.auth === 'none' ? <CheckServerTest settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} /> : null}
       <ModelCapabilities
         subject="NIM model"
         capabilities={nim}
@@ -1618,7 +1484,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc, transition }: P
         description="Complete endpoint URL for the OpenAI-compatible API."
         errorId={endpointErrorId}
         error={fieldErrors[FIELD_ID_CUSTOM_ENDPOINT]}
-        validate={validateCustomEndpoint}
+        validate={validateHttpEndpoint}
         onCommit={(value) => commit('transcription', {
           ...config.transcription,
           providers: { ...config.transcription.providers, customOpenAiCompatible: { ...custom, endpoint: value } },
@@ -1681,7 +1547,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc, transition }: P
         </>
       ) : null}
       {custom.auth === 'none' ? (
-        <CheckServerTest provider="custom-open-ai-compatible" settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} />
+        <CheckServerTest settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} />
       ) : null}
       <ModelCapabilities
         subject="model"
@@ -1708,10 +1574,7 @@ function WhisperLiveKitSection({
   onReadinessChange: (readiness: TranscriptionReadiness | null) => void;
 }) {
   const { commit, fieldErrors } = persistence;
-  const provider = config.transcription.providers.whisperLiveKit ?? {
-    baseUrl: 'http://localhost:8000',
-    auth: 'none' as const,
-  };
+  const provider = config.transcription.providers.whisperLiveKit;
   const save = (next: typeof provider, field: string) => {
     onReadinessChange(null);
     return commit('transcription', {
@@ -1794,13 +1657,12 @@ function WhisperLiveKitReadinessTag({ readiness }: { readiness: TranscriptionRea
 }
 
 interface CheckServerTestProps {
-  provider: string;
   settingsIpc: import('./settings-ipc').SettingsIpc;
   testState: TestState;
   setTestState: (state: TestState) => void;
 }
 
-function CheckServerTest({ provider, settingsIpc, testState, setTestState }: CheckServerTestProps) {
+function CheckServerTest({ settingsIpc, testState, setTestState }: CheckServerTestProps) {
   const labelId = useId();
 
   const check = async () => {
@@ -1808,8 +1670,6 @@ function CheckServerTest({ provider, settingsIpc, testState, setTestState }: Che
     const reachable = await settingsIpc.checkTranscriptionServer();
     setTestState(reachable ? 'success' : 'failed');
   };
-
-  if (provider === 'local-whisper-cpp') return null; // handled inline
 
   return (
     <div className="flex items-center gap-3 border-b border-border/50 py-3.5 last:border-b-0">

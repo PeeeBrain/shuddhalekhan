@@ -84,6 +84,8 @@ describe('Batch Dictation runtime shell', () => {
     shell.markCaptureReady('obsolete-session');
     shell.markCaptureReady('session-1');
     shell.markCaptureReady('session-1');
+    shell.updateDurationWarning(10);
+    expect(send).toHaveBeenLastCalledWith('runtime:snapshot', expect.objectContaining({ durationWarningSeconds: 10 }));
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showProcessing('session-1');
@@ -97,9 +99,9 @@ describe('Batch Dictation runtime shell', () => {
       .filter((call: unknown[]) => call[0] === 'runtime:snapshot')
       .map((call: unknown[]) => call[1] as { kind: string; revision: number; captureStartedAt?: number | null });
     expect(snapshots.map((snapshot: { kind: string }) => snapshot.kind)).toEqual([
-      'recording', 'recording', 'recording', 'processing', 'failure', 'idle',
+      'recording', 'recording', 'recording', 'recording', 'processing', 'failure', 'idle',
     ]);
-    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(snapshots.map((snapshot: { revision: number }) => snapshot.revision)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(snapshots[0].captureStartedAt).toBeNull();
     expect(snapshots[1].captureStartedAt).toEqual(expect.any(Number));
     expect(snapshots[2].captureStartedAt).toBe(snapshots[1].captureStartedAt);

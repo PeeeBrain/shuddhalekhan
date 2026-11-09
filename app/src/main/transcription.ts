@@ -1,4 +1,7 @@
-import { hasControlCharacters, isLoopbackHost, isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
+import { providerCredentialKind } from '../shared/transcription-credential';
+import { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
+import { validateAzureSpeechSettings, validateGoogleCloudSpeechSettings, validateNvidiaSpeechNimSettings, validateWhisperLiveKitSettings, validateLocalWhisperSettings } from '../shared/transcription-validation';
+export { validateOpenAiModel, validateAzureSpeechSettings, validateGoogleCloudSpeechSettings, validateNvidiaSpeechNimSettings, validateCustomOpenAiSettings, validateWhisperLiveKitSettings, validateLocalWhisperSettings } from '../shared/transcription-validation';
 import { getSarvamSettingsErrors } from '@shuddhalekhan/shared/sarvam';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
@@ -73,13 +76,6 @@ export type TranscriptionFailureCategory =
   | 'malformed-response'
   | 'unknown';
 
-export function validateOpenAiModel(model: string): string[] {
-  const trimmed = model.trim();
-  if (!trimmed) return ['Enter a model name.'];
-  if (trimmed.length > 128) return ['Model name is too long (max 128 characters).'];
-  if (hasControlCharacters(trimmed)) return ['Model name contains control characters.'];
-  return [];
-}
 
 export function buildOpenAiEndpoint(baseUrl: string, task?: 'transcribe' | 'translate'): string {
   const normalized = baseUrl.replace(/\/+$/, '');
@@ -88,93 +84,6 @@ export function buildOpenAiEndpoint(baseUrl: string, task?: 'transcribe' | 'tran
   return `${normalized}${suffix}`;
 }
 
-export function validateAzureSpeechSettings(settings: { endpoint: string; region: string }): string[] {
-  const endpoint = settings.endpoint.trim();
-  const region = settings.region.trim();
-  if (!endpoint && !region) {
-    return ['Enter a Microsoft Azure Speech resource endpoint or region.'];
-  }
-
-  const errors: string[] = [];
-  if (endpoint) {
-    try {
-      const url = new URL(endpoint);
-      if (url.protocol !== 'https:') errors.push('Azure resource endpoint must use HTTPS.');
-    } catch {
-      errors.push('Enter a valid Azure resource endpoint URL.');
-    }
-  }
-  if (region && !/^[a-z0-9-]{2,64}$/i.test(region)) {
-    errors.push('Azure region may contain only letters, numbers, and hyphens.');
-  }
-  return errors;
-}
-
-export function validateGoogleCloudSpeechSettings(settings: { project: string; location: string; model: string }): string[] {
-  const errors: string[] = [];
-  if (!/^[a-z][a-z0-9-]{4,61}[a-z0-9]$/.test(settings.project.trim())) {
-    errors.push('Enter a valid Google Cloud project ID.');
-  }
-  if (!/^[a-z0-9-]{1,63}$/.test(settings.location.trim())) {
-    errors.push('Enter a valid Google Cloud location.');
-  }
-  errors.push(...validateOpenAiModel(settings.model));
-  return errors;
-}
-
-export function validateNvidiaSpeechNimSettings(settings: { endpoint: string; model: string; auth: string; headerName?: string }): string[] {
-  return validateCustomOpenAiSettings(settings);
-}
-
-export function validateCustomOpenAiSettings(settings: { endpoint: string; model: string; auth: string; headerName?: string }): string[] {
-  const errors: string[] = [];
-  try {
-    const url = new URL(settings.endpoint);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      errors.push('Endpoint must use HTTP or HTTPS.');
-    }
-  } catch {
-    errors.push('Enter a valid endpoint URL.');
-  }
-  if (settings.auth === 'header' && !settings.headerName?.trim()) {
-    errors.push('Header name is required when auth is set to Header.');
-  }
-  errors.push(...validateOpenAiModel(settings.model));
-  return errors;
-}
-
-export function validateWhisperLiveKitSettings(settings: {
-  baseUrl: string;
-  auth: string;
-}): string[] {
-  const value = settings.baseUrl.trim();
-  if (!value) return ['WhisperLiveKit base URL is required.'];
-
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return ['Enter a valid WhisperLiveKit base URL.'];
-  }
-
-  if (parsed.username || parsed.password) {
-    return ['WhisperLiveKit endpoint URLs cannot contain credentials.'];
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return ['WhisperLiveKit endpoints must use HTTP or HTTPS.'];
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-  const loopback = isLoopbackHost(hostname);
-  if (parsed.protocol === 'http:' && !loopback) {
-    return ['Remote WhisperLiveKit endpoints must use HTTPS.'];
-  }
-  if (settings.auth !== 'none' && settings.auth !== 'bearer') {
-    return ['WhisperLiveKit authentication mode is invalid.'];
-  }
-
-  return [];
-}
 
 export { isValidHttpFieldName } from '@shuddhalekhan/shared/validation';
 
@@ -183,6 +92,8 @@ export function validateProviderReadiness(
   config: import('../types/ipc').AppConfig,
   vault: { read: (id: string) => string | null },
 ): string[] {
+  const credentialKind = providerCredentialKind(config, providerId);
+  const readCredential = () => credentialKind ? vault.read(credentialKind) : null;
   const errors: string[] = [];
   const features = resolveTranscriptionFeatures(config);
   if (config.task === 'translate' && !features.translation) errors.push('Translation is not supported by the selected provider and model.');
@@ -202,19 +113,19 @@ export function validateProviderReadiness(
     const { baseUrl, model } = config.transcription.providers.openai;
     if (!baseUrl.trim()) errors.push('OpenAI base URL is not configured.');
     if (!model.trim()) errors.push('OpenAI model is not configured.');
-    const apiKey = vault.read('openai-api-key');
+    const apiKey = readCredential();
     if (!apiKey) errors.push('OpenAI API key is not configured. Save one in Settings.');
   }
 
   if (providerId === 'sarvam') {
     errors.push(...getSarvamSettingsErrors(config.transcription.providers.sarvam, config.language, config.dictionary));
-    if (!vault.read('sarvam-api-key')) errors.push('Sarvam API key is not configured. Save one in Settings.');
+    if (!readCredential()) errors.push('Sarvam API key is not configured. Save one in Settings.');
   }
 
   if (providerId === 'azure-speech') {
     const azure = config.transcription.providers.azureSpeech;
     errors.push(...validateAzureSpeechSettings(azure));
-    if (!vault.read('azure-speech-key')) {
+    if (!readCredential()) {
       errors.push('Microsoft Azure Speech key is not configured. Save one in Settings.');
     }
     if (config.task === 'translate') {
@@ -225,7 +136,7 @@ export function validateProviderReadiness(
   if (providerId === 'google-cloud-speech-v2') {
     const google = config.transcription.providers.googleCloudSpeech;
     errors.push(...validateGoogleCloudSpeechSettings(google));
-    if (google.credentialSource === 'service-account' && !vault.read('google-service-account')) {
+    if (google.credentialSource === 'service-account' && !readCredential()) {
       errors.push('Google service-account credentials are not configured. Import them in Settings.');
     }
     if (google.credentialSource === 'adc') {
@@ -240,8 +151,8 @@ export function validateProviderReadiness(
   if (providerId === 'nvidia-speech-nim') {
     const nim = config.transcription.providers.nvidiaSpeechNim;
     errors.push(...validateNvidiaSpeechNimSettings(nim));
-    if (nim.auth === 'bearer' && !vault.read('nvidia-nim-bearer')) errors.push('NVIDIA Speech NIM Bearer token is not configured.');
-    if (nim.auth === 'header' && !vault.read('nvidia-nim-header')) errors.push('NVIDIA Speech NIM custom header secret is not configured.');
+    if (nim.auth === 'bearer' && !readCredential()) errors.push('NVIDIA Speech NIM Bearer token is not configured.');
+    if (nim.auth === 'header' && !readCredential()) errors.push('NVIDIA Speech NIM custom header secret is not configured.');
     if (nim.auth === 'header' && !isValidHttpFieldName(nim.headerName.trim())) errors.push('NVIDIA Speech NIM header name is invalid.');
     if (config.language === 'auto' && !nim.supportsAutomaticLanguageDetection) errors.push('Automatic language detection is not enabled for this NIM model.');
     if (config.task === 'translate' && !nim.supportsTranslation) errors.push('Translation is not enabled for this NIM model.');
@@ -252,11 +163,11 @@ export function validateProviderReadiness(
     if (!endpoint.trim()) errors.push('Custom endpoint is not configured.');
     if (!model.trim()) errors.push('Custom model is not configured.');
     if (auth === 'bearer') {
-      const token = vault.read('custom-open-ai-compatible-bearer');
+      const token = readCredential();
       if (!token) errors.push('Bearer token is not configured.');
     }
     if (auth === 'header') {
-      const secret = vault.read('custom-open-ai-compatible-header');
+      const secret = readCredential();
       if (!secret) errors.push('Custom header secret is not configured.');
       if (!headerName.trim()) errors.push('Header name is not configured.');
       else if (!isValidHttpFieldName(headerName.trim())) errors.push('Header name contains invalid characters.');
@@ -266,7 +177,7 @@ export function validateProviderReadiness(
   if (providerId === 'whisper-live-kit') {
     const provider = config.transcription.providers.whisperLiveKit;
     errors.push(...validateWhisperLiveKitSettings(provider));
-    if (provider.auth === 'bearer' && !vault.read('whisper-live-kit-bearer')) {
+    if (provider.auth === 'bearer' && !readCredential()) {
       errors.push('WhisperLiveKit bearer token is not configured.');
     }
     if (config.task === 'translate') {
@@ -277,17 +188,6 @@ export function validateProviderReadiness(
   return errors;
 }
 
-export function validateLocalWhisperSettings(settings: { endpoint: string }): string[] {
-  let url: URL;
-  try {
-    url = new URL(settings.endpoint);
-  } catch {
-    return ['Enter a valid endpoint URL.'];
-  }
-  return url.protocol === 'http:' || url.protocol === 'https:'
-    ? []
-    : ['Endpoint must use HTTP or HTTPS.'];
-}
 
 export function failureForHttpStatus(
   status: number,

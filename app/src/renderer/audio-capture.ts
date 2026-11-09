@@ -1,3 +1,5 @@
+import { publishAudioLevel } from './audio-level';
+import { hasChosenMicrophone } from '../shared/microphone-selection';
 // Web Audio API audio capture for Electron renderer process
 // Runs in a hidden BrowserWindow. Samples come from an AudioWorklet
 // (audio-capture-worklet.js) and are converted once, at the actual context
@@ -24,7 +26,6 @@ const SETUP_TIMEOUT_MS = 30_000;
 export const MAX_IN_FLIGHT_PCM_CHUNKS = 50;
 
 export interface StreamingPcmChunk {
-  recordingSessionId: string;
   sequence: number;
   pcm: Uint8Array<ArrayBuffer>;
 }
@@ -83,7 +84,7 @@ function createRealtimeChunker(options: StreamingRecordingOptions) {
   const inFlight = new Set<number>();
   const emit = (pcm: Uint8Array<ArrayBuffer>) => {
     inFlight.add(sequence);
-    options.onPcmChunk({ recordingSessionId: options.recordingSessionId, sequence: sequence++, pcm });
+    options.onPcmChunk({ sequence: sequence++, pcm });
   };
   return {
     push(bytes: Uint8Array): void {
@@ -153,7 +154,7 @@ export function setSelectedDeviceId(deviceId: string | null): void {
 }
 
 function getDeviceId(): string | undefined {
-  if (!selectedDeviceId || selectedDeviceId === 'default') {
+  if (!hasChosenMicrophone(selectedDeviceId)) {
     return undefined;
   }
 
@@ -235,9 +236,9 @@ function stopLevelTelemetry(): void {
 
 function startLevelTelemetry(): void {
   stopLevelTelemetry();
-  window.electronAPI?.send('audio-level-changed', latestAudioLevel);
+  publishAudioLevel(latestAudioLevel);
   levelTelemetryTimer = setInterval(() => {
-    window.electronAPI?.send('audio-level-changed', latestAudioLevel);
+    publishAudioLevel(latestAudioLevel);
   }, AUDIO_LEVEL_TELEMETRY_INTERVAL_MS);
 }
 

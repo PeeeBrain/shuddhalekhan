@@ -116,6 +116,21 @@ interface MockSettingsIpcOptions {
   registerDesktopStatusChanged?: (callback: (status: DesktopStatus) => void) => void;
 }
 
+function localSnapshot(ready: boolean): ManagedLocalModelSnapshot {
+  const state: ManagedLocalModelSnapshot['state'] = ready
+    ? { kind: 'ready', modelId: 'test', path: 'model' }
+    : { kind: 'missing', modelId: 'test' };
+  return {
+    inference: { maxThreads: 16, defaultThreads: 4 },
+    model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
+    state,
+    catalog: [{ key: 'parakeet', name: 'Recommended local speech model', description: '', languages: ['English'],
+      cpu: { downloadBytes: 100, installedBytes: 200, state } }],
+    runtime: { status: 'idle', backend: null, message: '' },
+    gpu: { name: null, message: '' },
+  };
+}
+
 function createMockSettingsIpc(
   options: MockSettingsIpcOptions = {},
 ): SettingsIpc {
@@ -165,29 +180,18 @@ function createMockSettingsIpc(
     onNavigateRequested: mock(() => undefined),
     onMcpStatusSnapshot: mock(() => undefined),
     onTranscriptionReadinessChanged: mock((_callback: (readiness: import('../../../types/ipc').TranscriptionReadiness) => void) => undefined),
-    getManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? {
-      inference: { maxThreads: 16, defaultThreads: 4 },
-      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
-      state: options.managedLocalModelReady
-        ? { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' }
-        : { kind: 'missing' as const, modelId: 'test' },
-    })),
-    installManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? {
-      inference: { maxThreads: 16, defaultThreads: 4 },
-      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
-      state: { kind: 'ready' as const, modelId: 'test', path: 'C:\\model' },
-    })),
-    deleteManagedLocalModel: mock(() => Promise.resolve({
-      inference: { maxThreads: 16, defaultThreads: 4 },
-      model: { id: 'test', name: 'Recommended local speech model', downloadBytes: 100, installedBytes: 200, languages: ['English'] },
-      state: { kind: 'missing' as const, modelId: 'test' },
-    })),
+    getManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? localSnapshot(options.managedLocalModelReady ?? false))),
+    installManagedLocalModel: mock(() => Promise.resolve(options.managedLocalSnapshot?.() ?? localSnapshot(true))),
+    deleteManagedLocalModel: mock(() => Promise.resolve(localSnapshot(false))),
     onManagedLocalModelStateChanged: mock((callback: () => void) => {
       options.registerManagedLocalStateChanged?.(callback);
       return undefined;
     }),
     onOnboardingCompleted: mock((callback: () => void) => {
-      options.registerOnboardingCompleted?.(callback);
+      options.registerOnboardingCompleted?.(() => {
+        config = { ...config, onboarding: { status: 'complete' }, setupChecklistDismissed: true };
+        callback();
+      });
       return undefined;
     }),
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
@@ -543,6 +547,19 @@ describe('Settings navigation', () => {
 });
 
 describe('Settings section reachability', () => {
+  it('keeps credential availability unknown when the bridge cannot check storage', async () => {
+    const config = baseConfig();
+    config.transcription.activeProvider = 'openai';
+    config.transcription.providers.openai.model = 'whisper-1';
+    const settingsIpc = createMockSettingsIpc({ config });
+    settingsIpc.getCredentialStatus = mock(async () => { throw new Error('bridge unavailable'); });
+    render(<SettingsWindow settingsIpc={settingsIpc} />);
+    await waitForLoaded();
+    await screen.findByText('Unable to check secure credential storage.');
+    expect(screen.getByText('Checking setup')).toBeInTheDocument();
+    expect(screen.queryByText('Credential required')).toBeNull();
+  });
+
   for (const provider of ['sarvam', 'openai'] as const) {
     it(`refreshes ${provider} setup after saving and removing credentials without changing config`, async () => {
       const config = baseConfig();
@@ -1478,18 +1495,27 @@ describe('Settings save feedback', () => {
 });
 
 describe('Settings validation', () => {
+  it('reports when a rejected save cannot reload the saved state', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    spyOn(settingsIpc, 'patchTranscriptionConfig').mockRejectedValueOnce(new Error('save failed'));
+    spyOn(settingsIpc, 'getConfig').mockRejectedValueOnce(new Error('reload failed'));
+    fireEvent.click(screen.getByRole('switch', { name: 'Clean transcription' }));
+    expect(await screen.findByText('Could not reload saved settings. Reopen Settings to see the saved state.')).toBeInTheDocument();
+  });
+
   it('validates the local endpoint on blur without persisting an invalid draft', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
     const endpoint = screen.getByRole('textbox', { name: 'Endpoint' });
 
     fireEvent.change(endpoint, { target: { value: 'not a url' } });
-    expect(screen.queryByText(/Enter a valid URL/)).toBeNull();
+    expect(screen.queryByText(/Enter a valid endpoint URL/)).toBeNull();
     expect(settingsIpc.setConfig).not.toHaveBeenCalled();
 
     fireEvent.blur(endpoint);
 
-    const error = await screen.findByText(/Enter a valid URL/);
+    const error = await screen.findByText(/Enter a valid endpoint URL/);
     expect(error).toBeInTheDocument();
     expect(endpoint).toHaveAttribute('aria-invalid', 'true');
     expect(endpoint).toHaveAttribute('aria-describedby', error.id);
@@ -1524,6 +1550,6 @@ describe('Settings validation', () => {
         },
       );
     });
-    expect(screen.queryByText(/Enter a valid URL/)).toBeNull();
+    expect(screen.queryByText(/Enter a valid endpoint URL/)).toBeNull();
   });
 });

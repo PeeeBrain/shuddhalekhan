@@ -719,20 +719,6 @@ describe('RecordingSession', () => {
   });
 
 
-  it('forwards audio-level-changed events to the runtime shell', () => {
-    session.start();
-
-    const audioLevelCall = (electronMock.ipcMain.on as any).mock.calls.find(
-      (call: any) => call[0] === 'audio-level-changed'
-    );
-    expect(audioLevelCall).toBeDefined();
-    const listener = audioLevelCall[1];
-
-    listener({}, 0.5);
-
-    expect(audioStream.updateAudioLevel).toHaveBeenCalledWith(0.5);
-  });
-
   it('calls onResult when runtime audio arrives and transcription succeeds', async () => {
     const onResult = vi.fn();
     const onError = vi.fn();

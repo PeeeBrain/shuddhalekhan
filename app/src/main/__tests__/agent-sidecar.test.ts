@@ -1,6 +1,6 @@
 import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { join } from 'path';
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'events';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 import type { AppConfig } from '../../types/ipc';
@@ -30,9 +30,17 @@ class MockInterface extends EventEmitter {
 const stdoutLines = new MockInterface();
 const createInterface = vi.fn(() => stdoutLines);
 
+const actualChildProcess = { ...await import('child_process') };
+const actualReadline = { ...await import('readline') };
 mock.module('child_process', () => ({ spawn }));
 mock.module('readline', () => ({ createInterface }));
 installElectronMock();
+
+// Bun's mock.restore() does not undo mock.module replacements.
+afterAll(() => {
+  mock.module('child_process', () => actualChildProcess);
+  mock.module('readline', () => actualReadline);
+});
 
 class FakeJobPort {
   created: unknown[] = [];

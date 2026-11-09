@@ -1,5 +1,6 @@
+import { ipcErrorMessage } from './use-settings-persistence';
 import { useEffect, useId, useRef, useState } from 'react';
-import { agentProviderSupportsCacheBreakpoints } from '@shuddhalekhan/shared/providers';
+import { agentProviderSupportsCacheBreakpoints, agentProviderUsesChatCompletionsOnly } from '@shuddhalekhan/shared/providers';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,6 +10,7 @@ import { CredentialControl } from './ui/CredentialControl';
 import { Disclosure } from './ui/Disclosure';
 import { looksLikeRawApiKey } from './settings-model';
 import {
+  AGENT_CUSTOM_INSTRUCTIONS_LIMIT,
   getAgentProviderRequestUrl,
   isLoopbackProviderUrl,
   normalizeAgentProvider,
@@ -238,7 +240,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
       ...(kind === 'chatgpt' && provider.kind !== 'chatgpt' ? { model: '' } : {}),
       apiMode: kind === 'chatgpt'
         ? 'responses'
-        : kind !== 'openai' && kind !== 'azure-openai'
+        : agentProviderUsesChatCompletionsOnly(kind)
           ? 'chat-completions'
           : kind === provider.kind ? provider.apiMode : 'responses',
       auth: next.auth ?? (baseUrl === '' || isLoopbackProviderUrl(baseUrl) ? 'none' : 'bearer'),
@@ -344,7 +346,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
                 />
               </>
             )}
-            {provider.kind === 'openai' || provider.kind === 'azure-openai' ? (
+            {!agentProviderUsesChatCompletionsOnly(provider.kind) ? (
               <SelectRow
                 label="API"
                 value={provider.apiMode}
@@ -461,7 +463,7 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
               aria-labelledby="agent-custom-instructions-heading"
               aria-describedby={fieldErrors[FIELD_ID_CUSTOM_INSTRUCTIONS] ? customInstructionsErrorId : undefined}
               className="min-h-28 text-sm"
-              maxLength={4000}
+              maxLength={AGENT_CUSTOM_INSTRUCTIONS_LIMIT}
               placeholder="Reply in British English. Prefer metric units. Keep answers to two sentences."
               value={instructionsDraft ?? agent.customInstructions ?? ''}
               onChange={(event) => {
@@ -561,12 +563,6 @@ export function AgentSettings({ config, persistence, settingsIpc }: SettingsSect
       />
     </div>
   );
-}
-
-/** Electron prefixes rejected invoke errors with the channel name; show only the main process's message. */
-function ipcErrorMessage(error: unknown, fallback: string): string {
-  if (!(error instanceof Error)) return fallback;
-  return error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') || fallback;
 }
 
 /** Keeps a saved model selectable even when the account no longer lists it. */

@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { useEffect, useRef, useState } from 'react';
 import { Check, Download, Mic, Keyboard, ArrowRight, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,7 @@ export function Onboarding({
   settingsIpc: SettingsIpc;
   onOpenAdvanced: () => void;
 }) {
-  const modelId = config.managedLocal?.model ?? 'parakeet';
+  const modelId = config.managedLocal?.model ?? DEFAULT_MANAGED_LOCAL.model;
   const { snapshot, loadError, refresh, accept } = useManagedLocalSnapshot(settingsIpc, modelId);
   const [micState, setMicState] = useState<'idle' | 'checking' | 'verified' | 'error'>('idle');
   const [micLevel, setMicLevel] = useState(0);
@@ -29,13 +30,9 @@ export function Onboarding({
 
   // Onboarding always sets up the CPU files: they work offline and are Auto's fallback.
   // GPU setup stays an explicit choice in Settings.
-  const entry = snapshot?.catalog?.find((item) => item.key === modelId);
+  const entry = snapshot?.catalog.find((item) => item.key === modelId);
   const legacy = entry?.cpu.legacy?.inUse ? entry.cpu.legacy : null;
-  const model = snapshot
-    ? entry
-      ? { name: entry.name, languages: entry.languages, ...entry.cpu }
-      : { ...snapshot.model, state: snapshot.state }
-    : null;
+  const model = entry ? { name: entry.name, languages: entry.languages, ...entry.cpu } : null;
 
   const install = async () => {
     setInstallError('');

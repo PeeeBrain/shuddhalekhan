@@ -4,8 +4,6 @@ import {
   createHttpMcpTransport,
   formatTransport,
   normalizeDraftServer,
-  splitCommaList,
-  splitList,
 } from '../mcp-settings-model';
 
 describe('MCP settings model helpers', () => {
@@ -27,14 +25,14 @@ describe('MCP settings model helpers', () => {
       toolPolicies: {},
     };
 
-    expect(normalizeDraftServer(server, 'existing-id', () => 'new-id')).toEqual({
+    expect(normalizeDraftServer(server, 'existing-id')).toEqual({
       ...server,
       id: 'existing-id',
       displayName: 'MCP Server',
     });
-    expect(normalizeDraftServer({ ...server, displayName: ' Search ' }, null, () => 'new-id')).toEqual({
+    expect(normalizeDraftServer({ ...server, displayName: ' Search ' }, null)).toEqual({
       ...server,
-      id: 'new-id',
+      id: 'draft-id',
       displayName: 'Search',
     });
   });
@@ -56,7 +54,5 @@ describe('MCP settings model helpers', () => {
       discoveredTools: [],
       toolPolicies: {},
     })).toBe('bun run server.ts');
-    expect(splitCommaList('A, B,, C ')).toEqual(['A', 'B', 'C']);
-    expect(splitList(' run   server.ts ')).toEqual(['run', 'server.ts']);
   });
 });

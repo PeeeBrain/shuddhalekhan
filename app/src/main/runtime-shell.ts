@@ -1,3 +1,4 @@
+import { handle } from './typed-ipc';
 import { ipcMain, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { AudioSpool, sweepOrphanedSpools } from './audio-spool';
@@ -148,7 +149,7 @@ export class RuntimeShell {
       },
     });
     sweepOrphanedSpools();
-    ipcMain.handle('runtime:audio-spool', this.handleAudioSpool);
+    handle('runtime:audio-spool', this.handleAudioSpool);
     ipcMain.on('runtime:audio-end', this.handleAudioEnd);
   }
 
@@ -220,7 +221,7 @@ export class RuntimeShell {
     this.republish();
     const publish = () => {
       if (win.isDestroyed()) return;
-      win.webContents.send('recording:pill-show', recordingSessionId, envelope);
+      win.webContents.send('recording:pill-show');
       if (!win.isVisible()) win.showInactive();
       win.setAlwaysOnTop(true, 'screen-saver');
     };
@@ -437,11 +438,9 @@ export class RuntimeShell {
   }
 
   updateDurationWarning(remainingSeconds: number | null): void {
-    this.send('recording:duration-warning', remainingSeconds);
-  }
-
-  updateAudioLevel(level: number): void {
-    this.send('audio:level-changed', level);
+    if (!this.activeRecording) return;
+    this.activeRecording.durationWarningSeconds = remainingSeconds;
+    this.republish();
   }
 
   getWebContents(): WebContents | null {

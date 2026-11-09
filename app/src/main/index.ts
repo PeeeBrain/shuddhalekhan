@@ -1,3 +1,4 @@
+import { handle } from './typed-ipc';
 import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { app, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
@@ -558,22 +559,22 @@ registerCredentialIpcHandlers(ipcMain, credentialVault, credential => {
   if (credential === 'agent-api-key') invalidateProviderTest();
 });
 
-ipcMain.handle('chatgpt:get-status', () => chatGptAuth.getStatus());
-ipcMain.handle('chatgpt:sign-in', () => chatGptAuth.signIn());
-ipcMain.handle('chatgpt:sign-out', () => {
+handle('chatgpt:get-status', () => chatGptAuth.getStatus());
+handle('chatgpt:sign-in', () => chatGptAuth.signIn());
+handle('chatgpt:sign-out', () => {
   providerTestRevision++;
   if (getConfig().agent.provider.kind === 'chatgpt') invalidateActiveAgentRun();
   return chatGptAuth.signOut();
 });
-ipcMain.handle('chatgpt:list-models', () => chatGptAuth.listModels());
+handle('chatgpt:list-models', () => chatGptAuth.listModels());
 
-ipcMain.handle('agent:validate-provider', (_event, value: unknown) => {
+handle('agent:validate-provider', (_event, value: unknown) => {
   const parsed = agentProviderSchema.safeParse(value);
   if (!parsed.success) return { issues: [{ field: 'kind', message: 'Provider settings contain an invalid value.' }], credentials: 'missing' };
   return validateAgentProvider(parsed.data);
 });
 
-ipcMain.handle('agent:test-provider', async (_event, value: unknown) => {
+handle('agent:test-provider', async (_event, value: unknown) => {
   const parsed = agentProviderSchema.safeParse(value);
   if (!parsed.success) return failedProviderTest({ kind: 'configuration', message: 'Provider settings contain an invalid value.', action: 'Correct the Agent settings.' });
   const provider = normalizeAgentProvider(parsed.data);
@@ -595,60 +596,60 @@ ipcMain.handle('agent:test-provider', async (_event, value: unknown) => {
   return agentSidecar.testProvider(provider, apiKey);
 });
 
-ipcMain.handle('agent:cancel-provider-test', () => { providerTestRevision++; agentSidecar.cancelProviderTest(); });
+handle('agent:cancel-provider-test', () => { providerTestRevision++; agentSidecar.cancelProviderTest(); });
 
-ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
+handle('audio:select-device', (_event, deviceId: string) => {
   setConfig('selectedDeviceId', deviceId);
   recordingSession.updateDevice(deviceId);
 });
 
-ipcMain.handle('config:get', () => {
+handle('config:get', () => {
   return getConfig();
 });
-ipcMain.handle('desktop:get-status', getDesktopStatus);
-ipcMain.handle('desktop:set-wayland-insertion', async (_event, enabled: unknown) => {
+handle('desktop:get-status', getDesktopStatus);
+handle('desktop:set-wayland-insertion', async (_event, enabled: unknown) => {
   await setWaylandInsertion(enabled === true);
   return getDesktopStatus();
 });
 
-ipcMain.handle('shortcuts:get-paused', () => {
+handle('shortcuts:get-paused', () => {
   return keyboardHook.isPaused();
 });
 
-ipcMain.handle('shortcuts:set-paused', (_event, paused: boolean) => {
+handle('shortcuts:set-paused', (_event, paused: boolean) => {
   setShortcutsPaused(Boolean(paused));
   return keyboardHook.isPaused();
 });
 
-ipcMain.handle('shortcuts:begin-capture', () => {
+handle('shortcuts:begin-capture', () => {
   keyboardHook.setCaptureSuspended(true);
 });
 
-ipcMain.handle('shortcuts:end-capture', () => {
+handle('shortcuts:end-capture', () => {
   keyboardHook.setCaptureSuspended(false);
 });
 
-ipcMain.handle('transcription:check-server', () => checkTranscriptionServer(getConfig()));
-ipcMain.handle('transcription:check-readiness', () => checkTranscriptionReadiness(
+handle('transcription:check-server', () => checkTranscriptionServer(getConfig()));
+handle('transcription:check-readiness', () => checkTranscriptionReadiness(
   getConfig(), credentialVault,
   readiness => getSettingsWindow()?.webContents.send('transcription:readiness-changed', readiness),
 ));
 
-ipcMain.handle('managed-local:get-model', managedLocalSnapshot);
-ipcMain.handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
-ipcMain.handle('managed-local:delete-model', (_event, target: unknown) => {
+handle('managed-local:get-model', managedLocalSnapshot);
+handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
+handle('managed-local:delete-model', (_event, target: unknown) => {
   if (recordingSession.isBusy()) throw new Error('Finish the current recording before deleting local model files.');
   return deleteManagedLocalModel(target);
 });
 
-ipcMain.handle('config:patch-transcription', async (_event, patch: unknown) => {
+handle('config:patch-transcription', async (_event, patch: unknown) => {
   const previous = getConfig();
   const config = patchTranscriptionConfig(patch);
   await releaseUnusedTranscriber(previous, config);
   return config;
 });
 
-ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
+handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
   const previousConfig = getConfig();
   setConfig(key, value);
   const config = getConfig();
@@ -668,7 +669,7 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
   }
 });
 
-ipcMain.handle('mcp:test-server', async (_event, serverId: string) => {
+handle('mcp:test-server', async (_event, serverId: string) => {
   const config = getConfig();
   const server = config.agent.mcpServers.find((item) => item.id === serverId);
   if (!config.agent.enabled || !server?.enabled) return;
@@ -676,9 +677,9 @@ ipcMain.handle('mcp:test-server', async (_event, serverId: string) => {
   agentSidecar.testMcpServer(config, getAgentSidecarApiKey(config, credentialVault), serverId);
 });
 
-ipcMain.handle('mcp:get-status-snapshot', () => mcpStatusStore.getSnapshot());
+handle('mcp:get-status-snapshot', () => mcpStatusStore.getSnapshot());
 
-ipcMain.handle(
+handle(
   'agent:approval-decision',
   (_event, agentRunId: string, approvalId: string, decision: AgentApprovalChoice, message?: string) => {
     // The renderer is untrusted input: anything unrecognized must never approve.
@@ -703,7 +704,7 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('app:get-info', async () => {
+handle('app:get-info', async () => {
   return {
     name: app.name,
     version: app.getVersion(),
@@ -711,23 +712,23 @@ ipcMain.handle('app:get-info', async () => {
   };
 });
 
-ipcMain.handle('app:get-release-notes', () => {
+handle('app:get-release-notes', () => {
   return getBundledReleaseNotes();
 });
 
-ipcMain.handle('updater:get-status', () => {
+handle('updater:get-status', () => {
   return getUpdateStatus();
 });
 
-ipcMain.handle('updater:check', async () => {
+handle('updater:check', async () => {
   return checkForUpdates();
 });
 
-ipcMain.handle('audit:get-runs', async () => {
+handle('audit:get-runs', async () => {
   return getAuditRuns();
 });
 
-ipcMain.handle('audit:get-run-detail', async (_event, agentRunId: string) => {
+handle('audit:get-run-detail', async (_event, agentRunId: string) => {
   return getAuditRunDetail(agentRunId);
 });
 

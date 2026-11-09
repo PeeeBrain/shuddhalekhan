@@ -1,3 +1,4 @@
+import { parseGoogleServiceAccount } from '../../../shared/google-service-account';
 import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,15 +38,9 @@ export function CredentialControl({ credential, label, settingsIpc, documentImpo
     setError(null);
     if (documentImport) {
       try {
-        const document = JSON.parse(value) as Record<string, unknown>;
-        if (document.type !== 'service_account' || typeof document.client_email !== 'string'
-          || typeof document.private_key !== 'string' || !document.private_key.includes('BEGIN PRIVATE KEY')
-          || typeof document.token_uri !== 'string' || !document.token_uri.startsWith('https://')) {
-          setError('The document must contain a service-account type, client_email, private_key, and HTTPS token_uri.');
-          return;
-        }
-      } catch {
-        setError('Select a valid Google service-account JSON document.');
+        parseGoogleServiceAccount(value);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Select a valid Google service-account JSON document.');
         return;
       }
     }

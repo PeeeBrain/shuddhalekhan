@@ -1,3 +1,4 @@
+import { hasChosenMicrophone } from '../../shared/microphone-selection';
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type {
@@ -99,7 +100,7 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
           ) : null}
           <ReadOnlyRow
             label="Microphone"
-            value={config.selectedDeviceId && config.selectedDeviceId !== 'default' ? config.selectedDeviceId : 'System default'}
+            value={hasChosenMicrophone(config.selectedDeviceId) ? config.selectedDeviceId : 'System default'}
           />
         </SettingsCard>
       </SettingsPanel>

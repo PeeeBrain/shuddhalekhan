@@ -1,3 +1,4 @@
+import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '../shared/agent-provider';
 import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
 import { DEFAULT_SARVAM_CONFIG, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
@@ -322,7 +323,7 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
   if (key === 'agent') {
     const parsed = z.object({ enabled: z.boolean(), provider: agentProviderSchema,
       disabledSkills: z.array(z.string().max(64)).max(256).optional(), memoryEnabled: z.boolean().optional(),
-      customInstructions: z.string().max(4000).optional(),
+      customInstructions: z.string().max(AGENT_CUSTOM_INSTRUCTIONS_LIMIT).optional(),
     }).safeParse(value);
     if (!parsed.success) throw new Error('Provider settings contain an invalid value.');
     const previousAgent = store.get('agent');

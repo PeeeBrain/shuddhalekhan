@@ -1,3 +1,4 @@
+import { subscribeAudioLevel } from './audio-level';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic, Bot } from 'lucide-react';
 import type { RecordingIntent } from '../types/ipc';
@@ -40,13 +41,13 @@ interface RecordingPopupProps {
   intent: RecordingIntent;
   /** Main's timestamp for the session's audio-ready; null while the mic is still opening. */
   captureStartedAt: number | null;
+  remainingSeconds?: number | null;
 }
 
 /** Mounted once per recording session (keyed by the shell); all timing comes from the runtime snapshot. */
-export function RecordingPopup({ intent: mode, captureStartedAt }: RecordingPopupProps) {
+export function RecordingPopup({ intent: mode, captureStartedAt, remainingSeconds = null }: RecordingPopupProps) {
   const ready = captureStartedAt !== null;
   const [now, setNow] = useState(Date.now);
-  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
@@ -65,15 +66,10 @@ export function RecordingPopup({ intent: mode, captureStartedAt }: RecordingPopu
   }, []);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.subscribe('audio:level-changed', (nextLevel) => {
+    const unsubscribe = subscribeAudioLevel( (nextLevel) => {
       targetLevelRef.current = nextLevel;
       if (!isWaveformSettled(nextLevel, levelRef.current)) wakeRef.current?.();
     });
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = window.electronAPI.subscribe('recording:duration-warning', setRemainingSeconds);
     return unsubscribe;
   }, []);
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { runAgent } from '../runtime';
 import type { AgentRuntimeCallbacks } from '../runtime';
 
@@ -6,6 +6,8 @@ const streamTextMock = mock();
 const isStepCountMock = mock((n: number) => ({ stepCount: n }));
 const createMCPClientMock = mock();
 const closeMock = mock(() => Promise.resolve());
+const actualAi = { ...await import('ai') };
+const actualMcp = { ...await import('@ai-sdk/mcp') };
 
 mock.module('ai', () => ({
   streamText: streamTextMock,
@@ -16,6 +18,10 @@ mock.module('@ai-sdk/mcp', () => ({
   createMCPClient: createMCPClientMock,
 }));
 
+afterAll(() => {
+  mock.module('ai', () => actualAi);
+  mock.module('@ai-sdk/mcp', () => actualMcp);
+});
 
 const baseConfig = {
   whisperUrl: 'http://localhost:8080/inference',

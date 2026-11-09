@@ -1,3 +1,4 @@
+import { subscribeAudioLevel } from '../audio-level';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { RecordingOptions } from '../audio-capture';
 
@@ -621,6 +622,8 @@ describe('warm audio stream', () => {
     const mod = await importFresh();
 
     try {
+      const levels: number[] = [];
+      const offLevel = subscribeAudioLevel((level) => levels.push(level));
       await mod.startRecording(recorder().options);
       expect(intervalCallbacks).toHaveLength(1);
 
@@ -628,14 +631,9 @@ describe('warm audio stream', () => {
       intervalCallbacks.forEach((callback) => callback());
 
       const boundary = await mod.stopRecording();
-      const telemetryCalls = audio.send.mock.calls.filter(([channel]: [string, ...unknown[]]) =>
-        channel === 'audio-level-changed' || channel === 'audio-duration-changed'
-      );
-
-      expect(telemetryCalls).toEqual([
-        ['audio-level-changed', 0],
-        ['audio-level-changed', expect.closeTo(1)],
-      ]);
+      offLevel();
+      expect(levels).toEqual([0, expect.closeTo(1)]);
+      expect(audio.send).not.toHaveBeenCalled();
       expect(boundary).toEqual({ chunkCount: 4, sampleCount: 12 });
       expect(clearIntervalSpy).toHaveBeenCalled();
     } finally {

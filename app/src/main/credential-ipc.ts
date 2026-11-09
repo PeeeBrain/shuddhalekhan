@@ -3,9 +3,10 @@ import { CREDENTIAL_KINDS } from '../types/ipc';
 import { z } from 'zod';
 import type { CredentialVault } from './credential-vault';
 import { parseGoogleServiceAccount } from './google-cloud-speech';
+import type { handle } from './typed-ipc';
 
 export function registerCredentialIpcHandlers(
-  ipcMain: { handle(channel: string, listener: (...args: unknown[]) => unknown): void },
+  ipcMain: { handle: typeof handle },
   vault: Pick<CredentialVault, 'status' | 'save' | 'remove'>,
   onChanged?: (credential: CredentialKind) => void,
 ): void {

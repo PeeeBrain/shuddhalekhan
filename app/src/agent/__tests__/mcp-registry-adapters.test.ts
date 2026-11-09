@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
 
 const createMCPClient = mock();
 const writeJsonLine = mock();
@@ -19,7 +19,9 @@ class FakeOAuthProvider {
   }
 }
 
-mock.module('../protocol', () => ({ writeJsonLine, logSidecar }));
+const actualProtocol = { ...await import('../protocol') };
+mock.module('../protocol', () => ({ ...actualProtocol, writeJsonLine, logSidecar }));
+afterAll(() => mock.module('../protocol', () => actualProtocol));
 import {
   AisdkMcpClientFactory,
   type McpOAuthProviderResolver,

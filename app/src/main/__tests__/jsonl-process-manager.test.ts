@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'events';
 
 const vi = { fn: mock, mock: mock.module };
@@ -24,8 +24,16 @@ class MockInterface extends EventEmitter {
 const stdoutLines = new MockInterface();
 const createInterface = vi.fn(() => stdoutLines);
 
+const actualChildProcess = { ...await import('child_process') };
+const actualReadline = { ...await import('readline') };
 mock.module('child_process', () => ({ spawn }));
 mock.module('readline', () => ({ createInterface }));
+
+// Bun's mock.restore() does not undo mock.module replacements.
+afterAll(() => {
+  mock.module('child_process', () => actualChildProcess);
+  mock.module('readline', () => actualReadline);
+});
 
 describe('JsonlProcessManager', () => {
   beforeEach(() => {

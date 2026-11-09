@@ -1,37 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   getNextListboxIndex,
-  isListboxActivateKey,
-  isListboxNavKey,
 } from '../audit-history-nav';
-
-describe('isListboxNavKey', () => {
-  it('recognizes the four arrow/home/end keys', () => {
-    expect(isListboxNavKey('ArrowDown')).toBe(true);
-    expect(isListboxNavKey('ArrowUp')).toBe(true);
-    expect(isListboxNavKey('Home')).toBe(true);
-    expect(isListboxNavKey('End')).toBe(true);
-  });
-
-  it('rejects non-navigation keys', () => {
-    expect(isListboxNavKey('Enter')).toBe(false);
-    expect(isListboxNavKey(' ')).toBe(false);
-    expect(isListboxNavKey('a')).toBe(false);
-  });
-});
-
-describe('isListboxActivateKey', () => {
-  it('recognizes Enter and Space', () => {
-    expect(isListboxActivateKey('Enter')).toBe(true);
-    expect(isListboxActivateKey(' ')).toBe(true);
-  });
-
-  it('rejects navigation and letter keys', () => {
-    expect(isListboxActivateKey('ArrowDown')).toBe(false);
-    expect(isListboxActivateKey('Home')).toBe(false);
-    expect(isListboxActivateKey('a')).toBe(false);
-  });
-});
 
 describe('getNextListboxIndex', () => {
   it('moves down by one and clamps at the last item', () => {

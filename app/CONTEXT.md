@@ -262,7 +262,7 @@ Transcription Settings and main share a provider/model capability resolver. `con
 
 ### Audio Stream
 
-The runtime renderer acquires the selected microphone for each recording and stops every track at the terminal path. It observes the `AudioContext` sample rate, downmixes input to mono, and converts it to ordered 320-sample PCM16 chunks at 16 kHz. The same converted samples produce the retained final WAV. The renderer and `AudioContext` stay warm, but the microphone does not.
+The runtime renderer acquires the selected microphone for each recording and stops every track at the terminal path. It observes the `AudioContext` sample rate, downmixes input to mono, and converts it to ordered 320-sample PCM16 chunks at 16 kHz. The same converted samples produce the retained final WAV. The renderer and `AudioContext` stay warm, but the microphone does not. Audio levels reach the pill through a renderer-local subscription without IPC. Duration warnings travel in the main-owned recording snapshot.
 
 ### Whisper Client
 HTTP client that sends recorded WAV audio to a configurable Whisper API endpoint (e.g., a local `whisper.cpp` server) and returns transcribed text.

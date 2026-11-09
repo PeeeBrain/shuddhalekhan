@@ -42,7 +42,7 @@ export interface RecordingResult {
 type RuntimeShellBackend = Pick<import('./runtime-shell').RuntimeShell,
   'prepare' | 'beginCapture' | 'endCapture' | 'cancelCapture' | 'setSelectedDevice' |
   'destroy' | 'markReady' | 'getWebContents' | 'show' | 'hide' | 'showProcessing' |
-  'finish' | 'updateDurationWarning' | 'updateAudioLevel' | 'showStreamingPreview' |
+  'finish' | 'updateDurationWarning' | 'showStreamingPreview' |
   'markCaptureReady' | 'acceptsAudioEvent' | 'consumeAudioEvent' | 'setRecordingHandlers'>;
 
 type KeyboardHook = Pick<import('./native/keyboard').KeyboardHook, 'start' | 'stop' | 'recordingEndedExternally'>;
@@ -372,7 +372,6 @@ export class RecordingSession {
     ipcMain.on('runtime:audio-ready', this.handleRuntimeAudioReady);
     ipcMain.on('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.on('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
-    ipcMain.on('audio-level-changed', this.handleAudioLevelChanged);
 
     this.startKeyboardHook();
   }
@@ -383,7 +382,6 @@ export class RecordingSession {
     ipcMain.off('runtime:audio-ready', this.handleRuntimeAudioReady);
     ipcMain.off('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.off('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
-    ipcMain.off('audio-level-changed', this.handleAudioLevelChanged);
 
     void this.cancel();
     this.stopKeyboardHook();
@@ -694,8 +692,5 @@ export class RecordingSession {
     if (this.activeRun === run) this.activeRun = null;
   }
 
-  private handleAudioLevelChanged = (_event: unknown, level: number): void => {
-    this.runtimeShell.updateAudioLevel(level);
-  };
 }
 

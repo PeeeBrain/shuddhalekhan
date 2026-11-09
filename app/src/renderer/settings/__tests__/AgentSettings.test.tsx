@@ -399,7 +399,7 @@ describe('AgentSettings ChatGPT plan', () => {
   });
 
   it('shows why sign-in failed and lets the user try again', async () => {
-    await renderAgent({ provider: CHATGPT, signIn: () => Promise.reject(new Error('You declined access.')) });
+    await renderAgent({ provider: CHATGPT, signIn: () => Promise.reject(new Error("Error invoking remote method 'chatgpt:sign-in': Error: You declined access.")) });
 
     await click(await screen.findByRole('button', { name: 'Continue with ChatGPT' }));
 
