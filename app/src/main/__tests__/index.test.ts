@@ -729,6 +729,13 @@ describe('main process IPC orchestration', () => {
       expect(remoteKeyboard.paste).toHaveBeenCalledTimes(1);
       expect(simulatePaste).not.toHaveBeenCalled();
       expect(runtimeShellShowFailure).not.toHaveBeenCalled();
+
+      recordingSessionIsBusy.mockReturnValue(true);
+      runtimeShellFinish.mockClear();
+      remoteKeyboard.paste.mockClear();
+      await trayHandlers.onPasteLastTranscript?.();
+      expect(remoteKeyboard.paste).toHaveBeenCalledTimes(1);
+      expect(runtimeShellFinish).not.toHaveBeenCalled();
     });
 
     it('keeps Wayland blocked and the setting off when keyboard control is declined', async () => {
@@ -1310,6 +1317,19 @@ describe('main process IPC orchestration', () => {
 
     expect(electronMock.clipboard.writeText).toHaveBeenLastCalledWith('transcribed text');
     expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('pastes the last transcript from the tray without clearing an active recording', async () => {
+    await sessionOptions.onResult({ text: 'previous words', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
+    recordingSessionIsBusy.mockReturnValue(true);
+    runtimeShellFinish.mockClear();
+    simulatePaste.mockClear();
+
+    await trayHandlers.onPasteLastTranscript?.();
+
+    expect(simulatePaste).toHaveBeenCalledTimes(1);
+    expect(runtimeShellFinish).not.toHaveBeenCalled();
+    expect(recordingSessionCancel).not.toHaveBeenCalled();
   });
 
   it('notifies when tray paste-last-transcript fails again', async () => {

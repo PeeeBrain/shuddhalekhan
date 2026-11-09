@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { ipcMain } from 'electron';
+import { ipcMain, type IpcMainEvent } from 'electron';
 import type {
   DictationConfig,
   DictationTargetSnapshot,
@@ -370,6 +370,7 @@ export class RecordingSession {
 
     ipcMain.on('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.on('runtime:audio-ready', this.handleRuntimeAudioReady);
+    ipcMain.on('runtime:audio-failed', this.handleRendererAudioFailed);
     ipcMain.on('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.on('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
 
@@ -380,6 +381,7 @@ export class RecordingSession {
     this.clearDurationTimers();
     ipcMain.off('audio-stream-ready', this.handleAudioStreamReady);
     ipcMain.off('runtime:audio-ready', this.handleRuntimeAudioReady);
+    ipcMain.off('runtime:audio-failed', this.handleRendererAudioFailed);
     ipcMain.off('runtime:audio-chunk', this.handleRuntimeAudioChunk);
     ipcMain.off('runtime:audio-stream-disabled', this.handleRuntimeAudioStreamDisabled);
 
@@ -667,6 +669,16 @@ export class RecordingSession {
     } catch {
       // Defensively catch in async ipcMain.on listener
     }
+  };
+
+  private handleRendererAudioFailed = (
+    event: IpcMainEvent,
+    generation: number,
+    recordingSessionId: string,
+    sequence: number,
+  ): void => {
+    if (event.sender !== this.runtimeShell.getWebContents()) return;
+    this.handleRuntimeAudioFailed(event, generation, recordingSessionId, sequence);
   };
 
   private handleRuntimeAudioFailed = (

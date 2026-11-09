@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { DEFAULT_SHORTCUTS } from '../../shared/shortcut-bindings';
 import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
@@ -795,39 +796,36 @@ describe('RecordingSession', () => {
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 
-  it('terminates the correlated run when runtime microphone capture fails', async () => {
-    const onError = vi.fn();
-    const runtimeShell = {
-      prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
-      setSelectedDevice: vi.fn(), show: vi.fn(), hide: vi.fn(), updateDurationWarning: vi.fn(),
-      updateAudioLevel: vi.fn(), showProcessing: vi.fn(), showFailure: vi.fn(), finish: vi.fn(),
-      destroy: vi.fn(), markReady: vi.fn(), markCrashed: vi.fn(), getWebContents: vi.fn(() => null),
-      consumeAudioEvent: vi.fn(() => true),
-    };
-    session = createSession({
-      runtimeShell,
-      transcriber: createTranscriber(({ audio }) => transcribe(audio)),
-      keyboardHook: { start: keyboardStart, stop: keyboardStop },
-      captureTarget,
-      isAgentModeEnabled,
-      onError,
+  for (const intent of ['dictation', 'agent'] as const) {
+    it(`releases a stopping ${intent} run after renderer microphone failure over IPC`, async () => {
+      const ipc = new EventEmitter();
+      electronMock.ipcMain.on.mockImplementation(ipc.on.bind(ipc));
+      electronMock.ipcMain.off.mockImplementation(ipc.off.bind(ipc));
+      electronMock.ipcMain.emit.mockImplementation(ipc.emit.bind(ipc));
+      const sender = {};
+      audioStream.getWebContents.mockReturnValue(sender);
+      audioStream.endCapture.mockReturnValue(true);
+      const onError = vi.fn();
+      session = createSession({ runtimeShell: audioStream, onError, isAgentModeEnabled: () => true });
+      try {
+        session.start();
+        session.begin(intent, 'failed-capture');
+        const command = audioStream.beginCapture.mock.calls[0]?.[0] as { recordingSessionId: string; sequence: number };
+        const ended = session.end();
+        void ended.catch(() => {});
+        electronMock.ipcMain.emit('runtime:audio-failed', { sender: {} }, 1, command.recordingSessionId, command.sequence);
+        expect(session.isBusy()).toBe(true);
+        expect(onError).not.toHaveBeenCalled();
+
+        electronMock.ipcMain.emit('runtime:audio-failed', { sender }, 1, command.recordingSessionId, command.sequence);
+
+        expect(session.isBusy()).toBe(false);
+        await expect(ended).rejects.toThrow('Microphone capture failed');
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(session.begin(intent, 'recovered')).toBe(true);
+      } finally { session.stop(); }
     });
-    session.start();
-    session.begin('dictation', 'failed-capture');
-    const command = runtimeShell.beginCapture.mock.calls[0]?.[0] as {
-      recordingSessionId: string;
-      sequence: number;
-    };
-    const failedCall = [null, audioStream.setRecordingHandlers.mock.calls.at(-1)?.[0].onAudioFailed];
-
-    failedCall[1]({}, 1, command.recordingSessionId, command.sequence);
-
-    expect(runtimeShell.consumeAudioEvent).toHaveBeenCalledWith(1, 'failed-capture', command.sequence);
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Microphone capture failed. Check the selected input device and try again.',
-    }));
-    expect(session.begin('dictation', 'recovered')).toBe(true);
-  });
+  }
 
   it('fails a capture whose renderer never becomes ready, releases the shortcut, and accepts a new recording', async () => {
     const timers: Array<() => void> = [];

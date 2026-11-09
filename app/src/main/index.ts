@@ -351,7 +351,7 @@ async function deliverTranscript(
   try {
     if (target?.kind === 'kde-wayland') {
       if (!waylandDelivery) return blocked('Best-effort insertion is no longer set up. Nothing was pasted.');
-      runtimeShell.finish();
+      if (source !== 'tray') runtimeShell.finish();
       return { result: await waylandDelivery.deliver(text, target, signal), actions: copyOnly };
     }
     if (!await keyboardHook.waitForKeysReleased(signal)) {
@@ -360,7 +360,7 @@ async function deliverTranscript(
       return { result, actions: getRecoveryActions(result) };
     }
     if (signal.aborted) return null;
-    runtimeShell.finish();
+    if (source !== 'tray') runtimeShell.finish();
     const result = await injectIntoFocusedApp(text, target, signal);
     return { result, actions: getRecoveryActions(result) };
   } finally {
