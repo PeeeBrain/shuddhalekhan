@@ -1,32 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import {
   checkServerReachability,
-  getRecognitionCompatibilityErrors,
   getSafeTranscriptionFailureMessage,
   TranscriptionFailure,
   validateLocalWhisperSettings,
 } from '../transcription';
-
-describe('transcription provider capabilities', () => {
-  it('reports recognition controls unsupported by a provider', () => {
-    expect(getRecognitionCompatibilityErrors({
-      language: 'auto',
-      task: 'translate',
-      dictionary: ['Shuddhalekhan'],
-      removeFillerWords: true,
-    }, {
-      translation: false,
-      automaticLanguageDetection: false,
-      dictionaryHints: false,
-      authentication: 'required',
-      maxDurationSeconds: 55,
-    })).toEqual([
-      'Translation is not supported by this provider.',
-      'Automatic language detection is not supported by this provider.',
-      'Dictionary hints are not supported by this provider.',
-    ]);
-  });
-});
 
 describe('sanitized failures', () => {
   it('keeps normalized guidance and redacts unknown error material', () => {

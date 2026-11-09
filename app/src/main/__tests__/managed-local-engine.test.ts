@@ -41,7 +41,7 @@ function rig({ failLoad = false, crashDecode = false, startup }: { failLoad?: bo
     },
     createWorker(runtime, numThreads) {
       return createManagedLocalTranscriber({ getModelPath: async () => runtime.modelPath,
-        getNumThreads: () => numThreads, startProcess() {
+        numThreads, startProcess() {
           const child = new Process(runtime, numThreads, runtime.backend === 'cuda' && failLoad, runtime.backend === 'cuda' && crashDecode);
           processes.push(child);
           return child;
@@ -61,7 +61,6 @@ describe('Managed Local recording decode', () => {
       const recording = engine.forRecording();
       settings.selection.model = 'granite';
       settings.numThreads = 2;
-      expect(recording.capabilities.dictionaryHints).toBe(true);
       expect(await recording.transcribe(request)).toBe('parakeet:cpu');
       expect(await engine.forRecording().transcribe(request)).toBe('granite:cpu');
       expect(await engine.forRecording().transcribe(request)).toBe('granite:cpu');

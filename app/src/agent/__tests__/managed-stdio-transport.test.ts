@@ -3,6 +3,22 @@ import { join } from 'path';
 import { ManagedStdioMcpTransport } from '../managed-stdio-transport';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'stdio-server-fixture.ts');
+const closedTransports = new WeakSet<ManagedStdioMcpTransport>();
+
+async function startTransport(transport: ManagedStdioMcpTransport): Promise<number> {
+  let pid: number | undefined;
+  const onmessage = transport.onmessage;
+  const onclose = transport.onclose;
+  transport.onmessage = message => {
+    if ('result' in message && message.result && typeof message.result === 'object'
+      && 'pid' in message.result && typeof message.result.pid === 'number') pid = message.result.pid;
+    onmessage?.(message);
+  };
+  transport.onclose = () => { closedTransports.add(transport); onclose?.(); };
+  await transport.start();
+  await waitFor(() => pid !== undefined);
+  return pid!;
+}
 
 function launchArgs(extra: string[] = []): { command: string; args: string[]; env: Record<string, string> } {
   return {
@@ -39,8 +55,8 @@ describe('ManagedStdioMcpTransport', () => {
     const messages: unknown[] = [];
     transport.onmessage = (message) => messages.push(message);
 
-    await transport.start();
-    expect(transport.getPid()).toBeTypeOf('number');
+    const pid = await startTransport(transport);
+    expect(isPidAlive(pid)).toBe(true);
 
     await transport.send({ jsonrpc: '2.0', id: 1, method: 'getEnv' });
     await transport.send({ jsonrpc: '2.0', id: 2, method: 'ping' });
@@ -59,24 +75,6 @@ describe('ManagedStdioMcpTransport', () => {
     expect(echoReply.result?.echoed).toBe('ping');
   });
 
-  it('bounds and redacts server stderr containing secret values', async () => {
-    const transport = track(
-      new ManagedStdioMcpTransport({
-        launch: launchArgs(['--flood-stderr']),
-        stderrMaxBytes: 4096,
-        redactValues: ['s3cret-value'],
-      })
-    );
-
-    await transport.start();
-    await new Promise((resolve) => setTimeout(resolve, 400));
-
-    const stderr = transport.getRecentStderr();
-    expect(stderr.length).toBeLessThanOrEqual(4096);
-    expect(stderr).not.toContain('s3cret-value');
-    expect(stderr).toContain('[redacted]');
-  });
-
   it('closes gracefully through stdin EOF and fires onclose once', async () => {
     const transport = track(new ManagedStdioMcpTransport({ launch: launchArgs() }));
     let closeCount = 0;
@@ -84,8 +82,7 @@ describe('ManagedStdioMcpTransport', () => {
       closeCount += 1;
     };
 
-    await transport.start();
-    const pid = transport.getPid();
+    const pid = await startTransport(transport);
     await transport.close();
 
     expect(closeCount).toBe(1);
@@ -100,8 +97,7 @@ describe('ManagedStdioMcpTransport', () => {
       })
     );
 
-    await transport.start();
-    const pid = transport.getPid();
+    const pid = await startTransport(transport);
 
     const startedAt = Date.now();
     await transport.close();
@@ -119,11 +115,10 @@ describe('ManagedStdioMcpTransport', () => {
       closeCount += 1;
     };
 
-    await transport.start();
-    const pid = transport.getPid()!;
+    const pid = await startTransport(transport);
     process.kill(pid, 'SIGKILL');
     await waitFor(() => closeCount === 1);
-    expect(transport.getPid()).toBeNull();
+    expect(closedTransports.has(transport)).toBe(true);
 
     const startedAt = Date.now();
     await transport.close();
@@ -138,10 +133,9 @@ describe('ManagedStdioMcpTransport', () => {
     const errors: unknown[] = [];
     transport.onerror = (error) => errors.push(error);
 
-    await transport.start();
-    const pid = transport.getPid()!;
+    const pid = await startTransport(transport);
     process.kill(pid, 'SIGKILL');
-    await waitFor(() => transport.getPid() === null);
+    await waitFor(() => closedTransports.has(transport));
 
     await transport.send({ jsonrpc: '2.0', id: 9, method: 'ping' });
     await transport.close();
@@ -152,16 +146,15 @@ describe('ManagedStdioMcpTransport', () => {
   it('settles a backpressured send when the server dies mid-write', async () => {
     const transport = track(new ManagedStdioMcpTransport({ launch: launchArgs() }));
 
-    await transport.start();
+    const pid = await startTransport(transport);
     // A payload far past the stdin high-water mark parks send in the drain wait.
     const backpressured = transport.send({
       jsonrpc: '2.0',
       method: 'flood',
       params: { blob: 'x'.repeat(1024 * 1024) },
     });
-    const pid = transport.getPid()!;
     process.kill(pid, 'SIGKILL');
-    await waitFor(() => transport.getPid() === null);
+    await waitFor(() => closedTransports.has(transport));
 
     await Promise.race([
       backpressured,

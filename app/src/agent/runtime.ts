@@ -11,11 +11,6 @@ import { learnAgentMemory } from './memory';
 
 export interface AgentRuntimeCallbacks {
   onStatus(status: string): void;
-  onToolStarted?(tool: {
-    serverId: string;
-    toolName: string;
-    modelToolName: string;
-  }): void;
   onResponseDelta(textDelta: string, fullText: string): void;
   onCompleted(response: string, toolSummary: string[]): void;
   onFailed(error: string): void;
@@ -211,8 +206,6 @@ export async function runAgent(
     const client = createAgentProvider(config.agent.provider, storedApiKey, agentRunId);
     const { model, providerOptions, prepareStep } = client;
     apiKey = client.apiKey;
-
-    callbacks.onStatus("Thinking...");
 
     const instructions: SystemModelMessage = { role: 'system', content: buildSystemPrompt(config.agent.customInstructions), providerOptions: client.cacheMessageOptions };
     const messages: ModelMessage[] = [command];

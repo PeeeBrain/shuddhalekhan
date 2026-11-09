@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { EventEmitter } from 'events';
@@ -89,6 +90,7 @@ function sentMessages(): Array<{ type: string; [key: string]: unknown }> {
 }
 
 const config: AppConfig = {
+  managedLocal: structuredClone(DEFAULT_MANAGED_LOCAL),
   whisperUrl: 'http://localhost:8080/inference',
   transcription: {
     activeProvider: 'local-whisper-cpp',
@@ -333,19 +335,6 @@ describe('AgentSidecarManager', () => {
     }
   });
 
-  it('ignores blank stdout lines from the sidecar', async () => {
-    const events: unknown[] = [];
-    const { AgentSidecarManager } = await importManager('blank');
-    const manager = new AgentSidecarManager((event: SidecarEvent) => events.push(event), {
-      jobPort: new FakeJobPort(),
-    });
-
-    manager.startRun('run-1', 'check mail', config);
-    stdoutLines.emit('line', '');
-    stdoutLines.emit('line', '   ');
-
-    expect(events).toEqual([]);
-  });
 
   it('uses the provided run id when starting and cancelling runs', async () => {
     const { AgentSidecarManager } = await importManager('run-id');

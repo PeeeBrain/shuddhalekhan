@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto';
 import { dirname, join } from 'path';
 import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
 import { failedProviderTest } from '../shared/agent-provider';
+import { providerTestCancelled, providerTestTimedOut } from '../shared/agent-provider-test';
+import { PROVIDER_TEST_RESPONSE_TIMEOUT_MS, SIDECAR_SHUTDOWN_TIMEOUT_MS } from '../shared/agent-timeouts';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
 import { getPersistentStoreDirectory } from './store-path';
@@ -44,7 +46,6 @@ export type SidecarManagerDeps = {
   onGenerationExit?: () => void;
 };
 
-const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5000;
 
 export class AgentSidecarManager {
   private providerTest: { requestId: string; resolve: (result: AgentProviderTestResult) => void; cancelTimeout: () => void } | null = null;
@@ -62,7 +63,7 @@ export class AgentSidecarManager {
     deps: SidecarManagerDeps = {},
   ) {
     this.jobPort = deps.jobPort ?? createJobObjectPort();
-    this.shutdownTimeoutMs = deps.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
+    this.shutdownTimeoutMs = deps.shutdownTimeoutMs ?? SIDECAR_SHUTDOWN_TIMEOUT_MS;
     this.scheduleTimeout =
       deps.scheduleTimeout ??
       ((fn, ms) => {
@@ -163,8 +164,8 @@ export class AgentSidecarManager {
     return new Promise(resolve => {
       const cancelTimeout = this.scheduleTimeout(() => {
         this.cancelProviderTestRequest(requestId);
-        this.finishProviderTest(failedProviderTest({ kind: 'timeout', message: 'The model test timed out.', action: 'Check the model server and retry.' }));
-      }, 90_000);
+        this.finishProviderTest(failedProviderTest(providerTestTimedOut));
+      }, PROVIDER_TEST_RESPONSE_TIMEOUT_MS);
       this.providerTest = { requestId, resolve, cancelTimeout };
       this.sendOrQueue({ type: 'provider:test', requestId, provider, ...(apiKey ? { apiKey } : {}) });
     });
@@ -173,7 +174,7 @@ export class AgentSidecarManager {
   cancelProviderTest(): void {
     if (!this.providerTest) return;
     this.cancelProviderTestRequest(this.providerTest.requestId);
-    this.finishProviderTest(failedProviderTest({ kind: 'cancelled', message: 'The model test was cancelled.', action: 'Run Test model when ready.' }));
+    this.finishProviderTest(failedProviderTest(providerTestCancelled));
   }
 
   private cancelProviderTestRequest(requestId: string): void {
@@ -194,12 +195,7 @@ export class AgentSidecarManager {
 
   /** Point-update the sidecar config, then reconnect only the named MCP server. */
   testMcpServer(config: AppConfig, agentApiKey: string | undefined, serverId: string): void {
-    this.ensureGeneration();
-    this.sendOrQueue({
-      type: 'config:update',
-      config,
-      ...(agentApiKey ? { agentApiKey } : {}),
-    });
+    this.start(config, agentApiKey);
     this.sendOrQueue({
       type: 'mcp:test-server',
       serverId,

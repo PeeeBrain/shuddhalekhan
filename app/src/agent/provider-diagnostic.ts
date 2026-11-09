@@ -1,7 +1,8 @@
 import { chatGptDiagnosticFromText } from '@shuddhalekhan/shared/chatgpt';
 import { z } from 'zod';
-import type { AgentProviderDiagnostic } from '../types/ipc';
+import { redactAgentSecrets } from '../shared/agent-secrets';
 import { AgentProviderConfigurationError } from './provider';
+import type { AgentProviderDiagnostic } from '../types/ipc';
 
 const errorSchema = z.object({
   message: z.string().optional(), statusCode: z.number().optional(), status: z.number().optional(),
@@ -12,9 +13,7 @@ const errorSchema = z.object({
 
 export function redactProviderText(text: string, apiKey?: string): string {
   const redacted = apiKey ? text.split(apiKey).join('[redacted]') : text;
-  return redacted.replace(/\bsk-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+/g, '[redacted]')
-    .replace(/("?(?:api[-_]?key|authorization|(?:access|refresh|id)[-_]?token|password|secret)"?\s*[:=]\s*")([^"\r\n]*)(")/gi, '$1[redacted]$3')
-    .slice(0, 4000);
+  return redactAgentSecrets(redacted).slice(0, 4000);
 }
 
 export function providerDiagnostic(error: unknown, apiKey?: string): AgentProviderDiagnostic {

@@ -81,8 +81,8 @@ export function registerAgentContextIpcHandlers(directory: string, deps: {
     createRunContext(): AgentRunContext {
       if (!deps.getConfig().agent.memoryEnabled) return { skillsDirectory: skills.directory, memory: null };
       const snapshot = memory.snapshot();
-      if (snapshot.error && deps.getConfig().agent.memoryEnabled) publish();
-      return { skillsDirectory: skills.directory, memory: deps.getConfig().agent.memoryEnabled && !snapshot.error
+      if (snapshot.error) publish();
+      return { skillsDirectory: skills.directory, memory: !snapshot.error
         ? { revision: snapshot.revision, markdown: snapshot.markdown } : null };
     },
     handleMemoryEvent(event: MemoryEvent): void {

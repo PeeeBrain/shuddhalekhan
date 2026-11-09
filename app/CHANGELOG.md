@@ -7,6 +7,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Desktop Sarvam verbatim transcription now preserves filler words when filler removal is enabled.
 - Tray paste now reports the insertion policy on unsupported Wayland sessions. Linux sessions started with `startx` use X11 shortcuts when `DISPLAY` is set, matching text delivery.
 
 ### Agent

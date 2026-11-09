@@ -9,7 +9,6 @@ import type {
   OAuthRedirectServerFactory,
   SidecarMessageTransporter,
 } from '../mcp-registry';
-import type { AgentRuntimeCallbacks } from '../runtime';
 
 const baseConfig = {
   whisperUrl: 'http://localhost:8080/inference',
@@ -148,7 +147,7 @@ describe('McpRegistry', () => {
     await registry.updateConfig(baseConfig as never);
     await registry.settle(1000);
 
-    const snapshot = registry.createRunSnapshot(approve);
+    const snapshot = registry.createRunSnapshot();
     expect(Object.keys(snapshot.tools)).toEqual(['srv1__search']);
 
     await snapshot.close();
@@ -181,7 +180,7 @@ describe('McpRegistry', () => {
     await registry.updateConfig(withServer({ toolPolicies: { 'srv1:send': 'alwaysAllow' } }) as never);
     await registry.settle(1000);
 
-    const snapshot = registry.createRunSnapshot(approve);
+    const snapshot = registry.createRunSnapshot();
     expect(snapshot.tools.srv1__send.needsApproval).toBeUndefined();
     expect(connection.closed).toBe(false);
 
@@ -237,7 +236,7 @@ describe('McpRegistry', () => {
 
     await registry.updateConfig(baseConfig as never);
     await registry.settle(1000);
-    const activeRun = registry.createRunSnapshot(approve);
+    const activeRun = registry.createRunSnapshot();
 
     await registry.updateConfig(withServer({
       transport: { type: 'http', url: 'http://localhost:4000/mcp', redirect: 'error' },
@@ -246,7 +245,7 @@ describe('McpRegistry', () => {
 
     expect(firstConnection.closed).toBe(false);
     expect(Object.keys(activeRun.tools)).toEqual(['srv1__oldTool']);
-    const nextRun = registry.createRunSnapshot(approve);
+    const nextRun = registry.createRunSnapshot();
     expect(Object.keys(nextRun.tools)).toEqual(['srv1__newTool']);
 
     await activeRun.close();
@@ -266,7 +265,7 @@ describe('McpRegistry', () => {
     expect(failingConnection.closed).toBe(true);
     expect(ports.oauthFactory.servers[0]?.closed).toBe(true);
     expect(ports.transporter.events).toContainEqual(['status', 'srv1', 'failed', 'Server refused connection']);
-    expect(registry.createRunSnapshot(approve).tools).toEqual({});
+    expect(registry.createRunSnapshot().tools).toEqual({});
   });
 
   it('closes a duplicate attempt instead of overwriting the registered client', async () => {
@@ -301,7 +300,7 @@ describe('McpRegistry', () => {
     expect(registeredConnection.closed).toBe(false);
     expect(ports.oauthFactory.servers.filter((server) => !server.closed)).toHaveLength(1);
 
-    const snapshot = registry.createRunSnapshot(approve);
+    const snapshot = registry.createRunSnapshot();
     expect(Object.keys(snapshot.tools)).toEqual(['srv1__search']);
     expect(snapshot.tools.srv1__search.description).toBe('registered');
 
@@ -317,7 +316,7 @@ describe('McpRegistry', () => {
 
     await registry.updateConfig(baseConfig as never);
     await registry.settle(1000);
-    const activeRun = registry.createRunSnapshot(approve);
+    const activeRun = registry.createRunSnapshot();
 
     const closing = registry.close(20);
     await closing;
@@ -388,7 +387,7 @@ describe('McpRegistry', () => {
     );
     await registry.settle(1000);
 
-    const snapshot = registry.createRunSnapshot(approve);
+    const snapshot = registry.createRunSnapshot();
     const needsApproval = snapshot.tools.srv1__search.needsApproval as () => boolean;
     expect(needsApproval()).toBe(true);
     expect(snapshot.tools).not.toHaveProperty('srv1__remove');
@@ -494,5 +493,3 @@ function withServer(serverOverrides: Record<string, unknown>) {
     },
   };
 }
-
-const approve: AgentRuntimeCallbacks['requestToolApproval'] = async () => ({ approved: true });

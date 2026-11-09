@@ -22,10 +22,6 @@ import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '.
 export type { TranscriptionProviderId } from '../types/ipc';
 
 export interface TranscriptionCapabilities {
-  translation: boolean;
-  automaticLanguageDetection: boolean;
-  dictionaryHints: boolean;
-  authentication: 'none' | 'required' | 'optional';
   maxDurationSeconds: number | null;
 }
 
@@ -77,23 +73,6 @@ export type TranscriptionFailureCategory =
   | 'malformed-response'
   | 'unknown';
 
-export function getRecognitionCompatibilityErrors(
-  settings: RecognitionSettings,
-  capabilities: TranscriptionCapabilities,
-): string[] {
-  const errors: string[] = [];
-  if (settings.task === 'translate' && !capabilities.translation) {
-    errors.push('Translation is not supported by this provider.');
-  }
-  if (settings.language === 'auto' && !capabilities.automaticLanguageDetection) {
-    errors.push('Automatic language detection is not supported by this provider.');
-  }
-  if (settings.dictionary.length > 0 && !capabilities.dictionaryHints) {
-    errors.push('Dictionary hints are not supported by this provider.');
-  }
-  return errors;
-}
-
 export function validateOpenAiModel(model: string): string[] {
   const trimmed = model.trim();
   if (!trimmed) return ['Enter a model name.'];
@@ -107,20 +86,6 @@ export function buildOpenAiEndpoint(baseUrl: string, task?: 'transcribe' | 'tran
   const suffix = task === 'translate' ? '/audio/translations' : '/audio/transcriptions';
   if (normalized.endsWith(suffix)) return normalized;
   return `${normalized}${suffix}`;
-}
-
-export function validateOpenAiSettings(settings: { baseUrl: string; model: string }): string[] {
-  const errors: string[] = [];
-  try {
-    const url = new URL(settings.baseUrl);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      errors.push('Base URL must use HTTP or HTTPS.');
-    }
-  } catch {
-    errors.push('Enter a valid base URL.');
-  }
-  errors.push(...validateOpenAiModel(settings.model));
-  return errors;
 }
 
 export function validateAzureSpeechSettings(settings: { endpoint: string; region: string }): string[] {
@@ -158,7 +123,7 @@ export function validateGoogleCloudSpeechSettings(settings: { project: string; l
 }
 
 export function validateNvidiaSpeechNimSettings(settings: { endpoint: string; model: string; auth: string; headerName?: string }): string[] {
-  return validateCustomOpenAiSettings(settings).map((error) => error.replace('Custom', 'NVIDIA Speech NIM'));
+  return validateCustomOpenAiSettings(settings);
 }
 
 export function validateCustomOpenAiSettings(settings: { endpoint: string; model: string; auth: string; headerName?: string }): string[] {
@@ -300,12 +265,8 @@ export function validateProviderReadiness(
 
   if (providerId === 'whisper-live-kit') {
     const provider = config.transcription.providers.whisperLiveKit;
-    if (!provider) {
-      errors.push('WhisperLiveKit provider settings are not configured.');
-    } else {
-      errors.push(...validateWhisperLiveKitSettings(provider));
-    }
-    if (provider?.auth === 'bearer' && !vault.read('whisper-live-kit-bearer')) {
+    errors.push(...validateWhisperLiveKitSettings(provider));
+    if (provider.auth === 'bearer' && !vault.read('whisper-live-kit-bearer')) {
       errors.push('WhisperLiveKit bearer token is not configured.');
     }
     if (config.task === 'translate') {
@@ -394,4 +355,113 @@ export class TranscriptionFailure extends Error {
     super(message);
     this.name = 'TranscriptionFailure';
   }
+}
+
+export async function transcribeOpenAiLike(
+  audioData: Uint8Array<ArrayBuffer>,
+  recognition: RecognitionSettings,
+  endpoint: string,
+  model: string | undefined,
+  auth: 'none' | 'bearer' | 'header',
+  apiKey: string | null | undefined,
+  headerName: string | undefined,
+  contract: 'openai' | 'nvidia-nim' | 'whisper-cpp' = 'openai',
+  signal?: AbortSignal,
+): Promise<string> {
+  const { removeFillerWords, language, task, dictionary } = recognition;
+
+  const effectiveEndpoint = contract !== 'whisper-cpp' && task === 'translate' && !endpoint.endsWith('/audio/translations')
+    ? endpoint.replace(/\/audio\/transcriptions$/, '/audio/translations')
+    : endpoint;
+
+  const form = new FormData();
+  const blob = new Blob([audioData], { type: 'audio/wav' });
+  form.append('file', blob, 'audio.wav');
+
+  if (model) {
+    form.append('model', model);
+  }
+
+  form.append('response_format', 'json');
+
+  if (contract === 'whisper-cpp') {
+    form.append('temperature', '0.2');
+    form.append('translate', task === 'translate' ? 'true' : 'false');
+    if (language && language !== 'auto') form.append('language', language);
+  } else if (task === 'translate') {
+    if (contract === 'nvidia-nim') {
+      if (language && language !== 'auto') form.append('language', language);
+      form.append('target_language', 'en-US');
+    } else {
+      form.append('language', 'en');
+    }
+  } else if (language && language !== 'auto') {
+    form.append('language', language);
+  }
+
+  let promptText = '';
+  if (dictionary && dictionary.length > 0) {
+    promptText += `Glossary: ${dictionary.join(', ')}. `;
+  }
+  if (removeFillerWords) {
+    promptText += 'The following is a clear, formal transcript without any stutters, repetitions, or filler words like um and ah.';
+  }
+  if (promptText) {
+    form.append('prompt', promptText.trim());
+  }
+
+  const headers: Record<string, string> = {};
+  if (auth === 'bearer' && apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  } else if (auth === 'header' && apiKey && headerName) {
+    headers[headerName] = apiKey;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(effectiveEndpoint, {
+      method: 'POST',
+      headers,
+      body: form as unknown as BodyInit,
+      signal,
+    });
+  } catch {
+    throw new TranscriptionFailure(
+      'network',
+      'Could not reach the transcription provider. Check the endpoint and network connection.',
+    );
+  }
+
+  if (!response.ok) {
+    throw failureForHttpStatus(response.status);
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new TranscriptionFailure(
+      'malformed-response',
+      'The transcription provider returned an invalid response.',
+    );
+  }
+
+  const rawText = typeof data === 'object' && data !== null && 'text' in data
+    ? (data as { text?: unknown }).text
+    : undefined;
+
+  if (typeof rawText !== 'string') {
+    throw new TranscriptionFailure(
+      'malformed-response',
+      'The transcription provider returned an invalid response.',
+    );
+  }
+
+  let text = rawText.trim();
+
+  if (removeFillerWords) {
+    text = cleanFillerWords(text);
+  }
+
+  return text;
 }

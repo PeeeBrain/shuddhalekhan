@@ -1,6 +1,7 @@
 import { mkdirSync } from 'fs';
-import { dirname, join } from 'path';
-import { createRequire } from 'module';
+import { dirname } from 'path';
+import { openAuditDatabase } from '../shared/audit-sqlite';
+import { SECRET_KEY_PATTERN, redactAgentSecrets } from '../shared/agent-secrets';
 import { AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
 
 type AuditPayload = Record<string, unknown>;
@@ -13,11 +14,7 @@ type SqliteDatabase = {
   prepare(sql: string): SqliteStatement;
   close(): unknown;
 };
-type SqliteDatabaseConstructor = new (dbPath: string) => SqliteDatabase;
 
-const SECRET_KEY_PATTERN = /(authorization|access[_-]?token|refresh[_-]?token|api[_-]?key|client[_-]?secret|auth[_-]?code|password|secret)/i;
-const SECRET_VALUE_PATTERN = /\b(sk-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+)\b/g;
-const require = createRequire(import.meta.url);
 
 export class AgentAuditStore {
   private readonly db: SqliteDatabase;
@@ -25,9 +22,9 @@ export class AgentAuditStore {
   private readonly lastStatusByRunId = new Map<string, string>();
   private isClosed = false;
 
-  constructor(dbPath = getDefaultAuditDbPath()) {
+  constructor(dbPath = resolveAuditDbPath()) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = createDatabase(dbPath);
+    this.db = openAuditDatabase(dbPath);
     this.db.exec(AGENT_AUDIT_SCHEMA_SQL);
     this.insertEvent = this.db.prepare(
       'INSERT INTO agent_audit_events (agent_run_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?)'
@@ -45,6 +42,9 @@ export class AgentAuditStore {
         if (previousStatus === payloadJson) return;
         this.lastStatusByRunId.set(agentRunId, payloadJson);
       }
+      if (['run_completed', 'run_failed', 'run_interrupted'].includes(eventType)) {
+        this.lastStatusByRunId.delete(agentRunId);
+      }
 
       this.insertEvent.run(agentRunId, eventType, payloadJson, new Date().toISOString());
     } catch (err) {
@@ -60,22 +60,6 @@ export class AgentAuditStore {
   }
 }
 
-function createDatabase(dbPath: string): SqliteDatabase {
-  const Database = getDatabaseConstructor();
-  return new Database(dbPath);
-}
-
-function getDatabaseConstructor(): SqliteDatabaseConstructor {
-  if (isBunRuntime()) {
-    return require('bun:sqlite').Database as SqliteDatabaseConstructor;
-  }
-
-  return require('better-sqlite3') as SqliteDatabaseConstructor;
-}
-
-function isBunRuntime(): boolean {
-  return typeof process.versions.bun === 'string';
-}
 
 export function sanitizeAuditPayload(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -91,12 +75,8 @@ export function sanitizeAuditPayload(value: unknown): unknown {
   }
 
   if (typeof value === 'string') {
-    return value.replace(SECRET_VALUE_PATTERN, '[redacted]');
+    return redactAgentSecrets(value);
   }
 
   return value;
-}
-
-function getDefaultAuditDbPath(): string {
-  return resolveAuditDbPath(join(process.cwd(), '.shuddhalekhan'));
 }

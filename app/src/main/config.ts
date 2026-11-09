@@ -18,7 +18,8 @@ import { z } from 'zod';
 import { normalizeTranscriptionTransition, getTranscriptionDictionaryError } from '../shared/transcription-features';
 import { transcriptionSettingsPatchSchema } from './transcription-settings';
 
-type StoreConfig = Omit<AppConfig, 'dictation'> & {
+type StoreConfig = Omit<AppConfig, 'dictation' | 'whisperUrl'> & {
+  whisperUrl?: string;
   chatGptHostId?: string;
   dictation?: unknown;
   migrated?: boolean;
@@ -68,7 +69,6 @@ const store = new Store<StoreConfig>({
   name: 'shuddhalekhan-config',
   cwd: storeDirectory,
   defaults: {
-    whisperUrl: DEFAULT_LOCAL_ENDPOINT,
     transcription: DEFAULT_TRANSCRIPTION,
     managedLocalThreads: null,
     managedLocal: DEFAULT_MANAGED_LOCAL,
@@ -110,6 +110,8 @@ const store = new Store<StoreConfig>({
   },
 });
 
+let importedLegacyEndpoint: string | undefined;
+
 // Migrate old config from ~/.speech-2-text/config.json on first run
 function maybeMigrateLegacyConfig(): void {
   if (existsSync(legacyConfigPath) && !store.get('migrated')) {
@@ -117,7 +119,7 @@ function maybeMigrateLegacyConfig(): void {
       const raw = readFileSync(legacyConfigPath, 'utf-8');
       const legacy = JSON.parse(raw);
 
-      if (legacy.whisper_url) store.set('whisperUrl', legacy.whisper_url);
+      if (typeof legacy.whisper_url === 'string') importedLegacyEndpoint = legacy.whisper_url;
       if (legacy.selected_device) store.set('selectedDeviceId', legacy.selected_device);
       if (typeof legacy.remove_filler_words === 'boolean') {
         store.set('removeFillerWords', legacy.remove_filler_words);
@@ -141,7 +143,7 @@ maybeMigrateLegacyConfig();
 function maybeMigrateTranscriptionConfig(): void {
   if (store.get('transcriptionMigrated')) return;
 
-  const legacyEndpoint = store.get('whisperUrl') || DEFAULT_LOCAL_ENDPOINT;
+  const legacyEndpoint = importedLegacyEndpoint || store.get('whisperUrl') || DEFAULT_LOCAL_ENDPOINT;
   const transcription = store.get('transcription');
   const currentEndpoint = transcription?.providers?.localWhisperCpp?.endpoint;
   const endpoint = currentEndpoint && currentEndpoint !== DEFAULT_LOCAL_ENDPOINT
@@ -152,16 +154,7 @@ function maybeMigrateTranscriptionConfig(): void {
     activeProvider: isTranscriptionProviderId(transcription?.activeProvider)
       ? transcription.activeProvider
       : 'local-whisper-cpp',
-    providers: {
-      localWhisperCpp: { endpoint },
-      openai: transcription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
-      sarvam: sarvamConfigSchema.safeParse(transcription?.providers?.sarvam).data ?? { ...DEFAULT_SARVAM_CONFIG },
-      azureSpeech: transcription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
-      googleCloudSpeech: transcription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
-      nvidiaSpeechNim: transcription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-      customOpenAiCompatible: transcription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
-      whisperLiveKit: transcription?.providers?.whisperLiveKit ?? { baseUrl: 'http://localhost:8000', auth: 'none' },
-    },
+    providers: normalizeTranscriptionProviders(transcription?.providers, endpoint),
   });
   store.set('transcriptionMigrated', true);
 }
@@ -262,16 +255,7 @@ export function getConfig(): AppConfig {
     activeProvider: isTranscriptionProviderId(storedTranscription?.activeProvider)
       ? storedTranscription.activeProvider
       : 'local-whisper-cpp',
-    providers: {
-      localWhisperCpp: { endpoint: localEndpoint },
-      openai: storedTranscription?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
-      sarvam: sarvamConfigSchema.safeParse(storedTranscription?.providers?.sarvam).data ?? { ...DEFAULT_SARVAM_CONFIG },
-      azureSpeech: storedTranscription?.providers?.azureSpeech ?? { endpoint: '', region: '' },
-      googleCloudSpeech: storedTranscription?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
-      nvidiaSpeechNim: storedTranscription?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-      customOpenAiCompatible: storedTranscription?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
-      whisperLiveKit: storedTranscription?.providers?.whisperLiveKit ?? { baseUrl: 'http://localhost:8000', auth: 'none' },
-    },
+    providers: normalizeTranscriptionProviders(storedTranscription?.providers, localEndpoint),
   };
 
   return {
@@ -317,18 +301,13 @@ export function patchTranscriptionConfig(value: unknown): AppConfig {
       && next.dictionary.every(term => previous.dictionary.includes(term));
     if (error && !removingOnly) throw new Error(error);
   }
-  for (const intent of ['dictation', 'agent'] as const) {
-    const other = intent === 'dictation' ? 'agent' : 'dictation';
-    const verdict = assessBinding(next.shortcuts[intent].binding, next.shortcuts[other].binding);
-    if (verdict.status === 'error') throw new Error(verdict.message);
-  }
+  assertShortcutBindings(next.shortcuts);
   assertDictationConfig(next.dictation);
   // electron-store's object overload commits the validated transition in one write.
   store.set({
     transcription: next.transcription, managedLocal: next.managedLocal,
     language: next.language, task: next.task, dictionary: next.dictionary,
     removeFillerWords: next.removeFillerWords, dictation: next.dictation, shortcuts: next.shortcuts,
-    whisperUrl: next.transcription.providers.localWhisperCpp.endpoint,
   });
   return getConfig();
 }
@@ -367,13 +346,7 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
   }
   if (key === 'shortcuts') {
     const shortcuts = normalizeShortcutsConfig(value as ShortcutsConfig);
-    for (const intent of ['dictation', 'agent'] as const) {
-      const other = intent === 'dictation' ? 'agent' : 'dictation';
-      const verdict = assessBinding(shortcuts[intent].binding, shortcuts[other].binding);
-      if (verdict.status === 'error') {
-        throw new Error(verdict.message);
-      }
-    }
+    assertShortcutBindings(shortcuts);
     store.set(key, shortcuts as AppConfig[K]);
     return;
   }
@@ -389,24 +362,13 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
     sarvamConfigSchema.parse((value as TranscriptionConfig).providers.sarvam);
   }
 
-  store.set(key, value);
-  if (key === 'transcription') {
-    store.set('whisperUrl', (value as TranscriptionConfig).providers.localWhisperCpp.endpoint);
-  } else if (key === 'whisperUrl') {
+  if (key !== 'whisperUrl') store.set(key, value);
+  if (key === 'whisperUrl') {
     // Preserve existing cloud provider configs; only update local
     const existing = store.get('transcription');
     store.set('transcription', {
       activeProvider: existing?.activeProvider ?? 'local-whisper-cpp',
-      providers: {
-        localWhisperCpp: { endpoint: value as string },
-        openai: existing?.providers?.openai ?? { baseUrl: DEFAULT_OPENAI_BASE_URL, model: DEFAULT_OPENAI_MODEL },
-        sarvam: sarvamConfigSchema.safeParse(existing?.providers?.sarvam).data ?? { ...DEFAULT_SARVAM_CONFIG },
-        azureSpeech: existing?.providers?.azureSpeech ?? { endpoint: '', region: '' },
-        googleCloudSpeech: existing?.providers?.googleCloudSpeech ?? { project: '', location: 'global', model: '', credentialSource: 'service-account' },
-        nvidiaSpeechNim: existing?.providers?.nvidiaSpeechNim ?? { endpoint: '', model: '', auth: 'none', headerName: '', supportsAutomaticLanguageDetection: false, supportsTranslation: false, supportsDictionaryHints: false },
-        customOpenAiCompatible: existing?.providers?.customOpenAiCompatible ?? { endpoint: '', model: '', auth: 'none', headerName: '' },
-        whisperLiveKit: existing?.providers?.whisperLiveKit ?? { baseUrl: 'http://localhost:8000', auth: 'none' },
-      },
+      providers: normalizeTranscriptionProviders(existing?.providers, value as string),
     });
   }
 }
@@ -460,4 +422,28 @@ export function mergeDiscoveredTools(
     ...config.agent,
     mcpServers,
   });
+}
+
+function assertShortcutBindings(shortcuts: ShortcutsConfig): void {
+  for (const intent of ['dictation', 'agent'] as const) {
+    const other = intent === 'dictation' ? 'agent' : 'dictation';
+    const verdict = assessBinding(shortcuts[intent].binding, shortcuts[other].binding);
+    if (verdict.status === 'error') throw new Error(verdict.message);
+  }
+}
+
+function normalizeTranscriptionProviders(
+  stored: TranscriptionConfig['providers'] | undefined,
+  endpoint: string,
+): TranscriptionConfig['providers'] {
+  return {
+    localWhisperCpp: { endpoint },
+    openai: stored?.openai ?? structuredClone(DEFAULT_TRANSCRIPTION.providers.openai),
+    sarvam: sarvamConfigSchema.safeParse(stored?.sarvam).data ?? structuredClone(DEFAULT_TRANSCRIPTION.providers.sarvam),
+    azureSpeech: stored?.azureSpeech ?? structuredClone(DEFAULT_TRANSCRIPTION.providers.azureSpeech),
+    googleCloudSpeech: stored?.googleCloudSpeech ?? structuredClone(DEFAULT_TRANSCRIPTION.providers.googleCloudSpeech),
+    nvidiaSpeechNim: stored?.nvidiaSpeechNim ?? structuredClone(DEFAULT_TRANSCRIPTION.providers.nvidiaSpeechNim),
+    customOpenAiCompatible: stored?.customOpenAiCompatible ?? structuredClone(DEFAULT_TRANSCRIPTION.providers.customOpenAiCompatible),
+    whisperLiveKit: stored?.whisperLiveKit ?? structuredClone(DEFAULT_TRANSCRIPTION.providers.whisperLiveKit),
+  };
 }

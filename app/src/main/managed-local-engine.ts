@@ -1,10 +1,11 @@
-import type { ManagedLocalModelSnapshot, ManagedLocalSelection } from '../types/ipc';
+import { managedLocalSupportsDictionary } from '../shared/managed-local-selection';
+import type { ManagedLocalModelSnapshot, ManagedLocalSelection, ManagedLocalTarget } from '../types/ipc';
 import { TranscriptionFailure, type Transcriber, type TranscriptionRequest } from './transcription';
 import { createManagedLocalTranscriber } from './managed-local-runtime';
 
 export interface LocalRuntime {
-  model: 'parakeet' | 'granite';
-  backend: 'cpu' | 'cuda';
+  model: ManagedLocalSelection['model'];
+  backend: ManagedLocalTarget['backend'];
   modelPath: string;
   contextual?: boolean;
   formattingPath?: string;
@@ -156,15 +157,14 @@ export function createManagedLocalEngine({
      */
     forRecording(): Transcriber {
       const settings = structuredClone(getSettings());
-      if (!transcribing && !leases) void ensure({ settings, candidates: null }).catch(() => undefined);
+      if (!transcribing && !leases) void ensure({ settings, candidates: null }).catch(error => console.warn('Managed Local warmup failed:', error));
       return {
         id: 'managed-local',
-        capabilities: { translation: false, automaticLanguageDetection: false,
-          dictionaryHints: settings.selection.model === 'parakeet', authentication: 'none', maxDurationSeconds: null },
+        capabilities: { maxDurationSeconds: null },
         transcribe(request) {
           const recognition = structuredClone(request.recognition);
           return transcribePinned({ ...request, recognition }, { ...settings,
-            contextual: settings.selection.model === 'parakeet' && recognition.dictionary.length > 0 });
+            contextual: managedLocalSupportsDictionary(settings.selection.model) && recognition.dictionary.length > 0 });
         },
       };
     },

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MEMORY_BYTE_LIMIT, MEMORY_FACT_LIMIT, memoryFactsSchema, memoryUpdatesSchema, type AgentMemorySnapshot, type AgentMemoryCommitResult } from '../shared/agent-context';
+import { MEMORY_BYTE_LIMIT, MEMORY_FACT_LIMIT, memoryFactsSchema, type AgentMemoryUpdate, type AgentMemorySnapshot, type AgentMemoryCommitResult } from '../shared/agent-context';
 import { writeAtomicFile } from '../shared/atomic-file';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -58,10 +58,9 @@ export class AgentMemoryStore {
     return this.write([]);
   }
 
-  commit(revision: string, input: unknown): AgentMemoryCommitResult {
+  commit(revision: string, updates: AgentMemoryUpdate[]): AgentMemoryCommitResult {
     try {
       const snapshot = this.current(revision);
-      const updates = memoryUpdatesSchema.parse(input);
       const facts = snapshot.facts.map(fact => fact.text);
       let skipped = false;
       for (const update of updates) {

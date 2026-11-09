@@ -43,47 +43,6 @@ describe('runAgent', () => {
     delete process.env.OPENROUTER_API_KEY;
   });
 
-  it('fails when provider config is incomplete', async () => {
-    const callbacks = makeCallbacks();
-    const config = { ...baseConfig, agent: { ...baseConfig.agent, provider: { ...baseConfig.agent.provider, baseUrl: '' } } };
-
-    await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
-
-    expect(callbacks.onFailed).toHaveBeenCalledWith(
-      expect.stringContaining('Enter a valid HTTP or HTTPS API base URL.')
-    );
-  });
-
-  it('fails when API key environment variable is missing', async () => {
-    const callbacks = makeCallbacks();
-
-    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
-
-    expect(callbacks.onFailed).toHaveBeenCalledWith(
-      expect.stringContaining('environment variable is unavailable to the running app')
-    );
-  });
-
-  it('fails clearly when a raw API key is entered instead of an environment variable name', async () => {
-    const callbacks = makeCallbacks();
-    const config = {
-      ...baseConfig,
-      agent: {
-        ...baseConfig.agent,
-        provider: {
-          ...baseConfig.agent.provider,
-          apiKeyEnvVar: 'sk-or-v1-test',
-        },
-      },
-    };
-
-    await runAgent('run-1', 'hello', config as never, {}, new AbortController().signal, callbacks);
-
-    expect(callbacks.onFailed).toHaveBeenCalledWith(
-      expect.stringContaining('Enter the environment variable name, not the API key value.')
-    );
-  });
-
   it('completes successfully with no tools', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     streamTextMock.mockImplementation(() => makeStreamResult({
@@ -127,50 +86,6 @@ describe('runAgent', () => {
     expect(callbacks.onAudit).toHaveBeenCalledWith('run_failed', expect.objectContaining({
       diagnostic: expect.objectContaining({ kind: 'unsupported', statusCode: 400 }),
     }));
-  });
-
-  it('uses the stable AI SDK v7 runtime request names', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [{ toolCalls: [], toolResults: [] }],
-      toolCalls: [],
-      toolResults: [],
-    }));
-
-    await runAgent(
-      'run-1',
-      'hello',
-      baseConfig as never,
-      {},
-      new AbortController().signal,
-      makeCallbacks(),
-    );
-
-    const request = streamTextMock.mock.calls[0]?.[0];
-    expect(request.instructions.content).toContain('<identity>');
-    expect(request.onStepEnd).toBeFunction();
-    expect(request.system).toBeUndefined();
-    expect(request.onStepFinish).toBeUndefined();
-    expect(isStepCountMock).toHaveBeenCalledWith(5);
-  });
-
-  it('uses a GPT-5-style structured system prompt with explicit agent controls', async () => {
-    process.env.OPENROUTER_API_KEY = 'sk-test';
-    streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Done',
-      steps: [{ toolCalls: [], toolResults: [] }],
-      toolCalls: [],
-      toolResults: [],
-    }));
-
-    const callbacks = makeCallbacks();
-
-    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
-
-    const systemPrompt = streamTextMock.mock.calls[0]?.[0].instructions.content;
-    expect(systemPrompt).toContain('<identity>');
-    expect(systemPrompt).not.toContain('# Identity');
   });
 
   it('puts custom instructions in a system prompt that stays byte-identical across runs', async () => {

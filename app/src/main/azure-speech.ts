@@ -3,22 +3,12 @@ import type { AzureSpeechProviderConfig } from '../types/ipc';
 import {
   type RecognitionSettings,
   type Transcriber,
-  type TranscriptionCapabilities,
   cleanFillerWords,
   failureForHttpStatus,
   TranscriptionFailure,
 } from './transcription';
 
 export const AZURE_SPEECH_API_VERSION = '2025-10-15';
-
-export const AZURE_SPEECH_CAPABILITIES: TranscriptionCapabilities = {
-  translation: false,
-  automaticLanguageDetection: true,
-  dictionaryHints: true,
-  authentication: 'required',
-  maxDurationSeconds: null,
-};
-
 
 export function mapLanguageToAzureLocale(language: string): string | undefined {
   if (!language || language === 'auto') return undefined;
@@ -42,7 +32,7 @@ export function createAzureSpeechTranscriber(
 ): Transcriber {
   return {
     id: 'azure-speech',
-    capabilities: AZURE_SPEECH_CAPABILITIES,
+    capabilities: { maxDurationSeconds: null },
     async transcribe({ audio, recognition, signal }) {
       if (!apiKey) {
         throw new TranscriptionFailure(

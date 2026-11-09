@@ -136,19 +136,4 @@ describe('MCP server config', () => {
     });
   });
 
-  it('creates stable policy keys and connection keys', () => {
-    const server: McpServerConfig = {
-      id: 'srv1',
-      displayName: 'Server',
-      enabled: true,
-      transport: { type: 'stdio', command: 'bun', args: ['run', 'server.ts'], envVarNames: ['TOKEN'] },
-      discoveredTools: [],
-      toolPolicies: {},
-    };
-
-    expect(getMcpServerConnectionKey(server)).toBe(JSON.stringify({
-      enabled: true,
-      transport: { type: 'stdio', command: 'bun', args: ['run', 'server.ts'], envVarNames: ['TOKEN'] },
-    }));
-  });
 });

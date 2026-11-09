@@ -12,7 +12,6 @@ import {
   type StreamingTranscriptionSession,
   type StreamingTranscriptSnapshot,
   type Transcriber,
-  type TranscriptionCapabilities,
   TranscriptionFailure,
 } from './transcription';
 
@@ -24,14 +23,6 @@ export interface WhisperLiveKitEndpoints {
   health: string;
   websocket: string;
 }
-
-export const WHISPER_LIVE_KIT_CAPABILITIES: TranscriptionCapabilities = {
-  translation: false,
-  automaticLanguageDetection: true,
-  dictionaryHints: false,
-  authentication: 'optional',
-  maxDurationSeconds: null,
-};
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 5_000;
 const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
@@ -359,7 +350,7 @@ export function createWhisperLiveKitTranscriber(
 ): Transcriber {
   return {
     id: 'whisper-live-kit',
-    capabilities: WHISPER_LIVE_KIT_CAPABILITIES,
+    capabilities: { maxDurationSeconds: null },
     transportCapabilities: { batch: true, streaming: true },
     startStreaming(request) {
       return createWhisperLiveKitStreamingSession(config, savedBearerToken, request);

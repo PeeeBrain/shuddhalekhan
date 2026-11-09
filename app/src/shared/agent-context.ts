@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { redactAgentSecrets } from './agent-secrets';
 
 export const MEMORY_FACT_LIMIT = 50;
 export { MEMORY_BYTE_LIMIT } from '@shuddhalekhan/shared/agent-context';
 export const memoryFactSchema = z.string().trim().min(1).max(512)
   .refine(text => !/[\r\n]/.test(text), 'Each fact must fit on one line.')
-  .refine(text => !/\b(?:sk-[A-Za-z0-9_-]{8,}|Bearer\s+\S+|(?:password|api[_ -]?key|access[_ -]?token)\s*[:=]\s*\S+)/i.test(text), 'Credentials must not be stored in memory.');
+  .refine(text => redactAgentSecrets(text) === text, 'Credentials must not be stored in memory.');
 export const memoryFactsSchema = z.array(memoryFactSchema).max(MEMORY_FACT_LIMIT);
 export const memoryUpdatesSchema = z.array(z.object({ previous: z.string().max(512).nullable(), text: memoryFactSchema })).max(10);
 export type AgentMemoryUpdate = z.infer<typeof memoryUpdatesSchema>[number];

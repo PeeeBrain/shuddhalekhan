@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../../shared/managed-local-selection';
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
   act,
@@ -35,7 +36,8 @@ const SLOW_CI_TEST_TIMEOUT = 20000;
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
-    whisperUrl: 'http://localhost:8080/inference',
+    managedLocal: structuredClone(DEFAULT_MANAGED_LOCAL),
+  whisperUrl: 'http://localhost:8080/inference',
     transcription: {
       activeProvider: 'local-whisper-cpp',
       providers: {

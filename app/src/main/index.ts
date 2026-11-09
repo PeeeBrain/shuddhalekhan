@@ -16,7 +16,7 @@ import {
 } from './config';
 import { credentialVault } from './credential-vault';
 import { registerCredentialIpcHandlers } from './credential-ipc';
-import { getAgentSidecarApiKey } from './agent-credential';
+import { getAgentSidecarApiKey, getStoredAgentApiKey } from './agent-credential';
 import { ChatGptAuth } from './chatgpt-auth';
 import { loadAppIcon } from './app-icon';
 import { failedProviderTest, normalizeAgentProvider } from '../shared/agent-provider';
@@ -28,14 +28,12 @@ import { AgentSidecarManager } from './agent-sidecar';
 import { RecordingSession } from './recording-session';
 import { keyboardHook } from './native/keyboard';
 import {
-  checkServerReachability,
   getSafeTranscriptionFailureMessage,
   TranscriptionFailure,
   validateProviderReadiness,
 } from './transcription';
-import { getTranscriber } from './providers';
+import { getTranscriber, checkTranscriptionServer, checkTranscriptionReadiness, releaseUnusedTranscriber } from './providers';
 import { resolveRecognitionSettings } from '../shared/transcription-features';
-import { checkWhisperLiveKitReadiness } from './whisper-live-kit';
 import { createSidecarEventRouter } from './sidecar-event-router';
 import { McpStatusStore } from './mcp-status-store';
 import { makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
@@ -57,7 +55,6 @@ import { getPersistentStoreDirectory, preparePersistentStoreDirectory } from './
 import { registerAgentContextIpcHandlers } from './agent-context';
 import {
   configureManagedLocal,
-  getManagedLocalModelManager,
   managedLocalTranscriber,
   managedLocalSnapshot,
   installManagedLocalModel,
@@ -118,7 +115,6 @@ async function setWaylandInsertion(enabled: boolean): Promise<void> {
   if (outcome !== 'superseded') setConfig('waylandBestEffortInsertion', outcome === 'ready');
 }
 
-let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
 let providerTestRevision = 0;
 let retryPasteInFlight = false;
@@ -127,7 +123,7 @@ const agentPresenter = createRuntimeShellPresenter(runtimeShell);
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
   queueMicrotask(() => {
     if (getConfig().transcription.activeProvider === 'managed-local') {
-      void managedLocalTranscriber.warmup().catch(() => undefined);
+      void managedLocalTranscriber.warmup().catch(error => console.warn('Managed Local warmup failed:', error));
     }
   });
 });
@@ -190,7 +186,8 @@ const chatGptAuth = new ChatGptAuth({
 });
 const recordingSession = new RecordingSession({
   runtimeShell,
-  isAgentModeEnabled: () => cachedAgentEnabled,
+  keyboardHook,
+  isAgentModeEnabled: () => getConfig().agent.enabled,
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   onBegin: (intent) => {
     if (intent === 'agent') invalidateActiveAgentRun();
@@ -230,7 +227,6 @@ const recordingSession = new RecordingSession({
   onResult: routeRecordingResult,
   onError: showTranscriptionError,
 });
-runtimeShell.setCrashHandler((reason) => recordingSession.markRuntimeShellCrashed(reason));
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function routeRecordingResult(result: RecordingResult | null): Promise<void> {
@@ -266,7 +262,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     delivery.config.mode === 'corrected'
     && delivery.config.formatter?.processingConsent
   ) {
-    if (runtimeShell) runtimeShell.showProcessing(sessionId);
+    runtimeShell.showProcessing(sessionId);
     const outcome = await applyDictationFormatter({
       profile: delivery.config.formatter,
       rawText: result.text,
@@ -300,15 +296,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   }
 
   markLastTranscriptInjected(result.targetSnapshot?.kind === 'kde-wayland' && injectResult.kind === 'error' ? 'uncertain' : 'failed');
-  if (runtimeShell) {
-    runtimeShell.showFailure(
-      result.recordingSessionId,
-      getRecoveryMessage(injectResult),
-      actions,
-    );
-  } else {
-    showRecoveryNotification(injectResult);
-  }
+  runtimeShell.showFailure(result.recordingSessionId, getRecoveryMessage(injectResult), actions);
 }
 
 function completeOnboarding(): void {
@@ -561,8 +549,7 @@ function validateAgentProvider(provider: AgentProviderConfig) {
     // Validation reads account state without minting or exposing a credential.
     return resolveAgentProviderKey(provider, status.state === 'signed-in' && status.planUsage ? 'available' : undefined, {}).validation;
   }
-  const apiKey = normalized.auth !== 'none' && normalized.apiKeySource === 'stored'
-    ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+  const apiKey = getStoredAgentApiKey(normalized, credentialVault);
   return resolveAgentProviderKey(provider, apiKey, process.env).validation;
 }
 
@@ -598,7 +585,7 @@ ipcMain.handle('agent:test-provider', async (_event, value: unknown) => {
   let apiKey: string | undefined;
   try {
     apiKey = provider.kind === 'chatgpt' ? await chatGptAuth.getAccessToken()
-      : provider.apiKeySource === 'stored' && provider.auth !== 'none' ? credentialVault.read('agent-api-key') ?? undefined : undefined;
+      : getStoredAgentApiKey(provider, credentialVault);
   } catch (error) {
     return failedProviderTest({ kind: 'authentication', message: error instanceof Error ? error.message : 'Sign in with ChatGPT again.', action: 'Open ChatGPT account settings and sign in again.' }, validateAgentProvider(provider));
   }
@@ -609,14 +596,6 @@ ipcMain.handle('agent:test-provider', async (_event, value: unknown) => {
 });
 
 ipcMain.handle('agent:cancel-provider-test', () => { providerTestRevision++; agentSidecar.cancelProviderTest(); });
-
-ipcMain.handle('audio:get-devices', async () => {
-  const webContents = recordingSession.getAudioWebContents();
-  if (!webContents) return [];
-  // Devices will be enumerated by the renderer and sent back via a different IPC
-  // For now, return empty and let the tray update happen from the renderer
-  return [];
-});
 
 ipcMain.handle('audio:select-device', (_event, deviceId: string) => {
   setConfig('selectedDeviceId', deviceId);
@@ -649,88 +628,11 @@ ipcMain.handle('shortcuts:end-capture', () => {
   keyboardHook.setCaptureSuspended(false);
 });
 
-ipcMain.handle('transcription:check-server', async () => {
-  const config = getConfig();
-  const provider = config.transcription.activeProvider;
-
-  if (provider === 'local-whisper-cpp') {
-    return checkServerReachability(config.transcription.providers.localWhisperCpp.endpoint);
-  }
-
-  // OpenAI Cloud: local-only, zero fetches
-  if (provider === 'openai') {
-    return false;
-  }
-
-  if (provider === 'nvidia-speech-nim') {
-    const { endpoint, auth } = config.transcription.providers.nvidiaSpeechNim;
-    if (auth !== 'none') return false;
-    return checkServerReachability(endpoint);
-  }
-
-  // Custom with auth: local-only, zero fetches
-  if (provider === 'custom-open-ai-compatible') {
-    const { endpoint, auth } = config.transcription.providers.customOpenAiCompatible;
-    if (auth !== 'none') return false;
-    return checkServerReachability(endpoint);
-  }
-
-  return false;
-});
-
-ipcMain.handle('transcription:check-readiness', async () => {
-  const config = getConfig();
-  const provider = config.transcription.activeProvider;
-  if (provider === 'managed-local') {
-    const state = await getManagedLocalModelManager().getState();
-    if (state.kind === 'ready') {
-      try {
-        await managedLocalTranscriber.warmup();
-        const snapshot = await managedLocalSnapshot();
-        return { providerId: provider, state: 'ready' as const,
-          message: snapshot.runtime.status === 'ready'
-            ? snapshot.runtime.message || `Running on ${snapshot.runtime.backend === 'cuda' ? 'NVIDIA GPU' : 'CPU'}.` :'Model files are installed. Changes apply to the next recording.',
-          checkedAt: new Date().toISOString() };
-      } catch (error) {
-        return { providerId: provider, state: 'unavailable' as const,
-          message: getSafeTranscriptionFailureMessage(error), checkedAt: new Date().toISOString() };
-      }
-    }
-    return {
-      providerId: provider,
-      state: 'unavailable' as const,
-      message: state.kind === 'error'
-          ? state.message
-          : 'Install the recommended local speech model to start Dictation.',
-      checkedAt: new Date().toISOString(),
-    };
-  }
-  if (provider !== 'whisper-live-kit') {
-    const error = validateProviderReadiness(provider, config, credentialVault)[0];
-    return {
-      providerId: provider,
-      state: error ? 'unavailable' as const : 'ready' as const,
-      message: error ?? 'Settings are complete. Provider connectivity has not been checked.',
-      checkedAt: new Date().toISOString(),
-    };
-  }
-
-  const checking = {
-    providerId: provider,
-    state: 'checking' as const,
-    message: 'Checking WhisperLiveKit health and PCM WebSocket readiness...',
-    checkedAt: null,
-  };
-  getSettingsWindow()?.webContents.send('transcription:readiness-changed', checking);
-
-  const providerConfig = config.transcription.providers.whisperLiveKit;
-  const readiness = await checkWhisperLiveKitReadiness(
-    providerConfig ?? { baseUrl: '', auth: 'none' },
-    providerConfig?.auth === 'bearer' ? credentialVault.read('whisper-live-kit-bearer') : null,
-  );
-  getSettingsWindow()?.webContents.send('transcription:readiness-changed', readiness);
-  return readiness;
-});
+ipcMain.handle('transcription:check-server', () => checkTranscriptionServer(getConfig()));
+ipcMain.handle('transcription:check-readiness', () => checkTranscriptionReadiness(
+  getConfig(), credentialVault,
+  readiness => getSettingsWindow()?.webContents.send('transcription:readiness-changed', readiness),
+));
 
 ipcMain.handle('managed-local:get-model', managedLocalSnapshot);
 ipcMain.handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
@@ -742,9 +644,7 @@ ipcMain.handle('managed-local:delete-model', (_event, target: unknown) => {
 ipcMain.handle('config:patch-transcription', async (_event, patch: unknown) => {
   const previous = getConfig();
   const config = patchTranscriptionConfig(patch);
-  if (previous.transcription.activeProvider === 'managed-local' && config.transcription.activeProvider !== 'managed-local') {
-    await managedLocalTranscriber.shutdown().catch(() => undefined);
-  }
+  await releaseUnusedTranscriber(previous, config);
   return config;
 });
 
@@ -757,16 +657,8 @@ ipcMain.handle('config:set', async (_event, key: keyof AppConfig, value: AppConf
     invalidateProviderTest();
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
-  cachedAgentEnabled = config.agent.enabled;
   if (key === 'shortcuts' || key === 'agent') keyboardHook.refreshShortcuts();
-  // A switched-away provider has no next use with this runtime; release
-  // the loaded model instead of holding ~1.1GB idling all session.
-  if (
-    previousConfig.transcription.activeProvider === 'managed-local' &&
-    config.transcription.activeProvider !== 'managed-local'
-  ) {
-    await managedLocalTranscriber.shutdown().catch(() => undefined);
-  }
+  await releaseUnusedTranscriber(previousConfig, config);
   const sidecarAction = getSidecarConfigAction(previousConfig, config);
   if (sidecarAction === 'stop') {
     await agentSidecar.stop();
@@ -785,10 +677,6 @@ ipcMain.handle('mcp:test-server', async (_event, serverId: string) => {
 });
 
 ipcMain.handle('mcp:get-status-snapshot', () => mcpStatusStore.getSnapshot());
-
-ipcMain.handle('settings:open', () => {
-  openSettingsWindow();
-});
 
 ipcMain.handle(
   'agent:approval-decision',
@@ -927,7 +815,6 @@ if (!gotSingleInstanceLock) {
     });
 
     const startupConfig = getConfig();
-    cachedAgentEnabled = startupConfig.agent.enabled;
     if (startupConfig.agent.enabled) {
       resetMcpStatusSnapshot();
       agentSidecar.start(
@@ -944,9 +831,6 @@ if (!gotSingleInstanceLock) {
     void showBundledReleaseNotesAfterInstall();
     runtimeReadiness.markMainReady();
 
-    app.on('activate', () => {
-      // Keep running in tray; no main window to recreate
-    });
   });
 
   app.on('window-all-closed', () => {

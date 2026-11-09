@@ -1,3 +1,4 @@
+import { managedLocalSupportsDictionary } from './managed-local-selection';
 import { hasControlCharacters as hasDictionaryControlCharacters } from '@shuddhalekhan/shared/validation';
 export { hasDictionaryControlCharacters };
 import type { AppConfig, TranscriptionSettingsPatch } from '../types/ipc';
@@ -22,7 +23,7 @@ export function resolveTranscriptionFeatures(config: FeatureConfig, localLanguag
   let dictionaryMaxTermLength: number | null = null;
   switch (provider) {
     case 'managed-local':
-      dictionaryHints = (config.managedLocal?.model ?? 'parakeet') === 'parakeet';
+      dictionaryHints = managedLocalSupportsDictionary(config.managedLocal.model);
       dictionaryMaxTerms = 64;
       dictionaryMaxTermLength = 128;
       break;

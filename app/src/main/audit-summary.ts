@@ -1,5 +1,6 @@
 import { parseModelToolName } from '@shuddhalekhan/shared/mcp';
 import type { AuditRunSummary } from '../types/ipc';
+import { z } from 'zod';
 
 export interface AuditSummaryEventRow {
   agent_run_id: string;
@@ -9,7 +10,12 @@ export interface AuditSummaryEventRow {
 }
 
 const INTERRUPTED_RUN_GRACE_MS = 5 * 60 * 1000;
-const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interrupted', 'run_cancelled', 'cancelled']);
+const TERMINAL_EVENT_TYPES = new Set(['run_completed', 'run_failed', 'run_interrupted']);
+const payloadSchema = z.object({
+  transcript: z.string().optional(), response: z.string().optional(), error: z.string().optional(),
+  serverId: z.string().optional(), toolName: z.string().optional(),
+  toolCalls: z.array(z.object({ toolName: z.string().optional() }).nullable()).optional(),
+});
 
 export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.now()): AuditRunSummary[] {
   const eventsByRunId = new Map<string, AuditSummaryEventRow[]>();
@@ -49,9 +55,10 @@ export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.
         hasTerminalEvent = true;
       }
 
-      let payload: any = {};
+      let payload: z.infer<typeof payloadSchema> = {};
       try {
-        payload = JSON.parse(event.payload_json);
+        const parsed = payloadSchema.safeParse(JSON.parse(event.payload_json));
+        if (parsed.success) payload = parsed.data;
       } catch {
         // ignore parsing errors
       }
@@ -70,10 +77,6 @@ export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.
           break;
         case 'run_interrupted':
           summary.status = 'interrupted';
-          break;
-        case 'run_cancelled':
-        case 'cancelled':
-          summary.status = 'cancelled';
           break;
         case 'approval_requested':
         case 'mcp_tool_execute_started':

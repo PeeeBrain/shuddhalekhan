@@ -216,7 +216,7 @@ export class ChatGptAuth {
         ...(previous ? { login_hint: previous.email } : {}),
         ...(previous?.tokens?.idToken ? { id_token_hint: previous.tokens.idToken } : {}),
         response_type: 'code', redirect_uri: redirectUri,
-        scope: 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct',
+        scope: `openid profile email offline_access resource.invoke ${PLAN_SCOPE}`,
         resource: RESOURCE, state, nonce, code_challenge_method: 'S256',
         code_challenge: createHash('sha256').update(verifier).digest('base64url'),
       }).toString();

@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { createInterface } from 'readline';
 import type { JSONRPCMessage } from '@ai-sdk/mcp';
 import { logSidecar } from './protocol';
+import { MCP_STDIO_CLOSE_TIMEOUT_MS } from '../shared/agent-timeouts';
 
 export type ManagedStdioLaunch = {
   command: string;
@@ -12,15 +13,13 @@ export type ManagedStdioLaunch = {
 export type ManagedStdioOptions = {
   launch: ManagedStdioLaunch;
   gracefulCloseTimeoutMs?: number;
-  stderrMaxBytes?: number;
   redactValues?: string[];
 };
 
-const DEFAULT_GRACEFUL_CLOSE_TIMEOUT_MS = 5000;
-const DEFAULT_STDERR_MAX_BYTES = 8192;
+const DEFAULT_GRACEFUL_CLOSE_TIMEOUT_MS = MCP_STDIO_CLOSE_TIMEOUT_MS;
 
 // Application-owned stdio transport for managed MCP servers: hidden shell-free
-// launch, piped stdio, bounded redacted stderr, and a graceful shutdown that
+// launch, piped stdio, and a graceful shutdown that
 // ends stdin first and enforces termination only after a bounded wait.
 export class ManagedStdioMcpTransport {
   onmessage?: (message: JSONRPCMessage) => void;
@@ -30,9 +29,7 @@ export class ManagedStdioMcpTransport {
   private child: ChildProcessWithoutNullStreams | null = null;
   private readonly launch: ManagedStdioLaunch;
   private readonly gracefulCloseTimeoutMs: number;
-  private readonly stderrMaxBytes: number;
   private readonly redactValues: string[];
-  private stderrBuffer = '';
   private closed = false;
   private closePromise: Promise<void> | null = null;
   private onCloseFired = false;
@@ -40,16 +37,7 @@ export class ManagedStdioMcpTransport {
     this.launch = options.launch;
     this.gracefulCloseTimeoutMs =
       options.gracefulCloseTimeoutMs ?? DEFAULT_GRACEFUL_CLOSE_TIMEOUT_MS;
-    this.stderrMaxBytes = options.stderrMaxBytes ?? DEFAULT_STDERR_MAX_BYTES;
     this.redactValues = (options.redactValues ?? []).filter((value) => value.length > 0);
-  }
-
-  getPid(): number | null {
-    return this.child?.pid ?? null;
-  }
-
-  getRecentStderr(): string {
-    return this.redact(this.stderrBuffer);
   }
 
   async start(): Promise<void> {
@@ -67,7 +55,7 @@ export class ManagedStdioMcpTransport {
     const stdoutLines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     stdoutLines.on('line', (line) => this.handleStdoutLine(line));
 
-    child.stderr.on('data', (chunk) => this.appendStderr(String(chunk)));
+    child.stderr.on('data', () => undefined);
 
     // Writes raced against process exit must not crash the sidecar with an
     // unhandled stream error; callers notice death via close/timeout instead.
@@ -163,13 +151,6 @@ export class ManagedStdioMcpTransport {
     }
   }
 
-  private appendStderr(chunk: string): void {
-    // Retain raw text with a byte margin so secrets split across chunk
-    // boundaries still fall inside the window; redaction happens at read time.
-    const marginBytes = Math.max(...this.redactValues.map((value) => Buffer.byteLength(value)), 0);
-    this.stderrBuffer = truncateTail(this.stderrBuffer + chunk, this.stderrMaxBytes + marginBytes);
-  }
-
   private redact(text: string): string {
     let output = text;
     for (const secret of this.redactValues) {
@@ -187,10 +168,4 @@ export class ManagedStdioMcpTransport {
 
 function hasExited(child: ChildProcessWithoutNullStreams): boolean {
   return child.exitCode !== null || child.signalCode !== null;
-}
-
-function truncateTail(text: string, maxBytes: number): string {
-  const buffered = Buffer.from(text, 'utf8');
-  if (buffered.byteLength <= maxBytes) return text;
-  return buffered.subarray(buffered.byteLength - maxBytes).toString('utf8');
 }

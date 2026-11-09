@@ -5,7 +5,7 @@ import { app } from 'electron';
 import fs from 'fs';
 import type { AuditRunSummary, AuditEventDetail } from '../types/ipc';
 import { AGENT_AUDIT_DB_FILENAME, AGENT_AUDIT_SCHEMA_SQL, resolveAuditDbPath } from '../shared/audit-db';
-import { summarizeAuditEvents, type AuditSummaryEventRow } from './audit-summary';
+import { queryAuditRuns, queryAuditRunDetail } from './audit-queries';
 import { getPersistentStoreDirectory } from './store-path';
 
 const MONOREPO_AUDIT_MIGRATION_KEY = 'monorepo-audit-merged-v1';
@@ -88,31 +88,7 @@ export function getAuditRuns(): AuditRunSummary[] {
       return queryAuditRunsWithBunFallback() ?? [];
     }
 
-    const db = getDb();
-    
-    // 1. Get the latest 100 unique run IDs by their start time
-    const runsQuery = db.prepare(`
-      SELECT agent_run_id, MIN(created_at) as started_at 
-      FROM agent_audit_events 
-      GROUP BY agent_run_id 
-      ORDER BY started_at DESC 
-      LIMIT 100
-    `);
-    
-    const runIds = runsQuery.all() as { agent_run_id: string; started_at: string }[];
-    if (runIds.length === 0) return [];
-    
-    // 2. Fetch all events for these run IDs to reconstruct the summaries
-    const placeholders = runIds.map(() => '?').join(',');
-    const eventsQuery = db.prepare(`
-      SELECT agent_run_id, event_type, payload_json, created_at 
-      FROM agent_audit_events 
-      WHERE agent_run_id IN (${placeholders}) 
-      ORDER BY created_at ASC
-    `);
-    
-    const events = eventsQuery.all(runIds.map(r => r.agent_run_id)) as AuditSummaryEventRow[];
-    return summarizeAuditEvents(events);
+    return queryAuditRuns(getDb());
   } catch (err) {
     const fallbackRuns = queryAuditRunsWithBunFallback();
     if (fallbackRuns) {
@@ -131,37 +107,7 @@ export function getAuditRunDetail(agentRunId: string): AuditEventDetail[] {
       return queryAuditRunDetailWithBunFallback(agentRunId) ?? [];
     }
 
-    const db = getDb();
-    const query = db.prepare(`
-      SELECT id, agent_run_id, event_type, payload_json, created_at 
-      FROM agent_audit_events 
-      WHERE agent_run_id = ? 
-      ORDER BY created_at ASC
-    `);
-    
-    const rows = query.all(agentRunId) as {
-      id: number;
-      agent_run_id: string;
-      event_type: string;
-      payload_json: string;
-      created_at: string;
-    }[];
-    
-    return rows.map(row => {
-      let payload = {};
-      try {
-        payload = JSON.parse(row.payload_json);
-      } catch {
-        // ignore parsing errors
-      }
-      return {
-        id: row.id,
-        agentRunId: row.agent_run_id,
-        eventType: row.event_type,
-        payload,
-        createdAt: row.created_at,
-      };
-    });
+    return queryAuditRunDetail(getDb(), agentRunId);
   } catch (err) {
     const fallbackDetail = queryAuditRunDetailWithBunFallback(agentRunId);
     if (fallbackDetail) {

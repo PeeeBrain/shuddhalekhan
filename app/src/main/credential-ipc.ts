@@ -1,38 +1,20 @@
 import type { CredentialKind, CredentialStatus } from '../types/ipc';
+import { CREDENTIAL_KINDS } from '../types/ipc';
+import { z } from 'zod';
 import type { CredentialVault } from './credential-vault';
 import { parseGoogleServiceAccount } from './google-cloud-speech';
 
-type IpcMainRegistrar = {
-  handle(channel: string, listener: (...args: any[]) => unknown): void;
-};
-
-const CREDENTIAL_KINDS: CredentialKind[] = [
-  'agent-api-key',
-  'transcription-api-key',
-  'custom-secret-header',
-  'google-service-account',
-  'openai-api-key',
-  'custom-open-ai-compatible-bearer',
-  'custom-open-ai-compatible-header',
-  'sarvam-api-key',
-  'azure-speech-key',
-  'nvidia-nim-bearer',
-  'nvidia-nim-header',
-  'whisper-live-kit-bearer',
-  'dictation-formatter-api-key',
-];
-
 export function registerCredentialIpcHandlers(
-  ipcMain: IpcMainRegistrar,
+  ipcMain: { handle(channel: string, listener: (...args: unknown[]) => unknown): void },
   vault: Pick<CredentialVault, 'status' | 'save' | 'remove'>,
   onChanged?: (credential: CredentialKind) => void,
 ): void {
-  ipcMain.handle('credential:get-status', (_event, credential: CredentialKind) => {
+  ipcMain.handle('credential:get-status', (_event, credential) => {
     return vault.status(requireCredentialKind(credential));
   });
 
-  ipcMain.handle('credential:save', (_event, credential: CredentialKind, value: string): CredentialStatus => {
-    if (!value) throw new Error('Credential value is required.');
+  ipcMain.handle('credential:save', (_event, credential, value): CredentialStatus => {
+    if (typeof value !== 'string' || !value) throw new Error('Credential value is required.');
     const kind = requireCredentialKind(credential);
     if (kind === 'google-service-account') parseGoogleServiceAccount(value);
     let result: CredentialStatus;
@@ -49,7 +31,7 @@ export function registerCredentialIpcHandlers(
     return result;
   });
 
-  ipcMain.handle('credential:remove', (_event, credential: CredentialKind) => {
+  ipcMain.handle('credential:remove', (_event, credential) => {
     const kind = requireCredentialKind(credential);
     const result = vault.remove(kind);
     onChanged?.(kind);
@@ -57,7 +39,8 @@ export function registerCredentialIpcHandlers(
   });
 }
 
-function requireCredentialKind(value: CredentialKind): CredentialKind {
-  if (CREDENTIAL_KINDS.includes(value)) return value;
+function requireCredentialKind(value: unknown): CredentialKind {
+  const parsed = z.enum(CREDENTIAL_KINDS).safeParse(value);
+  if (parsed.success) return parsed.data;
   throw new Error('Unsupported credential.');
 }

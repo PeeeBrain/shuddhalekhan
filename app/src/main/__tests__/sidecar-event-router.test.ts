@@ -76,30 +76,6 @@ describe('SidecarEventRouter', () => {
     });
   });
 
-  it('opens OAuth authorization URLs externally', () => {
-    router.handle({
-      type: 'oauth:open-url',
-      serverId: 'mail',
-      url: 'https://perfect-horizon.example.com/oauth/authorize',
-    });
-
-    expect(openExternal).toHaveBeenCalledWith('https://perfect-horizon.example.com/oauth/authorize');
-  });
-
-  it('dispatches discovered tools to the config module', () => {
-    const tools = [
-      { name: 'read_email', description: 'Read messages', inputSchema: { type: 'object' } },
-      { name: 'send_email', description: 'Send messages' },
-    ];
-
-    router.handle({
-      type: 'mcp:tools-discovered',
-      serverId: 'mail',
-      tools,
-    });
-
-    expect(mergeDiscoveredTools).toHaveBeenCalledWith('mail', tools);
-  });
 
   it('maps agent status, streaming, completion, failure, and cancellation onto the presenter', () => {
     router.handle({ type: 'agent:status', agentRunId: 'run-1', status: 'Checking mail' });

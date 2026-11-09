@@ -8,17 +8,8 @@ import {
   failureForHttpStatus,
   type RecognitionSettings,
   type Transcriber,
-  type TranscriptionCapabilities,
   TranscriptionFailure,
 } from './transcription';
-
-export const GOOGLE_CLOUD_SPEECH_CAPABILITIES: TranscriptionCapabilities = {
-  translation: false,
-  automaticLanguageDetection: false,
-  dictionaryHints: true,
-  authentication: 'required',
-  maxDurationSeconds: 55,
-};
 
 export interface GoogleServiceAccount {
   type: 'service_account';
@@ -58,7 +49,6 @@ export function buildGoogleRecognizeEndpoint(config: GoogleCloudSpeechProviderCo
   return `https://speech.googleapis.com/v2/projects/${project}/locations/${location}/recognizers/_:recognize`;
 }
 
-
 export function createGoogleCloudSpeechTranscriber(
   config: GoogleCloudSpeechProviderConfig,
   savedCredential: string | null,
@@ -66,7 +56,7 @@ export function createGoogleCloudSpeechTranscriber(
   const adc = config.credentialSource === 'adc' ? loadApplicationDefaultCredential() : null;
   return {
     id: 'google-cloud-speech-v2',
-    capabilities: GOOGLE_CLOUD_SPEECH_CAPABILITIES,
+    capabilities: { maxDurationSeconds: 55 },
     async transcribe({ audio, recognition, signal }) {
       if (recognition.task === 'translate') {
         throw new TranscriptionFailure('model', 'Google Cloud Speech-to-Text v2 synchronous recognition does not translate audio.');

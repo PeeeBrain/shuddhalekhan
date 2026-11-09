@@ -1,8 +1,8 @@
+import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
   buildOpenAiEndpoint,
   validateOpenAiModel,
-  validateOpenAiSettings,
   validateAzureSpeechSettings,
   validateCustomOpenAiSettings,
   validateProviderReadiness,
@@ -25,6 +25,7 @@ function createVault(keys: Partial<Record<string, string>> = {}) {
 }
 
 const BASE_CONFIG: AppConfig = {
+  managedLocal: structuredClone(DEFAULT_MANAGED_LOCAL),
   whisperUrl: 'http://localhost:8080/inference',
   transcription: {
     activeProvider: 'openai',
@@ -110,22 +111,6 @@ describe('OpenAI endpoint building', () => {
     expect(buildOpenAiEndpoint('https://api.openai.com/v1/audio/transcriptions')).toBe(
       'https://api.openai.com/v1/audio/transcriptions',
     );
-  });
-});
-
-describe('OpenAI settings validation', () => {
-  it('accepts valid OpenAI settings', () => {
-    expect(validateOpenAiSettings({ baseUrl: 'https://api.openai.com/v1', model: 'whisper-1' })).toEqual([]);
-  });
-
-  it('rejects invalid base URL', () => {
-    const errors = validateOpenAiSettings({ baseUrl: 'not-a-url', model: 'whisper-1' });
-    expect(errors.some((e) => e.includes('valid'))).toBe(true);
-  });
-
-  it('rejects empty model', () => {
-    const errors = validateOpenAiSettings({ baseUrl: 'https://api.openai.com/v1', model: '' });
-    expect(errors).toContain('Enter a model name.');
   });
 });
 
@@ -568,16 +553,6 @@ describe('Microsoft Azure Speech provider', () => {
     )).toEqual([]);
   });
 
-  it('declares Fast Transcription capabilities', async () => {
-    const { AZURE_SPEECH_CAPABILITIES } = await import('../azure-speech');
-    expect(AZURE_SPEECH_CAPABILITIES).toEqual({
-      translation: false,
-      automaticLanguageDetection: true,
-      dictionaryHints: true,
-      authentication: 'required',
-      maxDurationSeconds: null,
-    });
-  });
 });
 
 describe('getTranscriber pins one recording to its starting settings', () => {
@@ -625,9 +600,7 @@ describe('getTranscriber provider selection', () => {
     expect(validateProviderReadiness('sarvam', config, createVault({ 'sarvam-api-key': 'secret' }))).toEqual([]);
     const transcriber = getTranscriber(config, createVault({ 'sarvam-api-key': 'secret' }));
     expect(transcriber.id).toBe('sarvam');
-    expect(transcriber.capabilities.dictionaryHints).toBe(true);
     config.transcription.providers.sarvam = { model: 'saaras:v3', mode: 'verbatim' };
-    expect(getTranscriber(config, createVault()).capabilities.dictionaryHints).toBe(false);
   });
   it('returns the isolated managed local transcriber for managed-local', async () => {
     const { getTranscriber } = await import('../providers');

@@ -579,12 +579,6 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
         title: 'Interrupted',
         description: unknownAsString(p.reason, 'Ended early'),
       };
-    case 'run_cancelled':
-    case 'cancelled':
-      return {
-        title: 'Cancelled',
-        description: unknownAsString(p.reason, 'Cancelled by you'),
-      };
     case 'run_failed':
       return {
         title: 'Failed',

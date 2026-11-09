@@ -86,4 +86,16 @@ describe('JsonlProcessManager', () => {
     expect(onSpawn).toHaveBeenCalledTimes(1);
     expect(manager.getChildPid()).toBeTypeOf('number');
   });
+
+  it('does not label a message handler failure as malformed JSONL', async () => {
+    const malformed = vi.fn();
+    const failure = new Error('handler failed');
+    const { JsonlProcessManager } = await import('../jsonl-process-manager');
+    const manager = new JsonlProcessManager({
+      onMessage: () => { throw failure; }, onMalformedMessage: malformed,
+    });
+    manager.start({ command: 'worker.exe', args: [] });
+    expect(() => stdoutLines.emit('line', '{"type":"pong"}')).toThrow(failure);
+    expect(malformed).not.toHaveBeenCalled();
+  });
 });

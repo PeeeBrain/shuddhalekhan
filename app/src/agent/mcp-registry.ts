@@ -3,10 +3,10 @@ import type { Tool } from 'ai';
 import type { AgentToolApprovalPolicy, AppConfig, McpServerConfig } from '../types/ipc';
 import type { AgentRuntimeCallbacks } from './runtime';
 import { getMcpServerConnectionKey } from './mcp-server-config';
+import { MCP_REGISTRY_CLOSE_TIMEOUT_MS } from '../shared/agent-timeouts';
 
-type RequestToolApproval = AgentRuntimeCallbacks['requestToolApproval'];
 type AuditCallback = NonNullable<AgentRuntimeCallbacks['onAudit']>;
-type ToolStartedCallback = NonNullable<AgentRuntimeCallbacks['onToolStarted']>;
+type ToolStartedCallback = (tool: { serverId: string; toolName: string; modelToolName: string }) => void;
 
 export interface McpClientConnection {
   tools(): Promise<Record<string, Tool>>;
@@ -124,7 +124,6 @@ export class McpRegistry {
   }
 
   createRunSnapshot(
-    requestToolApproval: RequestToolApproval,
     onAudit?: AuditCallback,
     onToolStarted?: ToolStartedCallback
   ): { tools: Record<string, Tool>; close: () => Promise<void> } {
@@ -148,7 +147,6 @@ export class McpRegistry {
           toolDef,
           policy,
           () => this.toolPolicies.get(policyKey),
-          requestToolApproval,
           onAudit,
           onToolStarted
         );
@@ -169,15 +167,17 @@ export class McpRegistry {
     };
   }
 
-  async close(timeoutMs = 5000): Promise<void> {
+  async close(timeoutMs = MCP_REGISTRY_CLOSE_TIMEOUT_MS): Promise<void> {
     this.desiredServers.clear();
     const pending = [...this.allPendingConnections];
-    await Promise.allSettled(pending);
     const servers = [...this.servers.values()];
-    await Promise.all(Array.from(this.servers.keys()).map((serverId) => this.disconnect(serverId)));
     // A run snapshot that never releases (hung tool call) must not stall
     // shutdown past the bounded wait; the job kill remains the backstop.
-    await waitForSettled(servers.map((server) => server.closed), timeoutMs);
+    await waitForSettled([
+      ...pending,
+      ...servers.map(server => this.disconnect(server.config.id)),
+      ...servers.map(server => server.closed),
+    ], timeoutMs);
   }
 
   private startConnectionAttempt(server: McpServerConfig): void {
@@ -324,7 +324,6 @@ function wrapToolWithPolicy(
   policy: Exclude<AgentToolApprovalPolicy, 'disabled'>,
   /** Current saved policy; lets "Always allow" relax approval mid-run. */
   livePolicy: () => AgentToolApprovalPolicy | undefined,
-  _requestToolApproval: RequestToolApproval,
   onAudit?: AuditCallback,
   onToolStarted?: ToolStartedCallback
 ): Tool {

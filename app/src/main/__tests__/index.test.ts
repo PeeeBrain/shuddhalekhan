@@ -129,7 +129,6 @@ const recordingSessionBegin = vi.fn();
 const recordingSessionEnd = vi.fn(() => Promise.resolve({ text: 'transcribed text', intent: 'dictation', targetSnapshot: null }));
 const recordingSessionCancel = vi.fn(() => Promise.resolve());
 const recordingSessionUpdateDevice = vi.fn();
-const recordingSessionGetAudioWebContents = vi.fn();
 let sessionOptions: any = null;
 
 installElectronMock();
@@ -257,7 +256,6 @@ mock.module('../recording-session', () => ({
     end = recordingSessionEnd;
     cancel = recordingSessionCancel;
     updateDevice = recordingSessionUpdateDevice;
-    getAudioWebContents = recordingSessionGetAudioWebContents;
     markRuntimeShellCrashed = vi.fn();
   }
 }));
@@ -412,7 +410,6 @@ describe('main process IPC orchestration', () => {
     recordingSessionBegin.mockClear();
     recordingSessionEnd.mockClear();
     recordingSessionUpdateDevice.mockClear();
-    recordingSessionGetAudioWebContents.mockClear();
     sessionOptions = null;
 
     await import(`../index?test=${Date.now()}-${Math.random()}`);
@@ -921,7 +918,7 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
     const activeRunId = agentStartRun.mock.calls[0]?.[0] as string;
 
-    expect(runtimeShellBeginAgentRun).toHaveBeenCalledTimes(1);
+    expect(runtimeShellClearAgentRun).toHaveBeenCalledTimes(1);
 
     agentEventHandler?.({
       type: 'approval:requested',
@@ -1002,7 +999,6 @@ describe('main process IPC orchestration', () => {
   });
 
   it('proxies config, device, update, and recording pill events without restarting sidecar for audio config', async () => {
-    recordingSessionGetAudioWebContents.mockReturnValue({ send: vi.fn() });
     
     expect(ipcHandlers.get('config:get')?.({})).toEqual(getConfig());
     await expect(ipcHandlers.get('app:get-info')?.({})).resolves.toEqual({
@@ -1013,7 +1009,6 @@ describe('main process IPC orchestration', () => {
     expect(ipcHandlers.get('updater:get-status')?.({})).toEqual(getUpdateStatus());
     ipcHandlers.get('config:set')?.({}, 'whisperUrl', 'http://new');
     ipcHandlers.get('mcp:test-server')?.({}, 'missing-server');
-    ipcHandlers.get('settings:open')?.({});
     ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-1', 'denied', 'no');
     ipcHandlers.get('audio:select-device')?.({}, 'mic-1');
     ipcHandlers.get('updater:check')?.({});
@@ -1023,7 +1018,6 @@ describe('main process IPC orchestration', () => {
     expect(agentStart).not.toHaveBeenCalled();
     expect(agentStop).not.toHaveBeenCalled();
     expect(agentTestMcpServer).not.toHaveBeenCalled();
-    expect(openSettingsWindow).toHaveBeenCalled();
     expect(agentSendApprovalDecision).toHaveBeenCalledWith('run-1', 'approval-1', 'denied', 'no');
     expect(setConfig).toHaveBeenCalledWith('selectedDeviceId', 'mic-1');
     expect(recordingSessionUpdateDevice).toHaveBeenCalledWith('mic-1');

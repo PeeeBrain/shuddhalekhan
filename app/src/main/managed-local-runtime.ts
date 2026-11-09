@@ -4,6 +4,8 @@ import { TranscriptionFailure, type Transcriber } from './transcription';
 import { resolveManagedLocalThreads } from './managed-local-threads';
 import type { LocalRuntime } from './managed-local-engine';
 
+export const RECOGNITION_TIMEOUT_MS = 120_000;
+
 type RuntimeProcess = {
   postMessage(message: unknown): void;
   kill(): boolean;
@@ -19,14 +21,14 @@ type PendingRequest = {
 
 export function createManagedLocalTranscriber({
   getModelPath,
-  getNumThreads = () => resolveManagedLocalThreads(null),
+  numThreads = resolveManagedLocalThreads(null),
   startProcess = defaultStartProcess,
   loadTimeoutMs = 120_000,
-  transcriptionTimeoutMs = 120_000,
+  transcriptionTimeoutMs = RECOGNITION_TIMEOUT_MS,
   runtime,
 }: {
   getModelPath: () => Promise<string>;
-  getNumThreads?: () => number;
+  numThreads?: number;
   startProcess?: () => RuntimeProcess | Promise<RuntimeProcess>;
   loadTimeoutMs?: number;
   transcriptionTimeoutMs?: number;
@@ -34,7 +36,6 @@ export function createManagedLocalTranscriber({
 }) {
   let child: RuntimeProcess | null = null;
   let ready: Promise<void> | null = null;
-  let runtimeThreads: number | null = null;
   let resolveReady: (() => void) | null = null;
   let rejectReady: ((error: Error) => void) | null = null;
   let loadTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -57,7 +58,6 @@ export function createManagedLocalTranscriber({
     if (child !== process) return;
     child = null;
     ready = null;
-    runtimeThreads = null;
     activeStartup = null;
     if (loadTimeout) clearTimeout(loadTimeout);
     loadTimeout = null;
@@ -99,18 +99,10 @@ export function createManagedLocalTranscriber({
   };
 
   const ensureReady = (): Promise<void> => {
-    const numThreads = resolveManagedLocalThreads(getNumThreads());
-    // Reload on next use; a settings change must not interrupt active inference or startup.
-    if (ready && child && !resolveReady && pending.size === 0 && runtimeThreads !== numThreads) {
-      reset(child, new TranscriptionFailure('model', 'Local speech recognition settings changed.'), true);
-    }
     if (ready) {
       const startup = ready;
-      return startup.then(() => {
-        if (ready !== startup || (pending.size === 0 && runtimeThreads !== resolveManagedLocalThreads(getNumThreads()))) return ensureReady();
-      });
+      return startup.then(() => { if (ready !== startup) return ensureReady(); });
     }
-    runtimeThreads = numThreads;
     const startupToken = {};
     activeStartup = startupToken;
     const startup = (async () => {
@@ -172,10 +164,6 @@ export function createManagedLocalTranscriber({
   const transcriber: Transcriber & { warmup(): Promise<void>; shutdown(): Promise<void> } = {
     id: 'managed-local',
     capabilities: {
-      translation: false,
-      automaticLanguageDetection: false,
-      dictionaryHints: runtime?.model !== 'granite',
-      authentication: 'none',
       maxDurationSeconds: null,
     },
     transcribe({ audio, recognition, signal }) {

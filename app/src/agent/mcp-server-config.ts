@@ -50,7 +50,6 @@ function normalizeMcpHttpOAuth(oauth: McpHttpOAuthConfig | undefined): McpHttpOA
 
 export function getMcpServerConnectionKey(server: McpServerConfig): string {
   return JSON.stringify({
-    enabled: server.enabled,
     transport: server.transport,
   });
 }
