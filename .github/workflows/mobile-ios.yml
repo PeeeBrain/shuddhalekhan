@@ -30,7 +30,7 @@ concurrency:
 jobs:
   checks:
     name: Mobile checks
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -79,7 +79,7 @@ jobs:
     name: Build unsigned iOS IPA
     if: github.event_name == 'workflow_dispatch'
     needs: checks
-    runs-on: blacksmith-6vcpu-macos-latest
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:
