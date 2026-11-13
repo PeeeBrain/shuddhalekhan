@@ -169,7 +169,7 @@ Agent runs are bounded primarily by a maximum agent step count of 30 model calls
 
 The max step count is an internal v4 guardrail, not a user-facing setting.
 
-When the max step count is reached, the agent must stop using tools and produce a concise final response describing what completed and what remains. The last step is sent with a wrap-up instruction and `toolChoice: 'none'`, keeping the tool definitions so the cached prefix survives. The audit database records that the run reached the max-step guardrail. An answer cut off at the model's output limit is labelled as such on desktop and reported as an error on iOS.
+When the max step count is reached, the agent must stop using tools and produce a concise final response describing what completed and what remains. The last step is sent with a wrap-up instruction and `toolChoice: 'none'`, keeping the tool definitions so the cached prefix survives. The audit database records that the run reached the max-step guardrail. An answer cut off at the model's output limit is kept and labelled as cut off. A model that still asks for tools on the last step gets them denied, so the conversation stays valid to reply to.
 
 The agent prompt is generic and extensible. A base prompt defines Agent Mode as a one-off command executor that respects tool policies, approval denials, timeout messages, and observable tool results, and that may end its turn with one short question the user can answer by reply. Shuddhalekhan does not add Gmail-specific agent instructions; MCP tool descriptions and the user's command provide integration context.
 

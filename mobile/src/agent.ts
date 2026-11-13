@@ -111,10 +111,10 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
         return approved ? { approved } : { approved, message: 'User denied tool execution.' };
       },
     });
-    if (result.outputLimitReached) throw new AgentError('The agent reached its output limit. Try a shorter command.');
-    if (!result.text.trim()) throw new AgentError('The agent returned an empty response.');
+    const text = result.outputLimitReached ? `${result.text.trim()}\n\n_Cut off at the model's output limit._` : result.text.trim();
+    if (!text) throw new AgentError('The agent returned an empty response.');
     status('Agent finished.');
-    return { text: result.text.trim(), messages: result.messages };
+    return { text, messages: result.messages };
   } catch (error) {
     signal.throwIfAborted();
     throw displayError(error, chatgpt);

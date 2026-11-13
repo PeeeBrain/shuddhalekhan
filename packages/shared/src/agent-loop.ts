@@ -17,7 +17,7 @@ export type ToolApprovalDecision = { approved: true } | { approved: false; messa
 type ApprovalRequestPart = {
   type: 'tool-approval-request';
   approvalId: string;
-  toolCall: { toolCallId?: string; toolName: string; input?: unknown };
+  toolCall: { toolCallId: string; toolName: string; input?: unknown };
 };
 type StreamPart =
   | { type: 'text-delta'; text?: string; textDelta?: string }
@@ -164,11 +164,17 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
       toolNames.push(...step.toolCalls.map(call => String(call.toolName)));
       if (step.toolResults.length > 0) onAudit?.('tool_results', { toolResults: step.toolResults });
     }
-    // A model that ignores `toolChoice: none` on its final step leaves unanswered tool calls; drop
-    // that round so the returned conversation stays valid to continue.
-    if (consumed.approvalRequests.length > 0 && usedSteps >= maxSteps) break;
     messages.push(...await result.responseMessages);
     if (consumed.approvalRequests.length === 0) break;
+    // A model that ignores `toolChoice: none` on its final step still asks for tools. Deny them, so a
+    // reply sees a result for every call (and keeps results of tools approved earlier in this round).
+    if (usedSteps >= maxSteps) {
+      messages.push({ role: 'tool', content: consumed.approvalRequests.map(request => ({
+        type: 'tool-result' as const, toolCallId: request.toolCall.toolCallId, toolName: request.toolCall.toolName,
+        output: { type: 'execution-denied' as const, reason: 'Step limit reached.' },
+      })) });
+      break;
+    }
 
     onAudit?.('tool_approval_requests', { approvalRequests: consumed.approvalRequests });
     const approvalResponses = [];

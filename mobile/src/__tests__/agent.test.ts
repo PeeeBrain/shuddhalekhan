@@ -414,13 +414,13 @@ describe('conversation and limits', () => {
     } finally { jest.useRealTimers(); }
   });
 
-  test('an answer cut off at the output limit is reported instead of shown as complete', async () => {
+  test('an answer cut off at the output limit is kept and labelled instead of shown as complete', async () => {
     await withServer(() => chatReply('Half an ans', 'length'), async url => {
-      const failure = await errorFrom(runAgent({
+      const { text } = await runAgent({
         transcript: 'Explain.', signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {}, approve: async () => true,
         settings: { ...agentSettings(url, url), mcpServers: [] },
-      }));
-      expect(failure.message).toBe('The agent reached its output limit. Try a shorter command.');
+      });
+      expect(text).toBe("Half an ans\n\n_Cut off at the model's output limit._");
     });
   });
 });

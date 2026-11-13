@@ -207,6 +207,28 @@ describe('runAgent', () => {
     expect(callbacks.onCompleted).toHaveBeenCalledWith(expect.stringContaining("Cut off at the model's output limit"), expect.anything());
   });
 
+  it('denies tools still requested on the last step so the conversation stays valid to reply to', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    const step = { toolCalls: [{ toolName: 'srv1__send' }], toolResults: [] };
+    const approvedResult = { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-1', toolName: 'srv1__send', output: { type: 'text', value: 'sent' } }] };
+    streamTextMock
+      .mockImplementationOnce(() => makeStreamResult({
+        text: '', steps: Array.from({ length: 29 }, () => step), toolCalls: [], toolResults: [],
+        streamParts: [makeApprovalRequest('approval-1', 'call-1', 'srv1__send', {})],
+      }))
+      // The model ignores `toolChoice: none` on the final step and asks again.
+      .mockImplementationOnce(() => makeStreamResult({
+        text: '', steps: [step], toolCalls: [], toolResults: [],
+        streamParts: [makeApprovalRequest('approval-2', 'call-2', 'srv1__send', {})],
+        responseMessages: [approvedResult],
+      }));
+
+    const messages = await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, makeCallbacks());
+
+    expect(messages).toContainEqual(approvedResult);
+    expect(messages?.at(-1)).toMatchObject({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-2', output: { type: 'execution-denied' } }] });
+  });
+
   it('continues a previous conversation by sending its messages before the new command', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     const answer = { role: 'assistant', content: 'Which city?' };

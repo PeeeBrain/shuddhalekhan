@@ -625,6 +625,18 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(((win.setBounds as ReturnType<typeof vi.fn>).mock.calls as unknown[][]).at(-1)?.[0]).toMatchObject({ width: 520, height: 520 });
   });
 
+  it('offers a reply only while the answer is the visible card', async () => {
+    const { window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('reply-visible-answer');
+    shell.prepare();
+
+    shell.showAgentCompleted('run-1', 'Answer', []);
+    expect(shell.getPresentedCompletedRunId()).toBe('run-1');
+    shell.showFailure('session-1', 'Paste failed');
+    expect(shell.getPresentedCompletedRunId()).toBeNull();
+  });
+
   it('ignores Agent card sizes while another presentation is visible', async () => {
     const { window } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => window);
