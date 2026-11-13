@@ -133,10 +133,9 @@ export async function runAgent(
       toolSummary.push("Max step guardrail reached");
       callbacks.onAudit?.("max_step_guardrail", { stepCount: AGENT_MAX_STEPS });
     }
-    if (loop.outputLimitReached) toolSummary.push("Answer cut off at the model's output limit");
-
     const finalResponse = normalizeFinalResponse(
-      loop.text,
+      // In the answer itself: the card shows only the first few summary entries.
+      loop.outputLimitReached ? `${loop.text}\n\n_Cut off at the model's output limit._` : loop.text,
       toolSummary,
       callbacks,
     );

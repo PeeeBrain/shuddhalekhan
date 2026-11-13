@@ -191,6 +191,22 @@ describe('runAgent', () => {
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Searched twice; one search remains.', expect.arrayContaining(['Max step guardrail reached']));
   });
 
+  it('marks an answer cut off at the output limit even when the tool list is too long to show', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    const tool = (toolName: string) => ({ toolCalls: [{ toolName }], toolResults: [] });
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Half an ans',
+      steps: [tool('a'), tool('b'), tool('c'), { toolCalls: [], toolResults: [], finishReason: 'length' }],
+      toolCalls: [],
+      toolResults: [],
+    }));
+
+    const callbacks = makeCallbacks();
+    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
+
+    expect(callbacks.onCompleted).toHaveBeenCalledWith(expect.stringContaining("Cut off at the model's output limit"), expect.anything());
+  });
+
   it('continues a previous conversation by sending its messages before the new command', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     const answer = { role: 'assistant', content: 'Which city?' };
@@ -493,7 +509,7 @@ function makeCallbacks(): AgentRuntimeCallbacks & { [K in keyof AgentRuntimeCall
 
 function makeStreamResult(result: {
   text: string;
-  steps: Array<{ toolCalls: Array<{ toolName: string }>; toolResults: unknown[] }>;
+  steps: Array<{ toolCalls: Array<{ toolName: string }>; toolResults: unknown[]; finishReason?: string }>;
   toolCalls: unknown[];
   toolResults: unknown[];
   streamChunks?: string[];

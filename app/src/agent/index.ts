@@ -42,7 +42,7 @@ const mcpRegistry = new McpRegistry({
 // Long enough to return from another app and read the arguments; the run waits, nothing else is blocked.
 const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 /** The latest completed run, kept in memory only so the next command can reply to it. */
-let lastConversation: { agentRunId: string; messages: ModelMessage[] } | null = null;
+let lastConversation: { agentRunId: string; provider: string; messages: ModelMessage[] } | null = null;
 
 
 type PendingApproval = {
@@ -129,9 +129,8 @@ function handleLine(line: string): void {
       if (providerTest?.requestId === message.requestId) providerTest.controller.abort();
       break;
     case 'config:update':
-      // Another provider cannot read this one's reasoning items, and a disabled agent keeps nothing.
-      if (!message.config.agent.enabled
-        || JSON.stringify(message.config.agent.provider) !== JSON.stringify(config?.agent.provider)) lastConversation = null;
+      // A disabled agent keeps nothing.
+      if (!message.config.agent.enabled) lastConversation = null;
       config = message.config;
       agentApiKey = message.agentApiKey;
       logSidecar('received config update');
@@ -167,7 +166,10 @@ function handleLine(line: string): void {
 async function handleAgentStart(agentRunId: string, transcript: string, context?: AgentRunContext, continueFrom?: string): Promise<void> {
   providerTest?.controller.abort();
   // Taken once: a failed or cancelled reply ends the conversation instead of leaving it half-updated.
-  const history = continueFrom && lastConversation?.agentRunId === continueFrom ? lastConversation.messages : [];
+  // Never sent to another provider, even if the provider changed while the answered run was still going.
+  const provider = JSON.stringify(config?.agent.provider);
+  const history = continueFrom && lastConversation?.agentRunId === continueFrom && lastConversation.provider === provider
+    ? lastConversation.messages : [];
   lastConversation = null;
   const previousAgentRunId = activeAgentRunId;
   const previousAbortController = activeAbortController;
@@ -246,7 +248,9 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
         },
       }, currentAgentApiKey, context, history);
       // A newer run may have started while this one finished; only the latest answer can be replied to.
-      if (messages && (activeAgentRunId === null || activeAgentRunId === agentRunId)) lastConversation = { agentRunId, messages };
+      if (messages && (activeAgentRunId === null || activeAgentRunId === agentRunId)) {
+        lastConversation = { agentRunId, provider: JSON.stringify(currentConfig.agent.provider), messages };
+      }
     } finally {
       await toolSnapshot.close();
     }
