@@ -103,6 +103,9 @@ export function RuntimeShellSurface() {
               Used {snapshot.toolSummary.slice(0, 3).join(' · ')}
             </p>
           ) : null}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Use the Agent shortcut to reply. Dismiss to start fresh.
+          </p>
         </AgentCard>
       );
     case 'agent-failed':

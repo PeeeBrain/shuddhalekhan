@@ -409,6 +409,11 @@ export class RuntimeShell {
       : null;
   }
 
+  /** The run whose answer is on screen. While it is, the next Agent command replies to it. */
+  getPresentedCompletedRunId(): string | null {
+    return this.agentTerminal?.phase === 'completed' ? this.agentTerminal.agentRunId : null;
+  }
+
   dismissAgentCard(): void {
     if (!this.agentTerminal) return;
     this.agentTerminal = null;

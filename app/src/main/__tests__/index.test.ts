@@ -118,6 +118,7 @@ const runtimeShellShowAgentCompleted = vi.fn();
 const runtimeShellShowAgentFailed = vi.fn();
 const runtimeShellDismissAgentCard = vi.fn();
 const runtimeShellGetPendingApproval = vi.fn((): { serverId: string; toolName: string } | null => null);
+const runtimeShellGetPresentedCompletedRunId = vi.fn((): string | null => null);
 const runtimeShellHandleAgentCardSize = vi.fn();
 const applyDictationFormatter = vi.fn();
 
@@ -228,6 +229,7 @@ mock.module('../runtime-shell', () => ({
     showAgentFailed = runtimeShellShowAgentFailed;
     dismissAgentCard = runtimeShellDismissAgentCard;
     getPendingApproval = runtimeShellGetPendingApproval;
+    getPresentedCompletedRunId = runtimeShellGetPresentedCompletedRunId;
     handleAgentCardSize = runtimeShellHandleAgentCardSize;
   },
 }));
@@ -464,7 +466,7 @@ describe('main process IPC orchestration', () => {
     expect(agentTestProvider).toHaveBeenCalledWith(expect.objectContaining({ kind: 'chatgpt' }), 'private-plan-token');
     expect(JSON.stringify(result)).not.toContain('private-');
     await sessionOptions.onResult({ text: 'Do the task.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
-    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'Do the task.', config, 'private-plan-token', expect.any(Object));
+    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'Do the task.', config, 'private-plan-token', expect.any(Object), undefined);
     expect(JSON.stringify(send.mock.calls)).not.toContain('private-');
     expect(simulatePaste).not.toHaveBeenCalled();
   });
@@ -612,7 +614,7 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
 
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined,
-      { memory: null, skillsDirectory: expect.stringContaining('skills') });
+      { memory: null, skillsDirectory: expect.stringContaining('skills') }, undefined);
     expect(simulatePaste).not.toHaveBeenCalled();
     // A lingering "Transcribing…" pill outranks and hides every Agent card for the whole run.
     expect(runtimeShellFinish).toHaveBeenCalled();
@@ -649,6 +651,7 @@ describe('main process IPC orchestration', () => {
       config,
       undefined,
       { memory: null, skillsDirectory: expect.stringContaining('skills') },
+      undefined,
     );
     expect(simulatePaste).not.toHaveBeenCalled();
   });
@@ -966,6 +969,21 @@ describe('main process IPC orchestration', () => {
 
     expect(agentCancelRun).toHaveBeenCalledWith(previousRunId);
     expect(runtimeShellShowAgentStatus).not.toHaveBeenCalled();
+  });
+
+  it('continues the conversation only when an Agent recording begins over a completed answer', async () => {
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+    await import(`../index?test=${Date.now()}-agent-reply`);
+    const command = (text: string) => sessionOptions.onResult({ text, intent: 'agent' as const, targetSnapshot: defaultTargetSnapshot });
+
+    runtimeShellGetPresentedCompletedRunId.mockReturnValueOnce('answered-run');
+    sessionOptions.onBegin('agent');
+    await command('Pune.');
+    sessionOptions.onBegin('agent');
+    await command('Tell me a joke.');
+
+    expect(agentStartRun.mock.calls.map((call: unknown[]) => call.at(-1))).toEqual(['answered-run', undefined]);
   });
 
   it('shows one persistent shell failure when the sidecar exits unexpectedly', async () => {

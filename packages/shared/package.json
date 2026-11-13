@@ -8,6 +8,8 @@
     "./validation": "./src/validation.ts",
     "./agent-prompt": "./src/agent-prompt.ts",
     "./agent-provider": "./src/agent-provider.ts",
+    "./agent-model": "./src/agent-model.ts",
+    "./agent-loop": "./src/agent-loop.ts",
     "./mcp": "./src/mcp.ts",
     "./languages": "./src/languages.ts",
     "./providers": "./src/providers.ts",
@@ -18,6 +20,11 @@
     "lint:fix": "oxlint . --fix"
   },
   "dependencies": {
+    "@ai-sdk/azure": "4.0.100",
+    "@ai-sdk/openai": "4.0.92",
+    "@ai-sdk/openai-compatible": "3.0.7",
+    "@openrouter/ai-sdk-provider": "3.1.0",
+    "ai": "7.0.138",
     "zod": "4.6.7"
   },
   "devDependencies": {

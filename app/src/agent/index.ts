@@ -5,6 +5,7 @@ import { logSidecar, parseElectronMessage, writeJsonLine } from './protocol';
 import { runAgent } from './runtime';
 import { testAgentProvider } from './provider-test';
 import { failedProviderTest } from '../shared/agent-provider';
+import type { ModelMessage } from 'ai';
 import type { AppConfig } from '../types/ipc';
 import type { ApprovalDecisionMessage } from './protocol';
 import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
@@ -38,7 +39,10 @@ const mcpRegistry = new McpRegistry({
   transporter: new StdoutSidecarMessageTransporter(),
 });
 
-const APPROVAL_TIMEOUT_MS = 30_000;
+// Long enough to return from another app and read the arguments; the run waits, nothing else is blocked.
+const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+/** The latest completed run, kept in memory only so the next command can reply to it. */
+let lastConversation: { agentRunId: string; messages: ModelMessage[] } | null = null;
 
 
 type PendingApproval = {
@@ -125,6 +129,9 @@ function handleLine(line: string): void {
       if (providerTest?.requestId === message.requestId) providerTest.controller.abort();
       break;
     case 'config:update':
+      // Another provider cannot read this one's reasoning items, and a disabled agent keeps nothing.
+      if (!message.config.agent.enabled
+        || JSON.stringify(message.config.agent.provider) !== JSON.stringify(config?.agent.provider)) lastConversation = null;
       config = message.config;
       agentApiKey = message.agentApiKey;
       logSidecar('received config update');
@@ -132,7 +139,7 @@ function handleLine(line: string): void {
       break;
     case 'agent:start':
       {
-        const run = handleAgentStart(message.agentRunId, message.transcript, message.context);
+        const run = handleAgentStart(message.agentRunId, message.transcript, message.context, message.continueFrom);
         pendingRuns.add(run);
         void run.finally(() => pendingRuns.delete(run));
       }
@@ -157,8 +164,11 @@ function handleLine(line: string): void {
   }
 }
 
-async function handleAgentStart(agentRunId: string, transcript: string, context?: AgentRunContext): Promise<void> {
+async function handleAgentStart(agentRunId: string, transcript: string, context?: AgentRunContext, continueFrom?: string): Promise<void> {
   providerTest?.controller.abort();
+  // Taken once: a failed or cancelled reply ends the conversation instead of leaving it half-updated.
+  const history = continueFrom && lastConversation?.agentRunId === continueFrom ? lastConversation.messages : [];
+  lastConversation = null;
   const previousAgentRunId = activeAgentRunId;
   const previousAbortController = activeAbortController;
 
@@ -201,7 +211,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     );
 
     try {
-      await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, runController.signal, {
+      const messages = await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, runController.signal, {
         onStatus: (status) => {
           if (activeAgentRunId !== agentRunId) return;
           auditStore.record(agentRunId, 'status', { status });
@@ -234,7 +244,9 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
         onMemoryStatus: status => {
           if (activeAgentRunId === agentRunId) writeJsonLine({ type: 'memory:status', agentRunId, status });
         },
-      }, currentAgentApiKey, context);
+      }, currentAgentApiKey, context, history);
+      // A newer run may have started while this one finished; only the latest answer can be replied to.
+      if (messages && (activeAgentRunId === null || activeAgentRunId === agentRunId)) lastConversation = { agentRunId, messages };
     } finally {
       await toolSnapshot.close();
     }

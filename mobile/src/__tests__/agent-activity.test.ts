@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { MobileController, type Recorder } from '../controller';
 import { parseAgentActivityLink, type AgentActivityPort, type AgentActivityUpdate, type AgentApprovalAction } from '../agent-activity';
 import { defaultSettings, type MobileSettings } from '../settings';
+import { chatReply } from './model-stream';
 
 const recorder: Recorder = {
   requestPermission: async () => true, start: async () => {},
@@ -55,7 +56,7 @@ describe('agent Live Activity lifecycle', () => {
           expect(controller.getSnapshot().phase).toBe('running');
           controller.agentRunStopped('run-1');
         }
-        response.resolve(Response.json({ choices: [{ message: { role: 'assistant', content: 'The answer.' } }] }));
+        response.resolve(chatReply('The answer.'));
         await run;
         expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', runId: 'run-1', response: outcome === 'granted' ? 'The answer.' : '' });
         const terminal = updates.filter(update => update.phase !== 'running' && update.phase !== 'awaitingApproval');
@@ -69,7 +70,7 @@ describe('agent Live Activity lifecycle', () => {
 
   test('foreground work still completes when the activity cannot start', async () => {
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0,
-      fetch: () => Response.json({ choices: [{ message: { role: 'assistant', content: 'Foreground answer.' } }] }),
+      fetch: () => chatReply('Foreground answer.'),
     });
     try {
       const { port } = activityPort({ start: async () => { throw new Error('Native unavailable'); } });
@@ -87,11 +88,12 @@ const rpc = z.object({ id: z.number().optional(), method: z.string() });
 const modelRequest = z.object({ tools: z.array(z.object({ function: z.object({ name: z.string() }) })).optional() });
 
 async function withToolRun(run: (input: {
-  controller: MobileController; native: AgentActivityPort; updates: AgentActivityUpdate[]; calls: () => number;
+  controller: MobileController; native: AgentActivityPort; updates: AgentActivityUpdate[]; calls: () => number; resumes: () => number;
   preparedApproval: () => string | null; queueAction: (action: AgentApprovalAction) => void;
 }) => Promise<void>, options: { rejectResume?: boolean; publication?: Promise<void>; notifications?: boolean } = {}) {
   let modelCalls = 0;
   let calls = 0;
+  let resumes = 0;
   let preparedApproval: string | null = null;
   const updates: AgentActivityUpdate[] = [];
   const actions: AgentApprovalAction[] = [];
@@ -99,12 +101,10 @@ async function withToolRun(run: (input: {
     if (new URL(request.url).pathname === '/chat') {
       const body = modelRequest.parse(await request.json());
       modelCalls++;
-      if (modelCalls > 2) return Response.json({ choices: [{ message: { role: 'assistant', content: 'Both tools finished.' } }] });
+      if (modelCalls > 2) return chatReply('Both tools finished.');
       const name = body.tools?.[0]?.function.name;
       if (!name) return new Response('No tool advertised', { status: 400 });
-      return Response.json({ choices: [{ message: { role: 'assistant', content: null,
-        tool_calls: [{ id: `call-${modelCalls}`, type: 'function', function: { name, arguments: '{"private":"argument"}' } }],
-      } }] });
+      return chatReply({ id: `call-${modelCalls}`, name, arguments: '{"private":"argument"}' });
     }
     if (request.method === 'DELETE') return new Response(null, { status: 202 });
     const body = rpc.parse(await request.json());
@@ -119,7 +119,7 @@ async function withToolRun(run: (input: {
     return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'Tool done.' }] } });
   } });
   const { port } = activityPort({
-    resume: async () => { if (options.rejectResume) throw new Error('Expired approval'); },
+    resume: async () => { resumes++; if (options.rejectResume) throw new Error('Expired approval'); },
     prepareApproval: async update => { preparedApproval = update.approvalId; return options.notifications ?? false; },
     takeApprovalAction: async () => actions.shift() ?? null,
     update: async update => { updates.push(update); if (update.phase === 'running') await options.publication; },
@@ -132,7 +132,7 @@ async function withToolRun(run: (input: {
     await controller.startRecording('agent');
     pending = controller.stopRecording();
     await when(controller, () => controller.getSnapshot().phase === 'awaitingApproval');
-    await run({ controller, native: port, updates, calls: () => calls, preparedApproval: () => preparedApproval, queueAction: action => { actions.push(action); } });
+    await run({ controller, native: port, updates, calls: () => calls, resumes: () => resumes, preparedApproval: () => preparedApproval, queueAction: action => { actions.push(action); } });
     await pending;
   } finally { controller.cancel(); await pending; await server.stop(true); }
 }
@@ -184,7 +184,7 @@ test('an expired native approval cannot dispatch the tool even if its UI was sti
 });
 
 test('notification actions wait for foreground and cannot approve a stale or subsequent tool', async () => {
-  await withToolRun(async ({ controller, calls, queueAction }) => {
+  await withToolRun(async ({ controller, calls, resumes, queueAction }) => {
     const first = controller.getSnapshot().approval;
     if (!first) throw new Error('Expected first approval');
     expect(controller.getSnapshot().approvalNotified).toBe(true);
@@ -209,9 +209,10 @@ test('notification actions wait for foreground and cannot approve a stale or sub
     queueAction({ runId: second.runId, approvalId: second.approvalId, action: 'deny' });
     await controller.consumeApprovalAction();
     await when(controller, () => controller.getSnapshot().phase === 'idle');
+    // A denial is the model's to explain; the denied tool never runs, but native execution resumes for the answer.
     expect(calls()).toBe(1);
-    expect(controller.getSnapshot().response).toBe('');
-    expect(controller.getSnapshot().error).toContain('Tool denied');
+    expect(resumes()).toBe(2);
+    expect(controller.getSnapshot()).toMatchObject({ response: 'Both tools finished.', error: null });
   }, { notifications: true });
 });
 

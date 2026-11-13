@@ -3,6 +3,7 @@ import { MobileController, type Recorder } from '../controller';
 import type { AgentActivityPort, AgentActivityUpdate } from '../agent-activity';
 import type { KeyboardSessionEvent } from '../keyboard-session';
 import { defaultSettings } from '../settings';
+import { chatReply } from './model-stream';
 
 const done: KeyboardSessionEvent = {
   endsAt: Date.now() + 60_000, requestId: 'keyboard-a', mode: 'agent', agentReady: true,
@@ -49,7 +50,7 @@ test('a background keyboard agent transcript runs once, rejects a busy command a
     requests++;
     requested.resolve(await request.text());
     await answer.promise;
-    return Response.json({ choices: [{ message: { role: 'assistant', content: 'The next train is at 10.' } }] });
+    return chatReply('The next train is at 10.');
   } });
   try {
     const { controller, updates, recorderCalls } = setup(`http://127.0.0.1:${server.port}/v1/chat/completions`);

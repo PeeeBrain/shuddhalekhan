@@ -113,6 +113,7 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
             <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">Agent response</Text>
             <Markdown>{response}</Markdown>
             <View style={kit.buttons}><CopyShare text={response} /></View>
+            {app.canReply ? <Text style={type.caption}>Record an Agent command to reply. Clear starts fresh.</Text> : null}
           </Card>
         ) : null}
 

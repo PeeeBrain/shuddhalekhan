@@ -63,7 +63,7 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Done', []);
-    expect(isStepCountMock).toHaveBeenCalledWith(5);
+    expect(isStepCountMock).toHaveBeenCalledWith(30);
   });
 
   it('reports the provider error carried by an AI SDK error stream part', async () => {
@@ -167,48 +167,47 @@ describe('runAgent', () => {
     expect(callbacks.onCompleted).toHaveBeenCalledWith('Weather is sunny', ['Used weather']);
   });
 
-  it('performs fallback when max steps reached with pending tool calls', async () => {
+  it('spends one step budget across approval pauses and forces a tool-free answer on the last step', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
-    let callCount = 0;
-    streamTextMock.mockImplementation((options: { onStepEnd?: (args: unknown) => void }) => {
-      callCount++;
-      if (callCount === 1) {
-        options.onStepEnd?.({
-          usage: { inputTokens: 1, outputTokens: 1, inputTokenDetails: {} },
-          toolCalls: [{ toolName: 'search' }],
-          toolResults: [],
-          text: '',
-        });
-        return makeStreamResult({
-          text: '',
-          steps: [
-            { toolCalls: [{ toolName: 'search' }], toolResults: [] },
-            { toolCalls: [{ toolName: 'search' }], toolResults: [] },
-            { toolCalls: [{ toolName: 'search' }], toolResults: [] },
-            { toolCalls: [{ toolName: 'search' }], toolResults: [] },
-            { toolCalls: [{ toolName: 'search' }], toolResults: [] },
-          ],
-          toolCalls: [{ toolName: 'search' }],
-          toolResults: [],
-        });
-      }
-      return makeStreamResult({
-        text: 'Step limit fallback',
-        steps: [],
-        toolCalls: [],
-        toolResults: [],
-        streamChunks: ['Step ', 'limit fallback'],
+    const step = { toolCalls: [{ toolName: 'srv1__search' }], toolResults: [] };
+    type Prepared = { messages: Array<{ role: string }>; toolChoice?: string };
+    const prepared: Prepared[] = [];
+    streamTextMock
+      .mockImplementationOnce(() => makeStreamResult({
+        text: '', steps: Array.from({ length: 29 }, () => step), toolCalls: [], toolResults: [],
+        streamParts: [makeApprovalRequest('approval-1', 'call-1', 'srv1__search', {})],
+      }))
+      .mockImplementationOnce((options: { prepareStep(input: { messages: unknown[]; stepNumber: number }): Prepared }) => {
+        prepared.push(options.prepareStep({ messages: [{ role: 'user', content: 'hello' }], stepNumber: 0 }));
+        return makeStreamResult({ text: 'Searched twice; one search remains.', steps: [{ toolCalls: [], toolResults: [] }], toolCalls: [], toolResults: [] });
       });
-    });
 
     const callbacks = makeCallbacks();
-
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    expect(callbacks.onStatus).toHaveBeenCalledWith('Step limit reached. Summarizing...');
-    expect(callbacks.onResponseDelta).toHaveBeenCalledWith('Step ', 'Step ');
-    expect(callbacks.onResponseDelta).toHaveBeenCalledWith('limit fallback', 'Step limit fallback');
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Step limit fallback', expect.arrayContaining(['Max step guardrail reached']));
+    expect(isStepCountMock.mock.calls).toEqual([[30], [1]]);
+    expect(prepared[0]?.toolChoice).toBe('none');
+    expect(prepared[0]?.messages.at(-1)).toMatchObject({ role: 'user', content: [{ text: expect.stringContaining('maximum number of steps') }] });
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Searched twice; one search remains.', expect.arrayContaining(['Max step guardrail reached']));
+  });
+
+  it('continues a previous conversation by sending its messages before the new command', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    const answer = { role: 'assistant', content: 'Which city?' };
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Which city?', steps: [{ toolCalls: [], toolResults: [] }], toolCalls: [], toolResults: [], responseMessages: [answer],
+    }));
+    const signal = new AbortController().signal;
+
+    const conversation = await runAgent('run-1', 'weather', baseConfig as never, {}, signal, makeCallbacks());
+    await runAgent('run-2', 'Pune', baseConfig as never, {}, signal, makeCallbacks(), undefined, undefined, conversation ?? []);
+
+    // The loop appends each response to the array it passed in, so compare only what was sent.
+    expect(streamTextMock.mock.calls[1]?.[0].messages.slice(0, 3)).toEqual([
+      { role: 'user', content: expect.stringContaining('\n\nweather') },
+      answer,
+      { role: 'user', content: expect.stringContaining('\n\nPune') },
+    ]);
   });
 
   it('resumes the model with a denied tool approval response', async () => {
@@ -432,6 +431,7 @@ describe('runAgent', () => {
     streamTextMock.mockReturnValue({
       text: Promise.resolve(''),
       steps: Promise.resolve([{ toolCalls: [], toolResults: [] }]),
+      responseMessages: Promise.resolve([]),
       toolCalls: Promise.resolve([]),
       toolResults: Promise.resolve([]),
     });
@@ -459,6 +459,7 @@ describe('runAgent', () => {
           toolResults: [{ toolName: 'srv1__search', result: 'ok' }],
         },
       ]),
+      responseMessages: Promise.resolve([]),
       toolCalls: Promise.resolve([{ toolName: 'srv1__search' }]),
       toolResults: Promise.resolve([{ toolName: 'srv1__search', result: 'ok' }]),
     });

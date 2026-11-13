@@ -1,6 +1,6 @@
 # Shuddhalekhan mobile
 
-`mobile/` is a React Native app using Expo SDK 58 for iOS 17+. It records while open, transcribes with on-device Parakeet or a configured endpoint, and includes a keyboard that dictates into other apps during a keyboard session you start. Agent Mode sends a one-off command and asks before tool calls unless you explicitly allow them in Settings.
+`mobile/` is a React Native app using Expo SDK 58 for iOS 17+. It records while open, transcribes with on-device Parakeet or a configured endpoint, and includes a keyboard that dictates into other apps during a keyboard session you start. Agent Mode sends a one-off command and asks before tool calls unless you explicitly allow them in Settings. Recording another Agent command while the answer is shown replies to it.
 
 ## Supported services
 
@@ -124,7 +124,7 @@ An ordinary background task cannot create a replacement custom activity when a t
 - Sideload the app with both the dictation keyboard and agent widget retained. Confirm installed build 14, then check ordinary in-app Dictation and keyboard insertion again.
 - Inspect the installed bundle identifier and `BGTaskSchedulerPermittedIdentifiers` after re-signing. The `.agent.*` pattern must start with the installed bundle identifier. If the signer rewrites only the bundle identifier, update its Info.plist rewrite before signing; native logs `AgentActivity stage=task_identifier_mismatch` and keeps execution foreground-only until they match. This check remains pending installation.
 
-One agent lifecycle record and the last final answer are stored in app-private, backup-excluded Application Support with iOS data protection. Starting a replacement recording or clearing results removes the previous result. There is no conversation history, persisted prompt, or automatic retry. Failed cleanup is reported. The app keeps the full live answer in memory; saved answers are bounded to 200,000 UTF-16 code units.
+One agent lifecycle record and the last final answer are stored in app-private, backup-excluded Application Support with iOS data protection. Starting a replacement recording or clearing results removes the previous result. The conversation an in-app Agent recording replies to is kept in memory only and ends when results are cleared, settings are saved, or the app quits; keyboard agent commands always start fresh. There is no persisted prompt or automatic retry. Failed cleanup is reported. The app keeps the full live answer in memory; saved answers are bounded to 200,000 UTF-16 code units.
 
 For performance changes, measure tap-to-session-ready and Stop-to-insertion separately. Compare a process-cold launch with a second session in the same process, recording permission prompts and model preparation separately. Record the device, iOS version, build number, and timings; one fast retry does not establish cold-start performance.
 
@@ -242,7 +242,7 @@ If saved settings or keys cannot be read, the app keeps them intact and blocks r
 - Keyboard commands and results use authenticated loopback TCP because iOS denies background pasteboard reads. Background recording, transcription, and insertion in Notes were confirmed on an iPhone with build 2; session persistence and interruption recovery need separate device checks.
 - Recording is capped at five minutes. iOS records mono 16 kHz PCM WAV for Whisper compatibility. Temporary audio is deleted after completion or cancellation. Transcripts stay in memory; the last agent answer is also saved locally until cleared or replaced.
 - Agent Mode supports Streamable HTTP MCP with bearer authentication. It does not support stdio MCP servers or OAuth.
-- The agent uses non-streaming Chat Completions with live progress messages. It allows eight model steps and sixteen sequential tool calls per command, gated by each tool's saved approval policy. Retrying a command may repeat earlier completed actions.
+- The agent runs on the AI SDK runtime shared with desktop (`packages/shared/src/agent-loop.ts`), streaming from the saved endpoint through `expo/fetch`. It allows 30 model steps per command, the last one tool-free, gated by each tool's saved approval policy. A denied tool is reported to the model, which explains or tries another way. Retrying a command may repeat earlier completed actions.
 - iOS 26 uses the system activity for agent progress and notifications for approval actions and background results. Notification actions authenticate and foreground the app before approving or denying the exact pending request. Continued processing is best-effort and does not survive force quit. Earlier iOS versions retain the custom activity and require the app to remain foregrounded while working. Final answers render Markdown in the app; Copy and Share preserve the source text.
 - HTTP endpoints require the explicit insecure HTTP setting. Prefer HTTPS. For a server on your Wi-Fi network, use an address the iPhone can reach; `localhost` points to the iPhone itself.
 - The app does not import desktop shortcuts, provider settings, tool policies, or local model data.

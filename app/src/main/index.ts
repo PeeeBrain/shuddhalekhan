@@ -118,6 +118,8 @@ async function setWaylandInsertion(enabled: boolean): Promise<void> {
 
 let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
+/** Set when an Agent recording begins over a completed answer; that command continues the conversation. */
+let continueFromRunId: string | null = null;
 let providerTestRevision = 0;
 let retryPasteInFlight = false;
 const runtimeShell = new RuntimeShell();
@@ -192,7 +194,10 @@ const recordingSession = new RecordingSession({
   isAgentModeEnabled: () => cachedAgentEnabled,
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   onBegin: (intent) => {
-    if (intent === 'agent') invalidateActiveAgentRun();
+    if (intent !== 'agent') return;
+    // Read before the new recording clears the card: an answer still on screen is being replied to.
+    continueFromRunId = runtimeShell.getPresentedCompletedRunId();
+    invalidateActiveAgentRun();
   },
   getShortcutBinding: (intent) => getConfig().shortcuts[intent].binding,
   getSelectedDeviceId: () => getConfig().selectedDeviceId,
@@ -476,6 +481,8 @@ async function startAgentRun(text: string, config: AppConfig): Promise<void> {
 
   // A new run invalidates any prior run before replacement events can arrive.
   invalidateActiveAgentRun();
+  const continueFrom = continueFromRunId ?? undefined;
+  continueFromRunId = null;
   const agentRunId = randomUUID();
   activeAgentRunId = agentRunId;
   let apiKey: string | undefined;
@@ -496,6 +503,7 @@ async function startAgentRun(text: string, config: AppConfig): Promise<void> {
     config,
     apiKey,
     agentContext.createRunContext(),
+    continueFrom,
   );
   console.log(`Started Agent Mode run ${agentRunId}`);
   getSettingsWindow()?.webContents.send('audit:run-updated', agentRunId);

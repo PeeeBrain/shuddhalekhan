@@ -104,6 +104,8 @@ export type AgentStartMessage = {
   agentRunId: string;
   transcript: string;
   context?: AgentRunContext;
+  /** The completed run this command replies to. Ignored unless it is the sidecar's latest conversation. */
+  continueFrom?: string;
 };
 
 export type AgentCancelMessage = {
@@ -168,7 +170,7 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
     case 'agent:start': {
       const result = z.object({ type: z.literal('agent:start'), agentRunId: z.string().min(1), transcript: z.string(), context: z.object({
         skillsDirectory: z.string().min(1), memory: z.object({ revision: z.string(), markdown: z.string().max(MEMORY_BYTE_LIMIT) }).nullable(),
-      }).optional() }).safeParse(parsed);
+      }).optional(), continueFrom: z.string().min(1).optional() }).safeParse(parsed);
       return result.success ? result.data : null;
     }
     case 'config:update':

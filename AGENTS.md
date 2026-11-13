@@ -32,7 +32,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **we, us, and maintainers** mean Partha and anyone maintaining Shuddhalekhan. These are who you are talking to now.
 - **user** means the person running the Shuddhalekhan desktop or iOS app for dictation and/or Agent Mode.
 - **Dictation** means speech-to-text into the focused app. Synonymous with "transcription mode" in user-facing language.
-- **Agent Mode** means the opt-in voice-to-agent path. Spoken text is transcribed, then sent as a one-off command to the local agent. It is not a chat surface and does not keep conversational history by default.
+- **Agent Mode** means the opt-in voice-to-agent path. Spoken text is transcribed, then sent as a one-off command to the local agent. It is not a chat surface; the only history is a **reply**, an Agent command given while the previous answer is still on screen.
 - **agent** / **agent run** means one single-flight Agent Mode execution inside the app (model + tools). Depending on context, "agent" may also mean you.
 - **sidecar** means the local agent process under `app/src/agent/`. Electron main owns hotkeys, windows, config, and approvals; the sidecar owns the AI SDK runtime, MCP clients, tool loop, and audit log.
 - **provider** means the OpenAI-compatible model endpoint Agent Mode calls (base URL + model + API key env-var name). Keys are never stored in config.
@@ -130,7 +130,7 @@ For **Dictation**, the transcript is injected into the focused app via the clipb
 
 For **Agent Mode**, Electron main hands the transcript to the **sidecar** over a stdio JSONL protocol (`agentRunId` on every run-scoped message). The sidecar runs a Vercel AI SDK loop against the configured OpenAI-compatible **provider**, optionally calling tools from connected **MCP** servers. Sensitive tools surface as **approval toasts**; status and the final answer appear as toasts. The sidecar writes a local SQLite **audit** trail; Electron main owns windows, config, tray, and approval UI.
 
-Agent Mode is opt-in, single-flight, and stateless by default: one spoken command → one run → done. Disabling Agent Mode stops the sidecar and MCP connections.
+Agent Mode is opt-in, single-flight, and one-off by default: one spoken command → one run → done. An Agent command given while the answer is still on screen replies to it; dismissing the answer starts fresh. Desktop and iOS share the runtime loop in `packages/shared`. Disabling Agent Mode stops the sidecar and MCP connections.
 
 Deeper product/architecture language lives in `app/CONTEXT.md` and `app/docs/adr/`.
 

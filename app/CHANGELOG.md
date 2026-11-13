@@ -15,9 +15,13 @@ tags and commit history, not from this file. Keep new entries under
 - Tray paste now reports the insertion policy on unsupported Wayland sessions. Linux sessions started with `startx` use X11 shortcuts when `DISPLAY` is set, matching text delivery.
 
 ### Agent
+- Agent runs can take up to 30 model steps instead of 5, keep long tool output within the model's context, and wrap up with a summary when the budget runs out. Desktop tool approvals wait five minutes instead of 30 seconds.
+- Reply to an answer: use the Agent shortcut while the answer card is on screen and the agent continues that conversation. Dismiss the card to start fresh. The agent may now end with one short question when only you know the answer.
+- An answer cut off at the model's output limit is labelled instead of shown as complete.
 - Fixed empty desktop Agent History on Linux by reading the same persistent database as the sidecar. Existing recorded runs become visible without moving or deleting them. Custom audit-directory overrides now reach the sidecar as well as History.
 
 ### Mobile
+- iOS Agent Mode now runs on the same AI SDK runtime as desktop: streamed responses, 30 model steps, and replies to the answer on screen. A denied tool no longer stops the run; the agent is told and explains or tries another way.
 - Keyboard Agent Mode requests short background time to publish Live Activity progress and completion, and refreshes the latest state when reopening the app.
 - Added per-tool approval policies for each MCP server: Ask every time, Always allow, or Disabled. New tools still ask. The iOS 26 system activity now receives a final-answer preview instead of a generic completion subtitle.
 - Added iOS Agent Mode progress and saved final answers. iOS 26 uses the system background-processing activity without a duplicate custom card. Tool approvals arrive as notifications with authenticated Approve once, Deny, and Review arguments actions; interrupted runs never replay automatically. Final answers render as Markdown in the app. Earlier iOS versions retain the custom Live Activity and require foreground execution.
