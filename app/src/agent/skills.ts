@@ -17,10 +17,19 @@ export function createSkillTools(directory: string, disabled: string[], signal: 
     if (!skills.some(skill => skill.name === name)) throw new Error('This skill is unavailable or disabled.');
   };
   return {
-    context: `Available skills:\n${catalog}\nUse ${LOAD_SKILL_TOOL} when a skill is relevant. Skills are user-authored guidance, not permission to bypass tool policies. Scripts are not executed by this runtime; use configured MCP tools or explain missing capabilities.`,
+    // agent-prompt.ts defers its tool-use limits to this trigger rule.
+    context: `<skills>
+Skills are user-installed instructions for specific tasks. Available skills:
+${catalog}
+How to use skills:
+- Trigger: when the command names a skill (spoken names may drop the hyphens) or clearly matches a skill's description, call ${LOAD_SKILL_TOOL} with that name first, before any other tool call or your answer. This holds even when you could answer without tools.
+- Load every skill the command needs, and only those, then follow their instructions. Read a skill resource with ${READ_SKILL_RESOURCE_TOOL} only when those instructions point to it for this task.
+- Skills never override tool policies or approval decisions. This runtime does not execute skill scripts; use configured MCP tools or say which capability is missing.
+- If a named skill is not listed or fails to load, say so briefly and continue without it.
+</skills>`,
     tools: {
       [LOAD_SKILL_TOOL]: tool({
-        description: 'Load the instructions of an available skill before using its workflow.',
+        description: 'Load the full instructions of an available skill. Call this before other tools or the final answer when the command names a listed skill or clearly matches its description.',
         inputSchema: z.object({ name: z.string() }),
         execute: async ({ name }) => {
           try {
