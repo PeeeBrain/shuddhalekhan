@@ -222,6 +222,7 @@ mock.module('../runtime-shell', () => ({
     setCrashHandler = runtimeShellSetCrashHandler;
     beginAgentRun = runtimeShellBeginAgentRun;
     clearAgentRun = runtimeShellClearAgentRun;
+    startAgentTurn = vi.fn();
     showAgentStatus = runtimeShellShowAgentStatus;
     showAgentStreaming = runtimeShellShowAgentStreaming;
     showAgentApproval = runtimeShellShowAgentApproval;
@@ -983,7 +984,11 @@ describe('main process IPC orchestration', () => {
     sessionOptions.onBegin('agent');
     await command('Tell me a joke.');
 
-    expect(agentStartRun.mock.calls.map((call: unknown[]) => call.at(-1))).toEqual(['answered-run', undefined]);
+    // A reply runs as the answered run itself; a fresh command gets its own id.
+    const [reply, fresh] = agentStartRun.mock.calls as unknown[][];
+    expect([reply?.[0], reply?.at(-1)]).toEqual(['answered-run', 'answered-run']);
+    expect(fresh?.[0]).not.toBe('answered-run');
+    expect(fresh?.at(-1)).toBeUndefined();
   });
 
   it('shows one persistent shell failure when the sidecar exits unexpectedly', async () => {
