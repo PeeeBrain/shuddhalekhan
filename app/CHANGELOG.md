@@ -7,6 +7,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Agent Mode now loads a matching skill on its own when a command fits the skill's description, instead of only when you ask for the skill by name.
 - Cancelling desktop Dictation now releases its renderer microphone before retiring the capture command. Stale local speech workers and paste retries cannot alter replacement work.
 - Agent replies keep execution ownership separate from their shared History entry. Removing or changing an MCP server cancels its pending OAuth wait.
 - Settings no longer loses a late-opening onboarding microphone, hangs when reselecting a History run, or shows an endpoint check for an edited URL. Main-owned tool discovery and approval policy changes reach open Settings windows.
