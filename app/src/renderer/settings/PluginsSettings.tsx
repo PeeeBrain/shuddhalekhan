@@ -25,6 +25,9 @@ export function PluginsSettings({ config, settingsIpc, persistence, onNavigate }
   const installed = config.agent.plugins ?? [];
   const directories = config.agent.pluginMarketplaces ?? [];
   const directoriesKey = directories.join('\n');
+  // Catalog repos are the official directory or one the user added.
+  const directoryName = (repo: string) => directories.includes(repo) ? repo : 'Anthropic’s official directory';
+  const directoryError = persistence.fieldErrors[FIELD_ID_DIRECTORIES];
 
   useEffect(() => {
     let active = true;
@@ -140,7 +143,7 @@ export function PluginsSettings({ config, settingsIpc, persistence, onNavigate }
         </div>
         {catalog?.failed.length ? (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
-            <span className="break-words">Couldn&apos;t load {catalog.failed.join(', ')}.</span>
+            <span className="break-words">Couldn&apos;t load {catalog.failed.map(directoryName).join(', ')}. Check your connection.</span>
             <Button type="button" size="sm" variant="secondary" onClick={retryCatalog}>Try again</Button>
           </div>
         ) : null}
@@ -228,6 +231,7 @@ export function PluginsSettings({ config, settingsIpc, persistence, onNavigate }
             </Button>
           </form>
         </SettingsCard>
+        {directoryError ? <p role="alert" className="px-1 text-xs text-destructive">{directoryError}</p> : null}
         <p className="px-1 text-xs text-muted-foreground">Only add directories you trust. Their plugins can connect the agent to other apps.</p>
       </section>
 

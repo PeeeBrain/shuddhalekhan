@@ -40,9 +40,9 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 /** Manifest paths are written "./skills/x"; scopedSkillPath wants "skills/x" ("" is the plugin root). */
 const cleanPath = (path: string) => path.replace(/^\.(?:\/|$)/, '').replace(/\/+$/, '');
 
-/** "owner/repo" from that or a github.com link. */
+/** "owner/repo" from that or a github.com link (GitHub names are ASCII). */
 function githubRepo(value: string): string | undefined {
-  const repo = value.trim().match(/^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/)?.[1];
+  const repo = value.trim().match(/^(?:(?:https?:\/\/)?(?:www\.)?github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/)?.[1];
   return repo?.split('/').every(part => part !== '.' && part !== '..') ? repo : undefined;
 }
 
