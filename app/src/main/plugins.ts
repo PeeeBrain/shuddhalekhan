@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { dialog } from 'electron';
 import { z } from 'zod';
-import { AgentSkillStore, scopedSkillPath } from '../shared/agent-skills';
+import { AgentSkillStore, listSkills, scopedSkillPath, skillCatalogFits } from '../shared/agent-skills';
 import type { AppConfig, McpServerConfig, PluginInstallResult } from '../types/ipc';
 import { extractTar } from './managed-local-model';
 
@@ -165,9 +165,13 @@ export function registerPluginIpcHandlers(directory: string, deps: {
       if (taken) skipped.push(`the ${server.id} connection (you already have one with that name)`);
       return !taken;
     });
+    const enabled: { name: string; description: string }[] = listSkills(skills.directory, agent.disabledSkills)
+      .filter(skill => skill.enabled && !skill.error);
     const sources = plugin.skills.filter(folder => {
       try {
-        skills.inspectImport(folder);
+        const preview = skills.inspectImport(folder);
+        if (!skillCatalogFits([...enabled, preview])) throw new Error('you already have as many skills turned on as the agent can use');
+        enabled.push(preview);
         return true;
       } catch (error) {
         skipped.push(`the ${basename(folder)} skill (${errorMessage(error)})`);
@@ -222,13 +226,13 @@ export function registerPluginIpcHandlers(directory: string, deps: {
     const agent = deps.getConfig().agent;
     const plugin = agent.plugins?.find(item => item.name === name);
     if (!plugin) return;
-    // Config first: a run never sees a plugin whose files are half gone.
+    // Files first: if one is locked, the record stays so Remove can be retried.
+    for (const skill of plugin.skills) if (existsSync(join(skills.directory, skill))) skills.remove(skill);
     await deps.setAgent({
       ...agent,
       mcpServers: agent.mcpServers.filter(server => !plugin.mcpServerIds.includes(server.id)),
       disabledSkills: agent.disabledSkills?.filter(skill => !plugin.skills.includes(skill)),
       plugins: agent.plugins?.filter(item => item !== plugin),
     });
-    for (const skill of plugin.skills) if (existsSync(join(skills.directory, skill))) skills.remove(skill);
   }));
 }

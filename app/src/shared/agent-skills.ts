@@ -49,6 +49,12 @@ export function readSkillText(directory: string, relativePath: string): string {
   catch { throw new Error('Skill resources must contain UTF-8 text.'); }
 }
 
+export const skillCatalog = (skills: { name: string; description: string }[]) =>
+  skills.map(skill => `- ${skill.name}: ${skill.description}`).join('\n');
+/** Past this the agent drops every skill, so check before turning more on. */
+export const skillCatalogFits = (skills: { name: string; description: string }[]) =>
+  skills.length <= 64 && Buffer.byteLength(skillCatalog(skills)) <= 16384;
+
 export function listSkills(directory: string, disabled: string[] = []): AgentSkillSummary[] {
   if (!existsSync(directory)) return [];
   scopedSkillPath(directory, 'SKILL.md');

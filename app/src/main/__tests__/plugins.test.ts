@@ -103,6 +103,16 @@ describe('Plugins', () => {
     expect((await invoke('plugins:install-folder') as PluginInstallResult).plugin.skills).toEqual(['loop-notes']);
   });
 
+  it('leaves out skills past the number the agent can use', async () => {
+    writeFiles(join(directory, 'skills'), Object.fromEntries(Array.from({ length: 63 }, (_, i) => [`own-${i}/SKILL.md`, skill(`own-${i}`)])));
+    const plugin = join(directory, 'acme');
+    writeFiles(plugin, { 'skills/acme-one/SKILL.md': skill('acme-one'), 'skills/acme-two/SKILL.md': skill('acme-two') });
+    chooseFolder(plugin);
+    const result = await invoke('plugins:install-folder') as PluginInstallResult;
+    expect(result.plugin.skills).toHaveLength(1);
+    expect(result.skipped).toHaveLength(1);
+  });
+
   it('leaves no skills behind when saving the plugin fails', async () => {
     const plugin = join(directory, 'acme');
     writeFiles(plugin, { 'skills/acme-triage/SKILL.md': skill('acme-triage') });
