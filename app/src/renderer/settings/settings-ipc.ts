@@ -20,7 +20,7 @@ import type {
   ChatGptAccountStatus,
   ChatGptModel,
   TranscriptionSettingsPatch,
-  PluginCatalogEntry,
+  PluginCatalog,
   PluginInstallResult,
 } from '../../types/ipc';
 import type {
@@ -88,8 +88,9 @@ export interface SettingsIpc {
   importSkill: (token: string) => Promise<AgentSkillSummary[]>;
   removeSkill: (name: string) => Promise<AgentSkillSummary[]>;
   openSkillsFolder: () => Promise<void>;
-  getPluginCatalog: () => Promise<PluginCatalogEntry[]>;
-  installPlugin: (name: string) => Promise<PluginInstallResult>;
+  getPluginCatalog: () => Promise<PluginCatalog>;
+  addPluginMarketplace: (repo: string) => Promise<string>;
+  installPlugin: (marketplace: string, name: string) => Promise<PluginInstallResult>;
   installPluginFolder: () => Promise<PluginInstallResult | null>;
   removePlugin: (name: string) => Promise<void>;
   getMemory: () => Promise<AgentMemorySnapshot>;
@@ -164,7 +165,8 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     removeSkill: (name) => requireElectronApi(electronAPI).invoke('skills:remove', name),
     openSkillsFolder: () => requireElectronApi(electronAPI).invoke('skills:open-folder'),
     getPluginCatalog: () => requireElectronApi(electronAPI).invoke('plugins:catalog'),
-    installPlugin: (name) => requireElectronApi(electronAPI).invoke('plugins:install', name),
+    addPluginMarketplace: (repo) => requireElectronApi(electronAPI).invoke('plugins:add-marketplace', repo),
+    installPlugin: (marketplace, name) => requireElectronApi(electronAPI).invoke('plugins:install', marketplace, name),
     installPluginFolder: () => requireElectronApi(electronAPI).invoke('plugins:install-folder'),
     removePlugin: (name) => requireElectronApi(electronAPI).invoke('plugins:remove', name),
     getMemory: () => requireElectronApi(electronAPI).invoke('memory:get'),

@@ -8,10 +8,10 @@ import { AgentSkillStore, listSkills, scopedSkillPath, skillCatalogFits } from '
 import type { AppConfig, McpServerConfig, PluginInstallResult } from '../types/ipc';
 import { extractTar } from './managed-local-model';
 
-// Anthropic's official Claude plugin directory (Apache-2.0). Plugins use the Claude Code layout:
+// A plugin directory is a GitHub repo with .claude-plugin/marketplace.json, as in Claude Code; Anthropic's
+// official one is always listed. Plugins use the Claude Code layout:
 // .claude-plugin/plugin.json, skills/<name>/SKILL.md, and .mcp.json.
-const CATALOG_URL = 'https://raw.githubusercontent.com/anthropics/claude-plugins-official/main/.claude-plugin/marketplace.json';
-const CATALOG_REPO = 'anthropics/claude-plugins-official';
+const OFFICIAL_MARKETPLACE = 'anthropics/claude-plugins-official';
 const DOWNLOAD_LIMIT = 50 * 1024 * 1024;
 const JSON_LIMIT = 1024 * 1024;
 
@@ -40,24 +40,31 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 /** Manifest paths are written "./skills/x"; scopedSkillPath wants "skills/x" ("" is the plugin root). */
 const cleanPath = (path: string) => path.replace(/^\.(?:\/|$)/, '').replace(/\/+$/, '');
 
+/** "owner/repo" from that or a github.com link. */
+function githubRepo(value: string): string | undefined {
+  const repo = value.trim().match(/^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/)?.[1];
+  return repo?.split('/').every(part => part !== '.' && part !== '..') ? repo : undefined;
+}
+
 /** Only GitHub sources are downloadable; LSP plugins are code-editor tooling. */
-function toCatalogEntry(value: unknown): CatalogEntry | null {
+function toCatalogEntry(marketplace: string, value: unknown): CatalogEntry | null {
   const parsed = catalogEntrySchema.safeParse(value);
   if (!parsed.success || parsed.data.lspServers) return null;
   const { name, description, source, skills = [] } = parsed.data;
-  if (typeof source === 'string') return { name, description, repo: CATALOG_REPO, ref: 'main', path: cleanPath(source), skills };
-  const repo = (source.repo ?? source.url)?.match(/^(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/)?.[1];
+  if (typeof source === 'string') return { name, description, repo: marketplace, ref: 'HEAD', path: cleanPath(source), skills };
+  const repo = githubRepo(source.repo ?? source.url ?? '');
   const ref = source.sha ?? source.ref ?? 'HEAD';
   if (!repo || !/^[\w./-]+$/.test(ref) || ref.includes('..')) return null;
   return { name, description, repo, ref, path: cleanPath(source.path ?? ''), skills };
 }
 
-async function loadCatalog(): Promise<CatalogEntry[]> {
-  const response = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) throw new Error('Could not load the plugin directory. Check your connection and try again.');
+async function loadCatalog(marketplace: string): Promise<CatalogEntry[]> {
+  const url = `https://raw.githubusercontent.com/${marketplace}/HEAD/.claude-plugin/marketplace.json`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`Could not load the plugin directory ${marketplace}. Check the name and your connection.`);
   const catalog = z.object({ plugins: z.array(z.unknown()) }).safeParse(await response.json().catch(() => null));
-  if (!catalog.success) throw new Error('The plugin directory could not be read. Try again later.');
-  return catalog.data.plugins.map(toCatalogEntry).filter(entry => entry !== null);
+  if (!catalog.success) throw new Error(`${marketplace} is not a plugin directory.`);
+  return catalog.data.plugins.map(entry => toCatalogEntry(marketplace, entry)).filter(entry => entry !== null);
 }
 
 async function download(url: string, path: string): Promise<void> {
@@ -198,9 +205,31 @@ export function registerPluginIpcHandlers(directory: string, deps: {
     }
   }
 
-  handle('plugins:catalog', async () => (await loadCatalog()).map(({ name, description }) => ({ name, description })));
-  handle('plugins:install', (_event, name: unknown) => serial(async () => {
-    const entry = (await loadCatalog()).find(item => item.name === name);
+  // Only directories the user added (or the official one) are trusted to name plugins.
+  const marketplaces = () => [OFFICIAL_MARKETPLACE,
+    ...(deps.getConfig().agent.pluginMarketplaces ?? []).filter(repo => githubRepo(repo) === repo)];
+
+  handle('plugins:catalog', async () => {
+    const repos = marketplaces();
+    const results = await Promise.allSettled(repos.map(loadCatalog));
+    return {
+      plugins: results.flatMap((result, index) => result.status === 'fulfilled'
+        ? result.value.map(({ name, description }) => ({ marketplace: repos[index]!, name, description })) : []),
+      failed: repos.filter((_, index) => results[index]!.status === 'rejected'),
+    };
+  });
+  handle('plugins:add-marketplace', (_event, input: unknown) => serial(async () => {
+    const repo = githubRepo(z.string().parse(input));
+    if (!repo) throw new Error('Enter a GitHub repo like owner/repo.');
+    if (marketplaces().some(item => item.toLowerCase() === repo.toLowerCase())) throw new Error(`${repo} is already listed.`);
+    await loadCatalog(repo);
+    const agent = deps.getConfig().agent;
+    await deps.setAgent({ ...agent, pluginMarketplaces: [...(agent.pluginMarketplaces ?? []), repo] });
+    return repo;
+  }));
+  handle('plugins:install', (_event, marketplace: unknown, name: unknown) => serial(async () => {
+    if (typeof marketplace !== 'string' || !marketplaces().includes(marketplace)) throw new Error('Add this plugin directory first.');
+    const entry = (await loadCatalog(marketplace)).find(item => item.name === name);
     if (!entry) throw new Error('This plugin is no longer in the directory.');
     const staging = mkdtempSync(join(tmpdir(), 'shuddhalekhan-plugin-'));
     try {

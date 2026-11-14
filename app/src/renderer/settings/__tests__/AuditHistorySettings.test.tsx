@@ -60,6 +60,7 @@ function auditIpc(overrides: Pick<SettingsIpc, 'getAuditRuns' | 'getAuditRunDeta
     removeSkill: mock(unused),
     openSkillsFolder: mock(() => Promise.resolve()),
     getPluginCatalog: mock(unused),
+    addPluginMarketplace: mock(unused),
     installPlugin: mock(unused),
     installPluginFolder: mock(unused),
     removePlugin: mock(unused),

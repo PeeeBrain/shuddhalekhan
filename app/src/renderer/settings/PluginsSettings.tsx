@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { FolderOpen, Search } from 'lucide-react';
-import type { PluginCatalogEntry, PluginInstallResult } from '../../types/ipc';
+import type { PluginCatalog, PluginInstallResult } from '../../types/ipc';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
@@ -9,9 +9,11 @@ import { Tag } from './ui/rows';
 import { ipcErrorMessage } from './use-settings-persistence';
 import type { SettingsSectionProps } from './settings-section-props';
 
+const FIELD_ID_DIRECTORIES = 'plugin-directories';
+
 /** Installed plugins come from the pushed agent config; main owns every install and removal. */
-export function PluginsSettings({ config, settingsIpc, onNavigate }: SettingsSectionProps) {
-  const [catalog, setCatalog] = useState<PluginCatalogEntry[] | null>(null);
+export function PluginsSettings({ config, settingsIpc, persistence, onNavigate }: SettingsSectionProps) {
+  const [catalog, setCatalog] = useState<PluginCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [query, setQuery] = useState('');
@@ -19,7 +21,10 @@ export function PluginsSettings({ config, settingsIpc, onNavigate }: SettingsSec
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [directoryInput, setDirectoryInput] = useState('');
   const installed = config.agent.plugins ?? [];
+  const directories = config.agent.pluginMarketplaces ?? [];
+  const directoriesKey = directories.join('\n');
 
   useEffect(() => {
     let active = true;
@@ -30,7 +35,12 @@ export function PluginsSettings({ config, settingsIpc, onNavigate }: SettingsSec
     return () => {
       active = false;
     };
-  }, [settingsIpc, catalogAttempt]);
+  }, [settingsIpc, catalogAttempt, directoriesKey]);
+
+  const retryCatalog = () => {
+    setCatalogError(null);
+    setCatalogAttempt((attempt) => attempt + 1);
+  };
 
   const run = async (name: string, action: () => Promise<string | null>, fallback: string) => {
     setBusy(name);
@@ -54,7 +64,7 @@ export function PluginsSettings({ config, settingsIpc, onNavigate }: SettingsSec
   };
 
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const matches = catalog?.filter((entry) => {
+  const matches = catalog?.plugins.filter((entry) => {
     const text = `${entry.name} ${entry.description}`.toLowerCase();
     return words.every((word) => text.includes(word));
   });
@@ -128,22 +138,31 @@ export function PluginsSettings({ config, settingsIpc, onNavigate }: SettingsSec
             className="pl-8"
           />
         </div>
+        {catalog?.failed.length ? (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            <span className="break-words">Couldn&apos;t load {catalog.failed.join(', ')}.</span>
+            <Button type="button" size="sm" variant="secondary" onClick={retryCatalog}>Try again</Button>
+          </div>
+        ) : null}
         {!matches ? (
           <SettingsCard className="flex items-center justify-center gap-3 py-8 text-sm text-muted-foreground">
             {catalogError ?? 'Loading plugins…'}
             {catalogError ? (
-              <Button type="button" size="sm" variant="secondary" onClick={() => { setCatalogError(null); setCatalogAttempt((attempt) => attempt + 1); }}>Try again</Button>
+              <Button type="button" size="sm" variant="secondary" onClick={retryCatalog}>Try again</Button>
             ) : null}
           </SettingsCard>
         ) : matches.length === 0 ? (
-          <SettingsCard className="py-8 text-center text-sm text-muted-foreground">No plugins match “{query}”.</SettingsCard>
+          <SettingsCard className="py-8 text-center text-sm text-muted-foreground">{query ? `No plugins match “${query}”.` : 'No plugins to show.'}</SettingsCard>
         ) : (
           <SettingsCard className="divide-y divide-border/50">
             {matches.map((entry) => (
-              <div key={entry.name} className="flex items-start justify-between gap-4 py-3">
+              <div key={`${entry.marketplace}/${entry.name}`} className="flex items-start justify-between gap-4 py-3">
                 <div className="min-w-0">
                   <p className="break-words text-sm font-medium">{entry.name}</p>
                   <p className="line-clamp-2 break-words text-xs leading-5 text-muted-foreground">{entry.description}</p>
+                  {directories.includes(entry.marketplace) ? (
+                    <p className="break-words text-xs leading-5 text-muted-foreground">From {entry.marketplace}</p>
+                  ) : null}
                 </div>
                 {installed.some((plugin) => plugin.name === entry.name) ? (
                   <Tag tone="success" className="mt-1">Installed</Tag>
@@ -154,7 +173,7 @@ export function PluginsSettings({ config, settingsIpc, onNavigate }: SettingsSec
                     variant="secondary"
                     disabled={busy !== null}
                     aria-label={`Install ${entry.name}`}
-                    onClick={() => void run(entry.name, async () => describeInstall(await settingsIpc.installPlugin(entry.name)), `Could not install ${entry.name}.`)}
+                    onClick={() => void run(entry.name, async () => describeInstall(await settingsIpc.installPlugin(entry.marketplace, entry.name)), `Could not install ${entry.name}.`)}
                   >
                     {busy === entry.name ? 'Installing…' : 'Install'}
                   </Button>
@@ -163,7 +182,53 @@ export function PluginsSettings({ config, settingsIpc, onNavigate }: SettingsSec
             ))}
           </SettingsCard>
         )}
-        <p className="px-1 text-xs text-muted-foreground">From Anthropic&apos;s official Claude plugin directory.</p>
+      </section>
+
+      <section aria-labelledby="plugin-directories-heading" className="settings-panel">
+        <h3 id="plugin-directories-heading" className="px-1 text-[13px] font-medium text-muted-foreground">Plugin directories</h3>
+        <SettingsCard className="divide-y divide-border/50">
+          <p className="py-3 text-sm">Anthropic&apos;s official directory</p>
+          {directories.map((repo) => (
+            <div key={repo} className="flex items-center justify-between gap-4 py-3">
+              <p className="break-words text-sm">{repo}</p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground hover:text-destructive"
+                disabled={busy !== null}
+                aria-label={`Remove ${repo}`}
+                onClick={() => void persistence.commit('agent', { ...config.agent, pluginMarketplaces: directories.filter((item) => item !== repo) }, FIELD_ID_DIRECTORIES)}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+          <form
+            className="flex items-center gap-2 py-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const repo = directoryInput.trim();
+              if (!repo) return;
+              void run('directory', async () => {
+                const added = await settingsIpc.addPluginMarketplace(repo);
+                setDirectoryInput('');
+                return `Added ${added}.`;
+              }, `Could not add ${repo}.`);
+            }}
+          >
+            <Input
+              value={directoryInput}
+              onChange={(event) => setDirectoryInput(event.target.value)}
+              placeholder="GitHub repo, like owner/repo"
+              aria-label="GitHub repo of a plugin directory"
+            />
+            <Button type="submit" size="sm" variant="secondary" disabled={busy !== null || !directoryInput.trim()}>
+              {busy === 'directory' ? 'Adding…' : 'Add'}
+            </Button>
+          </form>
+        </SettingsCard>
+        <p className="px-1 text-xs text-muted-foreground">Only add directories you trust. Their plugins can connect the agent to other apps.</p>
       </section>
 
       <ConfirmDialog

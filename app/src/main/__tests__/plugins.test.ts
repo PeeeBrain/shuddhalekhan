@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { AppConfig, PluginInstallResult } from '../../types/ipc';
+import type { AppConfig, PluginCatalog, PluginInstallResult } from '../../types/ipc';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -123,30 +123,51 @@ describe('Plugins', () => {
     expect(agent.plugins).toBeUndefined();
   });
 
+  /** Serves marketplace.json per directory repo and one tarball for every download; returns the requested URLs. */
+  function serveGitHub(marketplaces: Record<string, unknown[]>, top: string, files: Record<string, unknown>) {
+    const source = join(directory, 'tarball');
+    writeFiles(join(source, top), files);
+    // Relative names keep Git for Windows' GNU tar from reading "C:" as a remote host.
+    expect(spawnSync('tar', ['-czf', 'plugin.tgz', top], { cwd: source }).status).toBe(0);
+    const requests: string[] = [];
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      const url = String(input);
+      requests.push(url);
+      if (!url.endsWith('marketplace.json')) return new Response(readFileSync(join(source, 'plugin.tgz')));
+      const repo = Object.keys(marketplaces).find(name => url.startsWith(`https://raw.githubusercontent.com/${name}/HEAD/`));
+      return repo ? Response.json({ plugins: marketplaces[repo] }) : new Response('Not found', { status: 404 });
+    }) as unknown as typeof fetch;
+    return requests;
+  }
+
   it('lists GitHub plugins from the directory and installs one from its pinned subfolder', async () => {
     const sha = 'a'.repeat(40);
-    const source = join(directory, 'tarball');
-    writeFiles(join(source, `repo-${sha}`, 'plugin'), { '.mcp.json': { linear: { type: 'http', url: 'https://mcp.linear.test/mcp' } } });
-    // Relative names keep Git for Windows' GNU tar from reading "C:" as a remote host.
-    expect(spawnSync('tar', ['-czf', 'plugin.tgz', `repo-${sha}`], { cwd: source }).status).toBe(0);
-    const requests: string[] = [];
-    globalThis.fetch = mock(async (url: string | URL | Request) => {
-      requests.push(String(url));
-      if (String(url).endsWith('marketplace.json')) {
-        return Response.json({ plugins: [
-          { name: 'bundled', source: './plugins/bundled' },
-          { name: 'linear', description: 'Issues', source: { source: 'git-subdir', url: 'https://github.com/acme/repo.git', path: 'plugin', ref: 'main', sha } },
-          { name: 'elsewhere', source: { source: 'url', url: 'https://gitlab.com/acme/repo.git' } },
-          { name: 'pyright-lsp', source: './plugins/pyright-lsp', lspServers: { pyright: {} } },
-        ] });
-      }
-      return new Response(readFileSync(join(source, 'plugin.tgz')));
-    }) as unknown as typeof fetch;
+    const official = 'anthropics/claude-plugins-official';
+    const requests = serveGitHub({ [official]: [
+      { name: 'bundled', source: './plugins/bundled' },
+      { name: 'linear', description: 'Issues', source: { source: 'git-subdir', url: 'https://github.com/acme/repo.git', path: 'plugin', ref: 'main', sha } },
+      { name: 'elsewhere', source: { source: 'url', url: 'https://gitlab.com/acme/repo.git' } },
+      { name: 'pyright-lsp', source: './plugins/pyright-lsp', lspServers: { pyright: {} } },
+    ] }, `repo-${sha}`, { 'plugin/.mcp.json': { linear: { type: 'http', url: 'https://mcp.linear.test/mcp' } } });
 
-    expect((await invoke('plugins:catalog') as { name: string }[]).map(entry => entry.name)).toEqual(['bundled', 'linear']);
-    const result = await invoke('plugins:install', 'linear') as PluginInstallResult;
+    expect((await invoke('plugins:catalog') as PluginCatalog).plugins.map(entry => entry.name)).toEqual(['bundled', 'linear']);
+    const result = await invoke('plugins:install', official, 'linear') as PluginInstallResult;
 
     expect(requests.at(-1)).toBe(`https://codeload.github.com/acme/repo/tar.gz/${sha}`);
     expect(result.plugin).toEqual({ name: 'linear', skills: [], mcpServerIds: ['linear'] });
+  });
+
+  it('adds a GitHub plugin directory and installs only from listed directories', async () => {
+    const requests = serveGitHub({ 'anthropics/claude-plugins-official': [], 'acme/plugins': [{ name: 'notes', source: './notes' }] },
+      'plugins-main', { 'notes/skills/acme-notes/SKILL.md': skill('acme-notes') });
+
+    await expect(invoke('plugins:add-marketplace', 'acme/missing')).rejects.toThrow('Could not load the plugin directory acme/missing');
+    expect(await invoke('plugins:add-marketplace', 'https://github.com/acme/plugins')).toBe('acme/plugins');
+    expect(agent.pluginMarketplaces).toEqual(['acme/plugins']);
+    expect(await invoke('plugins:catalog')).toEqual({ plugins: [{ marketplace: 'acme/plugins', name: 'notes', description: '' }], failed: [] });
+
+    await expect(invoke('plugins:install', 'evil/plugins', 'notes')).rejects.toThrow('Add this plugin directory first.');
+    expect((await invoke('plugins:install', 'acme/plugins', 'notes') as PluginInstallResult).plugin.skills).toEqual(['acme-notes']);
+    expect(requests.at(-1)).toBe('https://codeload.github.com/acme/plugins/tar.gz/HEAD');
   });
 });

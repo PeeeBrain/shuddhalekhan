@@ -40,7 +40,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **recording pill** means the floating bottom-center UI shown while recording (blue for Dictation, red for Agent Mode).
 - **toast** means a transient notification (agent status, tool approval, final response, or failure), usually near the bottom-right.
 - **MCP registry** means the user-configured list of HTTP/stdio MCP servers in Settings. No presets in v4; tools are discovered from connected servers.
-- **plugin** means a Claude Code–format bundle of skills and MCP servers, installed from Anthropic's official plugin directory or a local folder (desktop only). Installing adds its skills and remote HTTPS servers to the normal skills folder and MCP registry; removing takes back exactly those.
+- **plugin** means a Claude Code–format bundle of skills and MCP servers, installed from Anthropic's official plugin directory, a GitHub plugin directory the user adds, or a local folder (desktop only). Installing adds its skills and remote HTTPS servers to the normal skills folder and MCP registry; removing takes back exactly those.
 - **tool approval policy** means the per-tool setting: `disabled`, `alwaysAsk`, or `alwaysAllow`. Newly discovered tools default to `alwaysAsk`.
 - **text injection** means pasting transcribed Dictation text into the focused window via the clipboard-sandwich pattern.
 - **app data** means Electron's application data directory: `electron-store` config (`shuddhalekhan-config`) and the sidecar-owned `agent-audit.sqlite`.

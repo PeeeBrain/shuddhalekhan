@@ -285,6 +285,7 @@ export function getConfig(): AppConfig {
       disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
       plugins: z.array(z.object({ name: z.string(), skills: z.array(z.string()), mcpServerIds: z.array(z.string()) }))
         .safeParse(agent?.plugins).data ?? [],
+      pluginMarketplaces: z.array(z.string()).safeParse(agent?.pluginMarketplaces).data ?? [],
       memoryEnabled: agent?.memoryEnabled === true,
       customInstructions: typeof agent?.customInstructions === 'string' ? agent.customInstructions : '',
     },
