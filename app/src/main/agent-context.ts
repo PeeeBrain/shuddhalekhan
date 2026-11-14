@@ -21,6 +21,7 @@ export function registerAgentContextIpcHandlers(directory: string, deps: {
 }) {
   const skills = new AgentSkillStore(join(directory, 'skills'));
   const memory = new AgentMemoryStore(directory);
+  let importSelectionRevision = 0;
   let pendingImport: { token: string; path: string } | null = null;
   const list = () => listSkills(skills.directory, deps.getConfig().agent.disabledSkills ?? []);
   const publish = () => {
@@ -35,8 +36,10 @@ export function registerAgentContextIpcHandlers(directory: string, deps: {
     return list();
   });
   handle('skills:select-import', async () => {
+    const selectionRevision = ++importSelectionRevision;
     pendingImport = null;
     const selection = await dialog.showOpenDialog({ title: 'Import a skill folder', properties: ['openDirectory'] });
+    if (selectionRevision !== importSelectionRevision) return null;
     const path = selection.filePaths[0];
     if (selection.canceled || !path) return null;
     const preview = skills.inspectImport(path);

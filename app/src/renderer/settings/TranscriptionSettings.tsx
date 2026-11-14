@@ -64,6 +64,22 @@ import { getTranscriptionDictionaryError, resolveTranscriptionFeatures } from '.
 
 type TestState = 'idle' | 'checking' | 'success' | 'failed';
 
+/**
+ * A server check belongs to the endpoint it tested: editing the URL hides it,
+ * and a superseded check's late answer is dropped.
+ */
+function useEndpointCheck(settingsIpc: Props['settingsIpc'], endpoint: string) {
+  const [check, setCheck] = useState<{ endpoint: string; state: Exclude<TestState, 'idle'> } | null>(null);
+  const checkEndpoint = async (tested: string) => {
+    const pending = { endpoint: tested, state: 'checking' } as const;
+    setCheck(pending);
+    const reachable = await settingsIpc.checkTranscriptionServer().catch(() => false);
+    setCheck((current) => current === pending ? { endpoint: tested, state: reachable ? 'success' : 'failed' } : current);
+  };
+  const testState: TestState = check?.endpoint === endpoint ? check.state : 'idle';
+  return { testState, checkEndpoint };
+}
+
 const FIELD_ID_LOCAL_WHISPER_URL = 'whisper-url';
 const FIELD_ID_CUSTOM_MODEL = 'custom-model';
 const FIELD_ID_WHISPER_LIVE_KIT_BASE_URL = 'whisper-live-kit-base-url';
@@ -1079,7 +1095,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
   const localEndpoint = config.transcription.providers.localWhisperCpp.endpoint;
   const [draft, setDraft] = useState(localEndpoint);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [testState, setTestState] = useState<TestState>('idle');
+  const { testState, checkEndpoint } = useEndpointCheck(settingsIpc, draft);
   const errorId = useId();
   const labelId = useId();
   const inputId = useId();
@@ -1098,9 +1114,7 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
         },
       }, FIELD_ID_LOCAL_WHISPER_URL);
     }
-    setTestState('checking');
-    const reachable = await settingsIpc.checkTranscriptionServer();
-    setTestState(reachable ? 'success' : 'failed');
+    await checkEndpoint(candidate);
   };
 
   const fieldError = validationError ?? fieldErrors[FIELD_ID_LOCAL_WHISPER_URL];
@@ -1118,7 +1132,6 @@ function LocalWhisperSection({ config, persistence, settingsIpc }: Props) {
           setDraft(e.target.value);
           setValidationError(null);
           clearFieldError(FIELD_ID_LOCAL_WHISPER_URL);
-          setTestState('idle');
         }}
         onBlur={() => {
           if (draft === localEndpoint) return;
@@ -1380,7 +1393,6 @@ function GoogleCloudSpeechSection({ config, persistence, settingsIpc }: Props) {
 function NvidiaSpeechNimSection({ config, persistence, settingsIpc, transition }: Props & { transition: Transition }) {
   const { commit, fieldErrors } = persistence;
   const nim = config.transcription.providers.nvidiaSpeechNim;
-  const [testState, setTestState] = useState<TestState>('idle');
   const headerErrorId = useId();
   const save = (next: typeof nim, field: string) => commit('transcription', {
     ...config.transcription,
@@ -1411,7 +1423,7 @@ function NvidiaSpeechNimSection({ config, persistence, settingsIpc, transition }
           <CredentialControl credential="nvidia-nim-header" label="Secret header value" settingsIpc={settingsIpc} />
         </>
       ) : null}
-      {nim.auth === 'none' ? <CheckServerTest settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} /> : null}
+      {nim.auth === 'none' ? <CheckServerTest settingsIpc={settingsIpc} endpoint={nim.endpoint} /> : null}
       <ModelCapabilities
         subject="NIM model"
         capabilities={nim}
@@ -1464,7 +1476,6 @@ function ModelCapabilities({ subject, capabilities, onChange }: {
 function CustomOpenAiSection({ config, persistence, settingsIpc, transition }: Props & { transition: Transition }) {
   const { commit, fieldErrors } = persistence;
   const custom = config.transcription.providers.customOpenAiCompatible;
-  const [testState, setTestState] = useState<TestState>('idle');
   const endpointErrorId = useId();
   const headerNameErrorId = useId();
   const authErrorId = useId();
@@ -1551,7 +1562,7 @@ function CustomOpenAiSection({ config, persistence, settingsIpc, transition }: P
         </>
       ) : null}
       {custom.auth === 'none' ? (
-        <CheckServerTest settingsIpc={settingsIpc} testState={testState} setTestState={setTestState} />
+        <CheckServerTest settingsIpc={settingsIpc} endpoint={custom.endpoint} />
       ) : null}
       <ModelCapabilities
         subject="model"
@@ -1660,20 +1671,11 @@ function WhisperLiveKitReadinessTag({ readiness }: { readiness: TranscriptionRea
   );
 }
 
-interface CheckServerTestProps {
-  settingsIpc: import('./settings-ipc').SettingsIpc;
-  testState: TestState;
-  setTestState: (state: TestState) => void;
-}
-
-function CheckServerTest({ settingsIpc, testState, setTestState }: CheckServerTestProps) {
+/** Checks the saved `endpoint`; main reads it from config. */
+function CheckServerTest({ settingsIpc, endpoint }: { settingsIpc: Props['settingsIpc']; endpoint: string }) {
   const labelId = useId();
-
-  const check = async () => {
-    setTestState('checking');
-    const reachable = await settingsIpc.checkTranscriptionServer();
-    setTestState(reachable ? 'success' : 'failed');
-  };
+  const { testState, checkEndpoint } = useEndpointCheck(settingsIpc, endpoint);
+  const check = () => checkEndpoint(endpoint);
 
   return (
     <div className="flex items-center gap-3 border-b border-border/50 py-3.5 last:border-b-0">

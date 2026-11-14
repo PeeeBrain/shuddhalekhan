@@ -23,10 +23,17 @@ export function Onboarding({
   const [micState, setMicState] = useState<'idle' | 'checking' | 'verified' | 'error'>('idle');
   const [micLevel, setMicLevel] = useState(0);
   const [installError, setInstallError] = useState('');
-  const micCleanup = useRef<(() => void) | null>(null);
+  // Owned from the click, not from permission: finishing or unmounting retires it,
+  // and a permission grant that lands afterwards releases its tracks immediately.
+  const micCheck = useRef<{ release: () => void } | null>(null);
   const desktopStatus = useDesktopStatus(settingsIpc);
 
-  useEffect(() => () => micCleanup.current?.(), []);
+  const releaseMicCheck = () => {
+    micCheck.current?.release();
+    micCheck.current = null;
+  };
+
+  useEffect(() => releaseMicCheck, []);
 
   // Onboarding always sets up the CPU files: they work offline and are Auto's fallback.
   // GPU setup stays an explicit choice in Settings.
@@ -45,12 +52,19 @@ export function Onboarding({
   };
 
   const startMicrophoneCheck = async () => {
+    if (micCheck.current) return;
+    const check = { release: () => {} };
+    micCheck.current = check;
     setMicState('checking');
     let stream: MediaStream | null = null;
     let context: AudioContext | null = null;
     try {
       const acquiredStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream = acquiredStream;
+      if (micCheck.current !== check) {
+        acquiredStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       const audioContext = new AudioContext();
       context = audioContext;
       const source = audioContext.createMediaStreamSource(acquiredStream);
@@ -63,7 +77,7 @@ export function Onboarding({
         const peak = values.reduce((largest, value) => Math.max(largest, Math.abs(value - 128)), 0);
         setMicLevel(Math.min(1, peak / 64));
       }, 100);
-      micCleanup.current = () => {
+      check.release = () => {
         window.clearInterval(timer);
         acquiredStream.getTracks().forEach((track) => track.stop());
         void audioContext.close();
@@ -71,13 +85,14 @@ export function Onboarding({
     } catch {
       stream?.getTracks().forEach((track) => track.stop());
       if (context) void context.close();
+      if (micCheck.current !== check) return;
+      micCheck.current = null;
       setMicState('error');
     }
   };
 
   const finishMicrophoneCheck = () => {
-    micCleanup.current?.();
-    micCleanup.current = null;
+    releaseMicCheck();
     setMicState('verified');
     setMicLevel(0);
   };

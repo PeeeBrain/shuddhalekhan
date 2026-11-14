@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { Tool } from 'ai';
 import { McpRegistry } from '../mcp-registry';
+import { SidecarOAuthProvider } from '../oauth-provider';
 import type {
   McpClientConnection,
   McpClientFactory,
@@ -139,6 +140,36 @@ describe('McpRegistry', () => {
     expect(staleConnection.closed).toBe(true);
   });
 
+  it.each(['disable', 'shutdown'] as const)('retires pending OAuth authorization on %s without publishing stale tools', async (action: 'disable' | 'shutdown') => {
+    const ports = makePorts({});
+    let provider: SidecarOAuthProvider | undefined;
+    let settled = false;
+    let entered: () => void = () => undefined;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const oauthFactory: OAuthRedirectServerFactory = { create(server) {
+      const created = new SidecarOAuthProvider(server);
+      provider = created;
+      return { start: () => created.start(), close: async () => created.close(), tokens: () => null };
+    } };
+    ports.mcpClientFactory.connect = async () => {
+      if (!provider) throw new Error('Missing OAuth provider');
+      const pending = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+      await Promise.resolve();
+      entered();
+      try { await pending; } finally { settled = true; }
+      return new FakeConnection({ stale: makeTool('stale') });
+    };
+    const registry = new McpRegistry({ ...ports, oauthFactory });
+    await registry.updateConfig(baseConfig as never);
+    await waiting;
+    if (action === 'disable') await registry.updateConfig(withServer({ enabled: false }) as never);
+    await registry.close(100);
+    expect(settled).toBe(true);
+    expect(ports.transporter.events.filter(([kind]) => kind === 'tools')).toEqual([]);
+    expect(ports.transporter.events.filter(([kind, , status]) => kind === 'status' && status !== 'connecting')).toEqual([]);
+    expect(registry.createRunSnapshot().tools).toEqual({});
+  });
+
   it('uses its injected client port to expose enabled server tools in a namespaced snapshot', async () => {
     const search = makeTool('search');
     const ports = makePorts({ srv1: [new FakeConnection({ search })] });
@@ -268,7 +299,7 @@ describe('McpRegistry', () => {
     expect(registry.createRunSnapshot().tools).toEqual({});
   });
 
-  it('closes a duplicate attempt instead of overwriting the registered client', async () => {
+  it('keeps only the newest attempt when the desired connection key cycles back', async () => {
     const registeredConnection = new FakeConnection({ search: makeTool('registered') });
     const k2Connection = new FakeConnection({ search: makeTool('k2') });
     const duplicateConnection = new FakeConnection({ search: makeTool('duplicate') });
@@ -295,18 +326,18 @@ describe('McpRegistry', () => {
     releases[3]?.(duplicateConnection);
     await registry.settle(1000);
 
-    // The duplicate loses to the already-registered client and is discarded.
-    expect(duplicateConnection.closed).toBe(true);
-    expect(registeredConnection.closed).toBe(false);
+    // A retired attempt cannot revive even when its old key becomes desired again.
+    expect(duplicateConnection.closed).toBe(false);
+    expect(registeredConnection.closed).toBe(true);
     expect(ports.oauthFactory.servers.filter((server) => !server.closed)).toHaveLength(1);
 
     const snapshot = registry.createRunSnapshot();
     expect(Object.keys(snapshot.tools)).toEqual(['srv1__search']);
-    expect(snapshot.tools.srv1__search.description).toBe('registered');
+    expect(snapshot.tools.srv1__search.description).toBe('duplicate');
 
     await snapshot.close();
     await registry.close();
-    expect(registeredConnection.closed).toBe(true);
+    expect(duplicateConnection.closed).toBe(true);
   });
 
   it('completes shutdown even when a leased server never releases its snapshot', async () => {

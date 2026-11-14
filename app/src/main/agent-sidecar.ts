@@ -28,14 +28,12 @@ type GenerationProcess = Pick<
 // has announced readiness. At most one generation is wired at a time, so the
 // transport lives on the manager while Generation stays pure lifecycle state.
 type Generation = {
-  id: number;
   job: unknown;
-  ready: boolean;
-  stopping: boolean;
-  tornDown: boolean;
-  pending: ElectronToSidecarMessage[];
-  stopPromise?: Promise<void>;
-  resolveStop?: () => void;
+  state:
+    | { kind: 'starting'; pending: ElectronToSidecarMessage[] }
+    | { kind: 'ready' }
+    | { kind: 'stopping'; promise: Promise<void>; finish: () => void }
+    | { kind: 'stopped' };
 };
 
 export type SidecarManagerDeps = {
@@ -51,7 +49,6 @@ export class AgentSidecarManager {
   private providerTest: { requestId: string; resolve: (result: AgentProviderTestResult) => void; cancelTimeout: () => void } | null = null;
   private generation: Generation | null = null;
   private process: GenerationProcess | null = null;
-  private nextGenerationId = 1;
   private readonly jobPort: JobObjectPort;
   private readonly shutdownTimeoutMs: number;
   private readonly scheduleTimeout: (fn: () => void, ms: number) => () => void;
@@ -110,32 +107,21 @@ export class AgentSidecarManager {
     this.cancelProviderTest();
     const generation = this.generation;
     if (!generation) return Promise.resolve();
-    if (generation.stopPromise) return generation.stopPromise;
+    if (generation.state.kind === 'stopping') return generation.state.promise;
+    if (generation.state.kind === 'stopped') return Promise.resolve();
 
-    generation.stopPromise = this.stopGeneration(generation);
-    return generation.stopPromise;
-  }
-
-  private async stopGeneration(generation: Generation): Promise<void> {
-    generation.stopping = true;
-    if (generation.ready) {
-      this.write({ type: 'sidecar:shutdown' });
-    }
-
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        cancelTimer();
-        resolve();
-      };
-      const cancelTimer = this.scheduleTimeout(finish, this.shutdownTimeoutMs);
-      generation.resolveStop = finish;
-      if (!this.process?.isRunning) finish();
-    });
-
-    this.teardownGeneration(generation);
+    const wasReady = generation.state.kind === 'ready';
+    let resolveStopped: () => void = () => undefined;
+    const promise = new Promise<void>(resolve => { resolveStopped = resolve; })
+      .then(() => this.teardownGeneration(generation));
+    const cancelTimer = this.scheduleTimeout(resolveStopped, this.shutdownTimeoutMs);
+    generation.state = { kind: 'stopping', promise, finish: () => {
+      cancelTimer();
+      resolveStopped();
+    } };
+    if (wasReady) this.write({ type: 'sidecar:shutdown' });
+    if (!this.process?.isRunning) generation.state.finish();
+    return promise;
   }
 
   sendApprovalDecision(
@@ -179,8 +165,8 @@ export class AgentSidecarManager {
   }
 
   private cancelProviderTestRequest(requestId: string): void {
-    if (this.generation && !this.generation.ready) {
-      this.generation.pending = this.generation.pending.filter(message => message.type !== 'provider:test' || message.requestId !== requestId);
+    if (this.generation?.state.kind === 'starting') {
+      this.generation.state.pending = this.generation.state.pending.filter(message => message.type !== 'provider:test' || message.requestId !== requestId);
     } else {
       this.sendOrQueue({ type: 'provider:cancel-test', requestId });
     }
@@ -206,8 +192,8 @@ export class AgentSidecarManager {
   private ensureGeneration(): void {
     // A generation that is still gracefully stopping cannot accept traffic.
     // Replace it immediately so an explicit start always yields a usable
-    // runtime; its own stop wait resolves through the tornDown flag.
-    if (this.generation?.stopping) {
+    // runtime; teardown also settles its outstanding stop wait.
+    if (this.generation?.state.kind === 'stopping') {
       this.teardownGeneration(this.generation);
     }
     if (this.generation) return;
@@ -228,12 +214,8 @@ export class AgentSidecarManager {
     }
 
     const generation: Generation = {
-      id: this.nextGenerationId++,
       job,
-      ready: false,
-      stopping: false,
-      tornDown: false,
-      pending: [],
+      state: { kind: 'starting', pending: [] },
     };
     this.generation = generation;
     this.process = this.createProcess(generation);
@@ -277,38 +259,36 @@ export class AgentSidecarManager {
     }
 
     if (event.type === 'sidecar:ready') {
-      generation.ready = true;
-      if (generation.stopping) {
-        generation.pending = [];
+      const state = generation.state;
+      if (state.kind === 'stopping') {
         this.write({ type: 'sidecar:shutdown' });
-      } else {
-        this.flushPending(generation);
+      } else if (state.kind === 'starting') {
+        generation.state = { kind: 'ready' };
+        for (const message of state.pending) this.sendOrQueue(message);
       }
     }
-    if (event.type === 'sidecar:shutdown-complete') {
-      generation.resolveStop?.();
+    if (event.type === 'sidecar:shutdown-complete' && generation.state.kind === 'stopping') {
+      generation.state.finish();
     }
     this.onEvent(event);
   }
 
   private handleExit(generation: Generation): void {
     if (this.generation !== generation) return;
-    if (!generation.stopping) this.onGenerationExit?.();
+    if (generation.state.kind !== 'stopping') this.onGenerationExit?.();
     this.teardownGeneration(generation);
   }
 
   private teardownGeneration(generation: Generation): void {
-    if (generation.tornDown) return;
-    generation.tornDown = true;
-    generation.stopping = true;
-    generation.pending = [];
+    if (generation.state.kind === 'stopped') return;
+    if (generation.state.kind === 'stopping') generation.state.finish();
+    generation.state = { kind: 'stopped' };
     if (this.generation === generation) {
       this.finishProviderTest(failedProviderTest({ kind: 'provider', message: 'The Agent sidecar stopped during the model test.', action: 'Retry the model test.' }));
       this.generation = null;
       this.process?.stop();
       this.process = null;
     }
-    generation.resolveStop?.();
 
     // The job kill is the descendant-tree backstop; the direct kill covers a
     // failed job assignment or a job API failure.
@@ -317,18 +297,17 @@ export class AgentSidecarManager {
 
   private sendOrQueue(message: ElectronToSidecarMessage): void {
     const generation = this.generation;
-    if (!generation || generation.stopping) return;
-
-    if (!generation.ready) {
-      generation.pending.push(message);
-      return;
-    }
-    this.write(message);
-  }
-
-  private flushPending(generation: Generation): void {
-    for (const message of generation.pending.splice(0)) {
-      this.write(message);
+    if (!generation) return;
+    switch (generation.state.kind) {
+      case 'starting':
+        generation.state.pending.push(message);
+        return;
+      case 'ready':
+        this.write(message);
+        return;
+      case 'stopping':
+      case 'stopped':
+        return;
     }
   }
 

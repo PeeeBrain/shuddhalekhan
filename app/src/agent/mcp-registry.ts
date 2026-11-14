@@ -52,16 +52,22 @@ type ManagedServer = {
   rawTools: Record<string, Tool>;
   oauthRedirectServer?: OAuthRedirectServer;
   leaseCount: number;
-  retired: boolean;
-  closeStarted: boolean;
+  state: 'active' | 'retired' | 'closing' | 'closed';
   closed: Promise<void>;
   resolveClosed: () => void;
 };
 
+type ConnectionAttempt = {
+  connectionKey: string;
+  state: 'connecting' | 'retired' | 'connected';
+  promise: Promise<void>;
+  oauthRedirectServer?: OAuthRedirectServer;
+};
+
 export class McpRegistry {
   private servers = new Map<string, ManagedServer>();
-  private pendingConnections = new Map<string, { connectionKey: string; promise: Promise<void> }>();
-  private allPendingConnections = new Set<Promise<void>>();
+  private pendingConnections = new Map<string, ConnectionAttempt>();
+  private allPendingConnections = new Set<ConnectionAttempt>();
   private attemptedConnectionKeys = new Map<string, string>();
   // Enabled-server ids are the keys of this map.
   private desiredServers = new Map<string, McpServerConfig>();
@@ -80,6 +86,13 @@ export class McpRegistry {
     }
 
     const disconnects: Promise<void>[] = [];
+    for (const [serverId, attempt] of this.pendingConnections) {
+      const desired = enabledServers.get(serverId);
+      if (!desired || getMcpServerConnectionKey(desired) !== attempt.connectionKey) {
+        this.pendingConnections.delete(serverId);
+        disconnects.push(this.retireAttempt(attempt));
+      }
+    }
     for (const [serverId, server] of this.servers) {
       const nextConfig = enabledServers.get(serverId);
       if (!nextConfig || getMcpServerConnectionKey(server.config) !== getMcpServerConnectionKey(nextConfig)) {
@@ -161,7 +174,7 @@ export class McpRegistry {
         released = true;
         await Promise.all(leasedServers.map(async (server) => {
           server.leaseCount -= 1;
-          if (server.retired && server.leaseCount === 0) await this.closeManagedServer(server);
+          if (server.state === 'retired' && server.leaseCount === 0) await this.closeManagedServer(server);
         }));
       },
     };
@@ -169,12 +182,14 @@ export class McpRegistry {
 
   async close(timeoutMs = MCP_REGISTRY_CLOSE_TIMEOUT_MS): Promise<void> {
     this.desiredServers.clear();
-    const pending = [...this.allPendingConnections];
+    const attempts = [...this.allPendingConnections];
+    this.pendingConnections.clear();
     const servers = [...this.servers.values()];
     // A run snapshot that never releases (hung tool call) must not stall
     // shutdown past the bounded wait; the job kill remains the backstop.
     await waitForSettled([
-      ...pending,
+      ...attempts.map(attempt => this.retireAttempt(attempt)),
+      ...attempts.map(attempt => attempt.promise),
       ...servers.map(server => this.disconnect(server.config.id)),
       ...servers.map(server => server.closed),
     ], timeoutMs);
@@ -187,21 +202,30 @@ export class McpRegistry {
     if (this.attemptedConnectionKeys.get(server.id) === connectionKey) return;
 
     this.attemptedConnectionKeys.set(server.id, connectionKey);
-    const pending = {
+    const pending: ConnectionAttempt = {
       connectionKey,
+      state: 'connecting',
       promise: Promise.resolve(),
     };
-    pending.promise = this.connect(server, connectionKey).finally(() => {
-      this.allPendingConnections.delete(pending.promise);
+    pending.promise = this.connect(server, pending).finally(() => {
+      this.allPendingConnections.delete(pending);
       if (this.pendingConnections.get(server.id) === pending) {
         this.pendingConnections.delete(server.id);
       }
     });
-    this.allPendingConnections.add(pending.promise);
+    this.allPendingConnections.add(pending);
     this.pendingConnections.set(server.id, pending);
   }
 
-  private async connect(server: McpServerConfig, connectionKey: string): Promise<void> {
+  private async retireAttempt(attempt: ConnectionAttempt): Promise<void> {
+    if (attempt.state !== 'connecting') return;
+    attempt.state = 'retired';
+    await attempt.oauthRedirectServer?.close().catch(() => undefined);
+  }
+
+  private async connect(server: McpServerConfig, attempt: ConnectionAttempt): Promise<void> {
+    const { connectionKey } = attempt;
+    const retired = () => attempt.state === 'retired';
     this.ports.transporter.sendStatus(server.id, 'connecting');
 
     let oauthRedirectServer: OAuthRedirectServer | undefined;
@@ -209,18 +233,27 @@ export class McpRegistry {
     try {
       if (server.transport.type === 'http') {
         oauthRedirectServer = this.ports.oauthFactory.create(server);
+        attempt.oauthRedirectServer = oauthRedirectServer;
         await oauthRedirectServer.start();
+        if (retired()) {
+          await oauthRedirectServer.close().catch(() => undefined);
+          return;
+        }
       }
 
       client = await this.ports.mcpClientFactory.connect(server, oauthRedirectServer?.tokens() ?? undefined);
-      const discovered = await this.discoverTools(server, client, oauthRedirectServer);
+      if (retired()) {
+        await client.close().catch(() => undefined);
+        return;
+      }
+      const discovered = await this.discoverTools(server, client, attempt);
       client = discovered.client;
       const { rawTools } = discovered;
       // Two attempts can race for one server id when the desired key cycles
       // back (K1 -> K2 -> K1); updateConfig keys pending state by id, so the
       // loser must discard its client instead of overwriting the tracked one.
       const desired = this.desiredServers.get(server.id);
-      if (!desired || getMcpServerConnectionKey(desired) !== connectionKey || this.servers.has(server.id)) {
+      if (retired() || !desired || getMcpServerConnectionKey(desired) !== connectionKey || this.servers.has(server.id)) {
         await client.close().catch(() => undefined);
         await oauthRedirectServer?.close().catch(() => undefined);
         return;
@@ -229,14 +262,14 @@ export class McpRegistry {
       const closed = new Promise<void>((resolve) => {
         resolveClosed = resolve;
       });
+      attempt.state = 'connected';
       this.servers.set(server.id, {
         config: server,
         client,
         rawTools,
         oauthRedirectServer,
         leaseCount: 0,
-        retired: false,
-        closeStarted: false,
+        state: 'active',
         closed,
         resolveClosed,
       });
@@ -254,7 +287,7 @@ export class McpRegistry {
       await client?.close().catch(() => undefined);
       await oauthRedirectServer?.close().catch(() => undefined);
       const desired = this.desiredServers.get(server.id);
-      if (!desired || getMcpServerConnectionKey(desired) !== connectionKey) return;
+      if (retired() || !desired || getMcpServerConnectionKey(desired) !== connectionKey) return;
       this.ports.transporter.sendStatus(server.id, 'failed', formatErrorMessage(err));
       this.ports.transporter.log(`MCP server failed: ${server.id}`, err);
     }
@@ -263,13 +296,13 @@ export class McpRegistry {
   private async discoverTools(
     server: McpServerConfig,
     client: McpClientConnection,
-    oauthRedirectServer?: OAuthRedirectServer
+    attempt: ConnectionAttempt
   ): Promise<{ client: McpClientConnection; rawTools: Record<string, Tool> }> {
     try {
       return { client, rawTools: await client.tools() };
     } catch (err) {
-      const oauthTokens = oauthRedirectServer?.tokens();
-      if (!oauthTokens?.access_token) throw err;
+      const oauthTokens = attempt.oauthRedirectServer?.tokens();
+      if (attempt.state === 'retired' || !oauthTokens?.access_token) throw err;
 
       await client.close().catch(() => undefined);
       const retriedClient = await this.ports.mcpClientFactory.connect(server, oauthTokens);
@@ -287,17 +320,18 @@ export class McpRegistry {
     if (!server) return;
 
     this.servers.delete(serverId);
-    server.retired = true;
+    server.state = 'retired';
     this.ports.transporter.sendStatus(serverId, 'disconnected');
     if (server.leaseCount > 0) return;
     await this.closeManagedServer(server);
   }
 
   private async closeManagedServer(server: ManagedServer): Promise<void> {
-    if (server.closeStarted) return server.closed;
-    server.closeStarted = true;
+    if (server.state === 'closing' || server.state === 'closed') return server.closed;
+    server.state = 'closing';
     await server.client.close().catch(() => undefined);
     await server.oauthRedirectServer?.close().catch(() => undefined);
+    server.state = 'closed';
     server.resolveClosed();
   }
 }

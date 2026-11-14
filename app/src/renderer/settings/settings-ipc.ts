@@ -72,6 +72,7 @@ export interface SettingsIpc {
   validateAgentProvider: (provider: AgentProviderConfig) => Promise<AgentProviderValidation>;
   testAgentProvider: (provider: AgentProviderConfig) => Promise<AgentProviderTestResult>;
   cancelAgentProviderTest: () => Promise<void>;
+  onAgentConfigChanged: (callback: (agent: AppConfig['agent']) => void) => Unsubscribe | undefined;
   onAgentProviderInvalidated: (callback: () => void) => Unsubscribe | undefined;
   getChatGptStatus: () => Promise<ChatGptAccountStatus>;
   signInChatGpt: () => Promise<ChatGptAccountStatus>;
@@ -142,6 +143,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     cancelAgentProviderTest: async () => {
       await requireElectronApi(electronAPI).invoke('agent:cancel-provider-test');
     },
+    onAgentConfigChanged: (callback) => requireElectronApi(electronAPI).subscribe('agent:config-changed', callback),
     onAgentProviderInvalidated: (callback) => requireElectronApi(electronAPI).subscribe('agent:provider-invalidated', callback),
     getChatGptStatus: () => requireElectronApi(electronAPI).invoke('chatgpt:get-status'),
     signInChatGpt: () => requireElectronApi(electronAPI).invoke('chatgpt:sign-in'),

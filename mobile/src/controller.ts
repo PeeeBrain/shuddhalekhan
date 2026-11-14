@@ -36,10 +36,9 @@ export type Recorder = {
 export class MobileController {
   private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false, turns: [], steps: [] };
   private listeners = new Set<() => void>();
-  private active: AbortController | null = null;
+  private operation: { kind: 'working' | 'finishing'; controller: AbortController } | null = null;
   private approvalDecision: ((approved: boolean) => void) | null = null;
   private initialization: Promise<void> | null = null;
-  private finishing = false;
   private activityStarted = false;
   private activityUpdates = Promise.resolve();
   private completedSteps = 0;
@@ -95,10 +94,10 @@ export class MobileController {
   }
 
   startRecording = async (intent: RecordingIntent) => {
-    if (this.state.phase !== 'idle' || this.active || this.backgrounded || this.keyboardSessionActive) return;
+    if (this.state.phase !== 'idle' || this.operation || this.backgrounded || this.keyboardSessionActive) return;
     if (intent === 'agent' && !this.state.settings.agentEnabled) { this.update({ error: 'Enable Agent Mode in Settings first.' }); return; }
     const active = new AbortController();
-    this.active = active;
+    this.operation = { kind: 'working', controller: active };
     const previousRunId = this.savedRunId;
     this.activityStarted = false;
     this.interrupted = false;
@@ -127,9 +126,9 @@ export class MobileController {
   };
 
   stopRecording = async () => {
-    const active = this.active;
+    const active = this.operation?.controller;
     // An interruption's cleanup keeps the phase at recording; its audio must never be sent.
-    if (!active || this.state.phase !== 'recording' || active.signal.aborted || this.finishing) return;
+    if (!active || this.state.phase !== 'recording' || active.signal.aborted || this.operation?.kind === 'finishing') return;
     this.update({ phase: 'transcribing', status: 'Transcribing…' });
     try {
       const audio = await this.ports.recorder.stop();
@@ -165,12 +164,12 @@ export class MobileController {
     }
     if (event.phase !== 'done' || this.handledKeyboardRequests.has(event.requestId)) return;
     this.handledKeyboardRequests.add(event.requestId);
-    if (this.active || this.state.phase !== 'idle') throw new Error('The agent is busy. Wait for the current command to finish.');
+    if (this.operation || this.state.phase !== 'idle') throw new Error('The agent is busy. Wait for the current command to finish.');
     if (!this.state.settings.agentEnabled) throw new Error('Set up Agent Mode in Shuddhalekhan first.');
     const transcript = event.text?.trim();
     if (!transcript) throw new Error('No speech was recognized.');
     const active = new AbortController();
-    this.active = active;
+    this.operation = { kind: 'working', controller: active };
     this.keyboardRequestId = event.requestId;
     this.keyboardRun = true;
     this.interrupted = false;
@@ -209,7 +208,7 @@ export class MobileController {
     const result = await runAgent({ transcript, settings: this.state.settings, signal: active.signal, fetch: this.ports.fetch,
       getChatGptAccessToken: this.ports.chatgpt?.getAccessToken, history: this.history,
       onStatus: (status, steps) => {
-        if (this.active !== active || active.signal.aborted) return;
+        if (this.operation?.controller !== active || active.signal.aborted) return;
         // Native rejects an update past the maximum it was started with.
         const completedSteps = Math.min(steps, maximumSteps);
         this.completedSteps = completedSteps;
@@ -244,23 +243,23 @@ export class MobileController {
   }
 
   retryAgent = () => {
-    if (this.state.phase !== 'idle' || this.active || this.backgrounded || !this.state.transcript) return;
+    if (this.state.phase !== 'idle' || this.operation || this.backgrounded || !this.state.transcript) return;
     const active = new AbortController();
-    this.active = active;
+    this.operation = { kind: 'working', controller: active };
     this.interrupted = false;
     this.update({ intent: 'agent', error: null, runId: null, activityNotice: null });
     void this.agent(active, this.state.transcript).then(() => this.finish(active), error => this.finish(active, error));
   };
 
   resolveApproval = async ({ approved, runId, approvalId }: ApprovalDecision) => {
-    const active = this.active;
+    const active = this.operation?.controller;
     const pending = this.state.approval;
     const resolve = this.approvalDecision;
     if (!active || active.signal.aborted || this.backgrounded || !resolve || pending?.runId !== runId || pending.approvalId !== approvalId) return;
     this.approvalDecision = null;
     this.update({ approval: null, approvalNotified: false, phase: 'running' });
     await this.activityUpdates;
-    if (this.active !== active || active.signal.aborted) { resolve(false); return; }
+    if (this.operation?.controller !== active || active.signal.aborted) { resolve(false); return; }
     // A denial also continues the run (the model is told), so native execution resumes either way.
     if (this.activityStarted) {
       try { await this.ports.activity?.resume(runId); }
@@ -272,7 +271,7 @@ export class MobileController {
         return;
       }
     }
-    if (this.active !== active || active.signal.aborted) { resolve(false); return; }
+    if (this.operation?.controller !== active || active.signal.aborted) { resolve(false); return; }
     resolve(approved);
   };
 
@@ -286,14 +285,14 @@ export class MobileController {
 
   enterBackground = async () => {
     this.backgrounded = true;
-    const active = this.active;
+    const active = this.operation?.controller;
     if (!active || active.signal.aborted) return;
     if (this.state.intent === 'agent' && this.state.phase === 'awaitingApproval') return;
     const runId = this.state.runId;
     if (this.state.intent === 'agent' && this.state.phase === 'running' && runId && this.activityStarted) {
       let allowed = false;
       try { allowed = await this.ports.activity?.canContinueInBackground(runId) ?? false; } catch { /* Fall back to foreground execution. */ }
-      if (this.active !== active || active.signal.aborted || !this.backgrounded || this.getSnapshot().phase === 'awaitingApproval') return;
+      if (this.operation?.controller !== active || active.signal.aborted || !this.backgrounded || this.getSnapshot().phase === 'awaitingApproval') return;
       if (allowed) return;
       this.interrupted = true;
       this.update({ activityNotice: 'Background processing stopped. Keep Shuddhalekhan open to finish Agent Mode.' });
@@ -303,7 +302,7 @@ export class MobileController {
 
   enterForeground = async () => {
     this.backgrounded = false;
-    if (!this.active || !this.activityStarted) return;
+    if (!this.operation || !this.activityStarted) return;
     try {
       const current = await this.ports.activity?.recover();
       if (current?.phase === 'interrupted') this.agentRunStopped(current.runId);
@@ -312,7 +311,7 @@ export class MobileController {
   };
 
   consumeApprovalAction = async () => {
-    if (this.backgrounded || !this.active || !this.activityStarted) return;
+    if (this.backgrounded || !this.operation || !this.activityStarted) return;
     let action;
     try { action = await this.ports.activity?.takeApprovalAction(); }
     catch { return; }
@@ -323,7 +322,7 @@ export class MobileController {
   };
 
   agentRunStopped = (runId: string) => {
-    if (!this.active || this.state.runId !== runId) return;
+    if (!this.operation || this.state.runId !== runId) return;
     this.interrupted = true;
     this.cancel();
   };
@@ -336,28 +335,29 @@ export class MobileController {
   };
 
   cancel = () => {
-    if (!this.active || this.active.signal.aborted) return;
-    this.active.abort();
+    if (!this.operation || this.operation.controller.signal.aborted) return;
+    this.operation.controller.abort();
     const resolve = this.approvalDecision;
     this.approvalDecision = null;
     resolve?.(false);
     this.update({ status: 'Cancelling… A tool already started may still finish.' });
     // Permission/preparation and network operations release their own work before another run starts.
-    if (this.state.phase === 'recording') void this.finish(this.active);
+    if (this.state.phase === 'recording') void this.finish(this.operation.controller);
   };
 
   recordingInterrupted = () => {
-    if (this.active && this.state.phase === 'recording') {
-      void this.finish(this.active, new Error('Recording was interrupted. No audio was sent. Record again.'));
+    if (this.operation && this.state.phase === 'recording') {
+      void this.finish(this.operation.controller, new Error('Recording was interrupted. No audio was sent. Record again.'));
     }
   };
 
   private async finish(active: AbortController, error?: unknown) {
-    if (this.active !== active || this.finishing) return;
-    this.finishing = true;
+    const operation = this.operation;
+    if (!operation || operation.controller !== active || operation.kind === 'finishing') return;
+    operation.kind = 'finishing';
     try { if (!this.keyboardRun && !this.keyboardSessionActive) await this.ports.recorder.discard(); }
     catch { if (!error && !active.signal.aborted) error = new Error('Could not remove the temporary recording. It remains in the app cache.'); }
-    if (this.active !== active) return;
+    if (this.operation !== operation) return;
     if (this.state.intent === 'agent' && this.state.runId) {
       const base = { runId: this.state.runId, completedSteps: this.completedSteps };
       await this.publish(this.interrupted ? { ...base, phase: 'interrupted', status: 'Run interrupted. Tools already started may still finish.' }
@@ -365,9 +365,8 @@ export class MobileController {
         : error ? { ...base, phase: 'failed', status: 'Agent could not finish. Open Shuddhalekhan for details.' }
         : { ...base, phase: 'completed', status: 'Answer ready.', response: this.state.response.slice(0, 200_000) });
     }
-    this.active = null;
+    this.operation = null;
     this.keyboardRun = false;
-    this.finishing = false;
     this.approvalDecision = null;
     this.update({ phase: 'idle', approval: null, approvalNotified: false,
       status: this.interrupted ? 'Interrupted. Tools already started may still finish. Start a new command when ready.' : active.signal.aborted ? 'Cancelled. Tools already started may still finish.' : error ? 'Could not complete the command.' : 'Done.',
@@ -376,7 +375,7 @@ export class MobileController {
   }
 
   saveSettings = async (settings: MobileSettings) => {
-    if (this.state.phase !== 'idle' || this.active) throw new Error('Wait for the current command to finish.');
+    if (this.state.phase !== 'idle' || this.operation) throw new Error('Wait for the current command to finish.');
     // Another provider cannot read this one's reasoning items.
     this.setConversation(null);
     this.history = [];
@@ -391,14 +390,14 @@ export class MobileController {
     catch { this.update({ error: 'Could not reset saved settings. Restart the app and try again.', status: 'Settings unavailable.' }); }
   };
   clearResults = async () => {
-    if (this.state.phase !== 'idle' || this.active) return;
+    if (this.state.phase !== 'idle' || this.operation) return;
     const savedRunId = this.savedRunId;
     try {
       if (savedRunId) await this.ports.activity?.clear(savedRunId);
       if (this.savedRunId === savedRunId) this.savedRunId = null;
     }
     catch { this.update({ error: 'Could not clear the saved agent result. Try again.' }); return; }
-    if (this.state.phase !== 'idle' || this.active) return;
+    if (this.state.phase !== 'idle' || this.operation) return;
     this.setConversation(null);
     this.history = [];
     this.update({ transcript: '', response: '', steps: [], runId: null, error: null, activityNotice: null, status: 'Ready to record.', turns: [] });

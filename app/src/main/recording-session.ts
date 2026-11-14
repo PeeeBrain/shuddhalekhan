@@ -75,8 +75,7 @@ interface RecordingRunContext {
   targetSnapshot: DictationTargetSnapshot | null;
   sequence: number;
   revision: number;
-  state: 'recording' | 'stopping' | 'transcribing' | 'delivering';
-  captureReady: boolean;
+  state: 'starting' | 'recording' | 'stopping' | 'transcribing' | 'delivering';
   abort: AbortController;
   dictation: DictationDeliveryContext | null;
   pendingEnd: {
@@ -160,8 +159,7 @@ export class RecordingSession {
       targetSnapshot,
       sequence: 0,
       revision: 0,
-      state: 'recording',
-      captureReady: false,
+      state: 'starting',
       abort: new AbortController(),
       dictation: intent === 'dictation' ? structuredClone(this.getDictationContext()) : null,
       pendingEnd: null,
@@ -188,7 +186,7 @@ export class RecordingSession {
       presentation,
     );
     this.captureStartupTimer = this.setTimeoutFn(() => {
-      if (this.activeRun !== run || run.state !== 'recording' || run.captureReady) return;
+      if (this.activeRun !== run || run.state !== 'starting') return;
       this.runtimeShell.cancelCapture();
       this.failActiveCapture(new TranscriptionFailure('unknown', 'Microphone did not start in time. Check the input device and try again.'));
     }, 30_000);
@@ -197,7 +195,7 @@ export class RecordingSession {
 
   async end(): Promise<RecordingResult | null> {
     const run = this.activeRun;
-    if (!run || run.state !== 'recording') return null;
+    if (!run || (run.state !== 'starting' && run.state !== 'recording')) return null;
 
     this.clearDurationTimers();
     run.state = 'stopping';
@@ -218,8 +216,8 @@ export class RecordingSession {
     this.clearDurationTimers();
     const run = this.activeRun;
     this.runtimeShell.hide();
-    this.runtimeShell.finish();
     this.runtimeShell.cancelCapture();
+    this.runtimeShell.finish();
     if (run) {
       run.abort.abort();
       this.cancelStreaming(run);
@@ -591,10 +589,10 @@ export class RecordingSession {
   ): void => {
     const run = this.activeRun;
     if (!run || run.id !== recordingSessionId || run.sequence !== sequence
-      || run.state !== 'recording' || run.captureReady) return;
+      || run.state !== 'starting') return;
     if (!event.sender || event.sender !== this.runtimeShell.getWebContents()) return;
     if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
-    run.captureReady = true;
+    run.state = 'recording';
     this.runtimeShell.markCaptureReady(run.id);
     this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
   };

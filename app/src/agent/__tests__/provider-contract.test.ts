@@ -25,3 +25,7 @@ it('preserves provider failures during cancellation races and terminates unexpec
 it('loads skills through the real SDK, preserves MCP approvals, and learns Markdown memory across runs', async () => {
   expect(await runFixture('agent-context-contract')).toContain('Agent context contracts passed');
 }, 20_000);
+
+it('keeps replacement execution callbacks, approvals and reply history separate when the audit run id is reused', async () => {
+  expect(await runFixture('execution-ownership')).toContain('Execution ownership contracts passed');
+}, 20_000);

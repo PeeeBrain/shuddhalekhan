@@ -3,8 +3,18 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { auth } from '@ai-sdk/mcp';
+import { get } from 'node:http';
 import { SidecarOAuthProvider } from '../oauth-provider';
 import type { McpServerConfig } from '../../types/ipc';
+
+function requestCallback(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    get(url, response => {
+      response.resume();
+      response.once('end', () => resolve(response.statusCode ?? 0));
+    }).once('error', reject);
+  });
+}
 
 const originalAppData = process.env.APPDATA;
 let appDataDir = '';
@@ -118,6 +128,89 @@ describe('SidecarOAuthProvider', () => {
     } finally {
       provider.close();
     }
+  });
+
+  it('settles authorization when closed and permits a new listener without old cleanup closing it', async () => {
+    const codes: Array<string | undefined> = [];
+    const authenticate: typeof auth = async (_provider, options) => {
+      codes.push(options.authorizationCode);
+      return 'AUTHORIZED';
+    };
+    const provider = new SidecarOAuthProvider(httpServer(), fetch, authenticate);
+    await provider.start();
+    const cancelled = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+    // redirectToAuthorization installs its waiter after its already-resolved startup promise.
+    await Promise.resolve();
+    provider.close();
+    await expect(cancelled).rejects.toThrow('cancelled');
+    await provider.start();
+    const currentUrl = provider.redirectUrl;
+    try {
+      const current = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+      const status = await requestCallback(`${currentUrl}?code=current`);
+      expect(status).toBe(200);
+      await current;
+      expect(codes).toEqual(['current']);
+    } finally { provider.close(); }
+  });
+
+  it('cancels listener startup before a late listening callback can replace a new listener', async () => {
+    const provider = new SidecarOAuthProvider(httpServer());
+    const starting = provider.start();
+    provider.close();
+    await expect(starting).rejects.toThrow('cancelled');
+    await provider.start();
+    try {
+      expect(new URL(provider.redirectUrl).hostname).toBe('127.0.0.1');
+      const pending = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+      await Promise.resolve();
+      provider.close();
+      await expect(pending).rejects.toThrow('cancelled');
+    } finally { provider.close(); }
+  });
+
+  it('does not reopen a closed listener for a late authorization request', async () => {
+    const provider = new SidecarOAuthProvider(httpServer());
+    await provider.start();
+    provider.close();
+    await expect(provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'))).rejects.toThrow('cancelled');
+  });
+
+  it('does not let an authorization resumed after close take a replacement listener', async () => {
+    const provider = new SidecarOAuthProvider(httpServer());
+    await provider.start();
+    const previous = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+    provider.close();
+    const replacement = provider.start();
+    await expect(previous).rejects.toThrow('cancelled');
+    await replacement;
+    try {
+      const pending = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+      await Promise.resolve();
+      provider.close();
+      await expect(pending).rejects.toThrow('cancelled');
+    } finally { provider.close(); }
+  });
+
+  it('keeps authorization pending after a code-less callback so a later valid callback can complete', async () => {
+    const exchanged: Array<{ code: string | undefined; state: string | undefined }> = [];
+    const authenticate: typeof auth = async (_provider, options) => {
+      exchanged.push({ code: options.authorizationCode, state: options.callbackState });
+      return 'AUTHORIZED';
+    };
+    const provider = new SidecarOAuthProvider(httpServer(), fetch, authenticate);
+    await provider.start();
+    const callbackUrl = provider.redirectUrl;
+    const pending = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));
+    try {
+      const invalid = await requestCallback(`${callbackUrl}?state=state-1`);
+      expect(invalid).toBe(400);
+      expect(exchanged).toEqual([]);
+      const valid = await requestCallback(`${callbackUrl}?code=code-1&state=state-1`);
+      expect(valid).toBe(200);
+      await pending;
+      expect(exchanged).toEqual([{ code: 'code-1', state: 'state-1' }]);
+    } finally { provider.close(); }
   });
 
   it('does not reuse tokens after the pre-registered client or scopes change', () => {

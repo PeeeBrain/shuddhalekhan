@@ -28,6 +28,15 @@ import {
 import type { DesktopStatus } from '../../shared/desktop-status';
 import { activeTrigger, useDesktopStatus } from './use-desktop-status';
 
+/** Starting and capturing own main's shortcut suspension; confirming has already released it. */
+type CaptureFlow =
+  | { phase: 'idle' }
+  | { phase: 'starting' }
+  | { phase: 'capturing'; keys: ShortcutCaptureState }
+  | { phase: 'confirming'; binding: ShortcutBinding; message: string };
+
+const IDLE_FLOW: CaptureFlow = { phase: 'idle' };
+
 export function ShortcutsSettings(props: SettingsSectionProps) {
   const { settingsIpc, config } = props;
   const desktopStatus = useDesktopStatus(settingsIpc);
@@ -131,35 +140,37 @@ function ShortcutRow({
   const otherIntent = intent === 'dictation' ? 'agent' : 'dictation';
   const label = intent === 'dictation' ? 'Dictation' : 'Agent Mode';
   const fieldId = `shortcut-${intent}`;
-  const [capturing, setCapturing] = useState(false);
-  const [captureState, setCaptureState] = useState<ShortcutCaptureState>(EMPTY_CAPTURE_STATE);
-  const captureStateRef = useRef(captureState);
-  const captureActiveRef = useRef(false);
+  const [flow, setFlowState] = useState<CaptureFlow>(IDLE_FLOW);
+  // Key events and the async begin read the latest flow before React re-renders.
+  const flowRef = useRef(flow);
   const [message, setMessage] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
-  const [pendingWarning, setPendingWarning] = useState<{
-    binding: ShortcutBinding;
-    message: string;
-  } | null>(null);
   const changeButtonRef = useRef<HTMLButtonElement | null>(null);
   const captureRef = useRef<HTMLDivElement | null>(null);
+  const capturing = flow.phase === 'capturing';
 
-  const setTrackedCaptureState = (state: ShortcutCaptureState) => {
-    captureStateRef.current = state;
-    setCaptureState(state);
+  const setFlow = (next: CaptureFlow) => {
+    flowRef.current = next;
+    setFlowState(next);
   };
 
   const restoreFocus = () => {
     requestAnimationFrame(() => changeButtonRef.current?.focus());
   };
 
-  const stopCapture = () => {
-    if (!captureActiveRef.current) return;
-    captureActiveRef.current = false;
-    void settingsIpc.endShortcutCapture();
+  // Global shortcuts are suspended while starting or capturing. Main handles begin/end
+  // synchronously in IPC order, so an end sent while begin is in flight still lands after it.
+  const leaveFlow = (next: CaptureFlow) => {
+    const { phase } = flowRef.current;
+    setFlow(next);
+    if (phase === 'starting' || phase === 'capturing') void settingsIpc.endShortcutCapture();
   };
 
   useEffect(() => {
-    return () => stopCapture();
+    return () => {
+      const { phase } = flowRef.current;
+      flowRef.current = IDLE_FLOW;
+      if (phase === 'starting' || phase === 'capturing') void settingsIpc.endShortcutCapture();
+    };
     // settingsIpc is stable for the lifetime of a rendered Settings window.
     // oxlint-disable-next-line react/exhaustive-deps
   }, []);
@@ -173,9 +184,7 @@ function ShortcutRow({
       ...config.shortcuts,
       [intent]: { ...shortcut, binding },
     };
-    setPendingWarning(null);
-    setCapturing(false);
-    stopCapture();
+    leaveFlow(IDLE_FLOW);
     setMessage({
       text: binding ? `${label} shortcut saved as ${formatBinding(binding)}.` : `${label} shortcut cleared.`,
       tone: 'info',
@@ -185,33 +194,37 @@ function ShortcutRow({
   };
 
   const beginCapture = async () => {
+    const { phase } = flowRef.current;
+    if (phase === 'starting' || phase === 'capturing') return;
+    const starting: CaptureFlow = { phase: 'starting' };
+    // Clear or unmount may retire this start (and send its end) while begin is in flight.
+    const ownsStart = () => flowRef.current === starting;
+    setFlow(starting);
     setMessage(null);
-    setPendingWarning(null);
-    setTrackedCaptureState(EMPTY_CAPTURE_STATE);
     try {
       await settingsIpc.beginShortcutCapture();
-      captureActiveRef.current = true;
-      setCapturing(true);
+      if (!ownsStart()) return;
+      setFlow({ phase: 'capturing', keys: EMPTY_CAPTURE_STATE });
       setMessage({
         text: `Recording a new ${label} shortcut. Press keys, or Escape to cancel.`,
         tone: 'info',
       });
     } catch {
+      if (!ownsStart()) return;
+      setFlow(IDLE_FLOW);
       setMessage({ text: 'Could not suspend global shortcuts for capture. Try again.', tone: 'error' });
     }
   };
 
   const cancelCapture = () => {
-    setCapturing(false);
-    setPendingWarning(null);
-    setTrackedCaptureState(EMPTY_CAPTURE_STATE);
-    stopCapture();
+    leaveFlow(IDLE_FLOW);
     setMessage({ text: `${label} shortcut capture cancelled.`, tone: 'info' });
     restoreFocus();
   };
 
   const processResult = (result: ShortcutCaptureResult) => {
-    setTrackedCaptureState(result.state);
+    if (flowRef.current.phase !== 'capturing') return;
+    setFlow({ phase: 'capturing', keys: result.state });
     if (result.kind === 'state') return;
     if (result.kind === 'cancel') {
       cancelCapture();
@@ -223,20 +236,18 @@ function ShortcutRow({
     }
     if (result.kind === 'unsupported') {
       setMessage({ text: result.message, tone: 'error' });
-      setTrackedCaptureState(EMPTY_CAPTURE_STATE);
+      setFlow({ phase: 'capturing', keys: EMPTY_CAPTURE_STATE });
       return;
     }
 
     const verdict = assessBinding(result.binding, config.shortcuts[otherIntent].binding);
     if (verdict.status === 'error') {
       setMessage({ text: verdict.message, tone: 'error' });
-      setTrackedCaptureState(EMPTY_CAPTURE_STATE);
+      setFlow({ phase: 'capturing', keys: EMPTY_CAPTURE_STATE });
       return;
     }
     if (verdict.status === 'warning') {
-      setPendingWarning({ binding: result.binding, message: verdict.message });
-      setCapturing(false);
-      stopCapture();
+      leaveFlow({ phase: 'confirming', binding: result.binding, message: verdict.message });
       setMessage({
         text: `Confirmation required for ${formatBinding(result.binding)}.`,
         tone: 'info',
@@ -249,13 +260,15 @@ function ShortcutRow({
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    processResult(captureKeyDown(captureStateRef.current, event.code, event.repeat));
+    const current = flowRef.current;
+    if (current.phase === 'capturing') processResult(captureKeyDown(current.keys, event.code, event.repeat));
   };
 
   const handleKeyUp = (event: React.KeyboardEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    processResult(captureKeyUp(captureStateRef.current, event.code));
+    const current = flowRef.current;
+    if (current.phase === 'capturing') processResult(captureKeyUp(current.keys, event.code));
   };
 
   const updateActivationMode = (activationMode: 'push-to-talk' | 'toggle') => {
@@ -269,8 +282,8 @@ function ShortcutRow({
   };
   const statusError = persistence.fieldErrors[fieldId] ?? persistence.fieldErrors[`${fieldId}-mode`];
 
-  const previewBinding: ShortcutBinding | null = captureState.started
-    ? { keyCode: captureState.keyCode, modifiers: captureState.modifiers }
+  const previewBinding: ShortcutBinding | null = flow.phase === 'capturing' && flow.keys.started
+    ? { keyCode: flow.keys.keyCode, modifiers: flow.keys.modifiers }
     : null;
 
   return (
@@ -348,17 +361,17 @@ function ShortcutRow({
         </div>
       ) : null}
 
-      {pendingWarning ? (
+      {flow.phase === 'confirming' ? (
         <div className="mt-3 rounded-lg border border-warning/50 bg-warning/10 p-4" role="alert">
           <div className="flex gap-3">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
             <div className="space-y-3">
               <div>
                 <p className="text-sm font-medium">This shortcut can disrupt normal typing</p>
-                <p className="mt-1 text-xs text-muted-foreground">{pendingWarning.message}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{flow.message}</p>
               </div>
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => void commitBinding(pendingWarning.binding)}>Use anyway</Button>
+                <Button size="sm" onClick={() => void commitBinding(flow.binding)}>Use anyway</Button>
                 <Button size="sm" variant="outline" onClick={cancelCapture}>Cancel</Button>
               </div>
             </div>
