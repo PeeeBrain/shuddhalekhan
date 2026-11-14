@@ -517,6 +517,67 @@ describe('Settings navigation', () => {
     expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
   });
 
+  it.each(['save', 'reload'])('keeps an agent edit when an older push arrives during %s', async (stage: string) => {
+    let publish!: (agent: AppConfig['agent']) => void;
+    const stale = baseConfig();
+    const { settingsIpc } = renderSettings({
+      config: stale,
+      registerAgentConfigChanged: (callback) => { publish = callback; },
+    });
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Agent'));
+
+    let finishSave!: () => void;
+    const setConfig = settingsIpc.setConfig;
+    const save = spyOn(settingsIpc, 'setConfig').mockImplementationOnce(async (key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
+      await setConfig(key, value);
+      await new Promise<void>((resolve) => { finishSave = resolve; });
+    });
+    const canonical = {
+      ...stale,
+      agent: { ...stale.agent, enabled: true, customInstructions: 'Saved by main' },
+    };
+    let finishRead!: (config: AppConfig) => void;
+    const read = spyOn(settingsIpc, 'getConfig')
+      .mockImplementationOnce(() => new Promise<AppConfig>((resolve) => { finishRead = resolve; }))
+      .mockImplementation(() => Promise.resolve(canonical));
+    read.mockClear();
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable Agent Mode' }));
+    await waitFor(() => expect(finishSave).toBeDefined());
+    if (stage === 'save') act(() => publish(stale.agent));
+    await act(async () => finishSave());
+    if (stage === 'reload') act(() => publish(stale.agent));
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
+
+    await act(async () => finishRead(canonical));
+    expect(read).toHaveBeenCalledTimes(stage === 'reload' ? 2 : 1);
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(tabByLabel('Memory'));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Enable memory' }));
+    expect(save).toHaveBeenLastCalledWith('agent', { ...canonical.agent, memoryEnabled: true });
+  });
+
+  it('does not let an older agent save reload replace a newer edit', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Agent'));
+    let finishOldRead!: (config: AppConfig) => void;
+    spyOn(settingsIpc, 'getConfig').mockImplementationOnce(() => new Promise<AppConfig>((resolve) => {
+      finishOldRead = resolve;
+    }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable Agent Mode' }));
+    await waitFor(() => expect(finishOldRead).toBeDefined());
+
+    fireEvent.click(tabByLabel('Memory'));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Enable memory' }));
+    await waitFor(() => expect(settingsIpc.getConfig).toHaveBeenCalledTimes(3));
+    await act(async () => finishOldRead(baseConfig()));
+
+    expect(screen.getByRole('switch', { name: 'Enable memory' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(tabByLabel('Agent'));
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
+  });
+
   it.each(['initial', 'onboarding'])('keeps agent config pushed during the %s read through a later agent edit', async (read: string) => {
     let complete: () => void = () => undefined;
     let publish!: (agent: AppConfig['agent']) => void;

@@ -48,11 +48,19 @@ export function useSettingsPersistence(
   settingsIpc: SettingsIpc,
   /** Merges into the rendered config; must not replace keys outside `patch`. */
   applyConfig: (patch: Partial<AppConfig>) => void,
-): SettingsPersistence {
+): SettingsPersistence & { onAgentConfigChanged: (agent: AppConfig['agent']) => void } {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [toast, setToast] = useState<SaveToastState | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptionRevision = useRef(0);
+  const agentSave = useRef<object | null>(null);
+  const agentPushRevision = useRef(0);
+
+  const onAgentConfigChanged = useCallback((agent: AppConfig['agent']) => {
+    agentPushRevision.current++;
+    // A save owns the optimistic edit until its canonical read completes.
+    if (!agentSave.current) applyConfig({ agent });
+  }, [applyConfig]);
 
   const dismissToast = useCallback((key: number) => {
     setToast((current) => (current && current.key === key ? null : current));
@@ -91,6 +99,8 @@ export function useSettingsPersistence(
       value: AppConfig[K],
       fieldId: string,
     ) => {
+      const owner = key === 'agent' ? {} : null;
+      if (owner) agentSave.current = owner;
       applyConfig({ [key]: value });
       try {
         await settingsIpc.setConfig(key, value);
@@ -101,10 +111,31 @@ export function useSettingsPersistence(
           ...current,
           [fieldId]: ipcErrorMessage(error, 'Could not save this setting.'),
         }));
-        await settingsIpc.getConfig().then(saved => applyConfig({ [key]: saved[key] })).catch((reloadError) => {
+        if (!owner) await settingsIpc.getConfig().then(saved => applyConfig({ [key]: saved[key] })).catch((reloadError) => {
           console.error('Failed to reload saved settings:', reloadError);
           showToast('error', 'Could not reload saved settings. Reopen Settings to see the saved state.');
         });
+      } finally {
+        if (owner) {
+          try {
+            while (agentSave.current === owner) {
+              const revision = agentPushRevision.current;
+              const saved = await settingsIpc.getConfig();
+              if (agentSave.current !== owner) break;
+              // A push during the read may describe a later main-side write.
+              if (revision !== agentPushRevision.current) continue;
+              applyConfig({ agent: saved.agent });
+              break;
+            }
+          } catch (reloadError) {
+            if (agentSave.current === owner) {
+              console.error('Failed to reload saved settings:', reloadError);
+              showToast('error', 'Could not reload saved settings. Reopen Settings to see the saved state.');
+            }
+          } finally {
+            if (agentSave.current === owner) agentSave.current = null;
+          }
+        }
       }
     },
     [applyConfig, clearFieldError, showToast, settingsIpc],
@@ -142,5 +173,5 @@ export function useSettingsPersistence(
     [applyConfig, clearFieldError, showToast, settingsIpc],
   );
 
-  return { commit, commitTranscription, fieldErrors, clearFieldError, toast };
+  return { commit, commitTranscription, fieldErrors, clearFieldError, toast, onAgentConfigChanged };
 }

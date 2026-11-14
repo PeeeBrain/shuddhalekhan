@@ -53,6 +53,13 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const latestMcpStatusRevision = useRef(-1);
 
+  const applyConfig = useCallback((patch: Partial<AppConfig>) => {
+    setConfigState((current) => (current ? { ...current, ...patch } : current));
+  }, []);
+
+  const persistence = useSettingsPersistence(settingsIpc, applyConfig);
+  const { onAgentConfigChanged } = persistence;
+
   useEffect(() => {
     const applyMcpStatusSnapshot = (snapshot: McpStatusSnapshot) => {
       if (snapshot.revision < latestMcpStatusRevision.current) return;
@@ -67,7 +74,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     let pushedAgent: AppConfig['agent'] | null = null;
     const offAgentConfig = settingsIpc.onAgentConfigChanged((agent) => {
       pushedAgent = agent;
-      setConfigState((current) => (current ? { ...current, agent } : current));
+      onAgentConfigChanged(agent);
     });
     settingsIpc.getConfig().then((loaded) => {
       setConfigState((current) => current
@@ -118,13 +125,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       offOnboarding?.();
       offAgentConfig?.();
     };
-  }, [settingsIpc]);
-
-  const applyConfig = useCallback((patch: Partial<AppConfig>) => {
-    setConfigState((current) => (current ? { ...current, ...patch } : current));
-  }, []);
-
-  const persistence = useSettingsPersistence(settingsIpc, applyConfig);
+  }, [settingsIpc, onAgentConfigChanged]);
 
   if (!config) {
     return (

@@ -159,7 +159,7 @@ describe('AuditHistorySettings live refresh backpressure', () => {
       expect(await screen.findByText("Couldn't load events for this run.")).toBeInTheDocument();
 
       failDetail = false;
-      fireEvent.click(screen.getByRole('option', { name: /Active run/ }));
+      fireEvent.click(await screen.findByRole('option', { name: /Active run/ }));
       expect(await screen.findByText('Started')).toBeInTheDocument();
       expect(screen.queryByText("Couldn't load events for this run.")).toBeNull();
       expect(settingsIpc.getAuditRunDetail).toHaveBeenCalledTimes(2);

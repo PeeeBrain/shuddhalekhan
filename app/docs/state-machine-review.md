@@ -85,12 +85,12 @@ The main behavioral fixes prevent work from retaining authority after cancellati
 | U07 | [MCP server settings editor](../src/renderer/settings/McpSettings.tsx) | Changed | Settings receives canonical agent config after main-owned policy/discovery changes. |
 | U08 | [Credential and provider setup controls](../src/renderer/settings/ui/CredentialControl.tsx) | Changed | Endpoint-check results are stamped and hidden when settings change. |
 | U09 | [Account model-list loading](../src/renderer/settings/AgentSettings.tsx) | Retained | Account stamps and effect cleanup guard model-list results. |
-| U10 | [Runtime snapshot acceptance and action submission](../src/renderer/RuntimeShellSurface.tsx) | Changed | Recovery failures settle with copy actions; stale retries cannot affect a new recording. |
+| U10 | [Runtime recovery action ownership](../src/main/index.ts) | Changed | Recovery failures settle with copy actions; stale retries cannot affect a new recording. |
 | U11 | [Response auto-follow and resizing](../src/renderer/RuntimeShellSurface.tsx) | Retained | Tail-follow preference and resize coalescing are independent presentation choices. |
 | U12 | [Recording pill visibility and waveform scheduling](../src/renderer/RecordingPopup.tsx) | Retained | Visibility phases are named; waveform parks while silent or hidden. |
 | U13 | [iOS Settings draft and tool discovery](../../mobile/src/ui/SettingsScreen.tsx) | Retained | Draft save/discard and tool-discovery union already have guarded cancellation. |
 | U14 | [Keyboard screen transition and delete repeat](../../mobile/targets/transcript-keyboard/KeyboardViewController.swift) | Retained | Animation generation and timer cleanup protect keyboard transitions and delete repeat. |
-| U15 | [Settings snapshot synchronization](../src/renderer/settings/use-managed-local-snapshot.ts) | Changed | Agent config pushes keep discovered tools and saved approval policies in the Settings snapshot. |
+| U15 | [Settings snapshot synchronization](../src/renderer/SettingsWindow.tsx) | Changed | Agent config pushes keep discovered tools and saved approval policies in the Settings snapshot. |
 | R01 | [Audio spool](../src/main/audio-spool.ts) | Retained | Nullable descriptor and finally cleanup fully express the spool resource lifetime. |
 | R02 | [Singleton windows](../src/main/window-factory.ts) | Retained | Nullable singleton handle delegates loading/visibility to Electron. |
 | R03 | [Audit writer](../src/agent/audit.ts) | Retained | Idempotent close and status deduplication are separate bounded concerns. |
