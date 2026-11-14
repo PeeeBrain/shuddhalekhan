@@ -17,9 +17,12 @@ export function MCPToolPolicies({ server, allowHTTP, onChange }: {
   const search = useNativeState('');
   const [query, setQuery] = useState('');
   const [discovery, setDiscovery] = useState<Discovery>({ phase: 'idle' });
+  // Rows listed at the last edit, so resetting a tool to Ask Every Time (which drops its saved policy) keeps its row.
+  const [listed, setListed] = useState<string[]>([]);
   const request = useRef<AbortController | null>(null);
   useEffect(() => {
     setDiscovery({ phase: 'idle' });
+    setListed([]);
     return () => { request.current?.abort(); request.current = null; };
   }, [server.endpoint, server.token, allowHTTP]);
 
@@ -41,12 +44,13 @@ export function MCPToolPolicies({ server, allowHTTP, onChange }: {
   };
   const tools = new Map(discovery.phase === 'ready' ? discovery.tools.map(tool => [tool.name, tool]) : []);
   // Saved policies remain editable offline, including tools no longer advertised by the server.
-  const names = [...new Set([...tools.keys(), ...Object.keys(server.toolPolicies ?? {})])];
+  const names = [...new Set([...tools.keys(), ...listed, ...Object.keys(server.toolPolicies ?? {})])];
   const shown = names.filter(name => `${name} ${tools.get(name)?.description ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()));
   const setPolicy = (name: string, value: string) => {
     const policy = toolApprovalPolicySchema.parse(value);
     const policies = { ...server.toolPolicies, [name]: policy };
     if (policy === 'alwaysAsk') delete policies[name];
+    setListed(names);
     onChange(policies);
   };
 
