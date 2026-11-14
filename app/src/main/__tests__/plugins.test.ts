@@ -95,6 +95,14 @@ describe('Plugins', () => {
     expect(skillNames()).toEqual(['acme-triage']);
   });
 
+  it('installs a plugin whose server file points back at itself', async () => {
+    const plugin = join(directory, 'loop');
+    writeFiles(plugin, { '.claude-plugin/plugin.json': { mcpServers: './.mcp.json' }, '.mcp.json': '"./.mcp.json"',
+      'skills/loop-notes/SKILL.md': skill('loop-notes') });
+    chooseFolder(plugin);
+    expect((await invoke('plugins:install-folder') as PluginInstallResult).plugin.skills).toEqual(['loop-notes']);
+  });
+
   it('leaves no skills behind when saving the plugin fails', async () => {
     const plugin = join(directory, 'acme');
     writeFiles(plugin, { 'skills/acme-triage/SKILL.md': skill('acme-triage') });
