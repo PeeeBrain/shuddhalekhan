@@ -7,6 +7,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Agent Mode on desktop and iOS loads MCP tool definitions on demand once more than ten tools are enabled, so large MCP setups no longer fill every request with tools the command never uses.
 - Agent Mode now loads a matching skill on its own when a command fits the skill's description, instead of only when you ask for the skill by name.
 - Cancelling desktop Dictation now releases its renderer microphone before retiring the capture command. Stale local speech workers and paste retries cannot alter replacement work.
 - Agent replies keep execution ownership separate from their shared History entry. Removing or changing an MCP server cancels its pending OAuth wait.

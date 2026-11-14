@@ -1,9 +1,14 @@
-import { isStepCount, streamText, type LanguageModelUsage, type ModelMessage, type SystemModelMessage, type Tool, type ToolCallPart } from 'ai';
+import { isStepCount, streamText, toolSearch, type LanguageModelUsage, type ModelMessage, type SystemModelMessage, type Tool, type ToolCallPart } from 'ai';
+import { z } from 'zod';
 import type { AgentModelClient } from './agent-model';
 import { parseModelToolName } from './mcp';
 
 /** Model calls allowed per command, counted across approval pauses. The last one must answer without tools. */
 export const AGENT_MAX_STEPS = 30;
+export const TOOL_SEARCH_TOOL = 'tool_search';
+// ponytail: a count, not a token measure; a few tools cost less up front than a search step.
+const DEFERRED_TOOLS_UP_FRONT = 10;
+const toolSearchOutputSchema = z.object({ tools: z.array(z.object({ name: z.string() })) });
 const TOOL_RESULT_CHAR_LIMIT = 100_000;
 // ponytail: counts tool-result characters only (roughly 100k tokens); spoken commands and answers are small. Count tokens if a provider overflows first.
 const CONTEXT_CHAR_BUDGET = 400_000;
@@ -101,6 +106,30 @@ function createCompactor() {
   return compact;
 }
 
+/**
+ * Tools marked `deferLoading` stay out of the request until `tool_search` finds them, once there are
+ * more than a few. The SDK forgets what a generation found when it ends, and the loop starts a new one
+ * after every approval pause and on a reply, so tools the conversation already found or called stay loaded.
+ */
+function withToolSearch(tools: Record<string, Tool>, messages: ModelMessage[]): Record<string, Tool> {
+  if (Object.values(tools).filter(tool => tool.deferLoading).length <= DEFERRED_TOOLS_UP_FRONT) {
+    return Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, { ...tool, deferLoading: false }]));
+  }
+  const found = new Set<string>();
+  for (const message of messages) {
+    if (typeof message.content === 'string') continue;
+    for (const part of message.content) {
+      if (part.type === 'tool-call') found.add(part.toolName);
+      if (part.type !== 'tool-result' || part.toolName !== TOOL_SEARCH_TOOL || part.output.type !== 'json') continue;
+      for (const tool of toolSearchOutputSchema.safeParse(part.output.value).data?.tools ?? []) found.add(tool.name);
+    }
+  }
+  return {
+    ...Object.fromEntries(Object.entries(tools).map(([name, tool]) => [name, found.has(name) ? { ...tool, deferLoading: false } : tool])),
+    [TOOL_SEARCH_TOOL]: toolSearch(),
+  };
+}
+
 export type AgentLoopResult = {
   text: string;
   /** The whole conversation, compacted. Pass it back as `messages` (plus a new user message) to continue. */
@@ -150,7 +179,7 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
       onError: () => undefined,
       instructions: system,
       messages,
-      tools: stableTools,
+      tools: withToolSearch(stableTools, messages),
       providerOptions: client.providerOptions,
       prepareStep: ({ messages: stepMessages, stepNumber }) => {
         const lastStep = stepsBefore + stepNumber + 1 >= maxSteps;
