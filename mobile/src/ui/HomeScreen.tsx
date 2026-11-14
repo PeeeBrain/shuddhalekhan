@@ -34,10 +34,7 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   const onDevice = settings.transcriptionSource === 'on-device';
   const configured = onDevice ? app.localModel.kind === 'ready' : transcriptionReady(settings);
   const canRetry = idle && settings.agentEnabled && transcript.trim() !== '';
-  // The keyboard session holds the microphone, so the in-app recorder has nothing to offer until it ends.
-  const sessionOn = app.keyboardSession.active;
-  const showRecorder = !(sessionOn && idle);
-  const setupCard = idle && !configured && !sessionOn;
+  const setupCard = idle && !configured && !app.keyboardSession.active;
   const line = (status && !restStatus.has(status) ? status : '') || busyLabel[phase] || '';
 
   return (
@@ -71,8 +68,6 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
           </Card>
         ) : null}
 
-        {sessionOn ? <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} /> : null}
-
         {setupCard ? (
           <Card>
             <Text style={type.headline}>{onDevice ? 'Download a speech model' : 'Set up transcription'}</Text>
@@ -81,22 +76,21 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
           </Card>
         ) : null}
 
-        {showRecorder ? (
-          <View style={home.hero}>
-            {settings.agentEnabled ? (
-              <Host matchContents={{ vertical: true }} colorScheme="dark" style={home.modes}>
-                <Picker selection={intent} onSelectionChange={v => setPicked(v === 'agent' ? 'agent' : 'dictation')} modifiers={[pickerStyle('segmented'), disabled(!idle)]}>
-                  <SwiftText modifiers={[tag('dictation')]}>Dictation</SwiftText>
-                  <SwiftText modifiers={[tag('agent')]}>Agent</SwiftText>
-                </Picker>
-              </Host>
-            ) : null}
-            <RecordControl app={app} intent={intent} configured={configured} />
-            <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>{line}</Text>
-          </View>
-        ) : null}
+        <View style={home.hero}>
+          {settings.agentEnabled ? (
+            <Host matchContents={{ vertical: true }} colorScheme="dark" style={home.modes}>
+              <Picker selection={intent} onSelectionChange={v => setPicked(v === 'agent' ? 'agent' : 'dictation')} modifiers={[pickerStyle('segmented'), disabled(!idle)]}>
+                <SwiftText modifiers={[tag('dictation')]}>Dictation</SwiftText>
+                <SwiftText modifiers={[tag('agent')]}>Agent</SwiftText>
+              </Picker>
+            </Host>
+          ) : null}
+          <RecordControl app={app} intent={intent} configured={configured} />
+          <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>{line}</Text>
+        </View>
 
-        {sessionOn ? null : <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} />}
+        {/* One slot for both states, so starting a session doesn't remount the card mid-layout. */}
+        <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} />
 
         {app.intent === 'agent' && (transcript || response || app.turns.length > 0) ? (
           <Card agent>
@@ -174,15 +168,16 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
     );
   }
 
-  const off = phase !== 'idle' || !configured || app.keyboardSession.active || app.keyboardSession.starting;
+  // A keyboard session gives up the microphone to a tap here, but not mid-utterance.
+  const off = phase !== 'idle' || !configured || app.keyboardSession.busy || app.keyboardSession.starting;
   const limit = recordingLimitSeconds(app.settings);
   return (
     <Pressable
-      onPress={() => app.startRecording(intent)}
+      onPress={() => { void app.startRecording(intent); }}
       disabled={off}
       accessibilityRole="button"
       accessibilityLabel={agent ? 'Record agent command' : 'Start dictation'}
-      accessibilityHint={`Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}`}
+      accessibilityHint={`Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}${app.keyboardSession.active ? ' and ends the keyboard session' : ''}`}
       accessibilityState={{ disabled: off }}
       style={({ pressed }) => [home.record, home.recordIdle, shape, { borderColor: tint }, pressed && { backgroundColor: color.raised }, off && { opacity: 0.4 }]}
     >
@@ -204,14 +199,14 @@ function KeyboardSession({ app, onSetUp }: { app: App; onSetUp: () => void }) {
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={type.headline} accessibilityRole="header">Keyboard session on</Text>
             <Text style={type.footnote}>
-              {session.remainingSeconds === 0 && session.busy ? 'Finishing this utterance…' : 'Switch back and use the keyboard. Only audio between Dictate and Stop is kept.'}
+              {session.remainingSeconds === 0 && session.busy ? 'Finishing this utterance…' : 'Switch back and use the keyboard. Only audio between Dictate and Stop is kept. Recording here ends the session.'}
             </Text>
           </View>
           <Text style={[type.title, home.timer, { color: session.remainingSeconds <= 60 ? color.ochre : color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>
             {m}:{s}
           </Text>
+          <Button label="Stop" kind="destructive" small onPress={() => { void app.stopKeyboardSession(); }} />
         </View>
-        <Button label="Stop Session" kind="destructive" wide onPress={() => { void app.stopKeyboardSession(); }} />
       </Card>
     );
   }

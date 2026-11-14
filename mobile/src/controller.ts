@@ -240,7 +240,7 @@ export class MobileController {
     });
     active.signal.throwIfAborted();
     this.update({ response: result.text, steps: result.steps });
-    this.setConversation(this.keyboardRun ? null : result.messages);
+    this.setConversation(result.messages);
   }
 
   retryAgent = () => {
