@@ -283,6 +283,9 @@ export function getConfig(): AppConfig {
       provider: { ...provider, ...normalizeAgentProvider(provider) },
       mcpServers,
       disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
+      plugins: z.array(z.object({ name: z.string(), skills: z.array(z.string()), mcpServerIds: z.array(z.string()) }))
+        .safeParse(agent?.plugins).data ?? [],
+      pluginMarketplaces: z.array(z.string()).safeParse(agent?.pluginMarketplaces).data ?? [],
       memoryEnabled: agent?.memoryEnabled === true,
       customInstructions: typeof agent?.customInstructions === 'string' ? agent.customInstructions : '',
     },
@@ -338,7 +341,11 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
       && !(issue.field === 'model' && !provider.model.trim())
       && !(issue.field === 'apiKeyEnvVar' && !provider.apiKeyEnvVar.trim()));
     if (issue) throw new Error(issue.message);
-    store.set('agent', { ...(value as AppConfig['agent']),
+    const agent = value as AppConfig['agent'];
+    // A deleted server leaves its plugin, so removing the plugin never takes a later server with the same id.
+    const plugins = agent.plugins?.map(plugin => ({ ...plugin,
+      mcpServerIds: plugin.mcpServerIds.filter(id => agent.mcpServers.some(server => server.id === id)) }));
+    store.set('agent', { ...agent, plugins,
       provider: { ...provider, apiKeyEnvVar: normalizeAgentProvider(provider).apiKeyEnvVar } });
     return;
   }

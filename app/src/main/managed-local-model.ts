@@ -291,7 +291,7 @@ export function validateArchiveEntries(entries: string[]): void {
       || normalized.startsWith(`..${sep}`)
       || /^[A-Za-z]:/.test(entry)
     ) {
-      throw new Error('The model archive contains an unsafe path.');
+      throw new Error('The archive contains an unsafe path.');
     }
   }
 }
@@ -305,7 +305,7 @@ export function selectArchiveMembers(listing: string[], include: string[]): stri
   const patterns = include.map((path) => new RegExp(`^${path.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`)); // `*` spans `/`, as bsdtar's does
   const names = listing.map((entry) => entry.replace(/^\.\//, ''));
   if (!patterns.every((pattern) => names.some((name) => pattern.test(name)))) {
-    throw new Error('The model archive is missing expected files.');
+    throw new Error('The archive is missing expected files.');
   }
   return listing.filter((_, index) => patterns.some((pattern) => pattern.test(names[index])));
 }
@@ -314,7 +314,7 @@ export function selectArchiveMembers(listing: string[], include: string[]): stri
  * Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. GNU tar cannot read zip,
  * so Linux extracts wheels with unzip, whose `-Z` listing uses the same `ls -l` style as `tar -tv`.
  */
-async function extractTar(archivePath: string, stagingPath: string, include: string[] = []): Promise<void> {
+export async function extractTar(archivePath: string, stagingPath: string, include: string[] = []): Promise<void> {
   const zip = process.platform !== 'win32' && await isZip(archivePath);
   const run = (args: string[]) => runArchiver(zip ? 'unzip' : 'tar', args);
   const listing = (await run(zip ? ['-Z1', archivePath] : ['-tf', archivePath])).split(/\r?\n/).filter(Boolean);
@@ -322,7 +322,7 @@ async function extractTar(archivePath: string, stagingPath: string, include: str
   validateArchiveEntries(listing);
   const verbose = (await run([zip ? '-Z' : '-tvf', archivePath, ...members])).split(/\r?\n/).filter(Boolean);
   if (verbose.some((line) => line[0] !== '-' && line[0] !== 'd')) {
-    throw new Error('The model archive contains unsupported links or device entries.');
+    throw new Error('The archive contains unsupported links or device entries.');
   }
   await run(zip ? ['-qo', archivePath, ...members, '-d', stagingPath] : ['-xf', archivePath, '-C', stagingPath, ...members]);
 }
@@ -355,7 +355,7 @@ function runArchiver(command: 'tar' | 'unzip', args: string[]): Promise<string> 
       ? new Error('GPU setup needs the unzip command. Install unzip, then retry.') : error));
     child.on('exit', (code) => {
       if (code === 0) resolve(stdout);
-      else reject(new Error(stderr.trim() || 'Could not extract the model archive.'));
+      else reject(new Error(stderr.trim() || 'Could not extract the archive.'));
     });
   });
 }

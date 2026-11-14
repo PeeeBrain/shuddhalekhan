@@ -158,6 +158,32 @@ export interface McpServerConfig {
   toolPolicies: Record<McpToolPolicyKey, AgentToolApprovalPolicy>;
 }
 
+/** What a plugin added, so removing it takes back exactly that. */
+export interface InstalledPlugin {
+  name: string;
+  skills: string[];
+  mcpServerIds: string[];
+}
+
+export interface PluginCatalogEntry {
+  /** GitHub owner/repo of the directory listing this plugin. */
+  marketplace: string;
+  name: string;
+  description: string;
+}
+
+export interface PluginCatalog {
+  plugins: PluginCatalogEntry[];
+  /** Directories that could not be loaded this time. */
+  failed: string[];
+}
+
+export interface PluginInstallResult {
+  plugin: InstalledPlugin;
+  /** Plain-language parts of the plugin Shuddhalekhan could not install. */
+  skipped: string[];
+}
+
 export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
   'surface-paint-proxy': (surface: string) => void;
@@ -216,6 +242,13 @@ export interface RendererToMainInvokeChannels {
   'skills:import': (token: string) => Promise<AgentSkillSummary[]>;
   'skills:remove': (name: string) => Promise<AgentSkillSummary[]>;
   'skills:open-folder': () => Promise<void>;
+  'plugins:catalog': () => Promise<PluginCatalog>;
+  'plugins:install': (marketplace: string, name: string) => Promise<PluginInstallResult>;
+  /** Takes "owner/repo" or a github.com link; saves it only once its directory loads, and resolves its owner/repo. */
+  'plugins:add-marketplace': (repo: string) => Promise<string>;
+  /** Resolves null when the folder picker is cancelled. */
+  'plugins:install-folder': () => Promise<PluginInstallResult | null>;
+  'plugins:remove': (name: string) => Promise<void>;
   'memory:get': () => Promise<AgentMemorySnapshot>;
   'memory:edit': (revision: string, id: string, text: string) => Promise<AgentMemorySnapshot>;
   'memory:remove': (revision: string, id: string) => Promise<AgentMemorySnapshot>;
@@ -557,6 +590,9 @@ export interface AppConfig {
     provider: AgentProviderConfig;
     mcpServers: McpServerConfig[];
     disabledSkills?: string[];
+    plugins?: InstalledPlugin[];
+    /** Extra GitHub plugin directories (owner/repo) beside Anthropic's official one. */
+    pluginMarketplaces?: string[];
     memoryEnabled?: boolean;
     /** Appended to the agent system prompt; part of the cached prefix, so it never carries per-run data. */
     customInstructions?: string;

@@ -54,6 +54,7 @@ import { createRuntimeShellPresenter } from './agent-presentation';
 import { getRecoveryActions } from './dictation-recovery';
 import { getPersistentStoreDirectory, preparePersistentStoreDirectory } from './store-path';
 import { registerAgentContextIpcHandlers } from './agent-context';
+import { registerPluginIpcHandlers } from './plugins';
 import {
   configureManagedLocal,
   managedLocalTranscriber,
@@ -182,6 +183,10 @@ const agentContext = registerAgentContextIpcHandlers(getPersistentStoreDirectory
   getActiveAgentRunId: () => activeAgentRun?.id ?? null,
   reply: (agentRunId, requestId, result) => agentSidecar.sendMemoryResult(agentRunId, requestId, result),
   publish: snapshot => getSettingsWindow()?.webContents.send('memory:changed', snapshot),
+});
+registerPluginIpcHandlers(getPersistentStoreDirectory(), {
+  getConfig,
+  setAgent: async agent => { await applyConfig('agent', agent); publishAgentConfig(); },
 });
 const chatGptAuth = new ChatGptAuth({
   vault: credentialVault, fetch: (url, init) => fetch(url, init), now: Date.now,
@@ -680,7 +685,10 @@ handle('config:patch-transcription', async (_event, patch: unknown) => {
   return config;
 });
 
-handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
+handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => applyConfig(key, value));
+
+/** Saves one config key and brings hotkeys, transcribers, and the agent sidecar in line with it. */
+async function applyConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): Promise<void> {
   const previousConfig = getConfig();
   setConfig(key, value);
   const config = getConfig();
@@ -699,7 +707,7 @@ handle('config:set', async (_event, key: keyof AppConfig, value: AppConfig[keyof
   } else if (sidecarAction === 'start') {
     agentSidecar.start(config, getAgentSidecarApiKey(config, credentialVault));
   }
-});
+}
 
 handle('mcp:test-server', async (_event, serverId: string) => {
   const config = getConfig();

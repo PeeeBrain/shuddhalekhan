@@ -1,6 +1,6 @@
 import { tool, type Tool } from 'ai';
 import { z } from 'zod';
-import { listSkills, parseSkill, readSkillText } from '../shared/agent-skills';
+import { listSkills, parseSkill, readSkillText, skillCatalog, skillCatalogFits } from '../shared/agent-skills';
 import type { AgentRuntimeCallbacks } from './runtime';
 
 export const LOAD_SKILL_TOOL = 'shuddhalekhan_load_skill';
@@ -8,8 +8,8 @@ export const READ_SKILL_RESOURCE_TOOL = 'shuddhalekhan_read_skill_resource';
 
 export function createSkillTools(directory: string, disabled: string[], signal: AbortSignal, audit: AgentRuntimeCallbacks['onAudit']): { context: string; tools: Record<string, Tool> } {
   const skills = listSkills(directory, disabled).filter(skill => !skill.error && skill.enabled);
-  const catalog = skills.map(skill => `- ${skill.name}: ${skill.description}`).join('\n');
-  if (skills.length > 64 || Buffer.byteLength(catalog) > 16384) throw new Error('Enabled skills exceed the catalog limit. Disable some skills in Settings.');
+  const catalog = skillCatalog(skills);
+  if (!skillCatalogFits(skills)) throw new Error('Enabled skills exceed the catalog limit. Disable some skills in Settings.');
   if (!skills.length) return { context: '', tools: {} };
   const loaded = new Set<string>();
   const requireSkill = (name: string) => {
