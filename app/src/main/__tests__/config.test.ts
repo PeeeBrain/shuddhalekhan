@@ -128,6 +128,14 @@ describe('config store', () => {
     expect(storeData.get('agent')).toEqual(saved);
   });
 
+  it('drops a deleted server from its plugin so removing the plugin spares a later same-id server', async () => {
+    storeData.set('agent', { enabled: false, provider: { baseUrl: '', model: '', apiKeyEnvVar: '' }, mcpServers: [],
+      plugins: [{ name: 'acme', skills: ['acme-triage'], mcpServerIds: ['acme'] }] });
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-plugin-servers`);
+    setConfig('agent', { ...getConfig().agent, mcpServers: [] });
+    expect(getConfig().agent.plugins).toEqual([{ name: 'acme', skills: ['acme-triage'], mcpServerIds: [] }]);
+  });
+
   it('copies monorepo dev stores only when stable stores do not exist', async () => {
     const sourceDirectory = normalize('/app-data/@shuddhalekhan/app');
     existsSync.mockImplementation((path: string) => path.startsWith(sourceDirectory));

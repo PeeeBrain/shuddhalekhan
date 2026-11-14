@@ -55,8 +55,9 @@ function toCatalogEntry(value: unknown): CatalogEntry | null {
 async function loadCatalog(): Promise<CatalogEntry[]> {
   const response = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(15_000) });
   if (!response.ok) throw new Error('Could not load the plugin directory. Check your connection and try again.');
-  const { plugins } = z.object({ plugins: z.array(z.unknown()) }).parse(await response.json());
-  return plugins.map(toCatalogEntry).filter(entry => entry !== null);
+  const catalog = z.object({ plugins: z.array(z.unknown()) }).safeParse(await response.json().catch(() => null));
+  if (!catalog.success) throw new Error('The plugin directory could not be read. Try again later.');
+  return catalog.data.plugins.map(toCatalogEntry).filter(entry => entry !== null);
 }
 
 async function download(url: string, path: string): Promise<void> {
@@ -105,18 +106,19 @@ function readPlugin(directory: string, extraSkillPaths: string[] = []) {
 
   // Later sources win, as in Claude Code: .mcp.json, then the manifest's own mcpServers.
   const serverJson = new Map<string, unknown>();
-  const addServers = (value: unknown): void => {
+  // Only the manifest may point at server files; the files themselves are read as-is, so they cannot loop.
+  const addServers = (value: unknown, followPaths = false): void => {
     if (typeof value === 'string') {
-      if (value.endsWith('.json')) addServers(readJson(directory, cleanPath(value)));
+      if (followPaths && value.endsWith('.json')) addServers(readJson(directory, cleanPath(value)));
       else skipped.push('a bundled connection package');
-    } else if (Array.isArray(value)) value.forEach(addServers);
+    } else if (Array.isArray(value)) value.forEach(item => addServers(item, followPaths));
     else if (isRecord(value)) {
       for (const [id, server] of Object.entries(isRecord(value.mcpServers) ? value.mcpServers : value)) serverJson.set(id, server);
     }
   };
   addServers(readJson(directory, '.mcp.json'));
   addServers(readJson(directory, 'mcp.json'));
-  addServers(manifest.data.mcpServers);
+  addServers(manifest.data.mcpServers, true);
   const servers: McpServerConfig[] = [];
   for (const [id, value] of serverJson) {
     const server = toServer(id, value);
@@ -153,7 +155,7 @@ export function registerPluginIpcHandlers(directory: string, deps: {
 
   async function install(source: string, catalogName?: string, extraSkillPaths?: string[]): Promise<PluginInstallResult> {
     const plugin = readPlugin(source, extraSkillPaths);
-    const name = pluginNameSchema.parse(catalogName ?? plugin.name ?? basename(source));
+    const name = pluginNameSchema.parse(catalogName ?? plugin.name ?? basename(source).slice(0, 64));
     const agent = deps.getConfig().agent;
     const installed = agent.plugins ?? [];
     if (installed.some(item => item.name === name)) throw new Error(`${name} is already installed.`);
