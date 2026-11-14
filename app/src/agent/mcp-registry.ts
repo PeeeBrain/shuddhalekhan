@@ -157,7 +157,9 @@ export class McpRegistry {
           serverId,
           originalName,
           modelName,
-          toolDef,
+          // Server ids are generated, so the display name is what tool search can match a service by.
+          toolDef.type === 'provider' ? toolDef
+            : { ...toolDef, description: `${server.config.displayName}: ${typeof toolDef.description === 'string' ? toolDef.description : ''}` },
           policy,
           () => this.toolPolicies.get(policyKey),
           onAudit,

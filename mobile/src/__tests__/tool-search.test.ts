@@ -18,6 +18,8 @@ describe('tool search', () => {
     const tools: Record<string, Tool> = {
       notes: tool({ description: 'Built-in notes.', inputSchema: z.object({}), execute: async () => 'none' }),
       weather__forecast: tool({ description: 'Get the weather forecast for a city.', inputSchema: z.object({ city: z.string() }), deferLoading: true, needsApproval: true, execute: async () => 'Rain' }),
+      // Found by the same search but never called: only the search result keeps it loaded.
+      weather__alerts: tool({ description: 'Get weather alerts for a city.', inputSchema: z.object({ city: z.string() }), deferLoading: true, execute: async () => 'None' }),
     };
     for (let index = 0; index < 10; index++) {
       tools[`other__tool_${index}`] = tool({ description: 'Unrelated.', inputSchema: z.object({}), deferLoading: true, execute: async () => '' });
@@ -45,6 +47,6 @@ describe('tool search', () => {
     expect(approvals).toEqual(['weather__forecast']);
     expect(sentTools[0]).toEqual(['notes', TOOL_SEARCH_TOOL]);
     // The third call is a new generation after the approval pause; the SDK alone would have forgotten the search.
-    expect(sentTools[2]).toEqual(['notes', TOOL_SEARCH_TOOL, 'weather__forecast']);
+    expect(sentTools[2]).toEqual(['notes', TOOL_SEARCH_TOOL, 'weather__alerts', 'weather__forecast']);
   });
 });

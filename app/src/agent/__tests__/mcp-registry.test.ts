@@ -333,7 +333,7 @@ describe('McpRegistry', () => {
 
     const snapshot = registry.createRunSnapshot();
     expect(Object.keys(snapshot.tools)).toEqual(['srv1__search']);
-    expect(snapshot.tools.srv1__search.description).toBe('duplicate');
+    expect(snapshot.tools.srv1__search.description).toBe('Test Server: duplicate');
 
     await snapshot.close();
     await registry.close();
