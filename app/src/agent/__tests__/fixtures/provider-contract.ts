@@ -129,7 +129,7 @@ let memoryCommits = 0;
 await learnAgentMemory({ agentRunId: 'chatgpt-memory', transcript: 'I prefer Marathi.',
   config: { agent: { enabled: true, provider: chatgptProfile, mcpServers: [] } },
   memory: { revision: 'initial', markdown: '' }, storedApiKey: 'plan-token', signal: new AbortController().signal,
-  callbacks: { onStatus() {}, onResponseDelta() {}, onCompleted() {}, onFailed() {}, onCancelled() {},
+  callbacks: { onStatus() {}, onSteps() {}, onCompleted() {}, onFailed() {}, onCancelled() {},
     requestToolApproval: async () => ({ approved: true }), commitMemory: async () => { memoryCommits++; return { saved: true }; } },
 });
 assert.equal(captures.length, 0, 'ChatGPT memory learning must never issue a non-streaming request');
@@ -190,7 +190,7 @@ captures = [];
 mode = 'no-cache-metrics';
 let missingUsage: Record<string, unknown> | undefined;
 await runAgent('no-cache-metrics', 'Reply OK', { agent: { enabled: true, provider: local, mcpServers: [] } }, {}, new AbortController().signal, {
-  onStatus() {}, onResponseDelta() {}, onCompleted() {}, onFailed(error) { throw new Error(error); }, onCancelled() {},
+  onStatus() {}, onSteps() {}, onCompleted() {}, onFailed(error) { throw new Error(error); }, onCancelled() {},
   requestToolApproval: async () => ({ approved: true }),
   onAudit(type, payload) { if (type === 'provider_usage') missingUsage = payload; },
 });
@@ -227,7 +227,7 @@ for (const provider of [router, { ...azureProfile, apiMode: 'responses' as const
     execute: async ({ value }) => { executions++; return { value }; } });
   await runAgent('approval-contract', 'Call the test tool.', { agent: { enabled: true, provider, mcpServers: [] } },
     { provider_check_echo: echo }, new AbortController().signal, {
-      onStatus() {}, onResponseDelta() {}, onCompleted(text) { completed = text; },
+      onStatus() {}, onSteps() {}, onCompleted(text) { completed = text; },
       onFailed(error) { throw new Error(error); }, onCancelled() { throw new Error('Unexpected cancellation'); },
       requestToolApproval: async () => { approvals++; return { approved: true }; },
     });
@@ -245,7 +245,7 @@ for (const provider of [router, ...[profile, azureProfile].flatMap(provider => (
   const echo = tool({ inputSchema: z.object({ value: z.literal('shuddhalekhan-provider-check') }), execute: ({ value }) => ({ value }) });
   await runAgent('cache-loop-session', 'Call the test tool.', { agent: { enabled: true, provider, mcpServers: [] } },
     { z_test: echo, provider_check_echo: echo, a_test: echo }, new AbortController().signal, {
-      onStatus() {}, onResponseDelta() {}, onCompleted(text) { assert.equal(text, 'OK'); },
+      onStatus() {}, onSteps() {}, onCompleted(text) { assert.equal(text, 'OK'); },
       onFailed(error) { throw new Error(error); }, onCancelled() { throw new Error('Unexpected cancellation'); },
       requestToolApproval: async () => ({ approved: true }),
       onAudit(type, payload) { if (type === 'provider_usage') usage.push(payload); },
@@ -264,7 +264,7 @@ for (const provider of [profile, azureProfile, router, { ...local, baseUrl: 'htt
   captures = [];
   let cacheRead: unknown;
   await runAgent('cache-prefix-session', 'A different command.', { agent: { enabled: true, provider, mcpServers: [] } }, {}, new AbortController().signal, {
-    onStatus() {}, onResponseDelta() {}, onCompleted() {}, onFailed(error) { throw new Error(error); }, onCancelled() {},
+    onStatus() {}, onSteps() {}, onCompleted() {}, onFailed(error) { throw new Error(error); }, onCancelled() {},
     requestToolApproval: async () => ({ approved: true }),
     onAudit(type, payload) { if (type === 'provider_usage') cacheRead = payload?.cacheReadTokens; },
   });

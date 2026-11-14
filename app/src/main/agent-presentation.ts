@@ -1,3 +1,5 @@
+import type { AgentStep } from '../types/ipc';
+
 export interface AgentApprovalPresentation {
   agentRunId: string;
   approvalId: string;
@@ -17,9 +19,9 @@ export interface AgentPresenter {
   /** Invalidates any prior run presentation before a replacement run starts. */
   beginRun(): void;
   status(agentRunId: string | null, message: string): void;
-  streaming(agentRunId: string, response: string): void;
+  streaming(agentRunId: string, steps: AgentStep[]): void;
   approval(request: AgentApprovalPresentation): void;
-  completed(agentRunId: string, response: string, toolSummary: string[]): void;
+  completed(agentRunId: string, response: string, toolSummary: string[], steps: AgentStep[]): void;
   failed(agentRunId: string | null, message: string): void;
   /** A cancelled run clears presentation silently; it never shows feedback. */
   cancelled(agentRunId: string): void;
@@ -28,9 +30,9 @@ export interface AgentPresenter {
 interface RuntimeShellPresenterTarget {
   clearAgentRun(): void;
   showAgentStatus(agentRunId: string | null, message: string): void;
-  showAgentStreaming(agentRunId: string, response: string): void;
+  showAgentStreaming(agentRunId: string, steps: AgentStep[]): void;
   showAgentApproval(approval: AgentApprovalPresentation): void;
-  showAgentCompleted(agentRunId: string, response: string, toolSummary: string[]): void;
+  showAgentCompleted(agentRunId: string, response: string, toolSummary: string[], steps: AgentStep[]): void;
   showAgentFailed(agentRunId: string | null, message: string): void;
 }
 
@@ -38,9 +40,9 @@ export function createRuntimeShellPresenter(shell: RuntimeShellPresenterTarget):
   return {
     beginRun: () => shell.clearAgentRun(),
     status: (agentRunId, message) => shell.showAgentStatus(agentRunId, message),
-    streaming: (agentRunId, response) => shell.showAgentStreaming(agentRunId, response),
+    streaming: (agentRunId, steps) => shell.showAgentStreaming(agentRunId, steps),
     approval: (request) => shell.showAgentApproval(request),
-    completed: (agentRunId, response, toolSummary) => shell.showAgentCompleted(agentRunId, response, toolSummary),
+    completed: (agentRunId, response, toolSummary, steps) => shell.showAgentCompleted(agentRunId, response, toolSummary, steps),
     failed: (agentRunId, message) => shell.showAgentFailed(agentRunId, message),
     cancelled: () => shell.clearAgentRun(),
   };

@@ -1,4 +1,4 @@
-import { runAgentLoop } from '@shuddhalekhan/shared/agent-loop';
+import { runAgentLoop, type AgentStep } from '@shuddhalekhan/shared/agent-loop';
 import { createAgentModel, type AgentFetch } from '@shuddhalekhan/shared/agent-model';
 import { buildSystemPrompt, buildRuntimeContext } from '@shuddhalekhan/shared/agent-prompt';
 import { APICallError, RetryError, dynamicTool, jsonSchema, type ModelMessage, type Tool } from 'ai';
@@ -26,7 +26,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
   approve: (request: ToolApproval) => Promise<boolean>;
   getChatGptAccessToken?: () => Promise<string>;
   history?: ModelMessage[];
-}): Promise<{ text: string; messages: ModelMessage[] }> {
+}): Promise<{ text: string; messages: ModelMessage[]; steps: AgentStep[] }> {
   if (!settings.agentEnabled) throw new Error('Enable Agent Mode in Settings first.');
   if (!transcript.trim()) throw new Error('Record a command first.');
   // Custom servers may run without a key even when a header mode is saved; hosted providers never do.
@@ -100,7 +100,6 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
       messages: [...history, { role: 'user', content: `${buildRuntimeContext()}\n\n${transcript}` }],
       // The loop's own status names tools by their model-facing ids; iOS reports its own stages instead.
       onStatus: () => {},
-      onResponseDelta: () => {},
       onStepEnd: () => { completedSteps++; status('Waiting for the agent…'); },
       requestToolApproval: async request => {
         const tool = approvals.get(request.modelToolName);
@@ -114,7 +113,9 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
     const text = result.outputLimitReached ? `${result.text.trim()}\n\n_Cut off at the model's output limit._` : result.text.trim();
     if (!text) throw new AgentError('The agent returned an empty response.');
     status('Agent finished.');
-    return { text, messages: result.messages };
+    // Model-facing tool ids are positional; the user knows a tool by its MCP name.
+    const steps = result.steps.map(step => ({ ...step, tools: step.tools.map(name => approvals.get(name)?.toolName ?? name) }));
+    return { text, messages: result.messages, steps };
   } catch (error) {
     signal.throwIfAborted();
     throw displayError(error, chatgpt);

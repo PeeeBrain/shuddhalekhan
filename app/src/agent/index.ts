@@ -219,13 +219,13 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
           auditStore.record(agentRunId, 'status', { status });
           writeJsonLine({ type: 'agent:status', agentRunId, status });
         },
-        onResponseDelta: (delta, response) => {
+        onSteps: (steps) => {
           if (activeAgentRunId !== agentRunId) return;
-          writeJsonLine({ type: 'agent:response-delta', agentRunId, delta, response });
+          writeJsonLine({ type: 'agent:steps', agentRunId, steps });
         },
-        onCompleted: (response, toolSummary) => {
+        onCompleted: (response, toolSummary, steps) => {
           if (activeAgentRunId !== agentRunId) return;
-          writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary });
+          writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary, steps });
           clearActiveRun();
         },
         onFailed: (error) => {

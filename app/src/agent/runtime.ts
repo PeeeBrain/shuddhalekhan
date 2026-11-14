@@ -1,5 +1,5 @@
 import { buildSystemPrompt, buildRuntimeContext } from '@shuddhalekhan/shared/agent-prompt';
-import { AGENT_MAX_STEPS, runAgentLoop, type ToolApprovalDecision } from '@shuddhalekhan/shared/agent-loop';
+import { AGENT_MAX_STEPS, runAgentLoop, type AgentStep, type ToolApprovalDecision } from '@shuddhalekhan/shared/agent-loop';
 import { parseModelToolName } from '@shuddhalekhan/shared/mcp';
 import type { ModelMessage, Tool } from "ai";
 import type { AppConfig } from "../types/ipc";
@@ -14,8 +14,10 @@ export type { ToolApprovalDecision };
 
 export interface AgentRuntimeCallbacks {
   onStatus(status: string): void;
-  onResponseDelta(textDelta: string, fullText: string): void;
-  onCompleted(response: string, toolSummary: string[]): void;
+  /** The run's steps so far, the last one live; read before returning. */
+  onSteps(steps: AgentStep[]): void;
+  /** `steps` are the ones before the answer; `toolSummary` holds notices about the run. */
+  onCompleted(response: string, toolSummary: string[], steps: AgentStep[]): void;
   onFailed(error: string): void;
   onCancelled(): void;
   requestToolApproval(
@@ -36,14 +38,14 @@ export interface ToolApprovalRequest {
 
 function normalizeFinalResponse(
   response: string,
-  toolSummary: string[],
+  toolNames: string[],
   callbacks: AgentRuntimeCallbacks,
 ): string {
   if (response.trim()) return response;
 
-  const hadToolActivity = toolSummary.length > 0;
+  const hadToolActivity = toolNames.length > 0;
   callbacks.onAudit?.("empty_response_degraded", {
-    toolSummary,
+    toolNames,
     hadToolActivity,
   });
 
@@ -106,7 +108,7 @@ export async function runAgent(
       tools: runTools,
       signal,
       onStatus: callbacks.onStatus,
-      onResponseDelta: callbacks.onResponseDelta,
+      onSteps: callbacks.onSteps,
       onAudit: callbacks.onAudit,
       requestToolApproval: request => callbacks.requestToolApproval({ ...parseModelToolName(request.modelToolName), ...request }),
       onStepEnd: ({ warnings, usage }) => {
@@ -128,7 +130,6 @@ export async function runAgent(
         }
       },
     });
-    toolSummary.push(...loop.toolNames.map(name => `Used ${name}`));
     if (loop.stepLimitReached) {
       toolSummary.push("Max step guardrail reached");
       callbacks.onAudit?.("max_step_guardrail", { stepCount: AGENT_MAX_STEPS });
@@ -136,7 +137,7 @@ export async function runAgent(
     const finalResponse = normalizeFinalResponse(
       // In the answer itself: the card shows only the first few summary entries.
       loop.outputLimitReached ? `${loop.text}\n\n_Cut off at the model's output limit._` : loop.text,
-      toolSummary,
+      loop.toolNames,
       callbacks,
     );
 
@@ -149,7 +150,7 @@ export async function runAgent(
       response: finalResponse,
       toolSummary,
     });
-    callbacks.onCompleted(finalResponse, toolSummary);
+    callbacks.onCompleted(finalResponse, toolSummary, loop.steps);
     return loop.messages;
   } catch (err) {
     if (signal.aborted) {

@@ -7,6 +7,7 @@ import { disabled, pickerStyle, tag } from '@expo/ui/swift-ui/modifiers';
 import { isParakeetLanguage, languageLabel } from '../languages';
 import { recordingLimitSeconds, transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
+import type { AgentStep } from '@shuddhalekhan/shared/agent-loop';
 import { Button, Card, color, styles as kit, type } from './kit';
 import { Markdown } from './Markdown';
 import type { SettingsPage } from './SettingsScreen';
@@ -107,6 +108,7 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
               </View>
             ))}
             {transcript ? <Bubble text={transcript} /> : null}
+            {response ? <Steps steps={app.steps} /> : null}
             {response ? <Markdown>{response}</Markdown> : null}
             <View style={kit.buttons}>
               <CopyShare text={response || transcript} />
@@ -265,6 +267,28 @@ function Bubble({ text }: { text: string }) {
   );
 }
 
+/** What the agent said and which tools it called on the way to the answer, folded until tapped. */
+function Steps({ steps }: { steps: AgentStep[] }) {
+  const [open, setOpen] = useState(false);
+  if (steps.length === 0) return null;
+  const tools = [...new Set(steps.flatMap(step => step.tools))];
+  return (
+    <View style={home.steps}>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}>
+        <Text style={type.caption}>
+          {open ? '▾' : '▸'} {steps.length === 1 ? '1 step' : `${steps.length} steps`}{tools.length > 0 ? ` · ${tools.join(', ')}` : ''}
+        </Text>
+      </Pressable>
+      {open ? steps.map((step, index) => (
+        <View key={index} style={home.step}>
+          {step.text.trim() ? <Text style={type.footnote} selectable>{step.text.trim()}</Text> : null}
+          {step.tools.map((tool, toolIndex) => <Text key={toolIndex} style={type.footnote}>🔧 {tool}</Text>)}
+        </View>
+      )) : null}
+    </View>
+  );
+}
+
 function CopyShare({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -302,5 +326,7 @@ const home = StyleSheet.create({
   sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   clear: { alignItems: 'center' },
   turn: { gap: 8, opacity: 0.75 },
+  steps: { gap: 6 },
+  step: { gap: 2, borderLeftWidth: 2, borderLeftColor: color.raised, paddingLeft: 8 },
   bubble: { alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: color.raised, borderRadius: 16, borderBottomRightRadius: 4, paddingHorizontal: 12, paddingVertical: 6 },
 });

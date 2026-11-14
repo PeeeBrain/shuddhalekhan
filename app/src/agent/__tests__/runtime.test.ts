@@ -62,7 +62,7 @@ describe('runAgent', () => {
 
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Done', []);
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Done', [], []);
     expect(isStepCountMock).toHaveBeenCalledWith(30);
   });
 
@@ -164,7 +164,7 @@ describe('runAgent', () => {
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onStatus).toHaveBeenCalledWith('Using tools: weather');
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Weather is sunny', ['Used weather']);
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Weather is sunny', [], []);
   });
 
   it('spends one step budget across approval pauses and forces a tool-free answer on the last step', async () => {
@@ -188,7 +188,7 @@ describe('runAgent', () => {
     expect(isStepCountMock.mock.calls).toEqual([[30], [1]]);
     expect(prepared[0]?.toolChoice).toBe('none');
     expect(prepared[0]?.messages.at(-1)).toMatchObject({ role: 'user', content: [{ text: expect.stringContaining('maximum number of steps') }] });
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Searched twice; one search remains.', expect.arrayContaining(['Max step guardrail reached']));
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Searched twice; one search remains.', expect.arrayContaining(['Max step guardrail reached']), expect.anything());
   });
 
   it('marks an answer cut off at the output limit even when the tool list is too long to show', async () => {
@@ -204,7 +204,7 @@ describe('runAgent', () => {
     const callbacks = makeCallbacks();
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    expect(callbacks.onCompleted).toHaveBeenCalledWith(expect.stringContaining("Cut off at the model's output limit"), expect.anything());
+    expect(callbacks.onCompleted).toHaveBeenCalledWith(expect.stringContaining("Cut off at the model's output limit"), expect.anything(), expect.anything());
   });
 
   it('denies tools still requested on the last step so the conversation stays valid to reply to', async () => {
@@ -323,7 +323,7 @@ describe('runAgent', () => {
         ],
       },
     ]);
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('I will not send it.', []);
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('I will not send it.', [], expect.anything());
   });
 
   it('prompts for multiple approval requests sequentially and resumes once with batched responses', async () => {
@@ -396,26 +396,32 @@ describe('runAgent', () => {
     });
   });
 
-  it('streams text deltas and completes with the accumulated response', async () => {
+  it('keeps what the model said before a tool call as a step, apart from the answer', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     streamTextMock.mockImplementation(() => makeStreamResult({
-      text: 'Hello world',
-      steps: [],
+      text: 'Sunny.',
+      steps: [
+        { toolCalls: [{ toolName: 'srv1__search' }], toolResults: [] },
+        { toolCalls: [], toolResults: [] },
+      ],
       toolCalls: [],
       toolResults: [],
-      streamChunks: ['Hello', ' world'],
+      streamParts: [
+        { type: 'start-step' },
+        { type: 'text-delta', text: 'Let me check.' },
+        { type: 'tool-call', toolName: 'srv1__search' },
+        { type: 'start-step' },
+        { type: 'text-delta', text: 'Sunny.' },
+      ],
     }));
 
     const callbacks = makeCallbacks();
+    await runAgent('run-1', 'weather?', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
-
-    expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(1, 'Hello', 'Hello');
-    expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(2, ' world', 'Hello world');
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Hello world', []);
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Sunny.', [], [{ text: 'Let me check.', tools: ['search'] }]);
   });
 
-  it('consumes response deltas from the stable v7 stream result', async () => {
+  it('reports each streamed text delta as the live step', async () => {
     process.env.OPENROUTER_API_KEY = 'sk-test';
     streamTextMock.mockReturnValue({
       text: Promise.resolve('Hello world'),
@@ -430,11 +436,12 @@ describe('runAgent', () => {
     });
 
     const callbacks = makeCallbacks();
+    const seen: unknown[] = [];
+    callbacks.onSteps.mockImplementation((steps: unknown) => { seen.push(structuredClone(steps)); });
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(1, 'Hello', 'Hello');
-    expect(callbacks.onResponseDelta).toHaveBeenNthCalledWith(2, ' world', 'Hello world');
-    expect(callbacks.onCompleted).toHaveBeenCalledWith('Hello world', []);
+    expect(seen).toEqual([[{ text: 'Hello', tools: [] }], [{ text: 'Hello world', tools: [] }]]);
+    expect(callbacks.onCompleted).toHaveBeenCalledWith('Hello world', [], []);
   });
 
   it('ignores blank streamed text deltas so the UI does not show an empty streaming toast', async () => {
@@ -451,8 +458,8 @@ describe('runAgent', () => {
 
     await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
-    expect(callbacks.onResponseDelta).toHaveBeenCalledTimes(1);
-    expect(callbacks.onResponseDelta).toHaveBeenCalledWith('Ready', 'Ready');
+    expect(callbacks.onSteps).toHaveBeenCalledTimes(1);
+    expect(callbacks.onSteps).toHaveBeenCalledWith([{ text: 'Ready', tools: [] }]);
   });
 
   it('calls onCancelled when aborted', async () => {
@@ -491,12 +498,13 @@ describe('runAgent', () => {
     await runAgent('run-1', 'say hello', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onAudit).toHaveBeenCalledWith('empty_response_degraded', {
-      toolSummary: [],
+      toolNames: [],
       hadToolActivity: false,
     });
     expect(callbacks.onCompleted).toHaveBeenCalledWith(
       'The agent completed, but returned an empty response.',
-      []
+      [],
+      [],
     );
   });
 
@@ -519,12 +527,13 @@ describe('runAgent', () => {
     await runAgent('run-1', 'search web', baseConfig as never, {}, new AbortController().signal, callbacks);
 
     expect(callbacks.onAudit).toHaveBeenCalledWith('empty_response_degraded', {
-      toolSummary: ['Used srv1__search'],
+      toolNames: ['srv1__search'],
       hadToolActivity: true,
     });
     expect(callbacks.onCompleted).toHaveBeenCalledWith(
       'The agent completed tool work but returned no final text.',
-      ['Used srv1__search']
+      [],
+      [],
     );
   });
 
@@ -533,7 +542,7 @@ describe('runAgent', () => {
 function makeCallbacks(): AgentRuntimeCallbacks & { [K in keyof AgentRuntimeCallbacks]: ReturnType<typeof mock> } {
   return {
     onStatus: mock(() => undefined),
-    onResponseDelta: mock(() => undefined),
+    onSteps: mock(() => undefined),
     onCompleted: mock(() => undefined),
     onFailed: mock(() => undefined),
     onCancelled: mock(() => undefined),
@@ -548,7 +557,7 @@ function makeStreamResult(result: {
   toolCalls: unknown[];
   toolResults: unknown[];
   streamChunks?: string[];
-  streamParts?: Array<{ type: string; text?: string; error?: unknown; approvalId?: string; toolCall?: { toolName: string; input: unknown } }>;
+  streamParts?: Array<{ type: string; text?: string; toolName?: string; error?: unknown; approvalId?: string; toolCall?: { toolName: string; input: unknown } }>;
   responseMessages?: unknown[];
 }) {
   const streamParts = result.streamParts ?? result.streamChunks?.map((text) => ({ type: 'text-delta', text })) ?? undefined;

@@ -1,4 +1,4 @@
-import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
+import type { AgentProviderConfig, AgentProviderTestResult, AgentStep, AppConfig } from '../types/ipc';
 import { z } from 'zod';
 import { agentProviderSchema } from '../shared/agent-provider-validation';
 import { MEMORY_BYTE_LIMIT, memoryUpdatesSchema, type AgentMemoryCommitResult, type AgentMemoryUpdate, type AgentRunContext } from '../shared/agent-context';
@@ -41,11 +41,11 @@ export type AgentStatusEvent = {
   status: string;
 };
 
-export type AgentResponseDeltaEvent = {
-  type: 'agent:response-delta';
+/** The run's steps so far, the last one live. */
+export type AgentStepsEvent = {
+  type: 'agent:steps';
   agentRunId: string;
-  delta: string;
-  response: string;
+  steps: AgentStep[];
 };
 
 export type ApprovalRequestedEvent = {
@@ -64,6 +64,8 @@ export type AgentCompletedEvent = {
   agentRunId: string;
   response: string;
   toolSummary: string[];
+  /** The steps before the answer. */
+  steps: AgentStep[];
 };
 
 export type AgentFailedEvent = {
@@ -87,7 +89,7 @@ export type SidecarEvent =
   | McpToolsDiscoveredEvent
   | OAuthOpenUrlEvent
   | AgentStatusEvent
-  | AgentResponseDeltaEvent
+  | AgentStepsEvent
   | ApprovalRequestedEvent
   | AgentCompletedEvent
   | AgentFailedEvent

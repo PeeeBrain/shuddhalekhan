@@ -1,5 +1,6 @@
 import { isStepCount, streamText, type LanguageModelUsage, type ModelMessage, type SystemModelMessage, type Tool, type ToolCallPart } from 'ai';
 import type { AgentModelClient } from './agent-model';
+import { parseModelToolName } from './mcp';
 
 /** Model calls allowed per command, counted across approval pauses. The last one must answer without tools. */
 export const AGENT_MAX_STEPS = 30;
@@ -31,25 +32,41 @@ function isApprovalRequestPart(part: StreamPart): part is ApprovalRequestPart {
     && typeof (part as { toolCall?: { toolName?: unknown } }).toolCall?.toolName === 'string';
 }
 
+/** One model step as the user sees it: what the model said, then the tools it called. */
+export type AgentStep = { text: string; tools: string[] };
+
 async function consumeStream(
   result: { text: PromiseLike<string>; stream?: AsyncIterable<StreamPart> },
-  onResponseDelta: (delta: string, fullText: string) => void,
+  steps: AgentStep[],
+  onSteps: (steps: AgentStep[]) => void,
 ): Promise<{ text: string; approvalRequests: ApprovalRequestPart[] }> {
   let streamed = '';
   const approvalRequests: ApprovalRequestPart[] = [];
   let streamError: unknown;
+  const currentStep = () => steps.at(-1) ?? steps[steps.push({ text: '', tools: [] }) - 1];
   for await (const part of result.stream ?? []) {
     if (isApprovalRequestPart(part)) { approvalRequests.push(part); continue; }
     if (part.type === 'error') { streamError = part.error; continue; }
+    if (part.type === 'start-step') { steps.push({ text: '', tools: [] }); continue; }
+    if (part.type === 'tool-call' && typeof part.toolName === 'string') {
+      currentStep().tools.push(parseModelToolName(part.toolName).toolName);
+      onSteps(steps);
+      continue;
+    }
     if (part.type !== 'text-delta') continue;
     const text = typeof part.text === 'string' ? part.text : typeof part.textDelta === 'string' ? part.textDelta : '';
-    if (!streamed && !text.trim()) continue;
+    const step = currentStep();
+    if (!step.text && !text.trim()) continue;
     streamed += text;
-    onResponseDelta(text, streamed);
+    step.text += text;
+    onSteps(steps);
   }
   if (streamError !== undefined) throw streamError;
   const finalText = await result.text;
-  if (!streamed && finalText) onResponseDelta(finalText, finalText);
+  if (!streamed && finalText) {
+    currentStep().text = finalText;
+    onSteps(steps);
+  }
   return { text: finalText || streamed, approvalRequests };
 }
 
@@ -89,6 +106,8 @@ export type AgentLoopResult = {
   /** The whole conversation, compacted. Pass it back as `messages` (plus a new user message) to continue. */
   messages: ModelMessage[];
   toolNames: string[];
+  /** The steps before the answer: what the model said along the way and the tools it called. */
+  steps: AgentStep[];
   stepLimitReached: boolean;
   /** The last step stopped at the model's output limit, so `text` may be cut off. */
   outputLimitReached: boolean;
@@ -99,7 +118,7 @@ export type AgentLoopResult = {
  * and stop within the step budget. Callers own tools, policy, UI and persistence.
  */
 export async function runAgentLoop({ client, instructions, messages: initialMessages, tools, signal, maxSteps = AGENT_MAX_STEPS,
-  onStatus, onResponseDelta, requestToolApproval, onStepEnd, onAudit }: {
+  onStatus, onSteps = () => {}, requestToolApproval, onStepEnd, onAudit }: {
   client: AgentModelClient;
   instructions: string;
   messages: ModelMessage[];
@@ -107,7 +126,8 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
   signal: AbortSignal;
   maxSteps?: number;
   onStatus(status: string): void;
-  onResponseDelta(delta: string, fullText: string): void;
+  /** The run's steps so far, the last one live. The array keeps changing: read it before returning. */
+  onSteps?(steps: AgentStep[]): void;
   requestToolApproval(request: { modelToolName: string; arguments: unknown }): Promise<ToolApprovalDecision>;
   onStepEnd?(step: { toolCalls: Array<{ toolName: string }>; warnings?: unknown[]; usage: LanguageModelUsage }): void;
   onAudit?(eventType: string, payload?: Record<string, unknown>): void;
@@ -117,6 +137,7 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
   const stableTools = Object.fromEntries(Object.entries(tools).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
   const compact = createCompactor();
   const toolNames: string[] = [];
+  const steps: AgentStep[] = [];
   let text = '';
   let usedSteps = 0;
   let outputLimitReached = false;
@@ -155,12 +176,12 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
       },
     });
 
-    const consumed = await consumeStream(result, onResponseDelta);
+    const consumed = await consumeStream(result, steps, onSteps);
     text = consumed.text;
-    const steps = await result.steps;
-    usedSteps += steps.length;
-    outputLimitReached = steps.at(-1)?.finishReason === 'length';
-    for (const step of steps) {
+    const modelSteps = await result.steps;
+    usedSteps += modelSteps.length;
+    outputLimitReached = modelSteps.at(-1)?.finishReason === 'length';
+    for (const step of modelSteps) {
       toolNames.push(...step.toolCalls.map(call => String(call.toolName)));
       if (step.toolResults.length > 0) onAudit?.('tool_results', { toolResults: step.toolResults });
     }
@@ -182,7 +203,10 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
     messages.push({ role: 'tool', content: approvalResponses });
   }
 
-  return { text, messages: compact(closeUnansweredToolCalls(messages)), toolNames, stepLimitReached: usedSteps >= maxSteps, outputLimitReached };
+  // The answer is the last step unless that step still asked for tools.
+  const work = steps.at(-1)?.tools.length === 0 ? steps.slice(0, -1) : steps;
+  return { text, messages: compact(closeUnansweredToolCalls(messages)), toolNames,
+    steps: work.filter(step => step.text.trim() || step.tools.length > 0), stepLimitReached: usedSteps >= maxSteps, outputLimitReached };
 }
 
 /**

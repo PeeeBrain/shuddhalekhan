@@ -4,6 +4,7 @@ import { readdirSync } from 'node:fs';
 import { electronMock, installElectronMock, resetElectronMock } from '../../test/electron-mock';
 
 const vi = { fn: mock };
+const step = (text: string) => [{ text, tools: [] }];
 
 installElectronMock();
 
@@ -452,19 +453,19 @@ describe('Agent Mode runtime shell presentation', () => {
     const shell = await createShell('agent-streaming', { setTimeoutFn, clearTimeoutFn: vi.fn() as unknown as typeof clearTimeout });
     shell.prepare();
 
-    shell.showAgentStreaming('run-1', '   \n');
+    shell.showAgentStreaming('run-1', [{ text: '', tools: [] }]);
     expect(snapshotsOf(send)).toEqual([]);
 
-    shell.showAgentStreaming('run-1', 'Here');
-    shell.showAgentStreaming('run-1', 'Here is');
-    shell.showAgentStreaming('run-1', 'Here is what I found.');
-    expect(snapshotsOf(send).map((snapshot) => snapshot.response)).toEqual(['Here']);
+    shell.showAgentStreaming('run-1', step('Here'));
+    shell.showAgentStreaming('run-1', step('Here is'));
+    shell.showAgentStreaming('run-1', step('Here is what I found.'));
+    expect(snapshotsOf(send).map((snapshot) => snapshot.steps)).toEqual([step('Here')]);
 
     // The trailing publish sends only the latest text; an unchanged one is deduped.
     timers.shift()?.();
     timers.shift()?.();
     const snapshots = snapshotsOf(send);
-    expect(snapshots.map((snapshot) => snapshot.response)).toEqual(['Here', 'Here is what I found.']);
+    expect(snapshots.map((snapshot) => snapshot.steps)).toEqual([step('Here'), step('Here is what I found.')]);
     expect(snapshots.map((snapshot) => snapshot.revision)).toEqual([1, 2]);
     expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
   });
@@ -480,7 +481,7 @@ describe('Agent Mode runtime shell presentation', () => {
     const shell = await createShell('agent-approval-priority', { setTimeoutFn, clearTimeoutFn: vi.fn() as unknown as typeof clearTimeout });
     shell.prepare();
 
-    shell.showAgentStreaming('run-1', 'Draft ready for review');
+    shell.showAgentStreaming('run-1', step('Draft ready for review'));
     shell.showAgentApproval({
       agentRunId: 'run-1',
       approvalId: 'approval-1',
@@ -500,7 +501,7 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(expiryTimer?.delay).toBeGreaterThan(29000);
     expiryTimer?.fn();
 
-    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-streaming', response: 'Draft ready for review' });
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-streaming', steps: step('Draft ready for review') });
   });
 
   it('replaces the expiry timer when the same approval is rescheduled', async () => {
@@ -514,7 +515,7 @@ describe('Agent Mode runtime shell presentation', () => {
     electronMock.BrowserWindow.mockImplementation(() => window);
     const shell = await createShell('approval-rescheduled', { setTimeoutFn, clearTimeoutFn });
     shell.prepare();
-    shell.showAgentStreaming('run-1', 'Draft ready for review');
+    shell.showAgentStreaming('run-1', step('Draft ready for review'));
 
     const firstExpiry = new Date(Date.now() + 30000).toISOString();
     shell.showAgentApproval({
@@ -606,7 +607,7 @@ describe('Agent Mode runtime shell presentation', () => {
     const shell = await createShell('card-growth');
     shell.prepare();
 
-    shell.showAgentCompleted('run-1', 'Long answer', []);
+    shell.showAgentCompleted('run-1', 'Long answer', [], []);
     win.setBounds.mockClear();
 
     shell.handleAgentCardSize(Number.NaN);
@@ -631,7 +632,7 @@ describe('Agent Mode runtime shell presentation', () => {
     const shell = await createShell('reply-visible-answer');
     shell.prepare();
 
-    shell.showAgentCompleted('run-1', 'Answer', []);
+    shell.showAgentCompleted('run-1', 'Answer', [], []);
     expect(shell.getPresentedCompletedRunId()).toBe('run-1');
     shell.showFailure('session-1', 'Paste failed');
     expect(shell.getPresentedCompletedRunId()).toBeNull();
@@ -644,7 +645,7 @@ describe('Agent Mode runtime shell presentation', () => {
     shell.prepare();
 
     shell.startAgentTurn('run-1', 'Weather?');
-    shell.showAgentCompleted('run-1', 'Which city?', []);
+    shell.showAgentCompleted('run-1', 'Which city?', [], []);
     // The reply is recorded first, which takes the answered card down.
     shell.show('agent');
     shell.startAgentTurn('run-1', 'Pune.');
@@ -654,7 +655,7 @@ describe('Agent Mode runtime shell presentation', () => {
       thread: { turns: [{ command: 'Weather?', response: 'Which city?' }], command: 'Pune.' },
     });
 
-    shell.showAgentCompleted('run-1', 'Sunny.', []);
+    shell.showAgentCompleted('run-1', 'Sunny.', [], []);
     shell.show('agent');
     shell.startAgentTurn('run-2', 'Joke?');
     shell.showAgentStatus('run-2', 'Thinking…');
@@ -667,7 +668,7 @@ describe('Agent Mode runtime shell presentation', () => {
     const shell = await createShell('card-size-visible-state');
     shell.prepare();
 
-    shell.showAgentStreaming('run-1', 'Long answer');
+    shell.showAgentStreaming('run-1', step('Long answer'));
     shell.showFailure('session-1', 'Paste failed');
     window.setBounds.mockClear();
 
@@ -790,7 +791,7 @@ describe('Agent Mode runtime shell presentation', () => {
     };
 
     // Surviving stream from a finished run.
-    shell.showAgentCompleted('run-old', 'Previous answer', []);
+    shell.showAgentCompleted('run-old', 'Previous answer', [], []);
     shell.beginCapture(envelope);
     shell.show('dictation', 'session-a', envelope);
     shell.finish();
@@ -834,7 +835,7 @@ describe('Agent Mode runtime shell presentation', () => {
     });
     const shell = await createShell('agent-crash-replay');
     shell.prepare();
-    shell.showAgentCompleted('run-1', 'Recovered answer', []);
+    shell.showAgentCompleted('run-1', 'Recovered answer', [], []);
 
     windows[0].webHandlers.get('render-process-gone')?.({}, { reason: 'crashed' });
     windows[1].webHandlers.get('did-finish-load')?.();

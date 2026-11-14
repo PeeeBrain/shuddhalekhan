@@ -1,4 +1,4 @@
-import { AGENT_MAX_STEPS } from '@shuddhalekhan/shared/agent-loop';
+import { AGENT_MAX_STEPS, type AgentStep } from '@shuddhalekhan/shared/agent-loop';
 import type { ModelMessage } from 'ai';
 import { runAgent, type ToolApproval } from './agent';
 import { parseAgentActivityLink, type AgentActivityPort, type AgentActivityUpdate } from './agent-activity';
@@ -20,6 +20,8 @@ type State = {
   canReply: boolean;
   /** Earlier exchanges of the conversation on screen, oldest first; `transcript` and `response` are the latest. */
   turns: Array<{ command: string; response: string }>;
+  /** What the agent said and which tools it called before `response`. */
+  steps: AgentStep[];
 };
 type PendingApproval = ToolApproval & { runId: string; approvalId: string };
 export type ApprovalDecision = Pick<PendingApproval, 'runId' | 'approvalId'> & { approved: boolean };
@@ -32,7 +34,7 @@ export type Recorder = {
 
 /** Owns single-flight work independently of React renders and native permission dialogs. */
 export class MobileController {
-  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false, turns: [] };
+  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false, turns: [], steps: [] };
   private listeners = new Set<() => void>();
   private active: AbortController | null = null;
   private approvalDecision: ((approved: boolean) => void) | null = null;
@@ -105,7 +107,7 @@ export class MobileController {
     this.history = replying ? this.conversation ?? [] : [];
     const turns = replying ? [...this.state.turns, { command: this.state.transcript, response: this.state.response }] : [];
     this.setConversation(null);
-    this.update({ phase: 'requestingPermission', intent, status: 'Requesting microphone access…', error: null, transcript: '', response: '', runId: null, activityNotice: null, turns });
+    this.update({ phase: 'requestingPermission', intent, status: 'Requesting microphone access…', error: null, transcript: '', response: '', steps: [], runId: null, activityNotice: null, turns });
     try {
       if (previousRunId) {
         try {
@@ -185,7 +187,7 @@ export class MobileController {
   };
 
   private async agent(active: AbortController, transcript: string, admitted?: () => void) {
-    this.update({ phase: 'running', response: '', status: 'Starting agent…' });
+    this.update({ phase: 'running', response: '', steps: [], status: 'Starting agent…' });
     this.completedSteps = 0;
     this.activityStarted = false;
     let runId = `foreground-${Date.now()}-${++this.sequence}`;
@@ -237,7 +239,7 @@ export class MobileController {
       },
     });
     active.signal.throwIfAborted();
-    this.update({ response: result.text });
+    this.update({ response: result.text, steps: result.steps });
     this.setConversation(this.keyboardRun ? null : result.messages);
   }
 
@@ -399,7 +401,7 @@ export class MobileController {
     if (this.state.phase !== 'idle' || this.active) return;
     this.setConversation(null);
     this.history = [];
-    this.update({ transcript: '', response: '', runId: null, error: null, activityNotice: null, status: 'Ready to record.', turns: [] });
+    this.update({ transcript: '', response: '', steps: [], runId: null, error: null, activityNotice: null, status: 'Ready to record.', turns: [] });
   };
   dismissError = () => { if (this.state.phase !== 'loading') this.update({ error: null }); };
 }

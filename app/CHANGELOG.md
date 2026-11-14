@@ -18,6 +18,7 @@ tags and commit history, not from this file. Keep new entries under
 - Agent runs can take up to 30 model steps instead of 5, keep long tool output within the model's context, and wrap up with a summary when the budget runs out. Desktop tool approvals wait five minutes instead of 30 seconds.
 - Reply to an answer: use the Agent shortcut while the answer card is on screen and the agent continues that conversation. Dismiss the card to start fresh. The agent may now end with one short question when only you know the answer.
 - An answer cut off at the model's output limit is labelled instead of shown as complete.
+- The agent card shows its steps: what the agent said between tool calls and which tools it used. They stay visible while it works and fold above the answer, instead of being replaced by it.
 - Fixed empty desktop Agent History on Linux by reading the same persistent database as the sidecar. Existing recorded runs become visible without moving or deleting them. Custom audit-directory overrides now reach the sidecar as well as History.
 
 ### Mobile

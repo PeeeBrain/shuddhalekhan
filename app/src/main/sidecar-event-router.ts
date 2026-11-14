@@ -58,8 +58,8 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       deps.presenter.status(event.agentRunId, event.status);
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
     }),
-    'agent:response-delta': whenActive((event) => {
-      deps.presenter.streaming(event.agentRunId, event.response);
+    'agent:steps': whenActive((event) => {
+      deps.presenter.streaming(event.agentRunId, event.steps);
     }),
     'approval:requested': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId} requested approval for ${event.serverId}:${event.toolName}`);
@@ -80,7 +80,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
     }),
     'agent:completed': whenActive((event) => {
       console.log(`Agent run ${event.agentRunId} completed: ${event.response}`);
-      deps.presenter.completed(event.agentRunId, event.response, event.toolSummary);
+      deps.presenter.completed(event.agentRunId, event.response, event.toolSummary, event.steps);
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
       deps.onAgentTerminal?.(event.agentRunId);
     }),

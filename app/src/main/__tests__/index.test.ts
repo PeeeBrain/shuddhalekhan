@@ -1020,6 +1020,7 @@ describe('main process IPC orchestration', () => {
       agentRunId: activeRunId,
       response: 'Finished',
       toolSummary: [],
+      steps: [],
     });
     expect(runtimeShellShowAgentCompleted).toHaveBeenCalledTimes(1);
 

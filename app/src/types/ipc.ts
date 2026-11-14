@@ -3,8 +3,9 @@ import type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
 import type { DesktopStatus } from '../shared/desktop-status';
 import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
+import type { AgentStep } from '@shuddhalekhan/shared/agent-loop';
 
-export type { AgentProviderKind, TranscriptionProviderId };
+export type { AgentProviderKind, TranscriptionProviderId, AgentStep };
 
 export type AudioDevice = {
   deviceId: string;
@@ -330,7 +331,7 @@ export type RuntimePresentationState =
       recoveryActions: DictationRecoveryAction[];
     }
   | { kind: 'agent-status'; agentRunId: string | null; message: string; thread?: AgentThread }
-  | { kind: 'agent-streaming'; agentRunId: string; response: string; thread?: AgentThread }
+  | { kind: 'agent-streaming'; agentRunId: string; steps: AgentStep[]; thread?: AgentThread }
   | {
       kind: 'agent-approval';
       agentRunId: string;
@@ -342,7 +343,7 @@ export type RuntimePresentationState =
       arguments: unknown;
       expiresAt: string;
     }
-  | { kind: 'agent-completed'; agentRunId: string; response: string; toolSummary: string[]; thread?: AgentThread }
+  | { kind: 'agent-completed'; agentRunId: string; response: string; toolSummary: string[]; steps: AgentStep[]; thread?: AgentThread }
   | { kind: 'agent-failed'; agentRunId: string | null; message: string };
 
 export type RuntimePresentationSnapshot = {

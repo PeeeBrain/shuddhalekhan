@@ -79,14 +79,15 @@ describe('SidecarEventRouter', () => {
 
   it('maps agent status, streaming, completion, failure, and cancellation onto the presenter', () => {
     router.handle({ type: 'agent:status', agentRunId: 'run-1', status: 'Checking mail' });
-    router.handle({ type: 'agent:response-delta', agentRunId: 'run-1', delta: 'Done', response: 'Done' });
-    router.handle({ type: 'agent:completed', agentRunId: 'run-1', response: 'Finished', toolSummary: ['Read 3 messages'] });
+    const steps = [{ text: 'Checking.', tools: ['read_mail'] }];
+    router.handle({ type: 'agent:steps', agentRunId: 'run-1', steps });
+    router.handle({ type: 'agent:completed', agentRunId: 'run-1', response: 'Finished', toolSummary: ['Read 3 messages'], steps });
     router.handle({ type: 'agent:failed', agentRunId: 'run-1', error: 'Provider failed' });
     router.handle({ type: 'agent:cancelled', agentRunId: 'run-1' });
 
     expect(harness.presenter.status).toHaveBeenCalledWith('run-1', 'Checking mail');
-    expect(harness.presenter.streaming).toHaveBeenCalledWith('run-1', 'Done');
-    expect(harness.presenter.completed).toHaveBeenCalledWith('run-1', 'Finished', ['Read 3 messages']);
+    expect(harness.presenter.streaming).toHaveBeenCalledWith('run-1', steps);
+    expect(harness.presenter.completed).toHaveBeenCalledWith('run-1', 'Finished', ['Read 3 messages'], steps);
     expect(harness.presenter.failed).toHaveBeenCalledWith('run-1', 'Provider failed');
     expect(harness.presenter.cancelled).toHaveBeenCalledWith('run-1');
   });
@@ -124,7 +125,7 @@ describe('SidecarEventRouter', () => {
     getActiveAgentRunId.mockReturnValue('run-current');
 
     router.handle({ type: 'agent:status', agentRunId: 'run-stale', status: 'Late news' });
-    router.handle({ type: 'agent:response-delta', agentRunId: 'run-stale', delta: 'x', response: 'x' });
+    router.handle({ type: 'agent:steps', agentRunId: 'run-stale', steps: [{ text: 'x', tools: [] }] });
     router.handle({ type: 'approval:requested', agentRunId: 'run-stale', approvalId: 'a', serverId: 's', toolName: 't', modelToolName: 's__t', arguments: {}, expiresAt: '2026-05-11T12:00:00.000Z' });
 
     expect(harness.presenter.status).not.toHaveBeenCalled();

@@ -3,6 +3,7 @@ import { ipcMain, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { AudioSpool, sweepOrphanedSpools } from './audio-spool';
 import type {
+  AgentStep,
   AgentThread,
   DictationRecoveryAction,
   RecordingIntent,
@@ -40,10 +41,10 @@ interface AgentStatusFact {
   message: string;
 }
 
-/** Latest non-empty cumulative model response for the active run. */
+/** The active run's steps so far, the last one live. */
 interface AgentStreamFact {
   agentRunId: string;
-  response: string;
+  steps: AgentStep[];
 }
 
 /** One sequential pending approval; expires on the sidecar's schedule. */
@@ -60,7 +61,7 @@ interface AgentApprovalFact {
 
 /** How the run ended; survives Dictation preemption and renderer crashes. */
 type AgentTerminalFact =
-  | { phase: 'completed'; agentRunId: string; response: string; toolSummary: string[] }
+  | { phase: 'completed'; agentRunId: string; response: string; toolSummary: string[]; steps: AgentStep[] }
   | { phase: 'failed'; agentRunId: string | null; message: string };
 
 interface DictationFailureFact {
@@ -323,17 +324,17 @@ export class RuntimeShell {
     this.republish();
   }
 
-  showAgentStreaming(agentRunId: string, response: string): void {
-    // Blank streamed prefixes are never a user-facing response.
-    if (!response.trim()) return;
+  showAgentStreaming(agentRunId: string, steps: AgentStep[]): void {
+    // Nothing to show until the model says something or calls a tool.
+    if (!steps.some(step => step.text.trim() || step.tools.length > 0)) return;
     this.clearAgentTimer('status');
     const closesApproval = this.agentApproval !== null;
     this.closePendingApproval();
     // Model output supersedes any point-in-time status.
     this.agentStatus = null;
     this.agentResponseHeight = Math.max(this.agentResponseHeight, AGENT_RESPONSE_BASE_HEIGHT);
-    this.agentStream = { agentRunId, response };
-    // Every delta carries the whole response, and each publish re-sends and
+    this.agentStream = { agentRunId, steps };
+    // Every delta carries all the steps, and each publish re-sends and
     // re-parses it, so tokens coalesce: publish now, then at most once per interval.
     if (this.streamTimer && !closesApproval) return;
     this.republish();
@@ -383,7 +384,7 @@ export class RuntimeShell {
     this.republish();
   }
 
-  showAgentCompleted(agentRunId: string, response: string, toolSummary: string[]): void {
+  showAgentCompleted(agentRunId: string, response: string, toolSummary: string[], steps: AgentStep[]): void {
     this.clearAgentTimers();
     this.agentStatus = null;
     this.agentStream = null;
@@ -395,6 +396,7 @@ export class RuntimeShell {
       agentRunId,
       response,
       toolSummary,
+      steps,
     };
     this.republish();
   }
@@ -555,7 +557,7 @@ export class RuntimeShell {
   private newestTerminal(): RuntimePresentationState | null {
     const agent = this.agentTerminal;
     if (agent?.phase === 'completed') {
-      return { kind: 'agent-completed', agentRunId: agent.agentRunId, response: agent.response, toolSummary: agent.toolSummary, ...this.threadOf(agent.agentRunId) };
+      return { kind: 'agent-completed', agentRunId: agent.agentRunId, response: agent.response, toolSummary: agent.toolSummary, steps: agent.steps, ...this.threadOf(agent.agentRunId) };
     }
     if (agent?.phase === 'failed') {
       return { kind: 'agent-failed', agentRunId: agent.agentRunId, message: agent.message };
