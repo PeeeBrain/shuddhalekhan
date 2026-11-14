@@ -19,6 +19,7 @@ tags and commit history, not from this file. Keep new entries under
 - Tray paste now reports the insertion policy on unsupported Wayland sessions. Linux sessions started with `startx` use X11 shortcuts when `DISPLAY` is set, matching text delivery.
 
 ### Agent
+- Plugins: search Anthropic's official Claude plugin directory in Settings and install apps like Linear, Notion, Sentry, or Stripe in one click, or add a plugin folder. A plugin brings its sign-in connection and skills; removing it takes them back out.
 - Agent runs can take up to 30 model steps instead of 5, keep long tool output within the model's context, and wrap up with a summary when the budget runs out. Desktop tool approvals wait five minutes instead of 30 seconds.
 - Reply to an answer: use the Agent shortcut while the answer card is on screen and the agent continues that conversation. Dismiss the card to start fresh. The agent may now end with one short question when only you know the answer.
 - An answer cut off at the model's output limit is labelled instead of shown as complete.

@@ -1,11 +1,12 @@
 import { createElement, type ComponentType } from 'react';
-import { BookOpen, Bot, Brain, FileText, History, House, Info, Keyboard, Plug } from 'lucide-react';
+import { BookOpen, Bot, Brain, FileText, History, House, Info, Keyboard, Plug, Puzzle } from 'lucide-react';
 import { HomeSettings } from './HomeSettings';
 import { TranscriptionSettings } from './TranscriptionSettings';
 import { ShortcutsSettings } from './ShortcutsSettings';
 import { AgentSettings } from './AgentSettings';
 import { McpSettings } from './McpSettings';
 import { SkillsSettings } from './SkillsSettings';
+import { PluginsSettings } from './PluginsSettings';
 import { MemorySettings } from './MemorySettings';
 import { AuditHistorySettings } from './AuditHistorySettings';
 import { AboutSettings } from './AboutSettings';
@@ -43,6 +44,7 @@ export const SETTINGS_NAV_GROUPS = [
     sections: [
       { id: 'agent', label: 'Agent', icon: Bot, component: AgentSettings },
       { id: 'mcp', label: 'MCP Servers', icon: Plug, component: McpPage },
+      { id: 'plugins', label: 'Plugins', icon: Puzzle, component: PluginsSettings },
       { id: 'skills', label: 'Skills', icon: BookOpen, component: SkillsSettings },
       { id: 'memory', label: 'Memory', icon: Brain, component: MemorySettings },
       { id: 'history', label: 'History', icon: History, component: AuditHistorySettings },

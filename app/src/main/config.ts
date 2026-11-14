@@ -283,6 +283,8 @@ export function getConfig(): AppConfig {
       provider: { ...provider, ...normalizeAgentProvider(provider) },
       mcpServers,
       disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
+      plugins: z.array(z.object({ name: z.string(), skills: z.array(z.string()), mcpServerIds: z.array(z.string()) }))
+        .safeParse(agent?.plugins).data ?? [],
       memoryEnabled: agent?.memoryEnabled === true,
       customInstructions: typeof agent?.customInstructions === 'string' ? agent.customInstructions : '',
     },

@@ -20,6 +20,8 @@ import type {
   ChatGptAccountStatus,
   ChatGptModel,
   TranscriptionSettingsPatch,
+  PluginCatalogEntry,
+  PluginInstallResult,
 } from '../../types/ipc';
 import type {
   AgentMemorySnapshot,
@@ -86,6 +88,10 @@ export interface SettingsIpc {
   importSkill: (token: string) => Promise<AgentSkillSummary[]>;
   removeSkill: (name: string) => Promise<AgentSkillSummary[]>;
   openSkillsFolder: () => Promise<void>;
+  getPluginCatalog: () => Promise<PluginCatalogEntry[]>;
+  installPlugin: (name: string) => Promise<PluginInstallResult>;
+  installPluginFolder: () => Promise<PluginInstallResult | null>;
+  removePlugin: (name: string) => Promise<void>;
   getMemory: () => Promise<AgentMemorySnapshot>;
   editMemoryFact: (revision: string, id: string, text: string) => Promise<AgentMemorySnapshot>;
   removeMemoryFact: (revision: string, id: string) => Promise<AgentMemorySnapshot>;
@@ -157,6 +163,10 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     importSkill: (token) => requireElectronApi(electronAPI).invoke('skills:import', token),
     removeSkill: (name) => requireElectronApi(electronAPI).invoke('skills:remove', name),
     openSkillsFolder: () => requireElectronApi(electronAPI).invoke('skills:open-folder'),
+    getPluginCatalog: () => requireElectronApi(electronAPI).invoke('plugins:catalog'),
+    installPlugin: (name) => requireElectronApi(electronAPI).invoke('plugins:install', name),
+    installPluginFolder: () => requireElectronApi(electronAPI).invoke('plugins:install-folder'),
+    removePlugin: (name) => requireElectronApi(electronAPI).invoke('plugins:remove', name),
     getMemory: () => requireElectronApi(electronAPI).invoke('memory:get'),
     editMemoryFact: (revision, id, text) => requireElectronApi(electronAPI).invoke('memory:edit', revision, id, text),
     removeMemoryFact: (revision, id) => requireElectronApi(electronAPI).invoke('memory:remove', revision, id),
