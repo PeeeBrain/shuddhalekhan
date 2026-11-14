@@ -483,8 +483,10 @@ async function startAgentRun(text: string, config: AppConfig): Promise<void> {
   invalidateActiveAgentRun();
   const continueFrom = continueFromRunId ?? undefined;
   continueFromRunId = null;
-  const agentRunId = randomUUID();
+  // A reply is part of the run it answers: one audit entry and one conversation on the card.
+  const agentRunId = continueFrom ?? randomUUID();
   activeAgentRunId = agentRunId;
+  runtimeShell.startAgentTurn(agentRunId, text);
   let apiKey: string | undefined;
   try {
     apiKey = config.agent.provider.kind === 'chatgpt'

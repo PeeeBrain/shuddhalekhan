@@ -509,7 +509,8 @@ function getEventDisplayInfo(event: AuditEventDetail): EventDisplay {
   switch (event.eventType) {
     case 'run_started':
       return {
-        title: 'Started',
+        // A reply continues the run, so its command appears as a later start in the same timeline.
+        title: typeof p.continuedMessageCount === 'number' && p.continuedMessageCount > 0 ? 'You replied' : 'Started',
         description: `"${formatPromptPreview(p.transcript)}"`,
       };
     case 'status':

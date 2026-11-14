@@ -205,8 +205,9 @@ describe('mobile command lifecycle', () => {
       expect(controller.getSnapshot()).toMatchObject({ response: 'Which city?', canReply: true });
       await ask();
       expect(bodies[1]).toContain('Which city?');
+      expect(controller.getSnapshot()).toMatchObject({ turns: [{ command: 'What is the weather?', response: 'Which city?' }], transcript: 'Pune.', response: 'Done.' });
       await controller.clearResults();
-      expect(controller.getSnapshot().canReply).toBe(false);
+      expect(controller.getSnapshot()).toMatchObject({ canReply: false, turns: [] });
       await ask();
       expect(bodies[2]).not.toContain('Which city?');
       expect(bodies[2]).not.toContain('Pune.');

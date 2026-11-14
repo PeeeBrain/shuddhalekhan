@@ -637,6 +637,30 @@ describe('Agent Mode runtime shell presentation', () => {
     expect(shell.getPresentedCompletedRunId()).toBeNull();
   });
 
+  it('shows a reply under the exchange it answers, and a new run on its own', async () => {
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('reply-thread');
+    shell.prepare();
+
+    shell.startAgentTurn('run-1', 'Weather?');
+    shell.showAgentCompleted('run-1', 'Which city?', []);
+    // The reply is recorded first, which takes the answered card down.
+    shell.show('agent');
+    shell.startAgentTurn('run-1', 'Pune.');
+    shell.showAgentStatus('run-1', 'Thinking…');
+    expect(snapshotsOf(send).at(-1)).toMatchObject({
+      kind: 'agent-status',
+      thread: { turns: [{ command: 'Weather?', response: 'Which city?' }], command: 'Pune.' },
+    });
+
+    shell.showAgentCompleted('run-1', 'Sunny.', []);
+    shell.show('agent');
+    shell.startAgentTurn('run-2', 'Joke?');
+    shell.showAgentStatus('run-2', 'Thinking…');
+    expect(snapshotsOf(send).at(-1)).toMatchObject({ kind: 'agent-status', thread: { turns: [], command: 'Joke?' } });
+  });
+
   it('ignores Agent card sizes while another presentation is visible', async () => {
     const { window } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => window);

@@ -18,6 +18,8 @@ type State = {
   approvalReviewId: string | null;
   /** The answer on screen can be replied to: the next agent command continues its conversation. */
   canReply: boolean;
+  /** Earlier exchanges of the conversation on screen, oldest first; `transcript` and `response` are the latest. */
+  turns: Array<{ command: string; response: string }>;
 };
 type PendingApproval = ToolApproval & { runId: string; approvalId: string };
 export type ApprovalDecision = Pick<PendingApproval, 'runId' | 'approvalId'> & { approved: boolean };
@@ -30,7 +32,7 @@ export type Recorder = {
 
 /** Owns single-flight work independently of React renders and native permission dialogs. */
 export class MobileController {
-  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false };
+  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false, turns: [] };
   private listeners = new Set<() => void>();
   private active: AbortController | null = null;
   private approvalDecision: ((approved: boolean) => void) | null = null;
@@ -99,9 +101,11 @@ export class MobileController {
     this.activityStarted = false;
     this.interrupted = false;
     // An agent command recorded while an answer is on screen replies to it. Clear starts fresh.
-    this.history = intent === 'agent' && this.conversation ? this.conversation : [];
+    const replying = intent === 'agent' && this.conversation !== null;
+    this.history = replying ? this.conversation ?? [] : [];
+    const turns = replying ? [...this.state.turns, { command: this.state.transcript, response: this.state.response }] : [];
     this.setConversation(null);
-    this.update({ phase: 'requestingPermission', intent, status: 'Requesting microphone access…', error: null, transcript: '', response: '', runId: null, activityNotice: null });
+    this.update({ phase: 'requestingPermission', intent, status: 'Requesting microphone access…', error: null, transcript: '', response: '', runId: null, activityNotice: null, turns });
     try {
       if (previousRunId) {
         try {
@@ -171,7 +175,7 @@ export class MobileController {
     // The keyboard cannot show the previous answer, so its commands never reply to one.
     this.history = [];
     this.setConversation(null);
-    this.update({ intent: 'agent', transcript, response: '', error: null, runId: null, activityNotice: null });
+    this.update({ intent: 'agent', transcript, response: '', error: null, runId: null, activityNotice: null, turns: [] });
     const admission = Promise.withResolvers<void>();
     void this.agent(active, transcript, admission.resolve).then(() => this.finish(active), async error => {
       admission.reject(error);
@@ -395,7 +399,7 @@ export class MobileController {
     if (this.state.phase !== 'idle' || this.active) return;
     this.setConversation(null);
     this.history = [];
-    this.update({ transcript: '', response: '', runId: null, error: null, activityNotice: null, status: 'Ready to record.' });
+    this.update({ transcript: '', response: '', runId: null, error: null, activityNotice: null, status: 'Ready to record.', turns: [] });
   };
   dismissError = () => { if (this.state.phase !== 'loading') this.update({ error: null }); };
 }

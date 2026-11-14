@@ -307,6 +307,9 @@ export interface RuntimeAudioCommand {
 
 export type DictationRecoveryAction = 'retry-paste' | 'copy-full-transcript' | 'copy-partial-transcript';
 
+/** The run's spoken commands: earlier exchanges (from replies) and the command being answered now. */
+export type AgentThread = { turns: Array<{ command: string; response: string }>; command: string };
+
 export type RuntimePresentationState =
   | { kind: 'idle' }
   | {
@@ -326,8 +329,8 @@ export type RuntimePresentationState =
       message: string;
       recoveryActions: DictationRecoveryAction[];
     }
-  | { kind: 'agent-status'; agentRunId: string | null; message: string }
-  | { kind: 'agent-streaming'; agentRunId: string; response: string }
+  | { kind: 'agent-status'; agentRunId: string | null; message: string; thread?: AgentThread }
+  | { kind: 'agent-streaming'; agentRunId: string; response: string; thread?: AgentThread }
   | {
       kind: 'agent-approval';
       agentRunId: string;
@@ -339,7 +342,7 @@ export type RuntimePresentationState =
       arguments: unknown;
       expiresAt: string;
     }
-  | { kind: 'agent-completed'; agentRunId: string; response: string; toolSummary: string[] }
+  | { kind: 'agent-completed'; agentRunId: string; response: string; toolSummary: string[]; thread?: AgentThread }
   | { kind: 'agent-failed'; agentRunId: string | null; message: string };
 
 export type RuntimePresentationSnapshot = {

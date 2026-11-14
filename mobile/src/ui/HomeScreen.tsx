@@ -97,7 +97,24 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
 
         {sessionOn ? null : <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} />}
 
-        {transcript ? (
+        {app.intent === 'agent' && (transcript || response || app.turns.length > 0) ? (
+          <Card agent>
+            <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">Agent</Text>
+            {app.turns.map((turn, index) => (
+              <View key={index} style={home.turn}>
+                <Bubble text={turn.command} />
+                <Markdown>{turn.response}</Markdown>
+              </View>
+            ))}
+            {transcript ? <Bubble text={transcript} /> : null}
+            {response ? <Markdown>{response}</Markdown> : null}
+            <View style={kit.buttons}>
+              <CopyShare text={response || transcript} />
+              {canRetry && !response ? <Button label="Send Again" systemImage="paperplane" small kind="agent" onPress={app.retryAgent} /> : null}
+            </View>
+            {app.canReply ? <Text style={type.caption}>Record an Agent command to reply. Clear starts fresh.</Text> : null}
+          </Card>
+        ) : transcript ? (
           <Card>
             <Text style={type.caption} accessibilityRole="header">Transcript</Text>
             <Text style={type.body} selectable>{transcript}</Text>
@@ -108,16 +125,7 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
           </Card>
         ) : null}
 
-        {response ? (
-          <Card agent>
-            <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">Agent response</Text>
-            <Markdown>{response}</Markdown>
-            <View style={kit.buttons}><CopyShare text={response} /></View>
-            {app.canReply ? <Text style={type.caption}>Record an Agent command to reply. Clear starts fresh.</Text> : null}
-          </Card>
-        ) : null}
-
-        {idle && (transcript || response) ? <View style={home.clear}><Button label="Clear" kind="ghost" onPress={app.clearResults} /></View> : null}
+        {idle && (transcript || response || app.turns.length > 0) ? <View style={home.clear}><Button label="Clear" kind="ghost" onPress={app.clearResults} /></View> : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -248,6 +256,15 @@ function localModelHint(model: App['localModel']): string {
   }
 }
 
+/** A spoken Agent command, shown as the user's side of the conversation. */
+function Bubble({ text }: { text: string }) {
+  return (
+    <View style={home.bubble} accessibilityLabel={`You said: ${text}`}>
+      <Text style={type.body} selectable>{text}</Text>
+    </View>
+  );
+}
+
 function CopyShare({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -284,4 +301,6 @@ const home = StyleSheet.create({
   status: { textAlign: 'center', minHeight: 18 },
   sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   clear: { alignItems: 'center' },
+  turn: { gap: 8, opacity: 0.75 },
+  bubble: { alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: color.raised, borderRadius: 16, borderBottomRightRadius: 4, paddingHorizontal: 12, paddingVertical: 6 },
 });

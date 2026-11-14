@@ -4,6 +4,7 @@ import { AlertTriangle, Bot, Check, ShieldQuestion } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type {
   AgentApprovalChoice,
+  AgentThread,
   DictationRecoveryAction,
   RuntimePresentationSnapshot,
 } from '../types/ipc';
@@ -51,11 +52,17 @@ export function RuntimeShellSurface() {
     case 'agent-status':
       return (
         <AgentCard
+          key={snapshot.agentRunId ?? undefined}
           tone="primary"
           icon={Bot}
           title="Agent"
-          live={{ role: 'status', 'aria-live': 'polite' }}
+          // A conversation is announced by its status alone, not re-read in full.
+          live={snapshot.thread ? undefined : { role: 'status', 'aria-live': 'polite' }}
+          announcement={snapshot.thread ? snapshot.message : undefined}
+          growRef={snapshot.thread !== undefined}
+          measureKey={snapshot.revision}
         >
+          <Thread thread={snapshot.thread} />
           {isThinkingMessage(snapshot.message) ? <ThinkingDots /> : snapshot.message}
         </AgentCard>
       );
@@ -71,6 +78,7 @@ export function RuntimeShellSurface() {
           growRef
           measureKey={snapshot.revision}
         >
+          <Thread thread={snapshot.thread} />
           <div aria-live="off" className="break-words">
             {renderMarkdown(snapshot.response)}
           </div>
@@ -97,10 +105,11 @@ export function RuntimeShellSurface() {
             </Button>
           }
         >
+          <Thread thread={snapshot.thread} />
           <div className="break-words">{renderMarkdown(snapshot.response)}</div>
           {snapshot.toolSummary.length > 0 ? (
             <p className="mt-3 break-words border-t border-border/60 pt-2.5 text-xs text-muted-foreground">
-              Used {snapshot.toolSummary.slice(0, 3).join(' · ')}
+              {snapshot.toolSummary.slice(0, 3).join(' · ')}
             </p>
           ) : null}
           <p className="mt-2 text-xs text-muted-foreground">
@@ -136,6 +145,30 @@ export function RuntimeShellSurface() {
       return _exhaustive;
     }
   }
+}
+
+/** The spoken commands as chat bubbles: earlier exchanges from replies, then the one being answered. */
+function Thread({ thread }: { thread?: AgentThread }) {
+  if (!thread) return null;
+  return (
+    <>
+      {thread.turns.map((turn, index) => (
+        <div key={index} className="mb-3 opacity-75">
+          <CommandBubble text={turn.command} />
+          <div className="break-words">{renderMarkdown(turn.response)}</div>
+        </div>
+      ))}
+      <CommandBubble text={thread.command} />
+    </>
+  );
+}
+
+function CommandBubble({ text }: { text: string }) {
+  return (
+    <p className="mb-2 ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-muted px-3 py-1.5 text-[13px] leading-5 text-foreground">
+      <span className="sr-only">You said: </span>{text}
+    </p>
+  );
 }
 
 function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnapshot, { kind: 'recording' }> }) {

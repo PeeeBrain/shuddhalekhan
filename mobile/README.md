@@ -1,6 +1,6 @@
 # Shuddhalekhan mobile
 
-`mobile/` is a React Native app using Expo SDK 58 for iOS 17+. It records while open, transcribes with on-device Parakeet or a configured endpoint, and includes a keyboard that dictates into other apps during a keyboard session you start. Agent Mode sends a one-off command and asks before tool calls unless you explicitly allow them in Settings. Recording another Agent command while the answer is shown replies to it.
+`mobile/` is a React Native app using Expo SDK 58 for iOS 17+. It records while open, transcribes with on-device Parakeet or a configured endpoint, and includes a keyboard that dictates into other apps during a keyboard session you start. Agent Mode sends a one-off command and asks before tool calls unless you explicitly allow them in Settings. Recording another Agent command while the answer is shown replies to it, and the answer card shows the conversation with your commands as chat bubbles.
 
 ## Supported services
 
