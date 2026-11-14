@@ -120,6 +120,8 @@ let cachedAgentEnabled = getConfig().agent.enabled;
 let activeAgentRunId: string | null = null;
 /** Set when an Agent recording begins over a completed answer; that command continues the conversation. */
 let continueFromRunId: string | null = null;
+/** The provider of the latest run, which is the one on the card; a reply to another provider's answer starts fresh. */
+let lastRunProvider: string | null = null;
 let providerTestRevision = 0;
 let retryPasteInFlight = false;
 const runtimeShell = new RuntimeShell();
@@ -481,8 +483,11 @@ async function startAgentRun(text: string, config: AppConfig): Promise<void> {
 
   // A new run invalidates any prior run before replacement events can arrive.
   invalidateActiveAgentRun();
-  const continueFrom = continueFromRunId ?? undefined;
+  // The sidecar never sends history to another provider, so the card must not show one conversation either.
+  const provider = JSON.stringify(config.agent.provider);
+  const continueFrom = continueFromRunId !== null && provider === lastRunProvider ? continueFromRunId : undefined;
   continueFromRunId = null;
+  lastRunProvider = provider;
   // A reply is part of the run it answers: one audit entry and one conversation on the card.
   const agentRunId = continueFrom ?? randomUUID();
   activeAgentRunId = agentRunId;

@@ -978,17 +978,40 @@ describe('main process IPC orchestration', () => {
     await import(`../index?test=${Date.now()}-agent-reply`);
     const command = (text: string) => sessionOptions.onResult({ text, intent: 'agent' as const, targetSnapshot: defaultTargetSnapshot });
 
-    runtimeShellGetPresentedCompletedRunId.mockReturnValueOnce('answered-run');
+    sessionOptions.onBegin('agent');
+    await command('What is the weather?');
+    const answered = agentStartRun.mock.calls[0]?.[0] as string;
+    runtimeShellGetPresentedCompletedRunId.mockReturnValueOnce(answered);
     sessionOptions.onBegin('agent');
     await command('Pune.');
     sessionOptions.onBegin('agent');
     await command('Tell me a joke.');
 
     // A reply runs as the answered run itself; a fresh command gets its own id.
-    const [reply, fresh] = agentStartRun.mock.calls as unknown[][];
-    expect([reply?.[0], reply?.at(-1)]).toEqual(['answered-run', 'answered-run']);
-    expect(fresh?.[0]).not.toBe('answered-run');
+    const [, reply, fresh] = agentStartRun.mock.calls as unknown[][];
+    expect([reply?.[0], reply?.at(-1)]).toEqual([answered, answered]);
+    expect(fresh?.[0]).not.toBe(answered);
     expect(fresh?.at(-1)).toBeUndefined();
+  });
+
+  // The sidecar drops history across providers; the card must not show the old exchange as the same conversation.
+  it('starts fresh when the provider changed since the answer on screen', async () => {
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+    await import(`../index?test=${Date.now()}-agent-reply-provider`);
+    const command = (text: string) => sessionOptions.onResult({ text, intent: 'agent' as const, targetSnapshot: defaultTargetSnapshot });
+
+    sessionOptions.onBegin('agent');
+    await command('What is the weather?');
+    const answered = agentStartRun.mock.calls[0]?.[0] as string;
+    getConfig.mockReturnValue({ ...config, agent: { ...config.agent, provider: { ...config.agent.provider, model: 'another-model' } } });
+    runtimeShellGetPresentedCompletedRunId.mockReturnValueOnce(answered);
+    sessionOptions.onBegin('agent');
+    await command('Pune.');
+
+    const reply = agentStartRun.mock.calls[1] as unknown[];
+    expect(reply[0]).not.toBe(answered);
+    expect(reply.at(-1)).toBeUndefined();
   });
 
   it('shows one persistent shell failure when the sidecar exits unexpectedly', async () => {
