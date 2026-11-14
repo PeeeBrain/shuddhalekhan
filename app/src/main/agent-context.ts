@@ -58,7 +58,13 @@ export function registerAgentContextIpcHandlers(directory: string, deps: {
     return list();
   });
   handle('skills:remove', (_event, name: unknown) => {
-    skills.remove(z.string().parse(name));
+    const skill = z.string().parse(name);
+    skills.remove(skill);
+    // A plugin must not later remove a same-named skill the user makes after this.
+    const agent = deps.getConfig().agent;
+    if (agent.plugins?.some(plugin => plugin.skills.includes(skill))) {
+      deps.setAgent({ ...agent, plugins: agent.plugins.map(plugin => ({ ...plugin, skills: plugin.skills.filter(item => item !== skill) })) });
+    }
     return list();
   });
   handle('skills:open-folder', async () => {

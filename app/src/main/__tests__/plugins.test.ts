@@ -9,6 +9,7 @@ import { electronMock, installElectronMock, resetElectronMock } from '../../test
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 installElectronMock();
 const { registerPluginIpcHandlers } = await import('../plugins');
+const { registerAgentContextIpcHandlers } = await import('../agent-context');
 
 const skill = (name: string) => `---\nname: ${name}\ndescription: ${name} workflow\n---\n\nDo the ${name} thing.\n`;
 function writeFiles(root: string, files: Record<string, unknown>) {
@@ -78,6 +79,20 @@ describe('Plugins', () => {
     expect(agent.plugins).toEqual([]);
     expect(skillNames()).toEqual(['acme-notes']);
     expect(readFileSync(join(directory, 'skills/acme-notes/SKILL.md'), 'utf8')).toBe(skill('acme-notes'));
+  });
+
+  it('keeps a skill the user recreated after removing the plugin copy', async () => {
+    registerAgentContextIpcHandlers(directory, { getConfig: () => ({ agent }), setAgent: next => { agent = next; },
+      getActiveAgentRunId: () => null, reply: () => undefined, publish: () => undefined });
+    const plugin = join(directory, 'acme');
+    writeFiles(plugin, { 'skills/acme-triage/SKILL.md': skill('acme-triage') });
+    chooseFolder(plugin);
+    await invoke('plugins:install-folder');
+    await invoke('skills:remove', 'acme-triage');
+    await invoke('skills:save', { name: 'acme-triage', content: skill('acme-triage'), create: true });
+
+    await invoke('plugins:remove', 'acme');
+    expect(skillNames()).toEqual(['acme-triage']);
   });
 
   it('leaves no skills behind when saving the plugin fails', async () => {
