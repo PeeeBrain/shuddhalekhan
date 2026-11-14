@@ -1,4 +1,4 @@
-import { isStepCount, streamText, type LanguageModelUsage, type ModelMessage, type SystemModelMessage, type Tool } from 'ai';
+import { isStepCount, streamText, type LanguageModelUsage, type ModelMessage, type SystemModelMessage, type Tool, type ToolCallPart } from 'ai';
 import type { AgentModelClient } from './agent-model';
 
 /** Model calls allowed per command, counted across approval pauses. The last one must answer without tools. */
@@ -165,16 +165,8 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
       if (step.toolResults.length > 0) onAudit?.('tool_results', { toolResults: step.toolResults });
     }
     messages.push(...await result.responseMessages);
-    if (consumed.approvalRequests.length === 0) break;
-    // A model that ignores `toolChoice: none` on its final step still asks for tools. Deny them, so a
-    // reply sees a result for every call (and keeps results of tools approved earlier in this round).
-    if (usedSteps >= maxSteps) {
-      messages.push({ role: 'tool', content: consumed.approvalRequests.map(request => ({
-        type: 'tool-result' as const, toolCallId: request.toolCall.toolCallId, toolName: request.toolCall.toolName,
-        output: { type: 'execution-denied' as const, reason: 'Step limit reached.' },
-      })) });
-      break;
-    }
+    // A model that ignores `toolChoice: none` on its final step still asks for tools; those are closed below.
+    if (consumed.approvalRequests.length === 0 || usedSteps >= maxSteps) break;
 
     onAudit?.('tool_approval_requests', { approvalRequests: consumed.approvalRequests });
     const approvalResponses = [];
@@ -190,5 +182,22 @@ export async function runAgentLoop({ client, instructions, messages: initialMess
     messages.push({ role: 'tool', content: approvalResponses });
   }
 
-  return { text, messages: compact(messages), toolNames, stepLimitReached: usedSteps >= maxSteps, outputLimitReached };
+  return { text, messages: compact(closeUnansweredToolCalls(messages)), toolNames, stepLimitReached: usedSteps >= maxSteps, outputLimitReached };
+}
+
+/**
+ * Gives every tool call the run left without a result a denied one. The SDK skips tools on a step that
+ * ends at the output limit, and the step limit leaves approval requests unanswered; a reply that
+ * carries an unanswered call fails with `MissingToolResultsError` before reaching the model.
+ */
+function closeUnansweredToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const answered = new Set(messages.flatMap(message => message.role !== 'tool' ? []
+    : message.content.flatMap(part => part.type === 'tool-result' ? [part.toolCallId] : [])));
+  const unanswered = messages.flatMap(message => message.role !== 'assistant' || typeof message.content === 'string' ? []
+    : message.content.filter((part): part is ToolCallPart => part.type === 'tool-call' && !part.providerExecuted && !answered.has(part.toolCallId)));
+  if (unanswered.length === 0) return messages;
+  return [...messages, { role: 'tool', content: unanswered.map(call => ({
+    type: 'tool-result' as const, toolCallId: call.toolCallId, toolName: call.toolName,
+    output: { type: 'execution-denied' as const, reason: 'The run ended before this tool could run.' },
+  })) }];
 }

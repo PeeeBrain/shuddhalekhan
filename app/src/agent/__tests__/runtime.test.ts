@@ -220,13 +220,26 @@ describe('runAgent', () => {
       .mockImplementationOnce(() => makeStreamResult({
         text: '', steps: [step], toolCalls: [], toolResults: [],
         streamParts: [makeApprovalRequest('approval-2', 'call-2', 'srv1__send', {})],
-        responseMessages: [approvedResult],
+        responseMessages: [approvedResult, { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call-2', toolName: 'srv1__send', input: {} }] }],
       }));
 
     const messages = await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, makeCallbacks());
 
     expect(messages).toContainEqual(approvedResult);
     expect(messages?.at(-1)).toMatchObject({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-2', output: { type: 'execution-denied' } }] });
+  });
+
+  it('closes a tool call cut off at the output limit so the conversation stays valid to reply to', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    // The SDK skips tools when a step ends at the output limit, but keeps the call in the response.
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: '', steps: [{ toolCalls: [{ toolName: 'srv1__search' }], toolResults: [], finishReason: 'length' }], toolCalls: [], toolResults: [],
+      responseMessages: [{ role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'call-1', toolName: 'srv1__search', input: {} }] }],
+    }));
+
+    const messages = await runAgent('run-1', 'hello', baseConfig as never, {}, new AbortController().signal, makeCallbacks());
+
+    expect(messages?.at(-1)).toMatchObject({ role: 'tool', content: [{ type: 'tool-result', toolCallId: 'call-1', output: { type: 'execution-denied' } }] });
   });
 
   it('continues a previous conversation by sending its messages before the new command', async () => {
