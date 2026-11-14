@@ -3,6 +3,8 @@ import { ipcMain, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { AudioSpool, sweepOrphanedSpools } from './audio-spool';
 import type {
+  AgentStep,
+  AgentThread,
   DictationRecoveryAction,
   RecordingIntent,
   RecordingPresentationEnvelope,
@@ -39,10 +41,10 @@ interface AgentStatusFact {
   message: string;
 }
 
-/** Latest non-empty cumulative model response for the active run. */
+/** The active run's steps so far, the last one live. */
 interface AgentStreamFact {
   agentRunId: string;
-  response: string;
+  steps: AgentStep[];
 }
 
 /** One sequential pending approval; expires on the sidecar's schedule. */
@@ -59,7 +61,7 @@ interface AgentApprovalFact {
 
 /** How the run ended; survives Dictation preemption and renderer crashes. */
 type AgentTerminalFact =
-  | { phase: 'completed'; agentRunId: string; response: string; toolSummary: string[] }
+  | { phase: 'completed'; agentRunId: string; response: string; toolSummary: string[]; steps: AgentStep[] }
   | { phase: 'failed'; agentRunId: string | null; message: string };
 
 interface DictationFailureFact {
@@ -98,6 +100,8 @@ export class RuntimeShell {
   private agentStream: AgentStreamFact | null = null;
   private agentApproval: AgentApprovalFact | null = null;
   private agentTerminal: AgentTerminalFact | null = null;
+  /** The commands of the latest run, kept across a reply; `response` is set once the current one is answered. */
+  private agentThread: AgentThread & { agentRunId: string; response: string | null } | null = null;
   private agentResponseHeight = AGENT_RESPONSE_BASE_HEIGHT;
   private lastPresentedKey: string | null = null;
   private lastGeometry: WindowGeometry | null = null;
@@ -296,6 +300,15 @@ export class RuntimeShell {
     this.republish();
   }
 
+  /** Starts answering a command. A reply reuses the answered run's id, so its earlier exchange stays on the card. */
+  startAgentTurn(agentRunId: string, command: string): void {
+    const thread = this.agentThread;
+    const turns = thread?.agentRunId === agentRunId && thread.response !== null
+      ? [...thread.turns, { command: thread.command, response: thread.response }] : [];
+    this.agentThread = { agentRunId, turns, command, response: null };
+    this.agentResponseHeight = AGENT_STATUS_HEIGHT;
+  }
+
   showAgentStatus(agentRunId: string | null, message: string): void {
     this.clearAgentTimer('status');
     // Status only arrives between model steps; a still-pending approval would
@@ -311,18 +324,17 @@ export class RuntimeShell {
     this.republish();
   }
 
-  showAgentStreaming(agentRunId: string, response: string): void {
-    // Blank streamed prefixes are never a user-facing response.
-    if (!response.trim()) return;
+  showAgentStreaming(agentRunId: string, steps: AgentStep[]): void {
+    // Nothing to show until the model says something or calls a tool.
+    if (!steps.some(step => step.text.trim() || step.tools.length > 0)) return;
     this.clearAgentTimer('status');
     const closesApproval = this.agentApproval !== null;
     this.closePendingApproval();
     // Model output supersedes any point-in-time status.
     this.agentStatus = null;
-    const previousResponsePhase = this.presentedResponsePhase();
-    if (!previousResponsePhase) this.agentResponseHeight = AGENT_RESPONSE_BASE_HEIGHT;
-    this.agentStream = { agentRunId, response };
-    // Every delta carries the whole response, and each publish re-sends and
+    this.agentResponseHeight = Math.max(this.agentResponseHeight, AGENT_RESPONSE_BASE_HEIGHT);
+    this.agentStream = { agentRunId, steps };
+    // Every delta carries all the steps, and each publish re-sends and
     // re-parses it, so tokens coalesce: publish now, then at most once per interval.
     if (this.streamTimer && !closesApproval) return;
     this.republish();
@@ -372,17 +384,19 @@ export class RuntimeShell {
     this.republish();
   }
 
-  showAgentCompleted(agentRunId: string, response: string, toolSummary: string[]): void {
+  showAgentCompleted(agentRunId: string, response: string, toolSummary: string[], steps: AgentStep[]): void {
     this.clearAgentTimers();
     this.agentStatus = null;
     this.agentStream = null;
     this.agentApproval = null;
     this.agentResponseHeight = AGENT_RESPONSE_BASE_HEIGHT;
+    if (this.agentThread?.agentRunId === agentRunId) this.agentThread.response = response;
     this.agentTerminal = {
       phase: 'completed',
       agentRunId,
       response,
       toolSummary,
+      steps,
     };
     this.republish();
   }
@@ -409,9 +423,16 @@ export class RuntimeShell {
       : null;
   }
 
+  /** The run whose answer is on screen. While it is, the next Agent command replies to it. */
+  getPresentedCompletedRunId(): string | null {
+    const state = this.derive();
+    return state.kind === 'agent-completed' ? state.agentRunId : null;
+  }
+
   dismissAgentCard(): void {
     if (!this.agentTerminal) return;
     this.agentTerminal = null;
+    this.agentThread = null;
     this.republish();
   }
 
@@ -420,10 +441,11 @@ export class RuntimeShell {
     if (!Number.isFinite(contentHeight)) return;
     const state = this.derive();
     const presentingCompleted = state.kind === 'agent-completed';
-    if (!presentingCompleted && state.kind !== 'agent-streaming') return;
+    const threadStatus = state.kind === 'agent-status' && state.thread !== undefined;
+    if (!presentingCompleted && !threadStatus && state.kind !== 'agent-streaming') return;
     const nextContentHeight = Math.min(
       AGENT_RESPONSE_MAX_HEIGHT,
-      Math.max(AGENT_RESPONSE_BASE_HEIGHT, Math.ceil(contentHeight)),
+      Math.max(threadStatus ? AGENT_STATUS_HEIGHT : AGENT_RESPONSE_BASE_HEIGHT, Math.ceil(contentHeight)),
     );
     if (!presentingCompleted && nextContentHeight <= this.agentResponseHeight + AGENT_RESIZE_STEP) {
       return;
@@ -482,6 +504,7 @@ export class RuntimeShell {
     this.agentStream = null;
     this.agentApproval = null;
     this.agentTerminal = null;
+    this.agentThread = null;
     this.windows.destroy();
   }
 
@@ -518,18 +541,23 @@ export class RuntimeShell {
     if (terminal) return terminal;
 
     if (this.agentStream) {
-      return { kind: 'agent-streaming', ...this.agentStream };
+      return { kind: 'agent-streaming', ...this.agentStream, ...this.threadOf(this.agentStream.agentRunId) };
     }
     if (this.agentStatus) {
-      return { kind: 'agent-status', ...this.agentStatus };
+      return { kind: 'agent-status', ...this.agentStatus, ...this.threadOf(this.agentStatus.agentRunId) };
     }
     return { kind: 'idle' };
+  }
+
+  private threadOf(agentRunId: string | null): { thread?: AgentThread } {
+    const thread = this.agentThread;
+    return thread && thread.agentRunId === agentRunId ? { thread: { turns: thread.turns, command: thread.command } } : {};
   }
 
   private newestTerminal(): RuntimePresentationState | null {
     const agent = this.agentTerminal;
     if (agent?.phase === 'completed') {
-      return { kind: 'agent-completed', agentRunId: agent.agentRunId, response: agent.response, toolSummary: agent.toolSummary };
+      return { kind: 'agent-completed', agentRunId: agent.agentRunId, response: agent.response, toolSummary: agent.toolSummary, steps: agent.steps, ...this.threadOf(agent.agentRunId) };
     }
     if (agent?.phase === 'failed') {
       return { kind: 'agent-failed', agentRunId: agent.agentRunId, message: agent.message };
@@ -602,7 +630,7 @@ export class RuntimeShell {
         // receive clicks; focusable remains false so cards never steal focus.
         return {
           width: AGENT_CARD_WIDTH,
-          height: state.kind === 'agent-status'
+          height: state.kind === 'agent-status' && !state.thread
             ? AGENT_STATUS_HEIGHT
             : Math.min(this.agentResponseHeight, AGENT_RESPONSE_MAX_HEIGHT),
           focusable: false,
@@ -656,12 +684,6 @@ export class RuntimeShell {
     if (!this.hideTimer) return;
     this.timers.clearTimeoutFn(this.hideTimer);
     this.hideTimer = null;
-  }
-
-  private presentedResponsePhase(): 'streaming' | 'completed' | null {
-    if (this.agentApproval === null && this.agentStream !== null) return 'streaming';
-    if (this.agentTerminal?.phase === 'completed') return 'completed';
-    return null;
   }
 
   private invalidateAgentPresentation(): void {

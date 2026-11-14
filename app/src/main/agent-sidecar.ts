@@ -83,7 +83,7 @@ export class AgentSidecarManager {
     });
   }
 
-  startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string, context?: AgentRunContext): void {
+  startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string, context?: AgentRunContext, continueFrom?: string): void {
     this.cancelProviderTest();
     this.start(config, agentApiKey);
     this.sendOrQueue({
@@ -91,6 +91,7 @@ export class AgentSidecarManager {
       agentRunId,
       transcript,
       ...(context ? { context } : {}),
+      ...(continueFrom ? { continueFrom } : {}),
     });
   }
 

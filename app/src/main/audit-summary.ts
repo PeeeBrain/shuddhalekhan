@@ -65,7 +65,10 @@ export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.
 
       switch (event.event_type) {
         case 'run_started':
-          summary.transcript = payload.transcript || '';
+          // A reply starts the same run again: the first command names it, the latest reply sets its status.
+          summary.transcript ||= payload.transcript || '';
+          summary.status = 'running';
+          hasTerminalEvent = false;
           break;
         case 'run_completed':
           summary.status = 'completed';

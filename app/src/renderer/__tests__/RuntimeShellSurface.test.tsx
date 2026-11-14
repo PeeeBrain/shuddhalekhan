@@ -67,6 +67,7 @@ describe('RuntimeShellSurface agent cards', () => {
       agentRunId: 'run-1',
       response: 'All done.',
       toolSummary: [],
+      steps: [],
     });
 
     const dismiss = await screen.findByRole('button', { name: 'Dismiss' });
@@ -96,12 +97,12 @@ describe('RuntimeShellSurface agent cards', () => {
     showCard({
       kind: 'agent-streaming',
       agentRunId: 'run-1',
-      response: 'A long streamed answer.',
+      steps: [{ text: 'A long streamed answer.', tools: [] }],
     });
     showCard({
       kind: 'agent-streaming',
       agentRunId: 'run-1',
-      response: 'A long streamed answer that grew.',
+      steps: [{ text: 'A long streamed answer that grew.', tools: [] }],
       revision: 2,
     });
 
@@ -122,7 +123,7 @@ describe('RuntimeShellSurface agent cards', () => {
   it('follows a growing response until the user scrolls away', () => {
     mockElectronAPI();
     render(<RuntimeShellSurface />);
-    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words.' });
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', steps: [{ text: 'First words.', tools: [] }] });
 
     // happy-dom has no layout, so emulate a browser box: scrollTop clamps to
     // the scrollable range and every change fires a scroll event.
@@ -142,18 +143,34 @@ describe('RuntimeShellSurface agent cards', () => {
       },
     });
 
-    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words. More.', revision: 2 });
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', steps: [{ text: 'First words. More.', tools: [] }], revision: 2 });
     expect(body.scrollTop).toBe(400);
 
     // The programmatic scroll's own event must not stop the follow.
     scrollHeight = 1000;
-    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', response: 'First words. More. Again.', revision: 3 });
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', steps: [{ text: 'First words. More. Again.', tools: [] }], revision: 3 });
     expect(body.scrollTop).toBe(600);
 
     body.scrollTop = 0;
     scrollHeight = 1200;
-    showCard({ kind: 'agent-completed', agentRunId: 'run-1', response: 'First words. More. Again. Done.', toolSummary: [], revision: 4 });
+    showCard({ kind: 'agent-completed', agentRunId: 'run-1', response: 'First words. More. Again. Done.', toolSummary: [], steps: [], revision: 4 });
     expect(body.scrollTop).toBe(0);
+  });
+
+  it('keeps what the agent said between tool calls visible, folded once it answers', async () => {
+    const user = userEvent.setup();
+    mockElectronAPI();
+    render(<RuntimeShellSurface />);
+    const steps = [{ text: 'Let me search.', tools: ['web_search'] }];
+
+    showCard({ kind: 'agent-streaming', agentRunId: 'run-1', steps: [...steps, { text: 'Found it', tools: [] }] });
+    expect(screen.getByText('Let me search.')).toBeTruthy();
+    expect(screen.getByText('Found it')).toBeTruthy();
+
+    showCard({ kind: 'agent-completed', agentRunId: 'run-1', response: 'Found it.', toolSummary: [], steps, revision: 2 });
+    expect(screen.queryByText('Let me search.')).toBeNull();
+    await user.click(screen.getByRole('button', { name: '1 step · web_search' }));
+    expect(screen.getByText('Let me search.')).toBeTruthy();
   });
 
   it('sends approval decisions without optional denial feedback', async () => {

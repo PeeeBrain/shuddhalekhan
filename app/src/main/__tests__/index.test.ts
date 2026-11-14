@@ -118,6 +118,7 @@ const runtimeShellShowAgentCompleted = vi.fn();
 const runtimeShellShowAgentFailed = vi.fn();
 const runtimeShellDismissAgentCard = vi.fn();
 const runtimeShellGetPendingApproval = vi.fn((): { serverId: string; toolName: string } | null => null);
+const runtimeShellGetPresentedCompletedRunId = vi.fn((): string | null => null);
 const runtimeShellHandleAgentCardSize = vi.fn();
 const applyDictationFormatter = vi.fn();
 
@@ -221,6 +222,7 @@ mock.module('../runtime-shell', () => ({
     setCrashHandler = runtimeShellSetCrashHandler;
     beginAgentRun = runtimeShellBeginAgentRun;
     clearAgentRun = runtimeShellClearAgentRun;
+    startAgentTurn = vi.fn();
     showAgentStatus = runtimeShellShowAgentStatus;
     showAgentStreaming = runtimeShellShowAgentStreaming;
     showAgentApproval = runtimeShellShowAgentApproval;
@@ -228,6 +230,7 @@ mock.module('../runtime-shell', () => ({
     showAgentFailed = runtimeShellShowAgentFailed;
     dismissAgentCard = runtimeShellDismissAgentCard;
     getPendingApproval = runtimeShellGetPendingApproval;
+    getPresentedCompletedRunId = runtimeShellGetPresentedCompletedRunId;
     handleAgentCardSize = runtimeShellHandleAgentCardSize;
   },
 }));
@@ -464,7 +467,7 @@ describe('main process IPC orchestration', () => {
     expect(agentTestProvider).toHaveBeenCalledWith(expect.objectContaining({ kind: 'chatgpt' }), 'private-plan-token');
     expect(JSON.stringify(result)).not.toContain('private-');
     await sessionOptions.onResult({ text: 'Do the task.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
-    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'Do the task.', config, 'private-plan-token', expect.any(Object));
+    expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'Do the task.', config, 'private-plan-token', expect.any(Object), undefined);
     expect(JSON.stringify(send.mock.calls)).not.toContain('private-');
     expect(simulatePaste).not.toHaveBeenCalled();
   });
@@ -612,7 +615,7 @@ describe('main process IPC orchestration', () => {
     await sessionOptions.onResult(result);
 
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'transcribed text', config, undefined,
-      { memory: null, skillsDirectory: expect.stringContaining('skills') });
+      { memory: null, skillsDirectory: expect.stringContaining('skills') }, undefined);
     expect(simulatePaste).not.toHaveBeenCalled();
     // A lingering "Transcribing…" pill outranks and hides every Agent card for the whole run.
     expect(runtimeShellFinish).toHaveBeenCalled();
@@ -649,6 +652,7 @@ describe('main process IPC orchestration', () => {
       config,
       undefined,
       { memory: null, skillsDirectory: expect.stringContaining('skills') },
+      undefined,
     );
     expect(simulatePaste).not.toHaveBeenCalled();
   });
@@ -968,6 +972,48 @@ describe('main process IPC orchestration', () => {
     expect(runtimeShellShowAgentStatus).not.toHaveBeenCalled();
   });
 
+  it('continues the conversation only when an Agent recording begins over a completed answer', async () => {
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+    await import(`../index?test=${Date.now()}-agent-reply`);
+    const command = (text: string) => sessionOptions.onResult({ text, intent: 'agent' as const, targetSnapshot: defaultTargetSnapshot });
+
+    sessionOptions.onBegin('agent');
+    await command('What is the weather?');
+    const answered = agentStartRun.mock.calls[0]?.[0] as string;
+    runtimeShellGetPresentedCompletedRunId.mockReturnValueOnce(answered);
+    sessionOptions.onBegin('agent');
+    await command('Pune.');
+    sessionOptions.onBegin('agent');
+    await command('Tell me a joke.');
+
+    // A reply runs as the answered run itself; a fresh command gets its own id.
+    const [, reply, fresh] = agentStartRun.mock.calls as unknown[][];
+    expect([reply?.[0], reply?.at(-1)]).toEqual([answered, answered]);
+    expect(fresh?.[0]).not.toBe(answered);
+    expect(fresh?.at(-1)).toBeUndefined();
+  });
+
+  // The sidecar drops history across providers; the card must not show the old exchange as the same conversation.
+  it('starts fresh when the provider changed since the answer on screen', async () => {
+    const config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true } };
+    getConfig.mockReturnValue(config);
+    await import(`../index?test=${Date.now()}-agent-reply-provider`);
+    const command = (text: string) => sessionOptions.onResult({ text, intent: 'agent' as const, targetSnapshot: defaultTargetSnapshot });
+
+    sessionOptions.onBegin('agent');
+    await command('What is the weather?');
+    const answered = agentStartRun.mock.calls[0]?.[0] as string;
+    getConfig.mockReturnValue({ ...config, agent: { ...config.agent, provider: { ...config.agent.provider, model: 'another-model' } } });
+    runtimeShellGetPresentedCompletedRunId.mockReturnValueOnce(answered);
+    sessionOptions.onBegin('agent');
+    await command('Pune.');
+
+    const reply = agentStartRun.mock.calls[1] as unknown[];
+    expect(reply[0]).not.toBe(answered);
+    expect(reply.at(-1)).toBeUndefined();
+  });
+
   it('shows one persistent shell failure when the sidecar exits unexpectedly', async () => {
 
     await import(`../index?test=${Date.now()}-shell-gen-exit`);
@@ -997,6 +1043,7 @@ describe('main process IPC orchestration', () => {
       agentRunId: activeRunId,
       response: 'Finished',
       toolSummary: [],
+      steps: [],
     });
     expect(runtimeShellShowAgentCompleted).toHaveBeenCalledTimes(1);
 

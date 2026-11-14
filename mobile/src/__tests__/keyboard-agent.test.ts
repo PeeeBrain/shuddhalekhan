@@ -3,6 +3,7 @@ import { MobileController, type Recorder } from '../controller';
 import type { AgentActivityPort, AgentActivityUpdate } from '../agent-activity';
 import type { KeyboardSessionEvent } from '../keyboard-session';
 import { defaultSettings } from '../settings';
+import { chatReply } from './model-stream';
 
 const done: KeyboardSessionEvent = {
   endsAt: Date.now() + 60_000, requestId: 'keyboard-a', mode: 'agent', agentReady: true,
@@ -25,7 +26,8 @@ function setup(endpoint: string, start: AgentActivityPort['start'] = async () =>
   };
   const controller = new MobileController({ recorder, activity, fetch,
     loadSettings: async () => ({ ...defaultSettings, agentEnabled: true, agentProvider: 'openai-compatible',
-      agentEndpoint: endpoint, allowInsecureHTTP: true }), saveSettings: async settings => settings,
+      agentEndpoint: endpoint, allowInsecureHTTP: true, transcriptionSource: 'on-device' }), saveSettings: async settings => settings,
+    transcribeOnDevice: async () => 'Pune.',
   });
   return { controller, updates, recorderCalls };
 }
@@ -49,7 +51,7 @@ test('a background keyboard agent transcript runs once, rejects a busy command a
     requests++;
     requested.resolve(await request.text());
     await answer.promise;
-    return Response.json({ choices: [{ message: { role: 'assistant', content: 'The next train is at 10.' } }] });
+    return chatReply('The next train is at 10.');
   } });
   try {
     const { controller, updates, recorderCalls } = setup(`http://127.0.0.1:${server.port}/v1/chat/completions`);
@@ -73,6 +75,27 @@ test('a background keyboard agent transcript runs once, rejects a busy command a
     expect(updates.at(-1)).toMatchObject({ runId: 'native-run', phase: 'completed', response: 'The next train is at 10.' });
     expect(recorderCalls).toEqual([]);
   } finally { answer.resolve(); await server.stop(true); }
+});
+
+// The keyboard can't show an answer, but the app can: once the session ends, an in-app recording replies to it.
+test('the in-app answer to a keyboard command can be replied to after the session ends', async () => {
+  const bodies: string[] = [];
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+    bodies.push(await request.text());
+    return chatReply(bodies.length === 1 ? 'Which city?' : 'Done.');
+  } });
+  try {
+    const { controller } = setup(`http://127.0.0.1:${server.port}/v1/chat/completions`);
+    await controller.initialize();
+    await controller.handleKeyboardSession(done);
+    await finished(controller);
+    expect(controller.getSnapshot()).toMatchObject({ response: 'Which city?', canReply: true });
+    await controller.handleKeyboardSession({ endsAt: 0, phase: 'idle', agentReady: false });
+    await controller.startRecording('agent');
+    await controller.stopRecording();
+    expect(bodies[1]).toContain('Which city?');
+    expect(controller.getSnapshot()).toMatchObject({ turns: [{ command: 'Find the next train.', response: 'Which city?' }], response: 'Done.' });
+  } finally { await server.stop(true); }
 });
 
 test('cancelling a keyboard request during native admission prevents a late agent request', async () => {

@@ -1,4 +1,4 @@
-import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
+import type { AgentProviderConfig, AgentProviderTestResult, AgentStep, AppConfig } from '../types/ipc';
 import { z } from 'zod';
 import { agentProviderSchema } from '../shared/agent-provider-validation';
 import { MEMORY_BYTE_LIMIT, memoryUpdatesSchema, type AgentMemoryCommitResult, type AgentMemoryUpdate, type AgentRunContext } from '../shared/agent-context';
@@ -41,11 +41,11 @@ export type AgentStatusEvent = {
   status: string;
 };
 
-export type AgentResponseDeltaEvent = {
-  type: 'agent:response-delta';
+/** The run's steps so far, the last one live. */
+export type AgentStepsEvent = {
+  type: 'agent:steps';
   agentRunId: string;
-  delta: string;
-  response: string;
+  steps: AgentStep[];
 };
 
 export type ApprovalRequestedEvent = {
@@ -64,6 +64,8 @@ export type AgentCompletedEvent = {
   agentRunId: string;
   response: string;
   toolSummary: string[];
+  /** The steps before the answer. */
+  steps: AgentStep[];
 };
 
 export type AgentFailedEvent = {
@@ -87,7 +89,7 @@ export type SidecarEvent =
   | McpToolsDiscoveredEvent
   | OAuthOpenUrlEvent
   | AgentStatusEvent
-  | AgentResponseDeltaEvent
+  | AgentStepsEvent
   | ApprovalRequestedEvent
   | AgentCompletedEvent
   | AgentFailedEvent
@@ -104,6 +106,8 @@ export type AgentStartMessage = {
   agentRunId: string;
   transcript: string;
   context?: AgentRunContext;
+  /** The completed run this command replies to. Ignored unless it is the sidecar's latest conversation. */
+  continueFrom?: string;
 };
 
 export type AgentCancelMessage = {
@@ -168,7 +172,7 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
     case 'agent:start': {
       const result = z.object({ type: z.literal('agent:start'), agentRunId: z.string().min(1), transcript: z.string(), context: z.object({
         skillsDirectory: z.string().min(1), memory: z.object({ revision: z.string(), markdown: z.string().max(MEMORY_BYTE_LIMIT) }).nullable(),
-      }).optional() }).safeParse(parsed);
+      }).optional(), continueFrom: z.string().min(1).optional() }).safeParse(parsed);
       return result.success ? result.data : null;
     }
     case 'config:update':

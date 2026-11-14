@@ -3,8 +3,9 @@ import type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
 import type { DesktopStatus } from '../shared/desktop-status';
 import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
+import type { AgentStep } from '@shuddhalekhan/shared/agent-loop';
 
-export type { AgentProviderKind, TranscriptionProviderId };
+export type { AgentProviderKind, TranscriptionProviderId, AgentStep };
 
 export type AudioDevice = {
   deviceId: string;
@@ -307,6 +308,9 @@ export interface RuntimeAudioCommand {
 
 export type DictationRecoveryAction = 'retry-paste' | 'copy-full-transcript' | 'copy-partial-transcript';
 
+/** The run's spoken commands: earlier exchanges (from replies) and the command being answered now. */
+export type AgentThread = { turns: Array<{ command: string; response: string }>; command: string };
+
 export type RuntimePresentationState =
   | { kind: 'idle' }
   | {
@@ -326,8 +330,8 @@ export type RuntimePresentationState =
       message: string;
       recoveryActions: DictationRecoveryAction[];
     }
-  | { kind: 'agent-status'; agentRunId: string | null; message: string }
-  | { kind: 'agent-streaming'; agentRunId: string; response: string }
+  | { kind: 'agent-status'; agentRunId: string | null; message: string; thread?: AgentThread }
+  | { kind: 'agent-streaming'; agentRunId: string; steps: AgentStep[]; thread?: AgentThread }
   | {
       kind: 'agent-approval';
       agentRunId: string;
@@ -339,7 +343,7 @@ export type RuntimePresentationState =
       arguments: unknown;
       expiresAt: string;
     }
-  | { kind: 'agent-completed'; agentRunId: string; response: string; toolSummary: string[] }
+  | { kind: 'agent-completed'; agentRunId: string; response: string; toolSummary: string[]; steps: AgentStep[]; thread?: AgentThread }
   | { kind: 'agent-failed'; agentRunId: string | null; message: string };
 
 export type RuntimePresentationSnapshot = {

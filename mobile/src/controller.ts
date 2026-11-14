@@ -1,3 +1,5 @@
+import { AGENT_MAX_STEPS, type AgentStep } from '@shuddhalekhan/shared/agent-loop';
+import type { ModelMessage } from 'ai';
 import { runAgent, type ToolApproval } from './agent';
 import { parseAgentActivityLink, type AgentActivityPort, type AgentActivityUpdate } from './agent-activity';
 import type { Fetch } from './network';
@@ -14,6 +16,12 @@ type State = {
   runId: string | null; activityNotice: string | null; activityOpenCount: number;
   approvalNotified: boolean;
   approvalReviewId: string | null;
+  /** The answer on screen can be replied to: the next agent command continues its conversation. */
+  canReply: boolean;
+  /** Earlier exchanges of the conversation on screen, oldest first; `transcript` and `response` are the latest. */
+  turns: Array<{ command: string; response: string }>;
+  /** What the agent said and which tools it called before `response`. */
+  steps: AgentStep[];
 };
 type PendingApproval = ToolApproval & { runId: string; approvalId: string };
 export type ApprovalDecision = Pick<PendingApproval, 'runId' | 'approvalId'> & { approved: boolean };
@@ -26,7 +34,7 @@ export type Recorder = {
 
 /** Owns single-flight work independently of React renders and native permission dialogs. */
 export class MobileController {
-  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null };
+  private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false, turns: [], steps: [] };
   private listeners = new Set<() => void>();
   private active: AbortController | null = null;
   private approvalDecision: ((approved: boolean) => void) | null = null;
@@ -43,6 +51,10 @@ export class MobileController {
   private handledKeyboardRequests = new Set<string>();
   private keyboardRun = false;
   private keyboardSessionActive = false;
+  /** The conversation behind the answer on screen, in memory only. */
+  private conversation: ModelMessage[] | null = null;
+  /** What the current command replies to. Kept through a failure so Retry sends the same reply. */
+  private history: ModelMessage[] = [];
 
   constructor(private readonly ports: {
     recorder: Recorder; fetch: Fetch;
@@ -56,6 +68,10 @@ export class MobileController {
 
   getSnapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  private setConversation(messages: ModelMessage[] | null) {
+    this.conversation = messages;
+    if (this.state.canReply !== (messages !== null)) this.update({ canReply: messages !== null });
+  }
   private update(patch: Partial<State>) { this.state = { ...this.state, ...patch }; for (const listener of this.listeners) listener(); }
 
   initialize = (): Promise<void> => {
@@ -86,7 +102,12 @@ export class MobileController {
     const previousRunId = this.savedRunId;
     this.activityStarted = false;
     this.interrupted = false;
-    this.update({ phase: 'requestingPermission', intent, status: 'Requesting microphone access…', error: null, transcript: '', response: '', runId: null, activityNotice: null });
+    // An agent command recorded while an answer is on screen replies to it. Clear starts fresh.
+    const replying = intent === 'agent' && this.conversation !== null;
+    this.history = replying ? this.conversation ?? [] : [];
+    const turns = replying ? [...this.state.turns, { command: this.state.transcript, response: this.state.response }] : [];
+    this.setConversation(null);
+    this.update({ phase: 'requestingPermission', intent, status: 'Requesting microphone access…', error: null, transcript: '', response: '', steps: [], runId: null, activityNotice: null, turns });
     try {
       if (previousRunId) {
         try {
@@ -153,7 +174,10 @@ export class MobileController {
     this.keyboardRequestId = event.requestId;
     this.keyboardRun = true;
     this.interrupted = false;
-    this.update({ intent: 'agent', transcript, response: '', error: null, runId: null, activityNotice: null });
+    // The keyboard cannot show the previous answer, so its commands never reply to one.
+    this.history = [];
+    this.setConversation(null);
+    this.update({ intent: 'agent', transcript, response: '', error: null, runId: null, activityNotice: null, turns: [] });
     const admission = Promise.withResolvers<void>();
     void this.agent(active, transcript, admission.resolve).then(() => this.finish(active), async error => {
       admission.reject(error);
@@ -163,12 +187,14 @@ export class MobileController {
   };
 
   private async agent(active: AbortController, transcript: string, admitted?: () => void) {
-    this.update({ phase: 'running', response: '', status: 'Starting agent…' });
+    this.update({ phase: 'running', response: '', steps: [], status: 'Starting agent…' });
     this.completedSteps = 0;
     this.activityStarted = false;
     let runId = `foreground-${Date.now()}-${++this.sequence}`;
+    // One unit per MCP connection and per model step. The native activity accepts at most 34.
+    const maximumSteps = Math.min(34, AGENT_MAX_STEPS + this.state.settings.mcpServers.filter(server => server.enabled).length);
     try {
-      const started = await this.ports.activity?.start(24 + this.state.settings.mcpServers.filter(server => server.enabled).length);
+      const started = await this.ports.activity?.start(maximumSteps);
       if (started) { runId = started.runId; this.savedRunId = runId; this.activityStarted = true; }
     } catch {
       if (this.keyboardRun) throw new Error('The agent could not start. Open Shuddhalekhan and try again.');
@@ -180,10 +206,12 @@ export class MobileController {
     if (this.backgrounded) await this.enterBackground();
     active.signal.throwIfAborted();
     admitted?.();
-    const response = await runAgent({ transcript, settings: this.state.settings, signal: active.signal, fetch: this.ports.fetch,
-      getChatGptAccessToken: this.ports.chatgpt?.getAccessToken,
-      onStatus: (status, completedSteps) => {
+    const result = await runAgent({ transcript, settings: this.state.settings, signal: active.signal, fetch: this.ports.fetch,
+      getChatGptAccessToken: this.ports.chatgpt?.getAccessToken, history: this.history,
+      onStatus: (status, steps) => {
         if (this.active !== active || active.signal.aborted) return;
+        // Native rejects an update past the maximum it was started with.
+        const completedSteps = Math.min(steps, maximumSteps);
         this.completedSteps = completedSteps;
         this.update({ status });
         void this.publish({ runId, phase: 'running', status, completedSteps });
@@ -211,7 +239,8 @@ export class MobileController {
       },
     });
     active.signal.throwIfAborted();
-    this.update({ response });
+    this.update({ response: result.text, steps: result.steps });
+    this.setConversation(result.messages);
   }
 
   retryAgent = () => {
@@ -232,7 +261,8 @@ export class MobileController {
     this.update({ approval: null, approvalNotified: false, phase: 'running' });
     await this.activityUpdates;
     if (this.active !== active || active.signal.aborted) { resolve(false); return; }
-    if (approved && this.activityStarted) {
+    // A denial also continues the run (the model is told), so native execution resumes either way.
+    if (this.activityStarted) {
       try { await this.ports.activity?.resume(runId); }
       catch {
         this.interrupted = true;
@@ -347,6 +377,9 @@ export class MobileController {
 
   saveSettings = async (settings: MobileSettings) => {
     if (this.state.phase !== 'idle' || this.active) throw new Error('Wait for the current command to finish.');
+    // Another provider cannot read this one's reasoning items.
+    this.setConversation(null);
+    this.history = [];
     this.update({ phase: 'loading' });
     try { this.update({ settings: await this.ports.saveSettings(settings), error: null }); }
     finally { this.update({ phase: 'idle' }); }
@@ -366,7 +399,9 @@ export class MobileController {
     }
     catch { this.update({ error: 'Could not clear the saved agent result. Try again.' }); return; }
     if (this.state.phase !== 'idle' || this.active) return;
-    this.update({ transcript: '', response: '', runId: null, error: null, activityNotice: null, status: 'Ready to record.' });
+    this.setConversation(null);
+    this.history = [];
+    this.update({ transcript: '', response: '', steps: [], runId: null, error: null, activityNotice: null, status: 'Ready to record.', turns: [] });
   };
   dismissError = () => { if (this.state.phase !== 'loading') this.update({ error: null }); };
 }

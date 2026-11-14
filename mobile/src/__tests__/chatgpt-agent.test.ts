@@ -3,67 +3,40 @@ import { z } from 'zod';
 import { runAgent } from '../agent';
 import { defaultSettings } from '../settings';
 import { selectAgentProvider } from '../providers';
-import type { Fetch } from '../network';
+import { responsesReply } from './model-stream';
 
-const settings = { ...selectAgentProvider(defaultSettings, 'chatgpt'), agentEnabled: true, agentModel: 'chosen-model' };
-const completed = { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Final café answer.' }] }] };
-const requestSchema = z.object({ model: z.string(), stream: z.boolean(), store: z.boolean(),
-  input: z.array(z.object({ role: z.string(), content: z.string() })), include: z.array(z.string()).optional() }).passthrough();
-function run(fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>, overrides = {}) {
-  return runAgent({ transcript: 'Hello.', settings: { ...settings, ...overrides }, signal: new AbortController().signal,
+// Request shaping (developer prompt, stripped fields, include fallback) is shared with desktop and covered by
+// app/src/agent/__tests__/fixtures/provider-contract.ts. These cover the iOS transport and its error messages.
+// A reasoning model: only those get `include`, which the plan may reject.
+const settings = { ...selectAgentProvider(defaultSettings, 'chatgpt'), agentEnabled: true, agentModel: 'gpt-5.4' };
+const requestSchema = z.object({ model: z.string(), stream: z.boolean(), store: z.boolean(), include: z.array(z.string()).optional() }).passthrough();
+const rejection = (status: number, error: Record<string, string>) =>
+  // The SDK retries 429 and 5xx; a zero retry-after keeps those cases fast.
+  Response.json({ error }, { status, headers: { 'retry-after-ms': '0' } });
+
+function run(fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
+  let issued = 0;
+  return runAgent({ transcript: 'Hello.', settings, signal: new AbortController().signal,
     fetch: Object.assign(fetch, { preconnect: globalThis.fetch.preconnect }),
-    onStatus: () => {}, approve: async () => true, getChatGptAccessToken: async () => 'fresh-bearer' });
-}
-function sse(type: string, response: unknown): Response {
-  return new Response(`event: ${type}\ndata: ${JSON.stringify({ type, response })}\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
+    onStatus: () => {}, approve: async () => true, getChatGptAccessToken: async () => `token-${++issued}` });
 }
 
-test('ChatGPT sends a streamed developer prompt with JSON bearer auth and no cache or system fields', async () => {
-  const bodies: z.infer<typeof requestSchema>[] = [];
-  const fetch: Fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
-    expect(String(input)).toBe('https://api.openai.com/v1/responses');
-    expect(Object.fromEntries(new Headers(init?.headers))).toEqual({ authorization: 'Bearer fresh-bearer', 'content-type': 'application/json' });
-    expect(init?.redirect).toBe('error');
-    bodies.push(requestSchema.parse(JSON.parse(String(init?.body))));
-    return sse('response.completed', completed);
-  }, { preconnect: globalThis.fetch.preconnect });
-  expect(await run(fetch)).toBe('Final café answer.');
-  expect(bodies[0]).toEqual({ model: 'chosen-model', stream: true, store: false, include: ['reasoning.encrypted_content'],
-    input: [{ role: 'developer', content: expect.stringContaining('<identity>') }, { role: 'user', content: expect.stringContaining('</runtime_context>\n\nHello.') }] });
-  const basePrompt = bodies[0]?.input[0]?.content;
-  await run(fetch, { customInstructions: '  Reply in French.\n' });
-  expect(bodies[1]?.input[0]?.content).toBe(`${basePrompt}\n\n<user_instructions>\nThe user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.\nReply in French.\n</user_instructions>`);
-  await run(fetch, { customInstructions: ' \n ' });
-  expect(bodies[2]?.input[0]?.content).toBe(basePrompt);
-});
-
-test('ChatGPT parses a split UTF-8 stream and finishes only from response.completed', async () => {
-  let cancelled = false;
-  const data = new TextEncoder().encode(`: keepalive\r\n\r\ndata: ${JSON.stringify({ type: 'response.output_text.delta', delta: 'Provisional' })}\r\n\r\nevent: response.completed\r\ndata: ${JSON.stringify({ type: 'response.completed', response: completed })}\r\n\r\n`);
-  let offset = 0;
-  const answer = await run(async () => new Response(new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (offset >= data.length) return; // The terminal event must finish even if the server keeps the connection open.
-      controller.enqueue(data.slice(offset, offset + 3));
-      offset += 3;
-    },
-    cancel() { cancelled = true; },
-  })));
-  expect(answer).toBe('Final café answer.');
-  expect(cancelled).toBe(true);
-});
-
-test.each(['include', 'include[0]', 'include.reasoning'])('retries %s rejection once without include', async param => {
-  const bodies: z.infer<typeof requestSchema>[] = [];
-  const answer = await run(async (_input, init) => {
-    bodies.push(requestSchema.parse(JSON.parse(String(init?.body))));
-    return bodies.length === 1 ? Response.json({ error: { param, code: 'subscription_sharing_unsupported_capability' } }, { status: 400 })
-      : sse('response.completed', completed);
+test('every plan request goes to the ChatGPT endpoint with a freshly read token and no redirects', async () => {
+  const requests: Array<{ url: string; authorization: string | null; redirect?: RequestRedirect; body: z.infer<typeof requestSchema> }> = [];
+  const { text } = await run(async (input, init) => {
+    const body = requestSchema.parse(JSON.parse(String(init?.body)));
+    requests.push({ url: String(input), authorization: new Headers(init?.headers).get('authorization'), redirect: init?.redirect, body });
+    return requests.length === 1
+      ? rejection(400, { param: 'include', code: 'subscription_sharing_unsupported_capability' })
+      : responsesReply('Final café answer.');
   });
-  expect(answer).toBe('Final café answer.');
-  expect(bodies).toHaveLength(2);
-  expect(bodies[0]).toHaveProperty('include');
-  expect(bodies[1]).not.toHaveProperty('include');
+  expect(text).toBe('Final café answer.');
+  expect(requests.map(({ url, authorization, redirect }) => ({ url, authorization, redirect }))).toEqual([
+    { url: 'https://api.openai.com/v1/responses', authorization: 'Bearer token-1', redirect: 'error' },
+    { url: 'https://api.openai.com/v1/responses', authorization: 'Bearer token-2', redirect: 'error' },
+  ]);
+  expect(requests[0]?.body).toMatchObject({ model: 'gpt-5.4', stream: true, store: false, include: ['reasoning.encrypted_content'] });
+  expect(requests[1]?.body).not.toHaveProperty('include');
 });
 
 test('does not retry unrelated 400s or retry include more than once', async () => {
@@ -71,7 +44,7 @@ test('does not retry unrelated 400s or retry include more than once', async () =
     let calls = 0;
     await expect(run(async () => {
       calls++;
-      return Response.json({ error: { param, code: 'subscription_sharing_unsupported_capability' } }, { status: 400 });
+      return rejection(400, { param, code: 'subscription_sharing_unsupported_capability' });
     })).rejects.toThrow('capability');
     expect(calls).toBe(param === 'include' ? 2 : 1);
   }
@@ -86,27 +59,7 @@ test.each([
   [403, 'subscription_sharing_user_not_eligible', 'not eligible'],
   [403, 'subscription_sharing_route_not_supported', 'Responses API'],
 ])('maps HTTP %i plan errors without leaking the provider body', async (status, code, message) => {
-  await expect(run(async () => Response.json({ error: { code, message: 'SECRET provider details' } }, { status }))).rejects.toThrow(message);
-});
-
-test.each([
-  ['response.failed', { status: 'failed', error: { code: 'chatpass_v2_scope_not_authorized' }, output: [] }, 'allow plan usage'],
-  ['response.incomplete', { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: completed.output }, 'output limit'],
-])('rejects the terminal %s event instead of returning a partial answer', async (type, response, message) => {
-  const finalized = { type: 'response.output_item.done', output_index: 0, item: completed.output[0] };
-  await expect(run(async () => new Response(`data: ${JSON.stringify(finalized)}\n\n${await sse(type, response).text()}`))).rejects.toThrow(message);
-});
-
-test('a stream that ends after deltas or finalized items cannot return an answer', async () => {
-  const events = [
-    { type: 'response.output_text.delta', delta: 'partial' },
-    { type: 'response.output_item.done', output_index: 0, item: completed.output[0] },
-  ];
-  await expect(run(async () => new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''))))
-    .rejects.toThrow('disconnected before completing');
-});
-
-test('a malformed function call fails the run instead of returning the text as the answer', async () => {
-  const response = { ...completed, output: [...completed.output, { type: 'function_call', name: 'search', arguments: '{}' }] };
-  await expect(run(async () => sse('response.completed', response))).rejects.toThrow();
+  const failure = run(async () => rejection(status, { code, message: 'SECRET provider details' }));
+  await expect(failure).rejects.toThrow(message);
+  await expect(failure).rejects.not.toThrow('SECRET');
 });

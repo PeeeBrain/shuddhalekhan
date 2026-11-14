@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MobileController, type Recorder } from '../controller';
 import { defaultSettings, type MobileSettings } from '../settings';
+import { chatReply } from './model-stream';
 
 function recorder(permission = Promise.resolve(true)) {
   const calls = { starts: 0, stops: 0, discards: 0 };
@@ -163,8 +164,9 @@ describe('mobile command lifecycle', () => {
       if (new URL(request.url).pathname === '/inference') { await request.formData(); uploads++; return Response.json({ text: 'Explain a rainbow.' }); }
       modelCalls++;
       cleanupBeforeModel.push(native.calls.discards);
-      if (modelCalls === 1) return new Response('private diagnostic', { status: 503 });
-      return Response.json({ choices: [{ message: { role: 'assistant', content: 'Light refracts in water droplets.' }, finish_reason: 'stop' }] });
+      // A non-retryable status: the SDK retries 5xx itself before the run fails.
+      if (modelCalls === 1) return new Response('private diagnostic', { status: 400 });
+      return chatReply('Light refracts in water droplets.');
     } });
     try {
       const base = `http://127.0.0.1:${server.port}`;
@@ -173,7 +175,7 @@ describe('mobile command lifecycle', () => {
       await controller.startRecording('agent');
       await controller.stopRecording();
       expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', transcript: 'Explain a rainbow.', response: '' });
-      expect(controller.getSnapshot().error).toContain('503');
+      expect(controller.getSnapshot().error).toContain('400');
       expect(controller.getSnapshot().error).not.toContain('private diagnostic');
       controller.retryAgent();
       await when(controller, () => controller.getSnapshot().phase === 'idle');
@@ -182,6 +184,33 @@ describe('mobile command lifecycle', () => {
       expect(native.calls.starts).toBe(1);
       expect(modelCalls).toBe(2);
       expect(cleanupBeforeModel[0]).toBeGreaterThan(0);
+    } finally { await server.stop(true); }
+  });
+
+  // The answer on screen is the conversation an Agent recording replies to; Clear is the way back to a fresh command.
+  test('an agent recording replies to the answer on screen until it is cleared', async () => {
+    const spoken = ['What is the weather?', 'Pune.', 'Tell me a joke.'];
+    const bodies: string[] = [];
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      if (new URL(request.url).pathname === '/inference') { await request.formData(); return Response.json({ text: spoken.shift() }); }
+      bodies.push(await request.text());
+      return chatReply(bodies.length === 1 ? 'Which city?' : 'Done.');
+    } });
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      const controller = createController(recorder().port, { ...defaultSettings, transcriptionProvider: 'custom-open-ai-compatible', agentProvider: 'openai-compatible', allowInsecureHTTP: true, agentEnabled: true, transcriptionEndpoint: `${base}/inference`, agentEndpoint: `${base}/chat` });
+      await controller.initialize();
+      const ask = async () => { await controller.startRecording('agent'); await controller.stopRecording(); };
+      await ask();
+      expect(controller.getSnapshot()).toMatchObject({ response: 'Which city?', canReply: true });
+      await ask();
+      expect(bodies[1]).toContain('Which city?');
+      expect(controller.getSnapshot()).toMatchObject({ turns: [{ command: 'What is the weather?', response: 'Which city?' }], transcript: 'Pune.', response: 'Done.' });
+      await controller.clearResults();
+      expect(controller.getSnapshot()).toMatchObject({ canReply: false, turns: [] });
+      await ask();
+      expect(bodies[2]).not.toContain('Which city?');
+      expect(bodies[2]).not.toContain('Pune.');
     } finally { await server.stop(true); }
   });
 

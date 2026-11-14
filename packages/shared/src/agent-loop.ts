@@ -1,0 +1,227 @@
+import { isStepCount, streamText, type LanguageModelUsage, type ModelMessage, type SystemModelMessage, type Tool, type ToolCallPart } from 'ai';
+import type { AgentModelClient } from './agent-model';
+import { parseModelToolName } from './mcp';
+
+/** Model calls allowed per command, counted across approval pauses. The last one must answer without tools. */
+export const AGENT_MAX_STEPS = 30;
+const TOOL_RESULT_CHAR_LIMIT = 100_000;
+// ponytail: counts tool-result characters only (roughly 100k tokens); spoken commands and answers are small. Count tokens if a provider overflows first.
+const CONTEXT_CHAR_BUDGET = 400_000;
+const CLEARED_RESULT = '[Earlier tool result removed to save context. Call the tool again if you still need it.]';
+const WRAP_UP: ModelMessage = {
+  role: 'user',
+  content: 'You have reached the maximum number of steps. Do not call tools. Give a concise final response describing what completed and what remains.',
+};
+
+export type ToolApprovalDecision = { approved: true } | { approved: false; message: string };
+
+type ApprovalRequestPart = {
+  type: 'tool-approval-request';
+  approvalId: string;
+  toolCall: { toolCallId: string; toolName: string; input?: unknown };
+};
+type StreamPart =
+  | { type: 'text-delta'; text?: string; textDelta?: string }
+  | { type: 'error'; error: unknown }
+  | ApprovalRequestPart
+  | { type: string; [key: string]: unknown };
+
+function isApprovalRequestPart(part: StreamPart): part is ApprovalRequestPart {
+  return part.type === 'tool-approval-request'
+    && typeof (part as { approvalId?: unknown }).approvalId === 'string'
+    && typeof (part as { toolCall?: { toolName?: unknown } }).toolCall?.toolName === 'string';
+}
+
+/** One model step as the user sees it: what the model said, then the tools it called. */
+export type AgentStep = { text: string; tools: string[] };
+
+async function consumeStream(
+  result: { text: PromiseLike<string>; stream?: AsyncIterable<StreamPart> },
+  steps: AgentStep[],
+  onSteps: (steps: AgentStep[]) => void,
+): Promise<{ text: string; approvalRequests: ApprovalRequestPart[] }> {
+  let streamed = '';
+  const approvalRequests: ApprovalRequestPart[] = [];
+  let streamError: unknown;
+  const currentStep = () => steps.at(-1) ?? steps[steps.push({ text: '', tools: [] }) - 1];
+  for await (const part of result.stream ?? []) {
+    if (isApprovalRequestPart(part)) { approvalRequests.push(part); continue; }
+    if (part.type === 'error') { streamError = part.error; continue; }
+    if (part.type === 'start-step') { steps.push({ text: '', tools: [] }); continue; }
+    if (part.type === 'tool-call' && typeof part.toolName === 'string') {
+      currentStep().tools.push(parseModelToolName(part.toolName).toolName);
+      onSteps(steps);
+      continue;
+    }
+    if (part.type !== 'text-delta') continue;
+    const text = typeof part.text === 'string' ? part.text : typeof part.textDelta === 'string' ? part.textDelta : '';
+    const step = currentStep();
+    if (!step.text && !text.trim()) continue;
+    streamed += text;
+    step.text += text;
+    onSteps(steps);
+  }
+  if (streamError !== undefined) throw streamError;
+  const finalText = await result.text;
+  if (!streamed && finalText) {
+    currentStep().text = finalText;
+    onSteps(steps);
+  }
+  return { text: finalText || streamed, approvalRequests };
+}
+
+/**
+ * Keeps a long run inside the model's context: one oversized tool result is truncated, and once the
+ * results together pass the budget the oldest are replaced by a placeholder. Message structure is
+ * never changed, so reasoning and tool-call pairs stay valid for every provider. Cleared ids are
+ * remembered, so the prompt prefix stays stable (and cacheable) until the budget is passed again.
+ */
+function createCompactor() {
+  const cleared = new Set<string>();
+  const compact = (messages: ModelMessage[]): ModelMessage[] => {
+    const kept: Array<{ id: string; size: number }> = [];
+    const next = messages.map(message => message.role !== 'tool' ? message : { ...message, content: message.content.map(part => {
+      if (part.type !== 'tool-result') return part;
+      if (cleared.has(part.toolCallId)) return { ...part, output: { type: 'text' as const, value: CLEARED_RESULT } };
+      const text = part.output.type === 'text' ? part.output.value : JSON.stringify(part.output);
+      kept.push({ id: part.toolCallId, size: Math.min(text.length, TOOL_RESULT_CHAR_LIMIT) });
+      return text.length <= TOOL_RESULT_CHAR_LIMIT ? part : { ...part, output: { type: 'text' as const,
+        value: `${text.slice(0, TOOL_RESULT_CHAR_LIMIT)}\n[Tool result truncated: it was ${text.length} characters long.]` } };
+    }) });
+    let total = kept.reduce((sum, result) => sum + result.size, 0);
+    if (total <= CONTEXT_CHAR_BUDGET) return next;
+    // Always keep the newest result: the model has not read it yet.
+    for (const result of kept.slice(0, -1)) {
+      if (total <= CONTEXT_CHAR_BUDGET / 2) break;
+      cleared.add(result.id);
+      total -= result.size;
+    }
+    return compact(messages);
+  };
+  return compact;
+}
+
+export type AgentLoopResult = {
+  text: string;
+  /** The whole conversation, compacted. Pass it back as `messages` (plus a new user message) to continue. */
+  messages: ModelMessage[];
+  toolNames: string[];
+  /** The steps before the answer: what the model said along the way and the tools it called. */
+  steps: AgentStep[];
+  stepLimitReached: boolean;
+  /** The last step stopped at the model's output limit, so `text` may be cut off. */
+  outputLimitReached: boolean;
+};
+
+/**
+ * The agent run shared by desktop and iOS: stream model steps, pause for tool approvals, resume,
+ * and stop within the step budget. Callers own tools, policy, UI and persistence.
+ */
+export async function runAgentLoop({ client, instructions, messages: initialMessages, tools, signal, maxSteps = AGENT_MAX_STEPS,
+  onStatus, onSteps = () => {}, requestToolApproval, onStepEnd, onAudit }: {
+  client: AgentModelClient;
+  instructions: string;
+  messages: ModelMessage[];
+  tools: Record<string, Tool>;
+  signal: AbortSignal;
+  maxSteps?: number;
+  onStatus(status: string): void;
+  /** The run's steps so far, the last one live. The array keeps changing: read it before returning. */
+  onSteps?(steps: AgentStep[]): void;
+  requestToolApproval(request: { modelToolName: string; arguments: unknown }): Promise<ToolApprovalDecision>;
+  onStepEnd?(step: { toolCalls: Array<{ toolName: string }>; warnings?: unknown[]; usage: LanguageModelUsage }): void;
+  onAudit?(eventType: string, payload?: Record<string, unknown>): void;
+}): Promise<AgentLoopResult> {
+  const system: SystemModelMessage = { role: 'system', content: instructions, providerOptions: client.cacheMessageOptions };
+  const messages = [...initialMessages];
+  const stableTools = Object.fromEntries(Object.entries(tools).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+  const compact = createCompactor();
+  const toolNames: string[] = [];
+  const steps: AgentStep[] = [];
+  let text = '';
+  let usedSteps = 0;
+  let outputLimitReached = false;
+
+  while (true) {
+    onStatus('Thinking...');
+    const stepsBefore = usedSteps;
+    const result = streamText({
+      model: client.model,
+      onError: () => undefined,
+      instructions: system,
+      messages,
+      tools: stableTools,
+      providerOptions: client.providerOptions,
+      prepareStep: ({ messages: stepMessages, stepNumber }) => {
+        const lastStep = stepsBefore + stepNumber + 1 >= maxSteps;
+        const prepared = compact(lastStep ? [...stepMessages, WRAP_UP] : stepMessages);
+        return {
+          messages: client.prepareStep?.({ messages: prepared }).messages ?? prepared,
+          // `none` keeps the tool definitions in the request, so the cached prefix survives the final step.
+          ...(lastStep ? { toolChoice: 'none' as const } : {}),
+        };
+      },
+      // A hung tool fails as a tool error the model can read; it does not end the run.
+      timeout: { firstChunkMs: 180_000, chunkMs: 60_000, toolMs: 120_000 },
+      stopWhen: isStepCount(maxSteps - usedSteps),
+      abortSignal: signal,
+      onStepEnd: step => {
+        onStepEnd?.(step);
+        if (step.toolCalls.length > 0) {
+          onAudit?.('tool_requests', { toolCalls: step.toolCalls });
+          onStatus(`Using tools: ${step.toolCalls.map(call => String(call.toolName)).join(', ')}`);
+        } else {
+          onStatus('Thinking...');
+        }
+      },
+    });
+
+    const consumed = await consumeStream(result, steps, onSteps);
+    text = consumed.text;
+    const modelSteps = await result.steps;
+    usedSteps += modelSteps.length;
+    outputLimitReached = modelSteps.at(-1)?.finishReason === 'length';
+    for (const step of modelSteps) {
+      toolNames.push(...step.toolCalls.map(call => String(call.toolName)));
+      if (step.toolResults.length > 0) onAudit?.('tool_results', { toolResults: step.toolResults });
+    }
+    messages.push(...await result.responseMessages);
+    // A model that ignores `toolChoice: none` on its final step still asks for tools; those are closed below.
+    if (consumed.approvalRequests.length === 0 || usedSteps >= maxSteps) break;
+
+    onAudit?.('tool_approval_requests', { approvalRequests: consumed.approvalRequests });
+    const approvalResponses = [];
+    // One at a time: each request is its own decision on screen.
+    for (const request of consumed.approvalRequests) {
+      const decision = await requestToolApproval({ modelToolName: request.toolCall.toolName, arguments: request.toolCall.input });
+      approvalResponses.push({
+        type: 'tool-approval-response' as const, approvalId: request.approvalId, approved: decision.approved,
+        reason: decision.approved ? 'User approved tool execution.' : decision.message.trim() || 'User denied tool execution.',
+      });
+    }
+    onAudit?.('tool_approval_responses_sent', { approvalResponses });
+    messages.push({ role: 'tool', content: approvalResponses });
+  }
+
+  // The answer is the last step unless that step still asked for tools.
+  const work = steps.at(-1)?.tools.length === 0 ? steps.slice(0, -1) : steps;
+  return { text, messages: compact(closeUnansweredToolCalls(messages)), toolNames,
+    steps: work.filter(step => step.text.trim() || step.tools.length > 0), stepLimitReached: usedSteps >= maxSteps, outputLimitReached };
+}
+
+/**
+ * Gives every tool call the run left without a result a denied one. The SDK skips tools on a step that
+ * ends at the output limit, and the step limit leaves approval requests unanswered; a reply that
+ * carries an unanswered call fails with `MissingToolResultsError` before reaching the model.
+ */
+function closeUnansweredToolCalls(messages: ModelMessage[]): ModelMessage[] {
+  const answered = new Set(messages.flatMap(message => message.role !== 'tool' ? []
+    : message.content.flatMap(part => part.type === 'tool-result' ? [part.toolCallId] : [])));
+  const unanswered = messages.flatMap(message => message.role !== 'assistant' || typeof message.content === 'string' ? []
+    : message.content.filter((part): part is ToolCallPart => part.type === 'tool-call' && !part.providerExecuted && !answered.has(part.toolCallId)));
+  if (unanswered.length === 0) return messages;
+  return [...messages, { role: 'tool', content: unanswered.map(call => ({
+    type: 'tool-result' as const, toolCallId: call.toolCallId, toolName: call.toolName,
+    output: { type: 'execution-denied' as const, reason: 'The run ended before this tool could run.' },
+  })) }];
+}

@@ -5,6 +5,7 @@ import { logSidecar, parseElectronMessage, writeJsonLine } from './protocol';
 import { runAgent } from './runtime';
 import { testAgentProvider } from './provider-test';
 import { failedProviderTest } from '../shared/agent-provider';
+import type { ModelMessage } from 'ai';
 import type { AppConfig } from '../types/ipc';
 import type { ApprovalDecisionMessage } from './protocol';
 import type { ToolApprovalDecision, ToolApprovalRequest } from './runtime';
@@ -38,7 +39,10 @@ const mcpRegistry = new McpRegistry({
   transporter: new StdoutSidecarMessageTransporter(),
 });
 
-const APPROVAL_TIMEOUT_MS = 30_000;
+// Long enough to return from another app and read the arguments; the run waits, nothing else is blocked.
+const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+/** The latest completed run, kept in memory only so the next command can reply to it. */
+let lastConversation: { agentRunId: string; provider: string; messages: ModelMessage[] } | null = null;
 
 
 type PendingApproval = {
@@ -125,6 +129,8 @@ function handleLine(line: string): void {
       if (providerTest?.requestId === message.requestId) providerTest.controller.abort();
       break;
     case 'config:update':
+      // A disabled agent keeps nothing.
+      if (!message.config.agent.enabled) lastConversation = null;
       config = message.config;
       agentApiKey = message.agentApiKey;
       logSidecar('received config update');
@@ -132,7 +138,7 @@ function handleLine(line: string): void {
       break;
     case 'agent:start':
       {
-        const run = handleAgentStart(message.agentRunId, message.transcript, message.context);
+        const run = handleAgentStart(message.agentRunId, message.transcript, message.context, message.continueFrom);
         pendingRuns.add(run);
         void run.finally(() => pendingRuns.delete(run));
       }
@@ -157,8 +163,14 @@ function handleLine(line: string): void {
   }
 }
 
-async function handleAgentStart(agentRunId: string, transcript: string, context?: AgentRunContext): Promise<void> {
+async function handleAgentStart(agentRunId: string, transcript: string, context?: AgentRunContext, continueFrom?: string): Promise<void> {
   providerTest?.controller.abort();
+  // Taken once: a failed or cancelled reply ends the conversation instead of leaving it half-updated.
+  // Never sent to another provider, even if the provider changed while the answered run was still going.
+  const provider = JSON.stringify(config?.agent.provider);
+  const history = continueFrom && lastConversation?.agentRunId === continueFrom && lastConversation.provider === provider
+    ? lastConversation.messages : [];
+  lastConversation = null;
   const previousAgentRunId = activeAgentRunId;
   const previousAbortController = activeAbortController;
 
@@ -201,19 +213,19 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     );
 
     try {
-      await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, runController.signal, {
+      const messages = await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, runController.signal, {
         onStatus: (status) => {
           if (activeAgentRunId !== agentRunId) return;
           auditStore.record(agentRunId, 'status', { status });
           writeJsonLine({ type: 'agent:status', agentRunId, status });
         },
-        onResponseDelta: (delta, response) => {
+        onSteps: (steps) => {
           if (activeAgentRunId !== agentRunId) return;
-          writeJsonLine({ type: 'agent:response-delta', agentRunId, delta, response });
+          writeJsonLine({ type: 'agent:steps', agentRunId, steps });
         },
-        onCompleted: (response, toolSummary) => {
+        onCompleted: (response, toolSummary, steps) => {
           if (activeAgentRunId !== agentRunId) return;
-          writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary });
+          writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary, steps });
           clearActiveRun();
         },
         onFailed: (error) => {
@@ -234,7 +246,11 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
         onMemoryStatus: status => {
           if (activeAgentRunId === agentRunId) writeJsonLine({ type: 'memory:status', agentRunId, status });
         },
-      }, currentAgentApiKey, context);
+      }, currentAgentApiKey, context, history);
+      // A newer run may have started while this one finished; only the latest answer can be replied to.
+      if (messages && (activeAgentRunId === null || activeAgentRunId === agentRunId)) {
+        lastConversation = { agentRunId, provider: JSON.stringify(currentConfig.agent.provider), messages };
+      }
     } finally {
       await toolSnapshot.close();
     }

@@ -1,14 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlertTriangle, Bot, Check, ShieldQuestion } from 'lucide-react';
+import { AlertTriangle, Bot, Check, ShieldQuestion, Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type {
   AgentApprovalChoice,
+  AgentStep,
+  AgentThread,
   DictationRecoveryAction,
   RuntimePresentationSnapshot,
 } from '../types/ipc';
 import { Button } from './components/ui/button';
 import { Textarea } from './components/ui/textarea';
+import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from './components/ai-elements/chain-of-thought';
 import { RecordingPopup } from './RecordingPopup';
 import { renderMarkdown } from './markdown';
 
@@ -51,11 +54,17 @@ export function RuntimeShellSurface() {
     case 'agent-status':
       return (
         <AgentCard
+          key={snapshot.agentRunId ?? undefined}
           tone="primary"
           icon={Bot}
           title="Agent"
-          live={{ role: 'status', 'aria-live': 'polite' }}
+          // A conversation is announced by its status alone, not re-read in full.
+          live={snapshot.thread ? undefined : { role: 'status', 'aria-live': 'polite' }}
+          announcement={snapshot.thread ? snapshot.message : undefined}
+          growRef={snapshot.thread !== undefined}
+          measureKey={snapshot.revision}
         >
+          <Thread thread={snapshot.thread} />
           {isThinkingMessage(snapshot.message) ? <ThinkingDots /> : snapshot.message}
         </AgentCard>
       );
@@ -71,9 +80,8 @@ export function RuntimeShellSurface() {
           growRef
           measureKey={snapshot.revision}
         >
-          <div aria-live="off" className="break-words">
-            {renderMarkdown(snapshot.response)}
-          </div>
+          <Thread thread={snapshot.thread} />
+          <StreamingSteps steps={snapshot.steps} />
         </AgentCard>
       );
     case 'agent-completed':
@@ -97,12 +105,17 @@ export function RuntimeShellSurface() {
             </Button>
           }
         >
+          <Thread thread={snapshot.thread} />
+          <Steps steps={snapshot.steps} live={false} />
           <div className="break-words">{renderMarkdown(snapshot.response)}</div>
           {snapshot.toolSummary.length > 0 ? (
             <p className="mt-3 break-words border-t border-border/60 pt-2.5 text-xs text-muted-foreground">
-              Used {snapshot.toolSummary.slice(0, 3).join(' · ')}
+              {snapshot.toolSummary.slice(0, 3).join(' · ')}
             </p>
           ) : null}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Use the Agent shortcut to reply. Dismiss to start fresh.
+          </p>
         </AgentCard>
       );
     case 'agent-failed':
@@ -133,6 +146,70 @@ export function RuntimeShellSurface() {
       return _exhaustive;
     }
   }
+}
+
+/** The spoken commands as chat bubbles: earlier exchanges from replies, then the one being answered. */
+function Thread({ thread }: { thread?: AgentThread }) {
+  if (!thread) return null;
+  return (
+    <>
+      {thread.turns.map((turn, index) => (
+        <div key={index} className="mb-3 opacity-75">
+          <CommandBubble text={turn.command} />
+          <div className="break-words">{renderMarkdown(turn.response)}</div>
+        </div>
+      ))}
+      <CommandBubble text={thread.command} />
+    </>
+  );
+}
+
+/** A step that called no tools may be the answer: it streams below the steps until a tool call makes it one. */
+function StreamingSteps({ steps }: { steps: AgentStep[] }) {
+  const answer = steps.at(-1)?.tools.length === 0 ? steps.at(-1) : undefined;
+  return (
+    <>
+      <Steps steps={answer ? steps.slice(0, -1) : steps} live />
+      {answer ? <div aria-live="off" className="break-words">{renderMarkdown(answer.text)}</div> : null}
+    </>
+  );
+}
+
+/** What the agent said and which tools it called on the way to the answer. Open while it works, folded once it answers. */
+function Steps({ steps, live }: { steps: AgentStep[]; live: boolean }) {
+  const work = steps.filter(step => step.text.trim() || step.tools.length > 0);
+  if (work.length === 0) return null;
+  const tools = [...new Set(work.flatMap(step => step.tools))];
+  return (
+    <ChainOfThought defaultOpen={live} className="mb-3 border-b border-border/60 pb-2.5">
+      <ChainOfThoughtHeader>
+        {work.length === 1 ? '1 step' : `${work.length} steps`}{tools.length > 0 ? ` · ${tools.join(', ')}` : ''}
+      </ChainOfThoughtHeader>
+      <ChainOfThoughtContent>
+        {work.map((step, index) => (
+          <div key={index} className="space-y-1">
+            {step.text.trim() ? <ChainOfThoughtStep label={renderMarkdown(step.text)} /> : null}
+            {step.tools.map((tool, toolIndex) => (
+              <ChainOfThoughtStep
+                key={toolIndex}
+                icon={Wrench}
+                label={tool}
+                status={live && index === work.length - 1 ? 'active' : 'complete'}
+              />
+            ))}
+          </div>
+        ))}
+      </ChainOfThoughtContent>
+    </ChainOfThought>
+  );
+}
+
+function CommandBubble({ text }: { text: string }) {
+  return (
+    <p className="mb-2 ml-auto w-fit max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-muted px-3 py-1.5 text-[13px] leading-5 text-foreground">
+      <span className="sr-only">You said: </span>{text}
+    </p>
+  );
 }
 
 function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnapshot, { kind: 'recording' }> }) {

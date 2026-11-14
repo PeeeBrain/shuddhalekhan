@@ -3,7 +3,7 @@ import { Alert, AppState, Linking, Platform } from 'react-native';
 import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions } from 'expo-audio';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
-import { MobileController, type Recorder } from './controller';
+import { MobileController, type Recorder, type RecordingIntent } from './controller';
 import { chatGptAuth, loadSettings, saveSettings } from './native-settings';
 import { localModelKey, transcribeOnDevice, useOnDeviceModel } from './on-device';
 import { signGoogleJwt } from './native-google-auth';
@@ -102,7 +102,6 @@ export function useMobileApp() {
   const [now, setNow] = useState(Date.now);
 
   const startSession = async () => {
-    // The session holds the microphone; in-app recording stays disabled until it ends.
     if (controller.getSnapshot().phase !== 'idle') throw new Error('Finish the current command first.');
     const settings = controller.getSnapshot().settings;
     // Agent readiness is fixed for the session; a cold launch from the keyboard must not read sign-in before it loads.
@@ -160,7 +159,16 @@ export function useMobileApp() {
     chatgpt, signInChatGpt: chatGptAuth.signIn, signOutChatGpt: chatGptAuth.signOut, listChatGptModels: chatGptAuth.listModels,
     localModel: localModels[localModelKey(state.settings.language)], localModels, installLocalModel, preparingModel,
     keyboardSession, stopKeyboardSession, startKeyboardSession: startSession,
-    startRecording: controller.startRecording, stopRecording: controller.stopRecording, cancel: controller.cancel,
+    // The keyboard session holds the microphone, so recording here ends it first.
+    // The controller is told directly rather than waiting for the native end event.
+    startRecording: async (intent: RecordingIntent) => {
+      if (keyboardSession.active) {
+        await stopKeyboardSession();
+        await controller.handleKeyboardSession({ endsAt: 0, phase: 'idle', agentReady: false });
+      }
+      await controller.startRecording(intent);
+    },
+    stopRecording: controller.stopRecording, cancel: controller.cancel,
     retryAgent: controller.retryAgent, resolveApproval: controller.resolveApproval,
     saveSettings: controller.saveSettings, resetSettings: controller.resetSettings,
     clearResults: controller.clearResults, dismissError: controller.dismissError,

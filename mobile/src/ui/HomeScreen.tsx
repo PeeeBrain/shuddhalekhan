@@ -7,6 +7,7 @@ import { disabled, pickerStyle, tag } from '@expo/ui/swift-ui/modifiers';
 import { isParakeetLanguage, languageLabel } from '../languages';
 import { recordingLimitSeconds, transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
+import type { AgentStep } from '@shuddhalekhan/shared/agent-loop';
 import { Button, Card, color, styles as kit, type } from './kit';
 import { Markdown } from './Markdown';
 import type { SettingsPage } from './SettingsScreen';
@@ -33,10 +34,7 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   const onDevice = settings.transcriptionSource === 'on-device';
   const configured = onDevice ? app.localModel.kind === 'ready' : transcriptionReady(settings);
   const canRetry = idle && settings.agentEnabled && transcript.trim() !== '';
-  // The keyboard session holds the microphone, so the in-app recorder has nothing to offer until it ends.
-  const sessionOn = app.keyboardSession.active;
-  const showRecorder = !(sessionOn && idle);
-  const setupCard = idle && !configured && !sessionOn;
+  const setupCard = idle && !configured && !app.keyboardSession.active;
   const line = (status && !restStatus.has(status) ? status : '') || busyLabel[phase] || '';
 
   return (
@@ -70,8 +68,6 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
           </Card>
         ) : null}
 
-        {sessionOn ? <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} /> : null}
-
         {setupCard ? (
           <Card>
             <Text style={type.headline}>{onDevice ? 'Download a speech model' : 'Set up transcription'}</Text>
@@ -80,24 +76,41 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
           </Card>
         ) : null}
 
-        {showRecorder ? (
-          <View style={home.hero}>
-            {settings.agentEnabled ? (
-              <Host matchContents={{ vertical: true }} colorScheme="dark" style={home.modes}>
-                <Picker selection={intent} onSelectionChange={v => setPicked(v === 'agent' ? 'agent' : 'dictation')} modifiers={[pickerStyle('segmented'), disabled(!idle)]}>
-                  <SwiftText modifiers={[tag('dictation')]}>Dictation</SwiftText>
-                  <SwiftText modifiers={[tag('agent')]}>Agent</SwiftText>
-                </Picker>
-              </Host>
-            ) : null}
-            <RecordControl app={app} intent={intent} configured={configured} />
-            <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>{line}</Text>
-          </View>
-        ) : null}
+        <View style={home.hero}>
+          {settings.agentEnabled ? (
+            <Host matchContents={{ vertical: true }} colorScheme="dark" style={home.modes}>
+              <Picker selection={intent} onSelectionChange={v => setPicked(v === 'agent' ? 'agent' : 'dictation')} modifiers={[pickerStyle('segmented'), disabled(!idle)]}>
+                <SwiftText modifiers={[tag('dictation')]}>Dictation</SwiftText>
+                <SwiftText modifiers={[tag('agent')]}>Agent</SwiftText>
+              </Picker>
+            </Host>
+          ) : null}
+          <RecordControl app={app} intent={intent} configured={configured} />
+          <Text style={[type.footnote, home.status]} accessibilityLiveRegion="polite" selectable>{line}</Text>
+        </View>
 
-        {sessionOn ? null : <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} />}
+        {/* One slot for both states, so starting a session doesn't remount the card mid-layout. */}
+        <KeyboardSession app={app} onSetUp={() => onOpenSettings('keyboard')} />
 
-        {transcript ? (
+        {app.intent === 'agent' && (transcript || response || app.turns.length > 0) ? (
+          <Card agent>
+            <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">Agent</Text>
+            {app.turns.map((turn, index) => (
+              <View key={index} style={home.turn}>
+                <Bubble text={turn.command} />
+                <Markdown>{turn.response}</Markdown>
+              </View>
+            ))}
+            {transcript ? <Bubble text={transcript} /> : null}
+            {response ? <Steps steps={app.steps} /> : null}
+            {response ? <Markdown>{response}</Markdown> : null}
+            <View style={kit.buttons}>
+              <CopyShare text={response || transcript} />
+              {canRetry && !response ? <Button label="Send Again" systemImage="paperplane" small kind="agent" onPress={app.retryAgent} /> : null}
+            </View>
+            {app.canReply ? <Text style={type.caption}>Record an Agent command to reply. Clear starts fresh.</Text> : null}
+          </Card>
+        ) : transcript ? (
           <Card>
             <Text style={type.caption} accessibilityRole="header">Transcript</Text>
             <Text style={type.body} selectable>{transcript}</Text>
@@ -108,15 +121,7 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
           </Card>
         ) : null}
 
-        {response ? (
-          <Card agent>
-            <Text style={[type.caption, { color: color.vermilion }]} accessibilityRole="header">Agent response</Text>
-            <Markdown>{response}</Markdown>
-            <View style={kit.buttons}><CopyShare text={response} /></View>
-          </Card>
-        ) : null}
-
-        {idle && (transcript || response) ? <View style={home.clear}><Button label="Clear" kind="ghost" onPress={app.clearResults} /></View> : null}
+        {idle && (transcript || response || app.turns.length > 0) ? <View style={home.clear}><Button label="Clear" kind="ghost" onPress={app.clearResults} /></View> : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -163,15 +168,16 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
     );
   }
 
-  const off = phase !== 'idle' || !configured || app.keyboardSession.active || app.keyboardSession.starting;
+  // A keyboard session gives up the microphone to a tap here, but not mid-utterance.
+  const off = phase !== 'idle' || !configured || app.keyboardSession.busy || app.keyboardSession.starting;
   const limit = recordingLimitSeconds(app.settings);
   return (
     <Pressable
-      onPress={() => app.startRecording(intent)}
+      onPress={() => { void app.startRecording(intent); }}
       disabled={off}
       accessibilityRole="button"
       accessibilityLabel={agent ? 'Record agent command' : 'Start dictation'}
-      accessibilityHint={`Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}`}
+      accessibilityHint={`Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}${app.keyboardSession.active ? ' and ends the keyboard session' : ''}`}
       accessibilityState={{ disabled: off }}
       style={({ pressed }) => [home.record, home.recordIdle, shape, { borderColor: tint }, pressed && { backgroundColor: color.raised }, off && { opacity: 0.4 }]}
     >
@@ -193,14 +199,14 @@ function KeyboardSession({ app, onSetUp }: { app: App; onSetUp: () => void }) {
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={type.headline} accessibilityRole="header">Keyboard session on</Text>
             <Text style={type.footnote}>
-              {session.remainingSeconds === 0 && session.busy ? 'Finishing this utterance…' : 'Switch back and use the keyboard. Only audio between Dictate and Stop is kept.'}
+              {session.remainingSeconds === 0 && session.busy ? 'Finishing this utterance…' : 'Switch back and use the keyboard. Only audio between Dictate and Stop is kept. Recording here ends the session.'}
             </Text>
           </View>
           <Text style={[type.title, home.timer, { color: session.remainingSeconds <= 60 ? color.ochre : color.blue }]} accessibilityLabel={`${m} minutes ${s} seconds left`}>
             {m}:{s}
           </Text>
+          <Button label="Stop" kind="destructive" small onPress={() => { void app.stopKeyboardSession(); }} />
         </View>
-        <Button label="Stop Session" kind="destructive" wide onPress={() => { void app.stopKeyboardSession(); }} />
       </Card>
     );
   }
@@ -247,6 +253,37 @@ function localModelHint(model: App['localModel']): string {
   }
 }
 
+/** A spoken Agent command, shown as the user's side of the conversation. */
+function Bubble({ text }: { text: string }) {
+  return (
+    <View style={home.bubble} accessibilityLabel={`You said: ${text}`}>
+      <Text style={type.body} selectable>{text}</Text>
+    </View>
+  );
+}
+
+/** What the agent said and which tools it called on the way to the answer, folded until tapped. */
+function Steps({ steps }: { steps: AgentStep[] }) {
+  const [open, setOpen] = useState(false);
+  if (steps.length === 0) return null;
+  const tools = [...new Set(steps.flatMap(step => step.tools))];
+  return (
+    <View style={home.steps}>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}>
+        <Text style={type.caption}>
+          {open ? '▾' : '▸'} {steps.length === 1 ? '1 step' : `${steps.length} steps`}{tools.length > 0 ? ` · ${tools.join(', ')}` : ''}
+        </Text>
+      </Pressable>
+      {open ? steps.map((step, index) => (
+        <View key={index} style={home.step}>
+          {step.text.trim() ? <Text style={type.footnote} selectable>{step.text.trim()}</Text> : null}
+          {step.tools.map((tool, toolIndex) => <Text key={toolIndex} style={type.footnote}>🔧 {tool}</Text>)}
+        </View>
+      )) : null}
+    </View>
+  );
+}
+
 function CopyShare({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -283,4 +320,8 @@ const home = StyleSheet.create({
   status: { textAlign: 'center', minHeight: 18 },
   sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   clear: { alignItems: 'center' },
+  turn: { gap: 8, opacity: 0.75 },
+  steps: { gap: 6 },
+  step: { gap: 2, borderLeftWidth: 2, borderLeftColor: color.raised, paddingLeft: 8 },
+  bubble: { alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: color.raised, borderRadius: 16, borderBottomRightRadius: 4, paddingHorizontal: 12, paddingVertical: 6 },
 });

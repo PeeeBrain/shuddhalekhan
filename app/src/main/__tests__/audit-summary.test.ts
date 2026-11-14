@@ -32,4 +32,18 @@ describe('summarizeAuditEvents', () => {
     expect(summaries.find((run) => run.agentRunId === 'run-cancelled')).toMatchObject({ status: 'cancelled' });
     expect(summaries.find((run) => run.agentRunId === 'run-active')).toMatchObject({ status: 'running' });
   });
+
+  it('keeps a reply in the run it answers: named by the first command, status from the latest reply', () => {
+    const [summary] = summarizeAuditEvents(
+      [
+        { agent_run_id: 'run-1', event_type: 'run_started', payload_json: JSON.stringify({ transcript: 'Weather?' }), created_at: '2026-06-25T10:00:00.000Z' },
+        { agent_run_id: 'run-1', event_type: 'run_completed', payload_json: JSON.stringify({ response: 'Which city?' }), created_at: '2026-06-25T10:00:01.000Z' },
+        { agent_run_id: 'run-1', event_type: 'run_started', payload_json: JSON.stringify({ transcript: 'Pune.' }), created_at: '2026-06-25T10:00:10.000Z' },
+      ],
+      Date.parse('2026-06-25T11:00:00.000Z')
+    );
+
+    // The reply never finished, so the run is interrupted, not still showing the earlier answer's status.
+    expect(summary).toMatchObject({ transcript: 'Weather?', status: 'interrupted' });
+  });
 });

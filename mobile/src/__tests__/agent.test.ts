@@ -1,8 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, jest, test } from 'bun:test';
 import { z } from 'zod';
 import { runAgent } from '../agent';
 import { MCPConnection } from '../mcp';
 import { defaultSettings, mobileSettingsSchema, type MobileSettings, type MCPServerSettings } from '../settings';
+import { chatReply } from './model-stream';
 
 const rpcRequestSchema = z.object({
   jsonrpc: z.literal('2.0'),
@@ -113,22 +114,10 @@ const modelRequestSchema = z.object({
     tool_call_id: z.string().optional(),
   }).passthrough()),
   tools: z.array(z.object({ type: z.literal('function'), function: z.object({ name: z.string() }).passthrough() })).optional(),
-  parallel_tool_calls: z.boolean().optional(),
 }).passthrough();
 
 function toolCallResponse(): Response {
-  return Response.json({ choices: [{
-    message: {
-      role: 'assistant',
-      content: null,
-      tool_calls: [{
-        id: 'call-search-1',
-        type: 'function',
-        function: { name: 'mcp_1_0', arguments: '{"query":"quarterly plan"}' },
-      }],
-    },
-    finish_reason: 'tool_calls',
-  }] });
+  return chatReply({ id: 'call-search-1', name: 'mcp_1_0', arguments: '{"query":"quarterly plan"}' });
 }
 
 describe('agent HTTP and MCP flow', () => {
@@ -218,18 +207,16 @@ describe('agent HTTP and MCP flow', () => {
   test('approves an MCP tool call, sends its result back to the model, and returns the continuation', async () => {
     const mcpState = newMCPFixtureState();
     let modelRequests = 0;
-    const providerRequests: Array<{ authorization: string | null; body: z.infer<typeof modelRequestSchema> }> = [];
+    const providerRequests: Array<{ path: string; authorization: string | null; body: z.infer<typeof modelRequestSchema> }> = [];
     const approvals: Array<{ serverName: string; toolName: string; arguments: string }> = [];
     await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
       await withServer(async request => {
         const body = modelRequestSchema.parse(await request.json());
-        providerRequests.push({ authorization: request.headers.get('authorization'), body });
+        providerRequests.push({ path: new URL(request.url).pathname, authorization: request.headers.get('authorization'), body });
         modelRequests++;
-        return modelRequests === 1
-          ? toolCallResponse()
-          : Response.json({ choices: [{ message: { role: 'assistant', content: 'I found the quarterly plan.' }, finish_reason: 'stop' }] });
+        return modelRequests === 1 ? toolCallResponse() : chatReply('I found the quarterly plan.');
       }, async providerUrl => {
-        const answer = await runAgent({
+        const { text } = await runAgent({
           transcript: 'Find the quarterly plan.',
           settings: agentSettings(providerUrl, mcpUrl),
           signal: new AbortController().signal,
@@ -241,13 +228,14 @@ describe('agent HTTP and MCP flow', () => {
           },
         });
 
-        expect(answer).toBe('I found the quarterly plan.');
+        expect(text).toBe('I found the quarterly plan.');
         expect(approvals).toEqual([{ serverName: 'Test Tools', toolName: 'search', arguments: '{\n  "query": "quarterly plan"\n}' }]);
         expect(modelRequests).toBe(2);
+        // The saved URL is used exactly, whatever path the SDK would build.
+        expect(providerRequests.map(item => item.path)).toEqual(['/v1/chat/completions', '/v1/chat/completions']);
         expect(providerRequests.map(item => item.authorization)).toEqual(['Bearer provider-secret', 'Bearer provider-secret']);
         expect(providerRequests[0]?.body.model).toBe('test-model');
         expect(providerRequests[0]?.body.tools?.map(tool => tool.function.name)).toEqual(['mcp_1_0']);
-        expect(providerRequests[0]?.body.parallel_tool_calls).toBe(false);
         const toolResult = providerRequests[1]?.body.messages.find(message => message.role === 'tool');
         expect(toolResult?.tool_call_id).toBe('call-search-1');
         expect(toolResult?.content).toContain('A matching document was found.');
@@ -261,19 +249,24 @@ describe('agent HTTP and MCP flow', () => {
     });
   });
 
-  test('a denied tool never reaches the MCP server and closes its session', async () => {
+  test('a denied tool never reaches the MCP server; the model is told and answers', async () => {
     const mcpState = newMCPFixtureState();
+    const bodies: string[] = [];
     await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
-      await withServer(() => toolCallResponse(), async providerUrl => {
-        const failure = await errorFrom(runAgent({
+      await withServer(async request => {
+        bodies.push(await request.text());
+        return bodies.length === 1 ? toolCallResponse() : chatReply('I did not search.');
+      }, async providerUrl => {
+        const { text } = await runAgent({
           transcript: 'Search something.',
           settings: agentSettings(providerUrl, mcpUrl),
           signal: new AbortController().signal,
           fetch: globalThis.fetch,
           onStatus: () => {},
           approve: async () => false,
-        }));
-        expect(failure.message).toBe('Tool denied. The agent run stopped. Earlier approved actions may already have completed.');
+        });
+        expect(text).toBe('I did not search.');
+        expect(bodies[1]).toContain('User denied tool execution.');
         expect(mcpState.calls).toHaveLength(0);
         expect(mcpState.closes).toBe(1);
       });
@@ -289,20 +282,17 @@ describe('agent HTTP and MCP flow', () => {
         let step = 0;
         await withServer(() => {
           step++;
-          return Response.json({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [{
-            id: `call-${step}`, type: 'function', function: { name: `mcp_${step}_0`, arguments: '{"query":"plan"}' },
-          }] }, finish_reason: 'tool_calls' }] });
+          return step > 2 ? chatReply('Done.') : chatReply({ id: `call-${step}`, name: `mcp_${step}_0`, arguments: '{"query":"plan"}' });
         }, async providerUrl => {
           const base = agentSettings(providerUrl, allowedUrl);
           const settings = mobileSettingsSchema.parse({ ...base, mcpServers: [
             { ...base.mcpServers[0], toolPolicies: { search: 'alwaysAllow' } },
             { ...base.mcpServers[0], id: 'other', name: 'Other Tools', endpoint: `${askingUrl}/mcp` },
           ] });
-          const failure = await errorFrom(runAgent({ transcript: 'Find a plan.', settings,
+          await runAgent({ transcript: 'Find a plan.', settings,
             signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {},
             approve: async approval => { approvals.push(approval.serverName); return false; },
-          }));
-          expect(failure.message).toContain('Tool denied');
+          });
           expect(allowed.calls).toEqual([{ name: 'search', arguments: { query: 'plan' } }]);
           expect(asking.calls).toHaveLength(0);
           expect(approvals).toEqual(['Other Tools']);
@@ -315,23 +305,24 @@ describe('agent HTTP and MCP flow', () => {
 
   test('disabled tools are not advertised and a guessed call cannot execute them', async () => {
     const mcp = newMCPFixtureState();
-    let advertised: string[] = [];
+    const advertised: string[] = [];
     let approvals = 0;
     await withServer(agentMCPHandler(mcp), async mcpUrl => {
+      let requests = 0;
       await withServer(async request => {
         const body = modelRequestSchema.parse(await request.json());
-        advertised = (body.tools ?? []).map(tool => tool.function.name);
-        return toolCallResponse();
+        advertised.push(...(body.tools ?? []).map(tool => tool.function.name));
+        return ++requests === 1 ? toolCallResponse() : chatReply('That tool is unavailable.');
       }, async providerUrl => {
         const base = agentSettings(providerUrl, mcpUrl);
         const settings = mobileSettingsSchema.parse({ ...base, mcpServers: base.mcpServers.map(server => ({
           ...server, toolPolicies: { search: 'disabled' },
         })) });
-        const failure = await errorFrom(runAgent({ transcript: 'Search.', settings,
+        await runAgent({ transcript: 'Search.', settings,
           signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {},
           approve: async () => { approvals++; return true; },
-        }));
-        expect(failure.message).toContain('unavailable tool');
+        });
+        expect(requests).toBe(2);
         expect(advertised).toEqual([]);
         expect(approvals).toBe(0);
         expect(mcp.calls).toHaveLength(0);
@@ -384,131 +375,52 @@ test('unreachable endpoints name the failing stage: agent model vs MCP server', 
   expect((await run(base)).message).toStartWith('MCP server "Test Tools": Could not reach the endpoint.');
 });
 
-describe('provider-specific agent continuation', () => {
-  test('ChatGPT retains finalized streamed items when completed output is empty and continues the tool loop', async () => {
-    const mcpState = newMCPFixtureState();
-    const bearers: (string | null)[] = [];
-    const inputs: unknown[][] = [];
-    const firstOutput = [
-      { type: 'reasoning', id: 'rs-1', encrypted_content: 'opaque-reasoning', summary: [] },
-      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Checking the plan.' }] },
-      { type: 'function_call', call_id: 'call-1', name: 'mcp_1_0', arguments: '{"query":"plan"}' },
-    ];
-    let issued = 0;
-    await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
-      const answer = await runAgent({ transcript: 'Find the plan.', signal: new AbortController().signal,
-        settings: { ...agentSettings('https://api.openai.com', mcpUrl), agentProvider: 'chatgpt', agentApiMode: 'responses', agentAuth: 'none', agentKey: '',
-          agentEndpoint: 'https://api.openai.com/v1/responses' },
-        fetch: Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
-          if (String(input) !== 'https://api.openai.com/v1/responses') return globalThis.fetch(input, init);
-          bearers.push(new Headers(init?.headers).get('authorization'));
-          inputs.push(z.object({ input: z.array(z.unknown()) }).parse(JSON.parse(String(init?.body))).input);
-          const output = bearers.length === 1 ? firstOutput
-            : [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Found it.' }] }];
-          // Observed on build 14: output_item.done carries the items; response.completed has output: [].
-          const events = output.map((item, output_index) => ({ type: 'response.output_item.done', output_index, item }));
-          return new Response([...events, { type: 'response.completed', response: { status: 'completed', output: [] } }]
-            .map(event => `data: ${JSON.stringify(event)}\n\n`).join(''));
-        }, { preconnect: globalThis.fetch.preconnect }),
-        getChatGptAccessToken: async () => `step-token-${++issued}`, onStatus: () => {}, approve: async () => true,
-      });
-      expect(answer).toBe('Found it.');
-      expect(bearers).toEqual(['Bearer step-token-1', 'Bearer step-token-2']);
-      expect(mcpState.calls).toHaveLength(1);
-      expect(mcpState.requests.every(request => request.authorization === 'Bearer mcp-secret')).toBe(true);
-      expect(inputs[1]?.slice(2, 5)).toEqual([
-        firstOutput[0], { role: 'assistant', content: 'Checking the plan.' }, firstOutput[2],
+// Provider wire formats (Responses echo, cache markers, reasoning details) are shared with desktop and
+// covered by app/src/agent/__tests__/fixtures/provider-contract.ts. These cover what iOS adds.
+describe('conversation and limits', () => {
+  test('a reply sends the earlier exchange before the new command', async () => {
+    const bodies: z.infer<typeof modelRequestSchema>[] = [];
+    await withServer(async request => {
+      bodies.push(modelRequestSchema.parse(await request.json()));
+      return chatReply(bodies.length === 1 ? 'Which city?' : 'It is sunny in Pune.');
+    }, async url => {
+      const settings = { ...agentSettings(url, url), mcpServers: [] };
+      const run = (transcript: string, history?: Awaited<ReturnType<typeof runAgent>>['messages']) => runAgent({ transcript, settings, history,
+        signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {}, approve: async () => true });
+      const first = await run('What is the weather?');
+      expect((await run('Pune.', first.messages)).text).toBe('It is sunny in Pune.');
+      expect(bodies[1]?.messages.map(message => [message.role, message.content])).toEqual([
+        ['system', expect.stringContaining('<identity>')],
+        ['user', expect.stringMatching(/\n\nWhat is the weather\?$/)],
+        ['assistant', 'Which city?'],
+        ['user', expect.stringMatching(/\n\nPune\.$/)],
       ]);
-      expect(inputs[1]?.[5]).toMatchObject({ type: 'function_call_output', call_id: 'call-1' });
-    });
-  });
-  const toolResult = JSON.stringify({ content: [{ type: 'text', text: 'A matching document was found.' }] });
-  const marked = (type: string, text: unknown) => [{ type, text, prompt_cache_breakpoint: { mode: 'explicit' } }];
-
-  test('Responses runs echo reasoning and calls statelessly, correlate each approved result, and move cache breakpoints', async () => {
-    const mcpState = newMCPFixtureState();
-    const bodies: Array<Record<string, unknown> & { input: unknown[] }> = [];
-    const keys: Array<string | null> = [];
-    const step = (n: number) => ({ status: 'completed', output: [
-      { type: 'reasoning', id: `rs-${n}`, encrypted_content: `opaque-${n}`, summary: [] },
-      { type: 'web_search_call', id: 'ignored' },
-      { type: 'function_call', id: `fc-${n}`, call_id: `call-${n}`, name: 'mcp_1_0', arguments: `{"query":"q${n}"}` },
-    ] });
-    await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
-      await withServer(async request => {
-        bodies.push(await request.json() as (typeof bodies)[number]);
-        keys.push(request.headers.get('api-key'));
-        return Response.json(bodies.length < 3 ? step(bodies.length)
-          : { status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Both found.' }] }] });
-      }, async providerUrl => {
-        const approvals: string[] = [];
-        const answer = await runAgent({
-          transcript: 'Find two things.', signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {},
-          settings: { ...agentSettings(providerUrl, mcpUrl), agentProvider: 'azure-openai', agentApiMode: 'responses', agentAuth: 'api-key',
-            agentEndpoint: `${providerUrl}/openai/v1/responses`, agentReasoning: 'high', agentCache: true },
-          approve: async approval => { approvals.push(approval.arguments); return true; },
-        });
-        expect(answer).toBe('Both found.');
-        expect(approvals).toEqual(['{\n  "query": "q1"\n}', '{\n  "query": "q2"\n}']);
-        expect(mcpState.calls.map(call => call.arguments)).toEqual([{ query: 'q1' }, { query: 'q2' }]);
-        expect(keys).toEqual(['provider-secret', 'provider-secret', 'provider-secret']);
-        expect(bodies[0]).toMatchObject({ store: false, include: ['reasoning.encrypted_content'], reasoning: { effort: 'high' },
-          prompt_cache_key: 'shuddhalekhan-mobile-agent-v1' });
-        const system = bodies[0]!.input[0];
-        const result = (n: number) => ({ type: 'function_call_output', call_id: `call-${n}`, output: toolResult });
-        const echoed = (n: number) => [
-          { type: 'reasoning', id: `rs-${n}`, encrypted_content: `opaque-${n}`, summary: [] },
-          { type: 'function_call', call_id: `call-${n}`, name: 'mcp_1_0', arguments: `{"query":"q${n}"}` },
-        ];
-        // The system prompt and the latest two inputs carry breakpoints; earlier inputs revert to plain strings.
-        expect(bodies[2]!.input).toEqual([
-          system,
-          { role: 'user', content: expect.stringMatching(/<runtime_context>[\s\S]*<\/runtime_context>\n\nFind two things\.$/) },
-          ...echoed(1), { ...result(1), output: marked('input_text', toolResult) },
-          ...echoed(2), { ...result(2), output: marked('input_text', toolResult) },
-        ]);
-        expect(bodies[1]!.input[1]).toEqual({ role: 'user', content: [{ type: 'input_text',
-          text: expect.stringMatching(/\n\nFind two things\.$/), prompt_cache_breakpoint: { mode: 'explicit' } }] });
-      });
     });
   });
 
-  test('Chat Completions echoes OpenRouter reasoning details with the tool call so reasoning models can continue', async () => {
-    const mcpState = newMCPFixtureState();
-    const bodies: Array<{ messages: Array<Record<string, unknown>>; reasoning?: unknown }> = [];
-    const referers: Array<string | null> = [];
-    const details = [{ type: 'reasoning.encrypted', data: 'opaque' }];
-    await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
-      await withServer(async request => {
-        bodies.push(await request.json() as (typeof bodies)[number]);
-        referers.push(request.headers.get('http-referer'));
-        return bodies.length === 1
-          ? Response.json({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: null, reasoning_details: details,
-            tool_calls: [{ id: 'call-1', type: 'function', function: { name: 'mcp_1_0', arguments: '{"query":"plan"}' } }] } }] })
-          : Response.json({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Found it.' } }] });
-      }, async providerUrl => {
-        const answer = await runAgent({
-          transcript: 'Find the plan.', signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {}, approve: async () => true,
-          settings: { ...agentSettings(providerUrl, mcpUrl), agentProvider: 'openrouter', agentReasoning: 'none' },
-        });
-        expect(answer).toBe('Found it.');
-        expect(referers[0]).toBe('https://github.com/parthashirolkar/shuddhalekhan');
-        expect(bodies[0]?.reasoning).toEqual({ enabled: false });
-        expect(bodies[1]?.messages[2]).toMatchObject({ role: 'assistant', reasoning_details: details, tool_calls: [{ id: 'call-1' }] });
-        expect(bodies[1]?.messages[3]).toMatchObject({ role: 'tool', tool_call_id: 'call-1',
-          content: [{ type: 'text', text: toolResult, cache_control: { type: 'ephemeral' } }] });
-      });
-    });
+  test('an endpoint that never sends response headers times out instead of hanging', async () => {
+    jest.useFakeTimers();
+    try {
+      const sent = Promise.withResolvers<void>();
+      const fetch = Object.assign((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        sent.resolve();
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      }), { preconnect: globalThis.fetch.preconnect });
+      const failure = errorFrom(runAgent({ transcript: 'Explain.', signal: new AbortController().signal, fetch, onStatus: () => {}, approve: async () => true,
+        settings: { ...agentSettings('http://127.0.0.1:9', 'http://127.0.0.1:9'), mcpServers: [] } }));
+      await sent.promise;
+      jest.advanceTimersByTime(180_000);
+      expect((await failure).message).toBe('Agent model endpoint: The endpoint stopped responding. The request timed out.');
+    } finally { jest.useRealTimers(); }
   });
 
-  test('an incomplete Responses run reports the output limit instead of a partial answer', async () => {
-    await withServer(() => Response.json({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' },
-      output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Half an ans' }] }] }), async url => {
-      const failure = await errorFrom(runAgent({
+  test('an answer cut off at the output limit is kept and labelled instead of shown as complete', async () => {
+    await withServer(() => chatReply('Half an ans', 'length'), async url => {
+      const { text } = await runAgent({
         transcript: 'Explain.', signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {}, approve: async () => true,
-        settings: { ...agentSettings(url, url), mcpServers: [], agentApiMode: 'responses', agentEndpoint: `${url}/v1/responses` },
-      }));
-      expect(failure.message).toBe('The agent reached its output limit. Try a shorter command.');
+        settings: { ...agentSettings(url, url), mcpServers: [] },
+      });
+      expect(text).toBe("Half an ans\n\n_Cut off at the model's output limit._");
     });
   });
 });

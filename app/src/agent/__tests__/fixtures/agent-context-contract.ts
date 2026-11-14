@@ -57,7 +57,7 @@ globalThis.fetch = async (_input, init) => {
 
 const callbacks: AgentRuntimeCallbacks = {
   onStatus() {},
-  onResponseDelta() { order.push('answer'); },
+  onSteps() { order.push('answer'); },
   onCompleted(response) { assert.equal(response, 'Done.'); completed += 1; order.push('complete'); },
   onFailed(error) { throw new Error(error); },
   onCancelled() { cancelled += 1; },
