@@ -22,12 +22,19 @@ type TokenFile = {
   state?: string;
 };
 
+type CallbackResult = { code: string; state?: string };
+type CallbackListener =
+  | { kind: 'idle' }
+  | { kind: 'closed' }
+  | { kind: 'starting'; server: Server; promise: Promise<Server>; reject: (error: Error) => void }
+  | { kind: 'listening'; server: Server; url: string }
+  | { kind: 'waiting'; server: Server; url: string; finish: (result: CallbackResult | Error) => void };
+
 export class SidecarOAuthProvider implements OAuthClientProvider {
   private readonly tokenPath: string;
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly oauthConfig: McpHttpOAuthConfig | undefined;
-  private callbackServer: Server | null = null;
-  private callbackUrl: string | null = null;
+  private callback: CallbackListener = { kind: 'idle' };
   private lastRedirectUrl: string | null = null;
 
   constructor(
@@ -48,7 +55,8 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   get redirectUrl(): string {
-    const redirectUrl = this.callbackUrl ?? this.lastRedirectUrl;
+    const redirectUrl = this.callback.kind === 'listening' || this.callback.kind === 'waiting'
+      ? this.callback.url : this.lastRedirectUrl;
     if (!redirectUrl) {
       throw new Error('OAuth callback server has not started.');
     }
@@ -68,6 +76,7 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   async start(): Promise<void> {
+    if (this.callback.kind === 'closed') this.callback = { kind: 'idle' };
     await this.startCallbackServer();
   }
 
@@ -103,14 +112,15 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.startCallbackServer();
+    const server = await this.startCallbackServer();
+    const pending = this.waitForCallback(server);
     writeJsonLine({
       type: 'oauth:open-url',
       serverId: this.server.id,
       url: authorizationUrl.href,
     });
 
-    const callback = await this.waitForCallback();
+    const callback = await pending;
     await this.authenticate(this, {
       serverUrl: this.server.transport.type === 'http' ? this.server.transport.url : '',
       authorizationCode: callback.code,
@@ -157,9 +167,17 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
   }
 
   close(): void {
-    this.callbackServer?.close();
-    this.callbackServer = null;
-    this.callbackUrl = null;
+    const callback = this.callback;
+    if (callback.kind === 'closed' || callback.kind === 'idle') { this.callback = { kind: 'closed' }; return; }
+    const error = new Error('OAuth authorization was cancelled.');
+    if (callback.kind === 'waiting') {
+      callback.finish(error);
+      this.callback = { kind: 'closed' };
+      return;
+    }
+    this.callback = { kind: 'closed' };
+    callback.server.close();
+    if (callback.kind === 'starting') callback.reject(error);
   }
 
   private readTokenFile(): TokenFile {
@@ -175,86 +193,89 @@ export class SidecarOAuthProvider implements OAuthClientProvider {
     writeFileSync(this.tokenPath, JSON.stringify(value, null, 2), { encoding: 'utf-8', mode: 0o600 });
   }
 
-  private async startCallbackServer(): Promise<void> {
-    if (this.callbackServer && this.callbackUrl) return;
+  private startCallbackServer(): Promise<Server> {
+    const callback = this.callback;
+    if (callback.kind === 'starting') return callback.promise;
+    if (callback.kind === 'closed') return Promise.reject(new Error('OAuth authorization was cancelled.'));
+    if (callback.kind === 'listening' || callback.kind === 'waiting') return Promise.resolve(callback.server);
 
-    await new Promise<void>((resolve, reject) => {
-      const server = createServer();
-      server.on('error', reject);
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address();
-        if (!address || typeof address === 'string') {
-          reject(new Error('Failed to start OAuth callback server.'));
-          return;
-        }
-        this.callbackServer = server;
-        this.callbackUrl = `http://127.0.0.1:${address.port}/oauth/callback`;
-        this.lastRedirectUrl = this.callbackUrl;
-        resolve();
-      });
+    const server = createServer();
+    let resolveStarted: (server: Server) => void = () => undefined;
+    let rejectStarted: (error: Error) => void = () => undefined;
+    const promise = new Promise<Server>((resolve, reject) => { resolveStarted = resolve; rejectStarted = reject; });
+    const starting = { kind: 'starting', server, promise, reject: rejectStarted } satisfies CallbackListener;
+    this.callback = starting;
+    server.on('error', error => {
+      if (this.callback.kind === 'waiting' && this.callback.server === server) {
+        this.callback.finish(error);
+      } else if (this.callback === starting) {
+        this.callback = { kind: 'closed' };
+        server.close();
+        rejectStarted(error);
+      }
     });
-  }
-
-  private waitForCallback(): Promise<{ code: string; state?: string }> {
-    return new Promise((resolve, reject) => {
-      if (!this.callbackServer) {
-        reject(new Error('OAuth callback server is not running.'));
+    server.listen(0, '127.0.0.1', () => {
+      if (this.callback !== starting) { server.close(); return; }
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        this.close();
         return;
       }
+      const url = `http://127.0.0.1:${address.port}/oauth/callback`;
+      this.callback = { kind: 'listening', server, url };
+      this.lastRedirectUrl = url;
+      resolveStarted(server);
+    });
+    return promise;
+  }
 
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(new Error('OAuth authorization timed out.'));
-      }, 120_000);
-
-      const cleanup = () => {
+  private waitForCallback(expectedServer: Server): Promise<CallbackResult> {
+    const callback = this.callback;
+    if (callback.kind !== 'listening' || callback.server !== expectedServer) {
+      return Promise.reject(new Error('OAuth authorization was cancelled or is already waiting.'));
+    }
+    const { server, url: callbackUrl } = callback;
+    return new Promise((resolve, reject) => {
+      const waiting = { kind: 'waiting', server, url: callbackUrl, finish: (result: CallbackResult | Error) => {
+        if (this.callback !== waiting) return;
+        this.callback = { kind: 'idle' };
         clearTimeout(timeout);
-        this.callbackServer?.removeAllListeners('request');
-        this.close();
-      };
-
-      let handledCallback = false;
-
-      this.callbackServer.on('request', (request, response) => {
+        server.removeAllListeners('request');
+        server.close();
+        if (result instanceof Error) reject(result);
+        else resolve(result);
+      } } satisfies CallbackListener;
+      const timeout = setTimeout(() => waiting.finish(new Error('OAuth authorization timed out.')), 120_000);
+      this.callback = waiting;
+      server.on('request', (request, response) => {
+        response.setHeader('Connection', 'close');
         try {
-          const url = new URL(request.url ?? '/', this.redirectUrl);
+          const url = new URL(request.url ?? '/', callbackUrl);
           if (url.pathname !== '/oauth/callback') {
             response.writeHead(404).end();
             return;
           }
-
-          if (handledCallback) {
-            response.writeHead(409, { 'Content-Type': 'text/plain' }).end('Authorization callback already handled.');
-            return;
-          }
-          handledCallback = true;
-
           const error = url.searchParams.get('error');
           if (error) {
             response.writeHead(400, { 'Content-Type': 'text/plain' }).end('Authorization failed. You can close this window.');
-            cleanup();
-            reject(new Error(`OAuth authorization failed: ${error}`));
+            waiting.finish(new Error(`OAuth authorization failed: ${error}`));
             return;
           }
-
           const code = url.searchParams.get('code');
           if (!code) {
             response.writeHead(400, { 'Content-Type': 'text/plain' }).end('Missing authorization code.');
             return;
           }
-
           response.writeHead(200, { 'Content-Type': 'text/plain' }).end('MCP server connected. You can close this window.');
-          const state = url.searchParams.get('state') ?? undefined;
-          cleanup();
-          resolve({ code, state });
-        } catch (err) {
-          logSidecar('OAuth callback failed', err);
-          cleanup();
-          reject(err);
+          waiting.finish({ code, state: url.searchParams.get('state') ?? undefined });
+        } catch (error) {
+          logSidecar('OAuth callback failed', error);
+          waiting.finish(error instanceof Error ? error : new Error('OAuth callback failed.'));
         }
       });
     });
   }
+
 }
 
 // Pre-registered clients (configured client ID/secret) skip dynamic client

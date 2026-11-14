@@ -22,8 +22,13 @@ import {
 
 let config: AppConfig | null = null;
 let agentApiKey: string | undefined;
-let activeAgentRunId: string | null = null;
-let activeAbortController: AbortController | null = null;
+type AgentExecution = {
+  agentRunId: string;
+  controller: AbortController;
+  phase: 'running' | 'completed' | 'failed' | 'cancelled';
+};
+// The audit run id survives replies; this object identifies just one execution.
+let execution: AgentExecution | null = null;
 const pendingRuns = new Set<Promise<void>>();
 let providerTest: { requestId: string; controller: AbortController } | null = null;
 let pendingApproval: PendingApproval | null = null;
@@ -46,15 +51,14 @@ let lastConversation: { agentRunId: string; provider: string; messages: ModelMes
 
 
 type PendingApproval = {
-  agentRunId: string;
+  execution: AgentExecution;
   approvalId: string;
   timeout: ReturnType<typeof setTimeout>;
   resolve: (decision: ToolApprovalDecision) => void;
 };
 
-function clearActiveRun(): void {
-  activeAgentRunId = null;
-  activeAbortController = null;
+function ownsExecution(run: AgentExecution): boolean {
+  return execution === run && run.phase === 'running';
 }
 
 function exitWithGroup(): void {
@@ -108,7 +112,7 @@ function handleLine(line: string): void {
 
   switch (message.type) {
     case 'provider:test': {
-      if (activeAgentRunId || providerTest) {
+      if (execution?.phase === 'running' || providerTest) {
         writeJsonLine({ type: 'provider:test-result', requestId: message.requestId, result: failedProviderTest({
           kind: 'busy', message: 'Agent Mode is busy.', action: 'Wait for the active run or model test to finish.',
         }) });
@@ -171,32 +175,32 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
   const history = continueFrom && lastConversation?.agentRunId === continueFrom && lastConversation.provider === provider
     ? lastConversation.messages : [];
   lastConversation = null;
-  const previousAgentRunId = activeAgentRunId;
-  const previousAbortController = activeAbortController;
-
-  if (previousAgentRunId && previousAbortController) {
-    previousAbortController.abort();
-    rejectPendingApproval(previousAgentRunId, 'Agent run was interrupted.');
-    writeJsonLine({ type: 'agent:cancelled', agentRunId: previousAgentRunId });
+  const previous = execution;
+  if (previous?.phase === 'running') {
+    previous.phase = 'cancelled';
+    auditStore.record(previous.agentRunId, 'run_interrupted');
+    previous.controller.abort();
+    rejectPendingApproval(previous, 'Agent run was interrupted.');
+    writeJsonLine({ type: 'agent:cancelled', agentRunId: previous.agentRunId });
   }
 
-  activeAgentRunId = agentRunId;
-  activeAbortController = new AbortController();
-  const runController = activeAbortController;
+  const run: AgentExecution = { agentRunId, controller: new AbortController(), phase: 'running' };
+  execution = run;
+  const runController = run.controller;
 
   const currentConfig = config;
   const currentAgentApiKey = agentApiKey;
   if (!currentConfig) {
     writeJsonLine({ type: 'agent:failed', agentRunId, error: 'No config available' });
-    clearActiveRun();
+    run.phase = 'failed';
     return;
   }
 
   try {
     await configUpdateQueue;
-    if (activeAgentRunId !== agentRunId || runController.signal.aborted) return;
+    if (!ownsExecution(run) || runController.signal.aborted) return;
     const availability = await mcpRegistry.settle(5000);
-    if (activeAgentRunId !== agentRunId || runController.signal.aborted) return;
+    if (!ownsExecution(run) || runController.signal.aborted) return;
     if (availability.connected < availability.enabled) {
       const status = `Some Agent tools are unavailable. Connected to ${availability.connected} of ${availability.enabled} MCP servers.`;
       auditStore.record(agentRunId, 'status', { status });
@@ -205,7 +209,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     const toolSnapshot = mcpRegistry.createRunSnapshot(
       (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
       (tool) => {
-        if (activeAgentRunId !== agentRunId) return;
+        if (!ownsExecution(run)) return;
         const status = `Using tool: ${tool.serverId}.${tool.toolName}`;
         auditStore.record(agentRunId, 'status', { status });
         writeJsonLine({ type: 'agent:status', agentRunId, status });
@@ -215,62 +219,66 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     try {
       const messages = await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, runController.signal, {
         onStatus: (status) => {
-          if (activeAgentRunId !== agentRunId) return;
+          if (!ownsExecution(run)) return;
           auditStore.record(agentRunId, 'status', { status });
           writeJsonLine({ type: 'agent:status', agentRunId, status });
         },
         onSteps: (steps) => {
-          if (activeAgentRunId !== agentRunId) return;
+          if (!ownsExecution(run)) return;
           writeJsonLine({ type: 'agent:steps', agentRunId, steps });
         },
         onCompleted: (response, toolSummary, steps) => {
-          if (activeAgentRunId !== agentRunId) return;
+          if (!ownsExecution(run)) return;
+          run.phase = 'completed';
           writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary, steps });
-          clearActiveRun();
         },
         onFailed: (error) => {
-          if (activeAgentRunId !== agentRunId) return;
+          if (!ownsExecution(run)) return;
+          run.phase = 'failed';
           writeJsonLine({ type: 'agent:failed', agentRunId, error });
-          clearActiveRun();
         },
         onCancelled: () => {
-          if (activeAgentRunId !== agentRunId) return;
-          rejectPendingApproval(agentRunId, 'Agent run was interrupted.');
+          if (!ownsExecution(run)) return;
+          run.phase = 'cancelled';
+          rejectPendingApproval(run, 'Agent run was interrupted.');
           writeJsonLine({ type: 'agent:cancelled', agentRunId });
-          clearActiveRun();
         },
-        requestToolApproval: (request) => requestToolApproval(agentRunId, request),
-        onAudit: (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
+        requestToolApproval: (request) => requestToolApproval(run, request),
+        onAudit: (eventType, payload) => {
+          if (ownsExecution(run)) auditStore.record(agentRunId, eventType, payload);
+        },
         commitMemory: (revision, updates) => memoryCommitter.request(agentRunId, revision, updates, runController.signal),
-        shouldLearnMemory: () => config?.agent.memoryEnabled === true && activeAgentRunId === agentRunId,
+        shouldLearnMemory: () => config?.agent.memoryEnabled === true && ownsExecution(run),
         onMemoryStatus: status => {
-          if (activeAgentRunId === agentRunId) writeJsonLine({ type: 'memory:status', agentRunId, status });
+          if (ownsExecution(run)) writeJsonLine({ type: 'memory:status', agentRunId, status });
         },
       }, currentAgentApiKey, context, history);
       // A newer run may have started while this one finished; only the latest answer can be replied to.
-      if (messages && (activeAgentRunId === null || activeAgentRunId === agentRunId)) {
+      if (messages && execution === run && run.phase === 'completed' && config?.agent.enabled) {
         lastConversation = { agentRunId, provider: JSON.stringify(currentConfig.agent.provider), messages };
       }
     } finally {
       await toolSnapshot.close();
     }
   } catch (err) {
-    if (activeAgentRunId !== agentRunId) return;
+    if (!ownsExecution(run)) return;
     logSidecar('unhandled agent start error', err);
     writeJsonLine({
       type: 'agent:failed',
       agentRunId,
       error: err instanceof Error ? err.message : String(err),
     });
-    clearActiveRun();
+    run.phase = 'failed';
   }
 }
 
 function handleAgentCancel(agentRunId: string): void {
-  if (activeAgentRunId === agentRunId && activeAbortController) {
-    activeAbortController.abort();
-    rejectPendingApproval(agentRunId, 'Agent run was interrupted.');
-    clearActiveRun();
+  const run = execution;
+  if (run?.agentRunId === agentRunId && ownsExecution(run)) {
+    run.phase = 'cancelled';
+    auditStore.record(agentRunId, 'run_interrupted');
+    run.controller.abort();
+    rejectPendingApproval(run, 'Agent run was interrupted.');
   }
   writeJsonLine({
     type: 'agent:cancelled',
@@ -278,7 +286,8 @@ function handleAgentCancel(agentRunId: string): void {
   });
 }
 
-async function requestToolApproval(agentRunId: string, request: ToolApprovalRequest): Promise<ToolApprovalDecision> {
+async function requestToolApproval(run: AgentExecution, request: ToolApprovalRequest): Promise<ToolApprovalDecision> {
+  const { agentRunId } = run;
   const previousQueue = approvalQueue;
   let releaseQueue: () => void = () => undefined;
   approvalQueue = new Promise<void>((resolve) => {
@@ -287,7 +296,7 @@ async function requestToolApproval(agentRunId: string, request: ToolApprovalRequ
 
   await previousQueue;
 
-  if (activeAgentRunId !== agentRunId) {
+  if (!ownsExecution(run)) {
     releaseQueue();
     return { approved: false, message: 'Rejected: agent run is no longer active.' };
   }
@@ -318,7 +327,7 @@ async function requestToolApproval(agentRunId: string, request: ToolApprovalRequ
     }, APPROVAL_TIMEOUT_MS);
 
     pendingApproval = {
-      agentRunId,
+      execution: run,
       approvalId,
       timeout,
       resolve: finish,
@@ -349,7 +358,8 @@ async function requestToolApproval(agentRunId: string, request: ToolApprovalRequ
 function handleApprovalDecision(message: ApprovalDecisionMessage): void {
   if (
     !pendingApproval ||
-    pendingApproval.agentRunId !== message.agentRunId ||
+    !ownsExecution(pendingApproval.execution) ||
+    pendingApproval.execution.agentRunId !== message.agentRunId ||
     pendingApproval.approvalId !== message.approvalId
   ) {
     logSidecar('ignored stale approval decision');
@@ -367,20 +377,21 @@ function handleApprovalDecision(message: ApprovalDecisionMessage): void {
   });
 }
 
-function rejectPendingApproval(agentRunId: string, message: string): void {
-  if (!pendingApproval || pendingApproval.agentRunId !== agentRunId) return;
+function rejectPendingApproval(run: AgentExecution, message: string): void {
+  if (!pendingApproval || pendingApproval.execution !== run) return;
   pendingApproval.resolve({ approved: false, message });
 }
 
 async function shutdown(): Promise<void> {
   providerTest?.controller.abort();
-  activeAbortController?.abort();
-  if (activeAgentRunId) {
-    rejectPendingApproval(activeAgentRunId, 'Agent run was interrupted because the sidecar is shutting down.');
+  const run = execution;
+  if (run && ownsExecution(run)) {
+    run.controller.abort();
+    rejectPendingApproval(run, 'Agent run was interrupted because the sidecar is shutting down.');
   }
   await configUpdateQueue.catch(() => undefined);
   // The aborted run records its own interruption; a tool that ignores the abort must not hold MCP cleanup hostage.
-  const runningId = activeAgentRunId;
+  const runningId = execution?.phase === 'running' ? execution.agentRunId : null;
   const settled = await Promise.race([
     Promise.allSettled(pendingRuns).then(() => true),
     new Promise<false>((resolve) => setTimeout(resolve, RUN_SETTLE_TIMEOUT_MS, false).unref()),

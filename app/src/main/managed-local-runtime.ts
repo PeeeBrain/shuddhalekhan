@@ -119,7 +119,9 @@ export function createManagedLocalTranscriber({
           resolveReady = resolve;
           rejectReady = reject;
         });
-        process.on('message', onMessage);
+        process.on('message', message => {
+          if (child === process) onMessage(message);
+        });
         process.on('exit', (code) => {
           if (child !== process) return;
           reset(process, new TranscriptionFailure(

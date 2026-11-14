@@ -579,14 +579,43 @@ describe('RecordingSession', () => {
     expect(audio.every((byte) => byte === 0)).toBe(true);
   });
 
-  it('cancels recording and tells the audio stream to discard capture', async () => {
-    session.begin('dictation');
-
-    await expect(session.cancel()).resolves.toBeUndefined();
-
-    expect(hideRecordingPill).toHaveBeenCalled();
-    expect(audioStream.cancelCapture).toHaveBeenCalledTimes(1);
-    expect(session.isBusy()).toBe(false);
+  it.each(['starting', 'stopping'])('cancels the real shell command before retiring a %s recording', async (phase: string) => {
+    const send = vi.fn();
+    electronMock.BrowserWindow.mockImplementation(() => ({
+      webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: () => false },
+      loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+      isDestroyed: () => false, isVisible: () => false,
+      setPosition: vi.fn(), setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+      setAlwaysOnTop: vi.fn(), showInactive: vi.fn(), hide: vi.fn(), destroy: vi.fn(),
+    }));
+    electronMock.screen.getPrimaryDisplay.mockReturnValue({
+      workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      workAreaSize: { width: 1920, height: 1080 },
+    });
+    const { RuntimeShell } = await import('../runtime-shell');
+    const shell = new RuntimeShell();
+    shell.markReady();
+    const recording = new RecordingSessionCtor({
+      runtimeShell: shell,
+      keyboardHook: { start: vi.fn(), stop: vi.fn(), recordingEndedExternally: vi.fn() },
+      getSelectedDeviceId: () => null, getRecordingActivationMode: () => 'toggle',
+      getShortcutBinding: intent => DEFAULT_SHORTCUTS[intent].binding,
+      getRecognitionSettings: () => ({ language: 'en', task: 'transcribe', dictionary: [], removeFillerWords: false }),
+      getDictationContext: () => ({ config: { mode: 'batch', formatter: null }, language: 'en', protectedTerms: [], formatterApiKey: null }),
+      getReadinessError: () => null, getTranscriber: () => createTranscriber(transcribe),
+      captureTarget: () => null, isAgentModeEnabled: () => false, onResult() {}, onError() {},
+    });
+    try {
+      recording.begin('dictation', 'cancelled-capture');
+      const ending = phase === 'stopping' ? recording.end() : null;
+      await recording.cancel();
+      expect(send).toHaveBeenCalledWith('runtime:audio-cancel', {
+        generation: 1, recordingSessionId: 'cancelled-capture', sequence: 1, streaming: false,
+      });
+      expect(shell.acceptsAudioEvent(1, 'cancelled-capture', 1)).toBe(false);
+      expect(recording.isBusy()).toBe(false);
+      if (ending) await expect(ending).resolves.toBeNull();
+    } finally { recording.stop(); }
   });
 
   it('clears recording state when the runtime shell crashes', () => {

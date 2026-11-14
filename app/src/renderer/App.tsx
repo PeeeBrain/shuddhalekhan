@@ -25,10 +25,21 @@ function sameCommand(current: RuntimeAudioCommand | null, next: Pick<RuntimeAudi
     && current.sequence === next.sequence;
 }
 
+// Each transition installs a fresh object, so async completions compare identity
+// to learn whether a cancel, failure, or newer start retired them.
+type AudioCapture =
+  | { phase: 'idle' }
+  | { phase: 'capturing'; command: RuntimeAudioCommand }
+  | { phase: 'stopping'; command: RuntimeAudioCommand };
+
+const IDLE: AudioCapture = { phase: 'idle' };
+
+function ownsCommand(capture: AudioCapture, command: Pick<RuntimeAudioCommand, 'generation' | 'recordingSessionId' | 'sequence'>): boolean {
+  return capture.phase !== 'idle' && sameCommand(capture.command, command);
+}
+
 export function AudioWindow() {
-  const commandRef = useRef<RuntimeAudioCommand | null>(null);
-  const stoppingRef = useRef<RuntimeAudioCommand | null>(null);
-  const revisionRef = useRef(0);
+  const captureRef = useRef<AudioCapture>(IDLE);
 
   useEffect(() => {
     window.electronAPI?.invoke('config:get').then((config) => {
@@ -50,14 +61,12 @@ export function AudioWindow() {
       // A start that was never stopped is superseded: drop it so it cannot
       // start late or emit audio under the old identity.
       cancelRecording();
-      revisionRef.current += 1;
-      stoppingRef.current = null;
-      commandRef.current = command;
+      const capturing: AudioCapture = { phase: 'capturing', command };
+      captureRef.current = capturing;
       const reportProcessorFailure = () => {
-        if (!sameCommand(commandRef.current, command) && !sameCommand(stoppingRef.current, command)) return;
-        revisionRef.current += 1;
-        commandRef.current = null;
-        stoppingRef.current = null;
+        const current = captureRef.current;
+        if (current.phase === 'idle' || current.command !== command) return;
+        captureRef.current = IDLE;
         window.electronAPI?.send('runtime:audio-failed',
           command.generation, command.recordingSessionId, command.sequence);
       };
@@ -98,14 +107,14 @@ export function AudioWindow() {
         onFailure: reportProcessorFailure,
       })
         .then(() => {
-          if (commandRef.current !== command) return;
+          if (captureRef.current !== capturing) return;
           window.electronAPI.send('runtime:audio-ready',
             command.generation, command.recordingSessionId, command.sequence);
         })
         .catch((err) => {
           // A stop already in flight owns the failure report.
-          if (commandRef.current !== command) return;
-          commandRef.current = null;
+          if (captureRef.current !== capturing) return;
+          captureRef.current = IDLE;
           console.error('Failed to start runtime recording:', err);
           window.electronAPI?.send(
             'runtime:audio-failed',
@@ -120,18 +129,18 @@ export function AudioWindow() {
       'runtime:audio-chunk-accepted',
       (generation, recordingSessionId, sequence, chunkSequence) => {
         const command = { generation, recordingSessionId, sequence };
-        if (!sameCommand(commandRef.current, command) && !sameCommand(stoppingRef.current, command)) return;
+        if (!ownsCommand(captureRef.current, command)) return;
         acknowledgeRealtimeChunk(recordingSessionId, chunkSequence);
       },
     );
     const unsubscribeStop = window.electronAPI.subscribe('runtime:audio-stop', async (command) => {
-      if (!sameCommand(commandRef.current, command)) return;
-      commandRef.current = null;
-      stoppingRef.current = command;
-      const revision = revisionRef.current;
+      const current = captureRef.current;
+      if (current.phase !== 'capturing' || !sameCommand(current.command, command)) return;
+      const stopping: AudioCapture = { phase: 'stopping', command: current.command };
+      captureRef.current = stopping;
       try {
         const boundary = await stopRecording();
-        if (revisionRef.current !== revision) return;
+        if (captureRef.current !== stopping) return;
         if (!boundary) throw new Error('Audio capture ended without a final boundary.');
         window.electronAPI?.send(
           'runtime:audio-end',
@@ -142,7 +151,7 @@ export function AudioWindow() {
           boundary.sampleCount,
         );
       } catch (err) {
-        if (revisionRef.current !== revision) return;
+        if (captureRef.current !== stopping) return;
         console.error('Failed to stop runtime recording:', err);
         window.electronAPI?.send(
           'runtime:audio-failed',
@@ -151,14 +160,12 @@ export function AudioWindow() {
           command.sequence,
         );
       } finally {
-        if (stoppingRef.current === command) stoppingRef.current = null;
+        if (captureRef.current === stopping) captureRef.current = IDLE;
       }
     });
     const unsubscribeCancel = window.electronAPI.subscribe('runtime:audio-cancel', (command) => {
-      if (!sameCommand(commandRef.current, command) && !sameCommand(stoppingRef.current, command)) return;
-      revisionRef.current += 1;
-      commandRef.current = null;
-      stoppingRef.current = null;
+      if (!ownsCommand(captureRef.current, command)) return;
+      captureRef.current = IDLE;
       cancelRecording();
     });
     return () => {
@@ -166,10 +173,8 @@ export function AudioWindow() {
       unsubscribeAccepted();
       unsubscribeStop();
       unsubscribeCancel();
-      revisionRef.current += 1;
+      captureRef.current = IDLE;
       cancelRecording();
-      commandRef.current = null;
-      stoppingRef.current = null;
     };
   }, []);
 

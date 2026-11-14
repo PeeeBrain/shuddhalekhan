@@ -42,6 +42,35 @@ describe('managed local runtime supervision', () => {
     await expect(startup).rejects.toThrow('stopped');
     expect(startProcess).not.toHaveBeenCalled();
   });
+  it('ignores startup messages from a retired worker while its replacement is loading', async () => {
+    const old = new FakeUtilityProcess();
+    const replacement = new FakeUtilityProcess();
+    replacement.respondToLoad = false;
+    const replacementLoad = new Promise<void>(resolve => replacement.once('sent', () => resolve()));
+    const exited = mock();
+    replacement.on('exit', exited);
+    const children = [old, replacement];
+    const transcriber = createManagedLocalTranscriber({ getModelPath: async () => 'model', startProcess: () => {
+      const child = children.shift();
+      if (!child) throw new Error('Unexpected worker restart');
+      return child;
+    } });
+    try {
+      await transcriber.warmup();
+      await transcriber.shutdown();
+      const startup = transcriber.warmup();
+      await replacementLoad;
+      old.emit('message', { kind: 'ready' });
+      old.emit('message', { kind: 'load-error', message: 'Retired worker failed' });
+      expect(exited).not.toHaveBeenCalled();
+      replacement.emit('message', { kind: 'ready' });
+      await startup;
+      expect(await transcriber.transcribe({ audio: new Uint8Array([1]), recognition: {
+        language: 'en', task: 'transcribe', dictionary: [], removeFillerWords: false,
+      } })).toBe('hello world');
+    } finally { await transcriber.shutdown(); }
+  });
+
   it('shares one startup across concurrent callers', async () => {
     const child = new FakeUtilityProcess();
     let resolveModelPath!: (path: string) => void;

@@ -7,6 +7,10 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Cancelling desktop Dictation now releases its renderer microphone before retiring the capture command. Stale local speech workers and paste retries cannot alter replacement work.
+- Agent replies keep execution ownership separate from their shared History entry. Removing or changing an MCP server cancels its pending OAuth wait.
+- Settings no longer loses a late-opening onboarding microphone, hangs when reselecting a History run, or shows an endpoint check for an edited URL. Main-owned tool discovery and approval policy changes reach open Settings windows.
+
 - Desktop Agent Mode hotkey checks reuse the enabled state instead of rereading saved config on every keypress.
 
 - Desktop microphone capture errors release the active recording so the next hotkey works. Tray paste preserves an ongoing recording.

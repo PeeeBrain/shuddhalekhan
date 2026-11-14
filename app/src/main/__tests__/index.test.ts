@@ -133,6 +133,7 @@ const recordingSessionUpdateDevice = vi.fn();
 let sessionOptions: any = null;
 
 installElectronMock();
+const actualRuntimeShell = { ...await import('../runtime-shell') };
 const keyboardSetPaused = vi.fn();
 const keyboardIsPaused = vi.fn(() => false);
 const keyboardSetCaptureSuspended = vi.fn();
@@ -303,6 +304,7 @@ describe('main process IPC orchestration', () => {
 
   afterAll(() => {
     mock.restore();
+    mock.module('../runtime-shell', () => actualRuntimeShell);
     setPlatform(nativePlatform);
     if (originalSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
     else process.env.XDG_SESSION_TYPE = originalSessionType;
@@ -862,6 +864,38 @@ describe('main process IPC orchestration', () => {
     expect(runtimeShellFinish).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['transcript', 'recording'])('abandons a pending paste retry when a newer %s owns the interaction', async (replacement: string) => {
+    ipcListeners.clear();
+    await import(`../index?test=${Date.now()}-obsolete-retry`);
+    const { setLastTranscript, getLastTranscript } = await import('../last-transcript');
+    setLastTranscript('old transcript', defaultTargetSnapshot);
+    let releaseKeys: (value: boolean) => void = () => undefined;
+    keyboardWaitForRelease.mockReturnValueOnce(new Promise(resolve => { releaseKeys = resolve; }));
+    runtimeShellFinish.mockClear();
+    ipcListeners.get('runtime:recovery-action')?.({}, 'retry-paste');
+    if (replacement === 'transcript') setLastTranscript('new transcript', defaultTargetSnapshot);
+    else sessionOptions.onBegin('dictation');
+    releaseKeys(true);
+    // Complete the event's promise continuations without advancing any paste delays.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(runtimeShellFinish).not.toHaveBeenCalled();
+    expect(simulatePaste).not.toHaveBeenCalled();
+    expect(getLastTranscript()).toMatchObject({ text: replacement === 'transcript' ? 'new transcript' : 'old transcript', injectionStatus: 'pending' });
+  });
+
+  it('ends a failed recovery retry with a copy action instead of leaving it pending', async () => {
+    ipcListeners.clear();
+    await import(`../index?test=${Date.now()}-retry-error`);
+    const { setLastTranscript } = await import('../last-transcript');
+    setLastTranscript('retained transcript', defaultTargetSnapshot);
+    keyboardWaitForRelease.mockRejectedValueOnce(new Error('Shortcut backend stopped'));
+    runtimeShellShowFailure.mockClear();
+    ipcListeners.get('runtime:recovery-action')?.({}, 'retry-paste');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(runtimeShellShowFailure).toHaveBeenCalledWith(null,
+      'Paste could not complete. Check the destination before copying the transcript.', ['copy-full-transcript']);
+  });
+
   it('ignores duplicate retry-paste recovery actions while injection is in flight', async () => {
     ipcListeners.clear();
     captureForegroundTarget.mockReturnValueOnce({
@@ -1161,9 +1195,15 @@ describe('main process IPC orchestration', () => {
     runtimeShellGetPendingApproval.mockImplementation((id: string) =>
       id === 'approval-1' ? { serverId: 'mail', toolName: 'send_message' } : null);
 
+    setConfig.mockImplementationOnce((_key: string, agent: typeof config.agent) => {
+      getConfig.mockReturnValue({ ...config, agent });
+    });
     await ipcHandlers.get('agent:approval-decision')?.({}, 'run-1', 'approval-1', 'always-allow');
 
     expect(setConfig).toHaveBeenCalledWith('agent', expect.objectContaining({
+      mcpServers: [expect.objectContaining({ toolPolicies: { 'mail:send_message': 'alwaysAllow' } })],
+    }));
+    expect(send).toHaveBeenCalledWith('agent:config-changed', expect.objectContaining({
       mcpServers: [expect.objectContaining({ toolPolicies: { 'mail:send_message': 'alwaysAllow' } })],
     }));
     expect(agentStart).toHaveBeenCalledTimes(1);

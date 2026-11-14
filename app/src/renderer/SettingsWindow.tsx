@@ -53,6 +53,13 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const latestMcpStatusRevision = useRef(-1);
 
+  const applyConfig = useCallback((patch: Partial<AppConfig>) => {
+    setConfigState((current) => (current ? { ...current, ...patch } : current));
+  }, []);
+
+  const persistence = useSettingsPersistence(settingsIpc, applyConfig);
+  const { onAgentConfigChanged } = persistence;
+
   useEffect(() => {
     const applyMcpStatusSnapshot = (snapshot: McpStatusSnapshot) => {
       if (snapshot.revision < latestMcpStatusRevision.current) return;
@@ -62,7 +69,17 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       ));
     };
 
-    settingsIpc.getConfig().then(setConfigState).catch((err) => {
+    // Main changes agent config on its own (discovered tools, imported skills).
+    // Subscribe before the initial read: a push that lands first is newer than it.
+    let pushedAgent: AppConfig['agent'] | null = null;
+    const offAgentConfig = settingsIpc.onAgentConfigChanged((agent) => {
+      pushedAgent = agent;
+      onAgentConfigChanged(agent);
+    });
+    settingsIpc.getConfig().then((loaded) => {
+      setConfigState((current) => current
+        ?? (pushedAgent ? { ...loaded, agent: pushedAgent } : loaded));
+    }).catch((err) => {
       console.error('Failed to load settings config:', err);
     });
     settingsIpc.getAppInfo().then(setAppInfo).catch((err) => {
@@ -84,11 +101,14 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       setActiveSection(section);
     });
     const offOnboarding = settingsIpc.onOnboardingCompleted(() => {
-      settingsIpc.getConfig().then(setConfigState).catch((error) => {
+      const agentBeforeRead = pushedAgent;
+      settingsIpc.getConfig().then((loaded) => {
+        setConfigState((current) => pushedAgent !== agentBeforeRead && pushedAgent
+          ? { ...loaded, agent: current?.agent ?? pushedAgent } : loaded);
+      }).catch((error) => {
         console.error('Failed to reload completed onboarding config:', error);
       });
     });
-
     const handlePaletteShortcut = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -103,14 +123,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       offNavigate?.();
       offMcpSnapshot?.();
       offOnboarding?.();
+      offAgentConfig?.();
     };
-  }, [settingsIpc]);
-
-  const applyConfig = useCallback((patch: Partial<AppConfig>) => {
-    setConfigState((current) => (current ? { ...current, ...patch } : current));
-  }, []);
-
-  const persistence = useSettingsPersistence(settingsIpc, applyConfig);
+  }, [settingsIpc, onAgentConfigChanged]);
 
   if (!config) {
     return (

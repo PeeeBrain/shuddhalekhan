@@ -41,25 +41,60 @@ interface AuditHistorySettingsProps {
 
 const LIVE_REFRESH_DEBOUNCE_MS = 500;
 
+/** The selected run's timeline. A failed live refresh keeps the events it already showed. */
+type RunDetail =
+  | { runId: string; status: 'loading' }
+  | { runId: string; status: 'loaded'; events: AuditEventDetail[] }
+  | { runId: string; status: 'failed'; events: AuditEventDetail[] | null };
+
 export function AuditHistorySettings({ settingsIpc, initialRunId = null }: AuditHistorySettingsProps) {
   const [runs, setRuns] = useState<AuditRunSummary[]>([]);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId);
-  const [selectedRunEvents, setSelectedRunEvents] = useState<AuditEventDetail[] | null>(null);
+  const [detail, setDetail] = useState<RunDetail | null>(
+    initialRunId ? { runId: initialRunId, status: 'loading' } : null,
+  );
   const [isPending, startTransition] = useTransition();
-  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [runsLoadFailed, setRunsLoadFailed] = useState(false);
-  const [detailLoadFailed, setDetailLoadFailed] = useState(false);
+  // Read by async callbacks; written in the same tick as `detail`.
   const selectedRunIdRef = useRef<string | null>(initialRunId);
   const runsQueryInFlightRef = useRef<Promise<void> | null>(null);
   const detailQueryInFlightRef = useRef<string | null>(null);
   const liveRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingUpdatedRunIdsRef = useRef(new Set<string>());
+  const selectedRunId = detail?.runId ?? null;
+  const selectedRunEvents = detail && detail.status !== 'loading' ? detail.events : null;
 
-  useEffect(() => {
-    selectedRunIdRef.current = selectedRunId;
-  }, [selectedRunId]);
+  const fetchRunDetail = useCallback((runId: string) => {
+    if (detailQueryInFlightRef.current === runId) return;
+    detailQueryInFlightRef.current = runId;
+
+    // Responses for a run the user has left are dropped by the runId match.
+    settingsIpc
+      .getAuditRunDetail(runId)
+      .then((events) => {
+        setDetail((current) => current?.runId === runId ? { runId, status: 'loaded', events } : current);
+      })
+      .catch((err) => {
+        console.error(`Failed to fetch events for run ${runId}:`, err);
+        setDetail((current) => current?.runId === runId
+          ? { runId, status: 'failed', events: current.status === 'loading' ? null : current.events }
+          : current);
+      })
+      .finally(() => {
+        if (detailQueryInFlightRef.current === runId) {
+          detailQueryInFlightRef.current = null;
+        }
+      });
+  }, [settingsIpc]);
+
+  // Reselecting the shown run keeps its timeline; reselecting a failed one retries.
+  const selectRun = useCallback((runId: string) => {
+    if (selectedRunIdRef.current === runId && detail?.status !== 'failed') return;
+    selectedRunIdRef.current = runId;
+    setDetail({ runId, status: 'loading' });
+    fetchRunDetail(runId);
+  }, [detail, fetchRunDetail]);
 
   const fetchRuns = useCallback(() => {
     if (runsQueryInFlightRef.current) return runsQueryInFlightRef.current;
@@ -71,8 +106,10 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
         });
         setRunsLoadFailed(false);
         if (data.length > 0 && !selectedRunIdRef.current) {
-          setIsLoadingDetail(true);
-          setSelectedRunId(data[0].agentRunId);
+          const runId = data[0].agentRunId;
+          selectedRunIdRef.current = runId;
+          setDetail({ runId, status: 'loading' });
+          fetchRunDetail(runId);
         }
       })
       .catch((err) => {
@@ -85,43 +122,7 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
 
     runsQueryInFlightRef.current = query;
     return query;
-  }, [settingsIpc]);
-
-  const fetchRunDetail = useCallback((runId: string, showLoading = false) => {
-    if (detailQueryInFlightRef.current === runId) return;
-    detailQueryInFlightRef.current = runId;
-    if (showLoading) setIsLoadingDetail(true);
-
-    settingsIpc
-      .getAuditRunDetail(runId)
-      .then((detail) => {
-        if (selectedRunIdRef.current === runId) {
-          setSelectedRunEvents(detail);
-          setDetailLoadFailed(false);
-        }
-      })
-      .catch((err) => {
-        console.error(`Failed to fetch events for run ${runId}:`, err);
-        if (selectedRunIdRef.current === runId) {
-          setDetailLoadFailed(true);
-        }
-      })
-      .finally(() => {
-        if (detailQueryInFlightRef.current === runId) {
-          detailQueryInFlightRef.current = null;
-        }
-        if (selectedRunIdRef.current === runId) {
-          setIsLoadingDetail(false);
-        }
-      });
-  }, [settingsIpc]);
-
-  const selectRun = useCallback((runId: string) => {
-    setSelectedRunEvents(null);
-    setDetailLoadFailed(false);
-    setIsLoadingDetail(true);
-    setSelectedRunId(runId);
-  }, []);
+  }, [settingsIpc, fetchRunDetail]);
 
   const visibleRuns = filterAuditRuns(runs, query, statusFilter);
   const selectedVisible = visibleRuns.some((run) => run.agentRunId === selectedRunId);
@@ -150,6 +151,7 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
 
   useEffect(() => {
     fetchRuns();
+    if (selectedRunIdRef.current) fetchRunDetail(selectedRunIdRef.current);
 
     const unsubscribe = settingsIpc.onAuditRunUpdated((updatedRunId) => {
       pendingUpdatedRunIdsRef.current.add(updatedRunId);
@@ -177,16 +179,6 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
       }
     };
   }, [settingsIpc, fetchRuns, fetchRunDetail]);
-
-  useEffect(() => {
-    if (!selectedRunId) {
-      return;
-    }
-
-    queueMicrotask(() => {
-      fetchRunDetail(selectedRunId);
-    });
-  }, [selectedRunId, fetchRunDetail]);
 
   const selectedRunSummary = runs.find((r) => r.agentRunId === selectedRunId);
 
@@ -313,10 +305,10 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
                   Activity{selectedRunEvents?.length ? ` · ${selectedRunEvents.length} steps` : ''}
                 </summary>
                 <div className="mt-2">
-                  {detailLoadFailed ? (
+                  {detail?.status === 'failed' ? (
                     <p role="alert" className="text-xs text-destructive">Couldn&apos;t load events for this run.</p>
                   ) : null}
-                  {isLoadingDetail && !selectedRunEvents ? (
+                  {detail?.status === 'loading' ? (
                     <p className="text-xs text-muted-foreground">Loading events…</p>
                   ) : selectedRunEvents && selectedRunEvents.length > 0 ? (
                     <ol className="divide-y divide-border/40">
@@ -324,7 +316,7 @@ export function AuditHistorySettings({ settingsIpc, initialRunId = null }: Audit
                         <TimelineNode key={event.id} event={event} />
                       ))}
                     </ol>
-                  ) : !detailLoadFailed ? (
+                  ) : detail?.status === 'loaded' ? (
                     <p className="text-xs text-muted-foreground">No detailed timeline events found.</p>
                   ) : null}
                   <p className="pt-3 font-mono text-[10px] text-muted-foreground/70">

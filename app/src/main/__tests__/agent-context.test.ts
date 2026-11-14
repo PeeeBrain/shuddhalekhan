@@ -69,6 +69,26 @@ describe('Agent context IPC and run lifecycle', () => {
     expect(getMemory().facts).toEqual([]);
   });
 
+  it('does not replace the latest import preview when an older folder dialog finishes late', async () => {
+    const older = join(directory, 'older-skill');
+    const newer = join(directory, 'newer-skill');
+    for (const [path, name] of [[older, 'older-skill'], [newer, 'newer-skill']]) {
+      mkdirSync(path);
+      writeFileSync(join(path, 'SKILL.md'), `---\nname: ${name}\ndescription: Format emails.\n---\nUse short paragraphs.\n`);
+    }
+    let finishOlder: (value: { canceled: boolean; filePaths: string[] }) => void = () => undefined;
+    chooseFolder.mockReturnValueOnce(new Promise(resolve => { finishOlder = resolve; }));
+    const first = invoke('skills:select-import');
+    chooseFolder.mockResolvedValueOnce({ canceled: false, filePaths: [newer] });
+    const latest = await invoke('skills:select-import');
+    finishOlder({ canceled: false, filePaths: [older] });
+    expect(await first).toBeNull();
+    if (!latest || typeof latest !== 'object' || !('token' in latest)) throw new Error('Expected latest preview');
+    expect(invoke('skills:import', latest.token)).toEqual([
+      { name: 'newer-skill', description: 'Format emails.', enabled: false, error: null },
+    ]);
+  });
+
   it('imports a reviewed folder disabled, without requiring the sidecar, and preserves its source', async () => {
     agent.enabled = false;
     const source = join(directory, 'email-style');

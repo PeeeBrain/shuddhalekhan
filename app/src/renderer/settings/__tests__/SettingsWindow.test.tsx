@@ -112,6 +112,7 @@ interface MockSettingsIpcOptions {
   managedLocalSnapshot?: () => ManagedLocalModelSnapshot;
   registerManagedLocalStateChanged?: (callback: () => void) => void;
   registerOnboardingCompleted?: (callback: () => void) => void;
+  registerAgentConfigChanged?: (callback: (agent: AppConfig['agent']) => void) => void;
   desktopStatus?: DesktopStatus;
   registerDesktopStatusChanged?: (callback: (status: DesktopStatus) => void) => void;
 }
@@ -193,6 +194,10 @@ function createMockSettingsIpc(
         callback();
       });
       return undefined;
+    }),
+    onAgentConfigChanged: mock((callback: (agent: AppConfig['agent']) => void) => {
+      options.registerAgentConfigChanged?.(callback);
+      return () => {};
     }),
     getAuditRuns: mock(() => Promise.resolve(options.auditRuns ?? [])),
     getAuditRunDetail: mock(() => Promise.resolve(options.auditRunDetail ?? [])),
@@ -454,6 +459,166 @@ describe('Settings navigation', () => {
     }
   });
 
+  it('releases a microphone granted after the user already confirmed it works', async () => {
+    const stop = mock(() => {});
+    let grant!: () => void;
+    const getUserMedia = mock(() => new Promise((resolve) => {
+      grant = () => resolve({ getTracks: () => [{ stop }] });
+    }));
+    const mediaDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+    const audioContext = Object.getOwnPropertyDescriptor(globalThis, 'AudioContext');
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia } });
+    Object.defineProperty(globalThis, 'AudioContext', {
+      configurable: true,
+      value: function AudioContext() {
+        return {
+          createMediaStreamSource: () => ({ connect: () => {} }),
+          createAnalyser: () => ({ fftSize: 0, frequencyBinCount: 0, getByteTimeDomainData: () => {} }),
+          close: () => Promise.resolve(),
+        };
+      },
+    });
+
+    try {
+      renderSettings({
+        config: baseConfig({
+          onboarding: { status: 'pending' },
+          transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+        }),
+        managedLocalModelReady: true,
+      });
+      await waitFor(() => expect(screen.getByRole('button', {
+        name: 'Start microphone check',
+      }).hasAttribute('disabled')).toBe(false));
+      fireEvent.click(screen.getByRole('button', { name: 'Start microphone check' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'My microphone works' }));
+      await act(async () => grant());
+
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('button', { name: 'My microphone works' })).toBeNull();
+    } finally {
+      if (mediaDevices) Object.defineProperty(navigator, 'mediaDevices', mediaDevices);
+      else Reflect.deleteProperty(navigator, 'mediaDevices');
+      if (audioContext) Object.defineProperty(globalThis, 'AudioContext', audioContext);
+      else Reflect.deleteProperty(globalThis, 'AudioContext');
+    }
+  });
+
+  it('shows agent config that main changed while Settings is open', async () => {
+    let publish!: (agent: AppConfig['agent']) => void;
+    renderSettings({ registerAgentConfigChanged: (callback) => { publish = callback; } });
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Agent'));
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'false');
+
+    act(() => publish({ ...baseConfig().agent, enabled: true }));
+
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it.each(['save', 'reload'])('keeps an agent edit when an older push arrives during %s', async (stage: string) => {
+    let publish!: (agent: AppConfig['agent']) => void;
+    const stale = baseConfig();
+    const { settingsIpc } = renderSettings({
+      config: stale,
+      registerAgentConfigChanged: (callback) => { publish = callback; },
+    });
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Agent'));
+
+    let finishSave!: () => void;
+    const setConfig = settingsIpc.setConfig;
+    const save = spyOn(settingsIpc, 'setConfig').mockImplementationOnce(async (key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => {
+      await setConfig(key, value);
+      await new Promise<void>((resolve) => { finishSave = resolve; });
+    });
+    const canonical = {
+      ...stale,
+      agent: { ...stale.agent, enabled: true, customInstructions: 'Saved by main' },
+    };
+    let finishRead!: (config: AppConfig) => void;
+    const read = spyOn(settingsIpc, 'getConfig')
+      .mockImplementationOnce(() => new Promise<AppConfig>((resolve) => { finishRead = resolve; }))
+      .mockImplementation(() => Promise.resolve(canonical));
+    read.mockClear();
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable Agent Mode' }));
+    await waitFor(() => expect(finishSave).toBeDefined());
+    if (stage === 'save') act(() => publish(stale.agent));
+    await act(async () => finishSave());
+    if (stage === 'reload') act(() => publish(stale.agent));
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
+
+    await act(async () => finishRead(canonical));
+    expect(read).toHaveBeenCalledTimes(stage === 'reload' ? 2 : 1);
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(tabByLabel('Memory'));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Enable memory' }));
+    expect(save).toHaveBeenLastCalledWith('agent', { ...canonical.agent, memoryEnabled: true });
+  });
+
+  it('does not let an older agent save reload replace a newer edit', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Agent'));
+    let finishOldRead!: (config: AppConfig) => void;
+    spyOn(settingsIpc, 'getConfig').mockImplementationOnce(() => new Promise<AppConfig>((resolve) => {
+      finishOldRead = resolve;
+    }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable Agent Mode' }));
+    await waitFor(() => expect(finishOldRead).toBeDefined());
+
+    fireEvent.click(tabByLabel('Memory'));
+    fireEvent.click(await screen.findByRole('switch', { name: 'Enable memory' }));
+    await waitFor(() => expect(settingsIpc.getConfig).toHaveBeenCalledTimes(3));
+    await act(async () => finishOldRead(baseConfig()));
+
+    expect(screen.getByRole('switch', { name: 'Enable memory' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(tabByLabel('Agent'));
+    expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it.each(['initial', 'onboarding'])('keeps agent config pushed during the %s read through a later agent edit', async (read: string) => {
+    let complete: () => void = () => undefined;
+    let publish!: (agent: AppConfig['agent']) => void;
+    const stale = baseConfig();
+    const settingsIpc = createMockSettingsIpc({
+      config: stale,
+      registerAgentConfigChanged: (callback) => { publish = callback; },
+      registerOnboardingCompleted: (callback) => { complete = callback; },
+    });
+    if (read === 'onboarding') {
+      render(<SettingsWindow settingsIpc={settingsIpc} />);
+      await waitForLoaded();
+    }
+    let resolveInitial!: (config: AppConfig) => void;
+    settingsIpc.getConfig = mock(() => new Promise<AppConfig>((resolve) => { resolveInitial = resolve; }));
+    if (read === 'initial') render(<SettingsWindow settingsIpc={settingsIpc} />);
+    else act(() => complete());
+    const discovered: AppConfig['agent'] = {
+      ...stale.agent,
+      mcpServers: [{
+        id: 'files',
+        displayName: 'Files',
+        enabled: true,
+        transport: { type: 'stdio', command: 'files-mcp', args: [], envVarNames: [] },
+        discoveredTools: [{ name: 'read', description: 'Read a file', discoveredAt: '2026-11-14T00:00:00.000Z' }],
+        toolPolicies: { 'files:read': 'alwaysAllow' },
+      }],
+    };
+
+    act(() => publish(discovered));
+    await act(async () => resolveInitial(stale));
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Agent'));
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable Agent Mode' }));
+
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith(
+      'agent',
+      { ...discovered, enabled: true },
+    ));
+  });
+
   it('dismisses the setup checklist when onboarding completes', async () => {
     let complete!: () => void;
     renderSettings({
@@ -608,6 +773,23 @@ describe('Settings section reachability', () => {
     expect(screen.getByRole('combobox', { name: 'Task' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Spoken language' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Add dictionary word' })).toBeInTheDocument();
+  });
+
+  it('does not report a server check against an endpoint the user has since edited', async () => {
+    const { settingsIpc } = renderSettings();
+    let answer!: (reachable: boolean) => void;
+    (settingsIpc.checkTranscriptionServer as ReturnType<typeof mock>).mockImplementation(
+      () => new Promise<boolean>((resolve) => { answer = resolve; }),
+    );
+    await waitForLoaded();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check server' }));
+    await waitFor(() => expect(settingsIpc.checkTranscriptionServer).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Endpoint' }), { target: { value: 'http://localhost:9090/inference' } });
+    await act(async () => answer(true));
+
+    expect(screen.queryByText('Reachable')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Check server' })).not.toBeDisabled();
   });
 
   it('sets up the Corrected formatter from Batch without saving an incomplete profile', async () => {
@@ -1122,6 +1304,24 @@ describe('Settings section reachability', () => {
 
     await waitFor(() => expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1), { timeout: SLOW_CI_TIMEOUT });
     expect(await screen.findByText(/capture cancelled/i, {}, { timeout: SLOW_CI_TIMEOUT })).toBeInTheDocument();
+  }, SLOW_CI_TEST_TIMEOUT);
+
+  it('resumes global shortcuts when the user leaves Shortcuts while capture is still starting', async () => {
+    const { settingsIpc } = renderSettings();
+    let suspended!: () => void;
+    (settingsIpc.beginShortcutCapture as ReturnType<typeof mock>).mockImplementation(
+      () => new Promise<void>((resolve) => { suspended = resolve; }),
+    );
+    await waitForLoaded();
+    fireEvent.click(tabByLabel('Shortcuts'));
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
+    expect(settingsIpc.beginShortcutCapture).toHaveBeenCalledTimes(1);
+    fireEvent.click(tabByLabel('Home'));
+    expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1);
+
+    await act(async () => suspended());
+    expect(settingsIpc.endShortcutCapture).toHaveBeenCalledTimes(1);
   }, SLOW_CI_TEST_TIMEOUT);
 
   it('clears a binding with idle Backspace and toggles session-only pause', async () => {

@@ -197,10 +197,8 @@ export function createWhisperLiveKitStreamingSession(
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? DEFAULT_HANDSHAKE_TIMEOUT_MS;
   const stalledAudioTimeoutMs = options.stalledAudioTimeoutMs ?? DEFAULT_STALLED_AUDIO_TIMEOUT_MS;
   const flushTimeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
-  let opened = false;
-  let configured = false;
-  let terminal = false;
-  let finishing = false;
+  let phase: 'connecting' | 'handshaking' | 'streaming' | 'finishing' | 'completed' | 'failed' | 'cancelled' = 'connecting';
+  const isTerminal = () => phase === 'completed' || phase === 'failed' || phase === 'cancelled';
   let snapshotSequence = 0;
   let committed = '';
   let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -236,16 +234,16 @@ export function createWhisperLiveKitStreamingSession(
     }
   };
   const fail = (message: string): void => {
-    if (terminal) return;
-    terminal = true;
+    if (isTerminal()) return;
+    phase = 'failed';
     const error = new TranscriptionFailure('network', message);
     cleanup();
     closeSocket();
-    if (!configured) rejectReady(error);
+    rejectReady(error);
     rejectFinal(error);
   };
   const onOpen = (): void => {
-    opened = true;
+    if (phase === 'connecting') phase = 'handshaking';
   };
   const onSocketFailure = (): void => {
     fail('WhisperLiveKit streaming connection failed. Falling back to Batch Dictation.');
@@ -273,22 +271,22 @@ export function createWhisperLiveKitStreamingSession(
       fail('WhisperLiveKit returned an invalid streaming response. Falling back to Batch Dictation.');
       return;
     }
-    if (!configured) {
-      if (!opened || !isWhisperLiveKitPcmConfig(value)) {
+    if (phase === 'connecting' || phase === 'handshaking') {
+      if (phase !== 'handshaking' || !isWhisperLiveKitPcmConfig(value)) {
         fail('WhisperLiveKit PCM handshake failed. Falling back to Batch Dictation.');
         return;
       }
-      configured = true;
+      phase = 'streaming';
       if (handshakeTimer) clearTimeout(handshakeTimer);
       resolveReady();
       return;
     }
     if (isReadyToStop(value)) {
-      if (!finishing) {
+      if (phase !== 'finishing') {
         fail('WhisperLiveKit ended the stream before finalization. Falling back to Batch Dictation.');
         return;
       }
-      terminal = true;
+      phase = 'completed';
       cleanup();
       closeSocket();
       resolveFinal(request.recognition.removeFillerWords ? cleanFillerWords(committed) : committed);
@@ -307,7 +305,7 @@ export function createWhisperLiveKitStreamingSession(
 
   const send = async (pcm: Uint8Array): Promise<void> => {
     await ready;
-    if (terminal || finishing) {
+    if (phase !== 'streaming') {
       throw new TranscriptionFailure('network', 'WhisperLiveKit streaming session is closed.');
     }
     await sendWebSocketBinary(socket, pcm, stalledAudioTimeoutMs);
@@ -317,10 +315,11 @@ export function createWhisperLiveKitStreamingSession(
     send,
     finish() {
       const beginFinish = async (): Promise<void> => {
-        if (!finishing && !terminal) {
-          if (!configured) await ready;
-          finishing = true;
+        if (phase === 'connecting' || phase === 'handshaking') await ready;
+        if (phase === 'streaming') {
+          phase = 'finishing';
           await sendWebSocketBinary(socket, new Uint8Array(), stalledAudioTimeoutMs);
+          if (phase !== 'finishing') return;
           flushTimer = setTimeout(() => {
             fail('WhisperLiveKit finalization timed out. Falling back to Batch Dictation.');
           }, flushTimeoutMs);
@@ -329,12 +328,12 @@ export function createWhisperLiveKitStreamingSession(
       return beginFinish().then(() => final);
     },
     cancel() {
-      if (terminal) return;
-      terminal = true;
+      if (isTerminal()) return;
+      phase = 'cancelled';
       const error = new TranscriptionFailure('network', 'WhisperLiveKit streaming was cancelled.');
       cleanup();
       closeSocket();
-      if (!configured) rejectReady(error);
+      rejectReady(error);
       rejectFinal(error);
     },
   };

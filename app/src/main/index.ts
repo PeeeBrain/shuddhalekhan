@@ -117,13 +117,13 @@ async function setWaylandInsertion(enabled: boolean): Promise<void> {
 }
 
 let cachedAgentEnabled = getConfig().agent.enabled;
-let activeAgentRunId: string | null = null;
+let activeAgentRun: { id: string } | null = null;
 /** Set when an Agent recording begins over a completed answer; that command continues the conversation. */
 let continueFromRunId: string | null = null;
 /** The provider of the latest run, which is the one on the card; a reply to another provider's answer starts fresh. */
 let lastRunProvider: string | null = null;
 let providerTestRevision = 0;
-let retryPasteInFlight = false;
+let retryPaste: AbortController | null = null;
 const runtimeShell = new RuntimeShell();
 const agentPresenter = createRuntimeShellPresenter(runtimeShell);
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
@@ -135,6 +135,9 @@ const runtimeReadiness = createRuntimeReadinessBarrier(() => {
 });
 const mcpStatusStore = new McpStatusStore();
 mcpStatusStore.configure(getConfig().agent.mcpServers);
+function publishAgentConfig(): void {
+  getSettingsWindow()?.webContents.send('agent:config-changed', getConfig().agent);
+}
 function publishMcpStatusSnapshot(snapshot: McpStatusSnapshot): void {
   getSettingsWindow()?.webContents.send('mcp:status-snapshot', snapshot);
 }
@@ -146,19 +149,22 @@ function notifyAgentRuntimeStopped(message: string): void {
   resetMcpStatusSnapshot();
   // One persistent failure card for unexpected loss; replacement,
   // disablement, and shutdown never reach this path.
-  runtimeShell.showAgentFailed(activeAgentRunId, message);
+  runtimeShell.showAgentFailed(activeAgentRun?.id ?? null, message);
 }
 const sidecarEventRouter = createSidecarEventRouter({
   getSettingsWindow,
-  getActiveAgentRunId: () => activeAgentRunId,
+  getActiveAgentRunId: () => activeAgentRun?.id ?? null,
   presenter: agentPresenter,
   openExternal: shell.openExternal,
-  mergeDiscoveredTools,
+  mergeDiscoveredTools: (serverId, tools) => {
+    mergeDiscoveredTools(serverId, tools);
+    publishAgentConfig();
+  },
   getConfig,
   recordMcpStatus: (status) => mcpStatusStore.record(status),
   onMemoryEvent: event => agentContext.handleMemoryEvent(event),
   onAgentTerminal: (agentRunId) => {
-    if (activeAgentRunId === agentRunId) activeAgentRunId = null;
+    if (activeAgentRun?.id === agentRunId) activeAgentRun = null;
   },
 });
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
@@ -167,13 +173,13 @@ const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
   },
   onGenerationExit: () => {
     notifyAgentRuntimeStopped('Agent runtime stopped unexpectedly. Try Agent Mode again.');
-    activeAgentRunId = null;
+    activeAgentRun = null;
   },
 });
 const agentContext = registerAgentContextIpcHandlers(getPersistentStoreDirectory(), {
   getConfig,
-  setAgent: agent => setConfig('agent', agent),
-  getActiveAgentRunId: () => activeAgentRunId,
+  setAgent: agent => { setConfig('agent', agent); publishAgentConfig(); },
+  getActiveAgentRunId: () => activeAgentRun?.id ?? null,
   reply: (agentRunId, requestId, result) => agentSidecar.sendMemoryResult(agentRunId, requestId, result),
   publish: snapshot => getSettingsWindow()?.webContents.send('memory:changed', snapshot),
 });
@@ -196,6 +202,7 @@ const recordingSession = new RecordingSession({
   isAgentModeEnabled: () => cachedAgentEnabled,
   getRecordingActivationMode: (intent) => getConfig().shortcuts[intent].activationMode,
   onBegin: (intent) => {
+    retryPaste?.abort();
     if (intent !== 'agent') return;
     // Read before the new recording clears the card: an answer still on screen is being replied to.
     continueFromRunId = runtimeShell.getPresentedCompletedRunId();
@@ -348,32 +355,28 @@ async function deliverTranscript(
     actions: copyOnly,
   });
   // KDE delivery may have already sent input; replaying the recording could double-insert.
-  if (source === 'retry' && (retryPasteInFlight || target?.kind === 'kde-wayland')) return null;
+  if (source === 'retry' && target?.kind === 'kde-wayland') return null;
   const policyError = getAutomaticDeliveryError(process.platform, process.env, waylandDelivery?.isReady() ?? false);
   if (policyError) return blocked(policyError);
   if (source === 'tray') target = waylandDelivery?.capture() ?? null;
   if (source !== 'tray' && !target) {
     return blocked('The original destination could not be identified when recording began. Copy the transcript to the intended field.');
   }
-  if (source === 'retry') retryPasteInFlight = true;
-  try {
-    if (target?.kind === 'kde-wayland') {
-      if (!waylandDelivery) return blocked('Best-effort insertion is no longer set up. Nothing was pasted.');
-      if (source !== 'tray') runtimeShell.finish();
-      return { result: await waylandDelivery.deliver(text, target, signal), actions: copyOnly };
-    }
-    if (!await keyboardHook.waitForKeysReleased(signal)) {
-      const result: InjectResult = { kind: 'input-blocked', acceptedEvents: 0,
-        reason: 'Release the recording shortcut before pasting the transcript.' };
-      return { result, actions: getRecoveryActions(result) };
-    }
-    if (signal.aborted) return null;
+  const retryTranscript = source === 'retry' ? getLastTranscript() : null;
+  if (target?.kind === 'kde-wayland') {
+    if (!waylandDelivery) return blocked('Best-effort insertion is no longer set up. Nothing was pasted.');
     if (source !== 'tray') runtimeShell.finish();
-    const result = await injectIntoFocusedApp(text, target, signal);
-    return { result, actions: getRecoveryActions(result) };
-  } finally {
-    if (source === 'retry') retryPasteInFlight = false;
+    return { result: await waylandDelivery.deliver(text, target, signal), actions: copyOnly };
   }
+  if (!await keyboardHook.waitForKeysReleased(signal)) {
+    const result: InjectResult = { kind: 'input-blocked', acceptedEvents: 0,
+      reason: 'Release the recording shortcut before pasting the transcript.' };
+    return { result, actions: getRecoveryActions(result) };
+  }
+  if (signal.aborted || (source === 'retry' && getLastTranscript() !== retryTranscript)) return null;
+  if (source !== 'tray') runtimeShell.finish();
+  const result = await injectIntoFocusedApp(text, target, signal);
+  return { result, actions: getRecoveryActions(result) };
 }
 
 async function copyLastTranscript(): Promise<void> {
@@ -422,19 +425,30 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
   if (!runtimeShell || !transcript) return;
   if (action === 'copy-full-transcript') {
     await copyLastTranscriptToClipboard(transcript.text);
-    runtimeShell.finish();
+    if (getLastTranscript() === transcript && !recordingSession.isBusy()) runtimeShell.finish();
     return;
   }
-  if (action !== 'retry-paste') return;
-  const outcome = await deliverTranscript(transcript.text, transcript.targetSnapshot, new AbortController().signal, 'retry');
-  if (!outcome) return;
-  const { result, actions } = outcome;
-  if (result.kind === 'input-dispatched') {
-    markLastTranscriptInjected('dispatched');
-    return;
+  if (action !== 'retry-paste' || retryPaste || recordingSession.isBusy()) return;
+  const retry = new AbortController();
+  retryPaste = retry;
+  try {
+    const outcome = await deliverTranscript(transcript.text, transcript.targetSnapshot, retry.signal, 'retry');
+    if (!outcome || retry.signal.aborted || getLastTranscript() !== transcript) return;
+    const { result, actions } = outcome;
+    if (result.kind === 'input-dispatched') {
+      markLastTranscriptInjected('dispatched');
+      return;
+    }
+    markLastTranscriptInjected('failed');
+    runtimeShell.showFailure(null, getRecoveryMessage(result), actions);
+  } catch {
+    if (!retry.signal.aborted && getLastTranscript() === transcript) {
+      markLastTranscriptInjected('failed');
+      runtimeShell.showFailure(null, 'Paste could not complete. Check the destination before copying the transcript.', ['copy-full-transcript']);
+    }
+  } finally {
+    if (retryPaste === retry) retryPaste = null;
   }
-  markLastTranscriptInjected('failed');
-  runtimeShell.showFailure(null, getRecoveryMessage(result), actions);
 }
 
 // Never leave global shortcut activation suspended after capture ends.
@@ -468,8 +482,8 @@ function showAgentConfigNotice(message: string): void {
 
 function invalidateActiveAgentRun(): void {
   agentPresenter.beginRun();
-  const previousRunId = activeAgentRunId;
-  activeAgentRunId = null;
+  const previousRunId = activeAgentRun?.id;
+  activeAgentRun = null;
   if (!previousRunId) return;
   agentSidecar.cancelRun(previousRunId);
 }
@@ -489,21 +503,22 @@ async function startAgentRun(text: string, config: AppConfig): Promise<void> {
   continueFromRunId = null;
   lastRunProvider = provider;
   // A reply is part of the run it answers: one audit entry and one conversation on the card.
-  const agentRunId = continueFrom ?? randomUUID();
-  activeAgentRunId = agentRunId;
+  const execution = { id: continueFrom ?? randomUUID() };
+  const agentRunId = execution.id;
+  activeAgentRun = execution;
   runtimeShell.startAgentTurn(agentRunId, text);
   let apiKey: string | undefined;
   try {
     apiKey = config.agent.provider.kind === 'chatgpt'
       ? await chatGptAuth.getAccessToken() : getAgentSidecarApiKey(config, credentialVault);
   } catch (error) {
-    if (activeAgentRunId !== agentRunId) return;
-    activeAgentRunId = null;
+    if (activeAgentRun !== execution) return;
+    activeAgentRun = null;
     runtimeShell.showFailure(null, error instanceof Error ? error.message : 'Sign in with ChatGPT again in Settings.');
     return;
   }
-  if (activeAgentRunId !== agentRunId) return;
-  if (!getConfig().agent.enabled) { activeAgentRunId = null; return; }
+  if (activeAgentRun !== execution) return;
+  if (!getConfig().agent.enabled) { activeAgentRun = null; return; }
   agentSidecar.startRun(
     agentRunId,
     text,
@@ -597,7 +612,7 @@ handle('agent:test-provider', async (_event, value: unknown) => {
   const validation = validateAgentProvider(provider);
   if (validation.issues.length) return failedProviderTest({ kind: 'configuration', message: validation.issues[0].message, action: 'Correct the Agent settings before testing.' }, validation);
   if (!getConfig().agent.enabled) return failedProviderTest({ kind: 'configuration', message: 'Agent Mode is disabled.', action: 'Enable Agent Mode to test the model. Local validation works while disabled.' }, validation);
-  if (activeAgentRunId) return failedProviderTest({ kind: 'busy', message: 'An agent run is active.', action: 'Wait for the run to finish before testing the model.' }, validation);
+  if (activeAgentRun) return failedProviderTest({ kind: 'busy', message: 'An agent run is active.', action: 'Wait for the run to finish before testing the model.' }, validation);
   const revision = ++providerTestRevision;
   let apiKey: string | undefined;
   try {
@@ -606,7 +621,7 @@ handle('agent:test-provider', async (_event, value: unknown) => {
   } catch (error) {
     return failedProviderTest({ kind: 'authentication', message: error instanceof Error ? error.message : 'Sign in with ChatGPT again.', action: 'Open ChatGPT account settings and sign in again.' }, validateAgentProvider(provider));
   }
-  if (revision !== providerTestRevision || activeAgentRunId || !getConfig().agent.enabled) {
+  if (revision !== providerTestRevision || activeAgentRun || !getConfig().agent.enabled) {
     return failedProviderTest({ kind: 'cancelled', message: 'The provider test was cancelled.', action: 'Test the current provider again when ready.' }, validation);
   }
   return agentSidecar.testProvider(provider, apiKey);
@@ -715,6 +730,7 @@ handle(
       });
       // Later calls in this same run should see the new policy too.
       const next = getConfig();
+      publishAgentConfig();
       agentSidecar.start(next, getAgentSidecarApiKey(next, credentialVault));
     }
     agentSidecar.sendApprovalDecision(agentRunId, approvalId, decision === 'denied' ? 'denied' : 'approved', message);

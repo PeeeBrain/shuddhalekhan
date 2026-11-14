@@ -279,6 +279,7 @@ export interface MainToRendererChannels {
   'mcp:status-snapshot': (snapshot: McpStatusSnapshot) => void;
   'credential:changed': (credential: CredentialKind) => void;
   'agent:provider-invalidated': () => void;
+  'agent:config-changed': (agent: AppConfig['agent']) => void;
   'updater:status-changed': (status: UpdateStatus) => void;
   'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;

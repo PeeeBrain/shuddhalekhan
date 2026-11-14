@@ -201,6 +201,33 @@ describe('WhisperLiveKit endpoint contract', () => {
     });
   });
 
+  // Stop can arrive while the WebSocket handshake is pending; resuming it must claim the finish phase once.
+  it.each(['finish-again', 'cancel'] as const)('rechecks the streaming phase after handshake when stop races with %s', async (action: 'finish-again' | 'cancel') => {
+    const socket = new FakeSocket();
+    const session = createWhisperLiveKitStreamingSession(
+      { baseUrl: 'http://127.0.0.1:8000', auth: 'none' }, null,
+      { recognition: { language: 'en', task: 'transcribe', dictionary: [], removeFillerWords: false }, onSnapshot() {} },
+      { webSocketFactory: () => socket as unknown as NodeWebSocket },
+    );
+    const finishing = session.finish();
+    socket.emit('open');
+    socket.emit('message', new MessageEvent('message', {
+      data: JSON.stringify({ type: 'config', useAudioWorklet: true, mode: 'full' }),
+    }));
+    if (action === 'cancel') {
+      session.cancel();
+      await expect(finishing).rejects.toThrow('cancelled');
+      expect(socket.sent).toEqual([]);
+    } else {
+      const secondFinish = session.finish();
+      // The send callback runs synchronously, so the marker is observable without waiting on finalization.
+      expect(socket.sent).toHaveLength(1);
+      socket.emit('message', new MessageEvent('message', { data: JSON.stringify({ type: 'ready_to_stop' }) }));
+      await expect(Promise.all([finishing, secondFinish])).resolves.toEqual(['', '']);
+      expect(socket.sent).toHaveLength(1);
+    }
+  });
+
   it('streams ordered PCM and finalizes from late committed full-mode snapshots', async () => {
     const socket = new FakeSocket();
     const snapshots: Array<{ sequence: number; committed: string; tentative: string }> = [];
