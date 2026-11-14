@@ -83,6 +83,7 @@ export async function runAgent({ transcript, settings, signal, fetch, onStatus, 
           description: `${server.name}: ${tool.name}. ${tool.description ?? ''}`,
           inputSchema: jsonSchema(tool.inputSchema),
           needsApproval: policy !== 'alwaysAllow',
+          deferLoading: true,
           // A failed call is returned to the model as a tool error, so it can explain or try another way.
           execute: async input => {
             status(`Running ${server.name} / ${tool.name}…`);

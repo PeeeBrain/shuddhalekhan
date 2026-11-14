@@ -363,6 +363,7 @@ function wrapToolWithPolicy(
 ): Tool {
   return {
     ...toolDef,
+    deferLoading: true,
     // The run snapshot only ever loosens: alwaysAsk becomes alwaysAllow once saved.
     needsApproval: policy === 'alwaysAsk' ? () => livePolicy() !== 'alwaysAllow' : undefined,
     execute: async (args, options) => {
