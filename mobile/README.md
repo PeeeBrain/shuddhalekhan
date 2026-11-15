@@ -24,7 +24,7 @@ The language decides the model. Any English variant, including English (India), 
 
 FluidAudio is pinned to v0.15.5 with INT8 encoders. The encoder uses CPU plus Apple Neural Engine; preprocessing also uses CPU. This is the Core ML export, not the desktop ONNX or Docker GGML files. Parakeet v3 supports 25 European languages. Neither model supports Hindi or Marathi, and the remote dictionary fields do not configure local inference.
 
-When on-device transcription is selected and the model is installed, the app starts preparing it on launch without opening the microphone or downloading anything. Home shows a preparation notice while this runs. A session started during preparation awaits the same native load. First use after an update can still require Core ML preparation; moving that work before the session tap does not shorten compilation. Endpoint-only launches do not preload the local model. See the [startup measurements](docs/performance/2026-10-26-startup.md) for measured cases and pending device checks.
+When on-device transcription is selected and the model is installed, the app starts preparing it on launch without opening the microphone or downloading anything. Home shows a preparation notice while this runs. A session started during preparation awaits the same native load. First use after an update can still require Core ML preparation; moving that work before the session tap does not shorten compilation. Endpoint-only launches do not preload the local model.
 
 ## Dictate in another app with the keyboard
 
@@ -66,7 +66,20 @@ The monorepo uses Bun's hoisted linker and a shared React 19.3 version to keep n
 
 ## Verification
 
-The [PR 255 verification checklist](docs/verification/pr-255.md) covers the shared-contract refactor, native source ownership, and pending phone checks.
+### Native contracts
+
+Edit `KeyboardSessionProtocol.swift` and `KeyboardSessionChannel.swift` in `modules/shuddhalekhan-speech/ios/`, and `AgentActivityAttributes.swift` in `modules/shuddhalekhan-agent-activity/ios/`. The `with-shared-native-contracts` Expo plugin copies them into the extension targets before Xcode project generation; those copies are ignored and missing inputs fail prebuild. Run prebuild after editing a contract if building directly in Xcode.
+
+### Phone pass
+
+Verify the installed build number, device model, iOS version, and the artifact run and commit first. Record each case as pass, fail, or untested, with provider, entry point, and timestamp. Exercise only the cases the change touches.
+
+1. **Settings retention.** Reopen saved settings, then save, force-close, and reopen. Switching providers clears the previous provider's secret; cancelling unsaved edits keeps saved settings.
+2. **In-app Dictation.** With Agent Mode off, record, stop, and copy a transcript with each configured provider, and with Parakeet in airplane mode. Cancel an utterance; the next one works. Recording outside a keyboard session stops when backgrounded.
+3. **Keyboard Dictation.** Follow the keyboard steps in AGENTS.md: text inserts exactly once while the app stays backgrounded, for a second utterance and in a second host app.
+4. **Session exits.** Cancel, hide and reopen the keyboard mid-utterance, stop and restart the session, let it expire, and interrupt it (Siri or a call). The reason is visible, the microphone releases, and a new session works. With no session, Dictate opens the app and resumes recording on return.
+5. **Agent Mode.** From Home and the background keyboard: prompts never insert into the host app; approve one tool, deny another, cancel while waiting; a stale approval never executes; a second command while busy is refused; Dictation still works after. The Live Activity shows progress, approvals open the right request, and the answer survives a restart.
+6. **Providers.** Exercise each provider you have credentials for and record the others as untested. Sarvam auto-stops around 28 seconds, Google around 55.
 
 ### Local checks on Windows
 
