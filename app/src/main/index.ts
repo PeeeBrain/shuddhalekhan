@@ -876,6 +876,11 @@ if (!gotSingleInstanceLock) {
 
   });
 
+  // A second launch quits; surface Settings here so it isn't silent. May fire before ready.
+  app.on('second-instance', () => {
+    void app.whenReady().then(() => openSettingsWindow());
+  });
+
   app.on('window-all-closed', () => {
     // Keep running in tray on Windows
   });

@@ -1225,6 +1225,16 @@ describe('main process IPC orchestration', () => {
     expect(agentSendApprovalDecision).not.toHaveBeenCalled();
   });
 
+  it('opens Settings when the app is launched a second time', async () => {
+    openSettingsWindow.mockClear();
+
+    appListeners.get('second-instance')?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(openSettingsWindow).toHaveBeenCalledTimes(1);
+  });
+
   it('waits for sidecar shutdown before allowing quit', async () => {
     let finishStop: () => void = () => undefined;
     agentStop.mockImplementationOnce(() => new Promise<void>((resolve) => {
