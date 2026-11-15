@@ -1,6 +1,6 @@
 # Desktop Dictation uses previews and final delivery
 
-Status: product direction accepted on 2026-11-06; native backend feasibility pending.
+Status: accepted on 2026-11-06. Strict Wayland delivery is blocked on an upstream receiver contract (see Receiver findings).
 
 ## Decision
 
@@ -23,16 +23,10 @@ Portal shortcut availability is useful for activation, but does not establish a 
 - Preserve provider settings, recognition preferences, credentials, model assets, and independent shortcuts. Migrate Live to previews plus final insertion with a concise explanation.
 - Clipboard/SendInput remains the current Windows implementation while feasibility work proceeds. Its process/window checks must not be advertised as exact text-field identity.
 
-## Open evidence
+## Receiver findings (2026-11-07)
 
-No input-method backend is certified. Record observed desktop capabilities and manual integration gates in [desktop-dictation-feasibility.md](../desktop-dictation-feasibility.md). The [implementation plan](../desktop-dictation-overhaul-plan.md) remains the work order; its first milestone is not complete merely because portal properties are readable.
+No app-side adapter can meet the contract. Every path Shuddhalekhan can drive from outside the receiving app checks focus in one process and edits in another: portal/EIS, uinput and XTEST type into the current focus; KWin 6.8.2 ignores stale text-input serials; GNOME's IBus/Mutter path and fcitx5/IBus frontends commit to whatever the toolkit focuses on receipt; AT-SPI `InsertText` reaches the exact object but still edits after focus loss, and Chromium/Electron, Qt Quick and terminals lack it. An isolated GNOME/GTK prototype confirmed the race lives in the final toolkit hop: a held commit landed in the newly focused field with stock GTK and nowhere with a patched GTK.
 
-The [receiver investigation](../receiver-context-feasibility.md) found missing receiver-side validation in the inspected KWin 6.8.2 commit handler and GNOME stock IBus/event path. It does not establish that every desktop-specific integration is impossible.
+A toolkit input-method module (GTK `GtkIMContext`, Qt `QPlatformInputContext`) could check and edit atomically, but it needs a session-wide input-method setting, displaces the user's IBus/fcitx IME, misses Chromium/Electron on native Wayland, and needs four ABI targets. Those are product-scope blockers.
 
-The maintainer subsequently selected strict safety and authorized investigation of receiver/compositor integrations. Best-effort validation is not the selected contract. Prepare isolated, pinned receiver prototypes and trace the final application/toolkit hop as well as compositor routing. A compositor-side context or surface token alone must not be described as exact field identity. Neither IBus nor portal delivery is certified. This decision authorizes investigation artifacts; it does not itself authorize replacing the running compositor or changing desktop input-method settings.
-
-## Receiver experiment outcome, 2026-11-07
-
-The isolated GNOME Shell and two-field GTK fixture exercised real delivery. Both variants used patched mutter and differed only in the experimental GTK change. When an old commit batch was held until local focus moved from A to B, unpatched GTK inserted into B and patched GTK inserted nowhere. Normal delivery, duplicate refusal, stale focus refusal, return-to-field refusal, and superseded-token handling passed. See the [retained findings](../receiver-context-feasibility.md). The probes, patches and raw evidence were archived outside the repository.
-
-This is evidence for toolkit participation in this receiver design, not certification of GNOME/KDE or all GTK applications. Keep Electron and continue independent previews/finalization work without treating these private desktop forks as product dependencies. Strict Wayland automatic delivery remains gated on a negotiated receiving contract and application coverage. No safety downgrade is implied.
+Strict delivery needs upstream agreement on either a receiver-issued field token over text-input-v3 (Mutter, KWin, GTK, Qt, Chromium Ozone, terminals) or a conditional AT-SPI edit that fails after focus loss. Until then, Wayland keeps Last Transcript as the explicit recovery path. KDE has an opt-in best-effort test mode that validates the original window, not the field; it does not meet this contract (see `CONTEXT.md`). Local work could resume only if the maintainer accepts GTK/Qt-only coverage or an opt-in session input-method change.

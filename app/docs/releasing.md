@@ -92,6 +92,10 @@ After the workflow completes:
 2. Confirm the GitHub Release is published under the same tag.
 3. Confirm the Windows installer and `latest.yml` are attached.
 4. Install or update the app and confirm its displayed version matches the tag.
+   When Electron or a native dependency changed, also run the installed
+   Electron with `ELECTRON_RUN_AS_NODE=1` and confirm it loads `koffi` and
+   `better-sqlite3` and can write and read back a temporary SQLite database.
+   The sidecar runs the same way from `resources/app.asar/out/agent/index.js`.
 5. Confirm the update prompt or Settings → About shows the same notes as the
    GitHub Release. On the first release containing this feature, verify the
    post-install “What’s New” prompt instead of the pre-update prompt.

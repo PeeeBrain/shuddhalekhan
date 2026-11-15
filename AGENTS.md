@@ -59,6 +59,14 @@ The most common defect in this repo is a change that works on the path you teste
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Start needs cancel. Enable needs disable. A one-way door is a bug.
 - **Docs.** Check whether the change makes this file, `app/CONTEXT.md`, or `mobile/README.md` inaccurate.
 
+## Where knowledge goes
+
+The repo holds docs that describe the product as it is now: the READMEs, `app/CONTEXT.md`, ADRs in `app/docs/adr/`, `app/docs/releasing.md`, and required license notices. Edit those. Don't create new docs.
+
+- Plans, specs, and task breakdowns belong in the session or a GitHub issue.
+- Audits, reviews, verification evidence, benchmarks, and investigation notes belong in the PR body, attached with `gh pr edit --attach`. Raw logs go in git-ignored `.cache/`.
+- A decision that will outlive the PR becomes a short ADR (under 40 lines) that says what was decided and why. It isn't a log of how you got there.
+- When a doc stops being true, fix it or delete it in the same change. Don't add a status note.
 
 
 ## Dev servers
