@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import { createInputEventParser, parseKeyboardDevices } from '../linux-input';
 
-function inputEvent(type: number, code: number, value: number): Buffer {
+function inputEvent(type: number, code: number, value: number, seconds = 0, micros = 0): Buffer {
   const event = Buffer.alloc(24);
+  event.writeBigInt64LE(BigInt(seconds), 0);
+  event.writeBigInt64LE(BigInt(micros), 8);
   event.writeUInt16LE(type, 16);
   event.writeUInt16LE(code, 18);
   event.writeInt32LE(value, 20);
@@ -36,5 +38,14 @@ describe('Linux evdev input', () => {
     feed(stream.subarray(77));
 
     expect(keys).toEqual([[0xa2, true], [0x5b, true], [0x56, false]]);
+  });
+
+  it('reports each key event at its kernel time in milliseconds', () => {
+    const times: Array<number | undefined> = [];
+    createInputEventParser((_vk, _down, at) => times.push(at))(Buffer.concat([
+      inputEvent(1, 29, 1, 1_700_000_000, 250_000),
+      inputEvent(1, 29, 0, 1_700_000_000, 530_500),
+    ]));
+    expect(times).toEqual([1_700_000_000_250, 1_700_000_000_530.5]);
   });
 });

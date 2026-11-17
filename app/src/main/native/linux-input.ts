@@ -40,8 +40,11 @@ export function parseKeyboardDevices(procDevices: string): string[] {
   });
 }
 
+/** `at` is the kernel's event time in ms; omitted on releases synthesized after a keyboard goes away. */
+type KeyHandler = (vkCode: number, isDown: boolean, at?: number) => void;
+
 /** Feeds a byte stream of input_event structs, keeping partial events across chunks. */
-export function createInputEventParser(onKey: (vkCode: number, isDown: boolean) => void): (chunk: Buffer) => void {
+export function createInputEventParser(onKey: KeyHandler): (chunk: Buffer) => void {
   let pending: Buffer = Buffer.alloc(0);
   return (chunk) => {
     pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
@@ -49,14 +52,16 @@ export function createInputEventParser(onKey: (vkCode: number, isDown: boolean) 
     for (; offset + INPUT_EVENT_SIZE <= pending.length; offset += INPUT_EVENT_SIZE) {
       if (pending.readUInt16LE(offset + 16) !== EV_KEY) continue;
       const vkCode = EVDEV_TO_VK.get(pending.readUInt16LE(offset + 18));
-      if (vkCode !== undefined) onKey(vkCode, pending.readInt32LE(offset + 20) !== 0); // 1 down, 2 repeat, 0 up
+      if (vkCode === undefined) continue;
+      const at = Number(pending.readBigInt64LE(offset)) * 1000 + Number(pending.readBigInt64LE(offset + 8)) / 1000; // timeval
+      onKey(vkCode, pending.readInt32LE(offset + 20) !== 0, at); // 1 down, 2 repeat, 0 up
     }
     pending = pending.subarray(offset);
   };
 }
 
 /** Starts reading every keyboard; returns a stop function. Throws when no keyboard is readable. */
-export function startEvdevKeyboardReader(onKey: (vkCode: number, isDown: boolean) => void): () => void {
+export function startEvdevKeyboardReader(onKey: KeyHandler): () => void {
   const devices = parseKeyboardDevices(readFileSync('/proc/bus/input/devices', 'utf8')).filter((path) => {
     try {
       accessSync(path, constants.R_OK);
@@ -74,18 +79,18 @@ export function startEvdevKeyboardReader(onKey: (vkCode: number, isDown: boolean
   // Which keyboards hold each key: a key is released only when the last one
   // lets go, so the same key held on two keyboards stays down.
   const holders = new Map<number, Set<string>>();
-  const release = (vkCode: number, path: string) => {
+  const release = (vkCode: number, path: string, at?: number) => {
     const held = holders.get(vkCode);
     if (!held?.delete(path) || held.size > 0) return;
     holders.delete(vkCode);
-    onKey(vkCode, false);
+    onKey(vkCode, false, at);
   };
   const readers: ChildProcess[] = devices.map((path) => {
     const child = spawn('cat', [path], { stdio: ['ignore', 'pipe', 'ignore'] });
-    child.stdout?.on('data', createInputEventParser((vkCode, isDown) => {
-      if (!isDown) return release(vkCode, path);
+    child.stdout?.on('data', createInputEventParser((vkCode, isDown, at) => {
+      if (!isDown) return release(vkCode, path, at);
       holders.set(vkCode, (holders.get(vkCode) ?? new Set()).add(path));
-      onKey(vkCode, true);
+      onKey(vkCode, true, at);
     }));
     child.on('error', (error) => console.error(`Failed to read ${path}:`, error));
     // An unplugged keyboard never sends its key-ups; release what it held so a

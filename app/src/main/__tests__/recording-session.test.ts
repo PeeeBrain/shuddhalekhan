@@ -408,8 +408,8 @@ describe('RecordingSession', () => {
     });
     session.begin('dictation');
     const ending = session.end().catch(error => error);
-    const audio = new Uint8Array(64);
-    const pcm = new Int16Array(audio.buffer, 44, 10);
+    const audio = new Uint8Array(44 + 9_600); // 300 ms
+    const pcm = new Int16Array(audio.buffer, 44);
     pcm.forEach((_, index) => { pcm[index] = index % 2 ? 32_767 : -32_768; });
     await session.complete(audio);
     expect((await ending).message).toContain('clipping');
@@ -919,6 +919,59 @@ describe('RecordingSession', () => {
     // An absolute end time, so a late Stop delivery cannot stretch the recording past the cap.
     expect(audioStream.endCapture).toHaveBeenCalledWith(tailMs ? now + elapsedMs + tailMs : 0);
     await session.cancel();
+  });
+
+  it.each([
+    ['a sub-threshold Dictation hold is discarded', 'dictation', 120, false],
+    ['a Dictation hold at the threshold is kept', 'dictation', 300, true],
+    ['a Toggle stop is kept however quick', 'dictation', null, true],
+    ['Agent Mode keeps a quick hold', 'agent', 120, true],
+  ] as const)('admits a shortcut release by hold length: %s', async (
+    _case: string, intent: RecordingIntent, heldMs: number | null, kept: boolean,
+  ) => {
+    const onError = vi.fn();
+    session = createSession({ runtimeShell: audioStream, onError });
+    session.start();
+    const hook = keyboardStart.mock.calls.at(-1)?.[0] as { onStop: (heldMs: number | null) => void };
+    session.begin(intent, 'hold');
+
+    hook.onStop(heldMs);
+
+    expect(audioStream.endCapture).toHaveBeenCalledTimes(kept ? 1 : 0);
+    expect(audioStream.cancelCapture).toHaveBeenCalledTimes(kept ? 0 : 1);
+    expect(session.isBusy()).toBe(kept);
+    if (!kept) {
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+      expect(session.begin('dictation', 'next')).toBe(true);
+    }
+    await session.cancel();
+  });
+
+  it.each([
+    ['Dictation discards it without recognition or a toast', 'dictation', 0],
+    ['Agent Mode still recognizes it', 'agent', 1],
+  ] as const)('near-silent audio: %s', async (_case: string, intent: RecordingIntent, recognitions: number) => {
+    const onError = vi.fn();
+    const onResult = vi.fn();
+    session = createSession({ runtimeShell: audioStream, onError, onResult });
+    session.begin(intent);
+    const ending = session.end();
+    const audio = new Uint8Array(44 + 32_000); // one second of faint room noise
+    const pcm = new Int16Array(audio.buffer, 44);
+    pcm.forEach((_, index) => { pcm[index] = (index * 7_919) % 13 - 6; });
+
+    await session.complete(audio);
+
+    expect(transcribe).toHaveBeenCalledTimes(recognitions);
+    expect(onError).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledTimes(recognitions);
+    expect(session.isBusy()).toBe(false);
+    expect(audio.every(byte => byte === 0)).toBe(true);
+    if (!recognitions) {
+      await expect(ending).resolves.toBeNull();
+      expect(audioStream.finish).toHaveBeenCalledTimes(1);
+    }
   });
 
   it('warns for the final ten seconds and auto-stops a duration-limited provider exactly once', async () => {

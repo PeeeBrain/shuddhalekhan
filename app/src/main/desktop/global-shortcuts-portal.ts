@@ -136,11 +136,13 @@ export async function openGlobalShortcutsPortal({ onShortcut, onLost, onTriggers
     }
     const id = message.body[1];
     if (!isRecordingIntent(id) || !intents.includes(id)) return;
+    // Activated/Deactivated(o session, s id, t timestamp ms, a{sv} options).
+    const at = typeof message.body[2] === 'bigint' ? Number(message.body[2]) : undefined;
     if (message.member === 'Activated') {
       held.add(id);
-      onShortcut(id, true);
+      onShortcut(id, true, at);
     } else if (message.member === 'Deactivated' && held.delete(id)) {
-      onShortcut(id, false);
+      onShortcut(id, false, at);
     }
   });
   bus.onClose(lose);

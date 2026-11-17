@@ -70,7 +70,7 @@ async function openPortal() {
 
 const CTRL_SPACE = { keyCode: 0x20, modifiers: ['ctrl' as const] };
 const shortcutSignal = (member: string, id: string): [string, string, string, unknown[]] =>
-  ['org.freedesktop.portal.GlobalShortcuts', member, 'osta{sv}', [SESSION, id, 0n, {}]];
+  ['org.freedesktop.portal.GlobalShortcuts', member, 'osta{sv}', [SESSION, id, 1_234n, {}]];
 
 describe('GlobalShortcuts portal session', () => {
   it('accepts shortcut signals only from the portal unique name', async () => {
@@ -82,7 +82,7 @@ describe('GlobalShortcuts portal session', () => {
     bus.signal(PORTAL_OWNER, SESSION, ...shortcutSignal('Activated', 'agent')); // not bound
     bus.signal(PORTAL_OWNER, SESSION, ...shortcutSignal('Activated', 'dictation'));
     await delivered;
-    expect(events.onShortcut.mock.calls).toEqual([['dictation', true]]);
+    expect(events.onShortcut.mock.calls).toEqual([['dictation', true, 1_234]]);
     portal.close();
   });
 
@@ -94,7 +94,8 @@ describe('GlobalShortcuts portal session', () => {
     await pressed;
 
     const rebinding = portal.bind({ dictation: CTRL_SPACE, agent: { keyCode: 0x20, modifiers: ['alt'] } });
-    expect(events.onShortcut.mock.calls).toEqual([['dictation', true], ['dictation', false]]);
+    // The synthesized release carries no desktop time.
+    expect(events.onShortcut.mock.calls).toEqual([['dictation', true, 1_234], ['dictation', false]]);
     await rebinding;
     portal.close();
   });

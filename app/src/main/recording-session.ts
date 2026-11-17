@@ -21,6 +21,7 @@ import {
 import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from './streaming-transcript';
 import { RECOGNITION_TIMEOUT_MS } from './managed-local-runtime';
 import { markTiming } from './eval-timing';
+import { isNearSilent, MIN_HOLD_MS } from './dictation-admission';
 
 /** Longest Dictation release tail (Hex's cap); the capture renderer usually keeps ~200 ms. */
 const MAX_RELEASE_TAIL_MS = 600;
@@ -203,15 +204,23 @@ export class RecordingSession {
   }
 
   /**
-   * Stops capture. `userRelease` marks the user's own Stop: Dictation then
-   * keeps a bounded release tail so a last word still sounding is not cut.
-   * Agent Mode and the provider duration cap stop at once.
+   * Stops capture. `release` marks the user's own Stop, with how long a
+   * push-to-talk chord was held (null for Toggle or unknown timing). A
+   * Dictation hold shorter than MIN_HOLD_MS is an accidental tap: it is
+   * discarded like a cancel, with no recognition and no toast. Otherwise
+   * Dictation keeps a bounded release tail so a last word still sounding is
+   * not cut. Agent Mode and the provider duration cap stop at once.
    */
-  async end(userRelease = false): Promise<RecordingResult | null> {
+  async end(release: { heldMs: number | null } | null = null): Promise<RecordingResult | null> {
     const run = this.activeRun;
     if (!run || (run.state !== 'starting' && run.state !== 'recording')) return null;
 
-    const tailMs = userRelease && run.intent === 'dictation' ? this.releaseTailCap(run) : 0;
+    if (run.intent === 'dictation' && release?.heldMs != null && release.heldMs < MIN_HOLD_MS) {
+      console.info('Discarded an accidental Dictation hold', { heldMs: release.heldMs });
+      await this.cancel();
+      return null;
+    }
+    const tailMs = release && run.intent === 'dictation' ? this.releaseTailCap(run) : 0;
     this.clearDurationTimers();
     run.state = 'stopping';
     this.runtimeShell.showProcessing(run.id);
@@ -297,6 +306,18 @@ export class RecordingSession {
       return null;
     }
 
+    const pcm = new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
+    if (run.intent === 'dictation' && isNearSilent(pcm)) {
+      // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
+      console.info('Discarded near-silent Dictation without recognizing it', { samples: pcm.length });
+      this.cancelStreaming(run);
+      this.runtimeShell.finish();
+      audioData.fill(0);
+      pendingEnd?.resolve(null);
+      this.activeRun = null;
+      return null;
+    }
+
     const transcriber = run.transcriber;
     try {
       const recognized = await this.recognizeWithinDeadline(run, transcriber, audioData);
@@ -304,7 +325,6 @@ export class RecordingSession {
       const text = recognized;
       if (!text.trim()) {
         // Content-free level summary so a silent mic is distinguishable from a decoder miss.
-        const pcm = new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
         let peak = 0;
         let energy = 0;
         for (const sample of pcm) {
@@ -375,7 +395,7 @@ export class RecordingSession {
   startKeyboardHook(): void {
     this.keyboardHook.start({
       onStart: (intent) => this.begin(intent),
-      onStop: () => { void this.end(true).catch(() => undefined); },
+      onStop: (heldMs) => { void this.end({ heldMs }).catch(() => undefined); },
       isAgentModeEnabled: this.isAgentModeEnabled,
       getBinding: this.getShortcutBinding,
       getActivationMode: this.getRecordingActivationMode,

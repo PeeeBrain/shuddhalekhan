@@ -62,11 +62,19 @@ interface ActiveSession {
   activationMode: RecordingActivationMode;
   /** Snapshot of the binding that started the session; immune to mid-session config changes. */
   binding: ShortcutBinding;
+  /** Source event time of the press, in the backend's own millisecond clock; null when it gave none. */
+  pressedAt: number | null;
 }
 
 export interface KeyboardHookStartOptions {
   onStart: (intent: RecordingIntent) => boolean | void;
-  onStop: () => void;
+  /**
+   * `heldMs` is how long a push-to-talk chord was held, press to release, by
+   * the input source's own event times. Null for a Toggle stop, or when either
+   * event came without a source time (a release synthesized after the
+   * desktop or keyboard went away).
+   */
+  onStop: (heldMs: number | null) => void;
   isAgentModeEnabled?: () => boolean;
   getBinding?: (intent: RecordingIntent) => ShortcutBinding | null;
   getActivationMode?: (intent: RecordingIntent) => RecordingActivationMode;
@@ -97,7 +105,7 @@ export class KeyboardHook {
   private paused = false;
   private captureSuspended = false;
   private onStartRecording: ((intent: RecordingIntent) => boolean | void) | null = null;
-  private onStopRecording: (() => void) | null = null;
+  private onStopRecording: ((heldMs: number | null) => void) | null = null;
   private isAgentModeEnabled: () => boolean = () => false;
   private getBinding: (intent: RecordingIntent) => ShortcutBinding | null =
     (intent) => DEFAULT_SHORTCUTS[intent].binding;
@@ -124,7 +132,7 @@ export class KeyboardHook {
         const isUp = msg === WM_KEYUP || msg === WM_SYSKEYUP;
         if (isDown || isUp) {
           const struct = koffi.decode(lParam, KbdLlHookStructType);
-          const consumed = this.handleKey(struct.vkCode as number, isDown);
+          const consumed = this.handleKey(struct.vkCode as number, isDown, struct.time as number);
           if (consumed) return 1n;
         }
       }
@@ -258,7 +266,7 @@ export class KeyboardHook {
     this.linuxConnecting = true;
     try {
       const backend = await connectLinuxShortcuts({
-        onShortcut: (intent, isDown) => this.handleShortcut(intent, isDown),
+        onShortcut: (intent, isDown, at) => this.handleShortcut(intent, isDown, at),
         onLost: () => this.desktopShortcutsLost(),
         onTriggers: (triggers) => {
           const current = this.linuxBackend;
@@ -279,8 +287,8 @@ export class KeyboardHook {
     if (!evdevFallback) return console.warn('Could not reconnect desktop shortcuts:', errorText(desktopError));
     try {
       // evdev observes keys but cannot consume them; triggers also reach the focused app.
-      this.stopLinuxReader = startEvdevKeyboardReader((vkCode, isDown) => {
-        this.handleKey(vkCode, isDown);
+      this.stopLinuxReader = startEvdevKeyboardReader((vkCode, isDown, at) => {
+        this.handleKey(vkCode, isDown, at);
       });
       console.warn('Desktop shortcuts unavailable; reading keyboards through evdev:', errorText(desktopError));
       this.publishLinuxStatus({ backend: 'evdev' });
@@ -375,12 +383,11 @@ export class KeyboardHook {
    * Desktop-delivered chord press/release. The desktop already matched the
    * chord and kept it from the focused app, so only intent semantics remain.
    */
-  private handleShortcut(intent: RecordingIntent, isDown: boolean): void {
+  private handleShortcut(intent: RecordingIntent, isDown: boolean, at?: number): void {
     if (!isDown) {
       if (!this.heldIntents.delete(intent)) return;
       if (this.session?.intent === intent && this.session.activationMode === 'push-to-talk') {
-        this.session = null;
-        this.onStopRecording?.();
+        this.endHold(this.session, at);
       }
       return;
     }
@@ -391,7 +398,7 @@ export class KeyboardHook {
     if (session) {
       if (session.intent === intent && session.activationMode === 'toggle') {
         this.session = null;
-        this.onStopRecording?.();
+        this.onStopRecording?.(null);
       }
       return;
     }
@@ -400,14 +407,23 @@ export class KeyboardHook {
     const binding = this.getBinding(intent);
     if (!binding) return;
     if (this.onStartRecording && this.onStartRecording(intent) === false) return;
-    this.session = { intent, activationMode: this.getActivationMode(intent), binding: normalizeBinding(binding) };
+    this.session = {
+      intent, activationMode: this.getActivationMode(intent), binding: normalizeBinding(binding), pressedAt: at ?? null,
+    };
+  }
+
+  /** Ends a push-to-talk session at its release, whose source time is `at`. */
+  private endHold(session: ActiveSession, at: number | undefined): void {
+    this.session = null;
+    // Unsigned 32-bit difference: the Windows and X11 millisecond clocks wrap.
+    this.onStopRecording?.(session.pressedAt !== null && at !== undefined ? (at - session.pressedAt) >>> 0 : null);
   }
 
   /**
    * Core state machine. Returns true when the event belongs to a configured
    * trigger and must be consumed so it never reaches the focused application.
    */
-  private handleKey(vkCode: number, isDown: boolean): boolean {
+  private handleKey(vkCode: number, isDown: boolean, at?: number): boolean {
     const isRepeat = isDown && this.pressed.has(vkCode);
     if (!isRepeat) {
       if (isDown) this.pressed.add(vkCode);
@@ -432,8 +448,7 @@ export class KeyboardHook {
           if (!this.isBindingFullyReleased(session.binding)) {
             this.toggleAwaitingRelease = session;
           }
-          this.session = null;
-          this.onStopRecording?.();
+          this.endHold(session, at);
         }
         return this.shouldConsumeBindingKey(session.binding, vkCode);
       }
@@ -446,7 +461,7 @@ export class KeyboardHook {
       ) {
         this.toggleAwaitingRelease = session;
         this.session = null;
-        this.onStopRecording?.();
+        this.onStopRecording?.(null);
         return true;
       }
       return this.shouldConsumeBindingKey(session.binding, vkCode);
@@ -475,6 +490,7 @@ export class KeyboardHook {
             intent,
             activationMode,
             binding: normalizeBinding(binding),
+            pressedAt: at ?? null,
           };
           if (activationMode === 'toggle') {
             this.toggleAwaitingRelease = this.session;
@@ -549,8 +565,8 @@ export class KeyboardHook {
     return required.every((modifier) => held.has(modifier));
   }
 
-  handleKeyForTest(vkCode: number, isDown: boolean): boolean {
-    return this.handleKey(vkCode, isDown);
+  handleKeyForTest(vkCode: number, isDown: boolean, at?: number): boolean {
+    return this.handleKey(vkCode, isDown, at);
   }
 }
 
