@@ -133,13 +133,13 @@ export function AudioWindow() {
         acknowledgeRealtimeChunk(recordingSessionId, chunkSequence);
       },
     );
-    const unsubscribeStop = window.electronAPI.subscribe('runtime:audio-stop', async (command) => {
+    const unsubscribeStop = window.electronAPI.subscribe('runtime:audio-stop', async (command, tailEndsAt) => {
       const current = captureRef.current;
       if (current.phase !== 'capturing' || !sameCommand(current.command, command)) return;
       const stopping: AudioCapture = { phase: 'stopping', command: current.command };
       captureRef.current = stopping;
       try {
-        const boundary = await stopRecording();
+        const boundary = await stopRecording(tailEndsAt);
         if (captureRef.current !== stopping) return;
         if (!boundary) throw new Error('Audio capture ended without a final boundary.');
         window.electronAPI?.send(

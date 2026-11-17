@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { DEFAULT_SHORTCUTS } from '../../shared/shortcut-bindings';
 import type { RecordingActivationMode, RecordingIntent } from '../../types/ipc';
 import type { StreamingTranscriptionRequest, Transcriber } from '../transcription';
@@ -885,6 +885,42 @@ describe('RecordingSession', () => {
     await session.cancel();
   });
 
+  it.each([
+    ['unlimited Dictation', 'dictation', null, 5_000, 600],
+    ['Agent Mode', 'agent', null, 5_000, 0],
+    ['Dictation near a 30 s cap', 'dictation', 30, 29_500, 400],
+    ['Dictation at a 30 s cap', 'dictation', 30, 29_950, 0],
+  ] as const)('a user Stop keeps a release tail bounded by intent and provider cap: %s', async (
+    _case: string, intent: RecordingIntent, maxDurationSeconds: number | null, elapsedMs: number, tailMs: number,
+  ) => {
+    session = createSession({
+      runtimeShell: audioStream,
+      transcriber: { ...createTranscriber(async () => 'text'), capabilities: { maxDurationSeconds } },
+      setTimeoutFn: (() => 0) as unknown as typeof setTimeout,
+      clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    });
+    const sender = {};
+    audioStream.getWebContents.mockReturnValue(sender);
+    session.start();
+    const hook = keyboardStart.mock.calls.at(-1)?.[0] as { onStop: () => void } | undefined;
+    session.begin(intent, 'tail-capture');
+    const command = audioStream.beginCapture.mock.calls[0]?.[0];
+    const ready = electronMock.ipcMain.on.mock.calls.find((call: unknown[]) => call[0] === 'runtime:audio-ready')?.[1];
+    const now = Date.now();
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      ready({ sender }, 1, command.recordingSessionId, command.sequence);
+      clock.mockReturnValue(now + elapsedMs);
+      hook?.onStop();
+    } finally {
+      clock.mockRestore();
+    }
+
+    // An absolute end time, so a late Stop delivery cannot stretch the recording past the cap.
+    expect(audioStream.endCapture).toHaveBeenCalledWith(tailMs ? now + elapsedMs + tailMs : 0);
+    await session.cancel();
+  });
+
   it('warns for the final ten seconds and auto-stops a duration-limited provider exactly once', async () => {
     const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
     const recordingEndedExternally = vi.fn();
@@ -938,7 +974,9 @@ describe('RecordingSession', () => {
     timers.find((timer) => timer.delay === 55000)?.callback();
     timers.find((timer) => timer.delay === 55000)?.callback();
 
+    // The cap stops at once: a release tail would run past the provider's limit.
     expect(audioStream.endCapture).toHaveBeenCalledTimes(1);
+    expect(audioStream.endCapture).toHaveBeenCalledWith(0);
     expect(recordingEndedExternally).toHaveBeenCalledTimes(1);
     expect(audioStream.showProcessing).toHaveBeenCalledTimes(1);
     expect(session.isBusy()).toBe(true);

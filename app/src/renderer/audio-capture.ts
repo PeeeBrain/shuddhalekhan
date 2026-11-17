@@ -22,6 +22,15 @@ const STOP_ACK_TIMEOUT_MS = 500;
 const SPOOL_ACK_TIMEOUT_MS = 2_000;
 // Fail closed if mic permission/open or worklet load never settles; generous for a permission prompt.
 const SETUP_TIMEOUT_MS = 30_000;
+// A Dictation release often lands while the last word still sounds, so stop
+// keeps this much audio (Hex's base tail), growing while speech continues
+// until this much quiet or main's cap.
+const RELEASE_TAIL_MS = 200;
+const RELEASE_TAIL_QUIET_MS = 160;
+// ponytail: level heuristic, not VAD. A batch is speech if its mean level is
+// within 20 dB of the loudest batch before release, and above the noise floor.
+const SPEECH_FLOOR = 0.003;
+const SPEECH_RELATIVE = 0.1;
 /** One second of buffered audio at 16 kHz with 320-sample chunks. */
 export const MAX_IN_FLIGHT_PCM_CHUNKS = 50;
 
@@ -134,8 +143,12 @@ interface Capture {
   failure: Error | null;
   stopWatchingMic: (() => void) | null;
   released: boolean;
-  /** Wakes the step stop is waiting on: the worklet's ack, all writes settled, or release. */
+  /** Wakes the step stop is waiting on: the release tail, the worklet's ack, all writes settled, or release. */
   onStopped: (() => void) | null;
+  /** Loudest batch level before release; the release tail's speech reference. */
+  peakLevel: number;
+  /** Set while stop keeps a release tail; told whether each batch sounds like speech. */
+  onTailBatch: ((speech: boolean) => void) | null;
 }
 
 type WorkletMessage = { type: 'audio'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
@@ -312,11 +325,15 @@ function handleWorkletMessage(capture: Capture, message: WorkletMessage): void {
     capture.node?.port.postMessage({ type: 'credit' });
   }
 
-  if (capture === active) {
-    let sum = 0;
-    for (const sample of samples) sum += Math.abs(sample);
-    latestAudioLevel = samples.length > 0 ? Math.min((sum / samples.length) * 10, 1) : 0;
+  let sum = 0;
+  for (const sample of samples) sum += Math.abs(sample);
+  const level = samples.length > 0 ? sum / samples.length : 0;
+  if (capture.onTailBatch) {
+    capture.onTailBatch(level > Math.max(SPEECH_FLOOR, capture.peakLevel * SPEECH_RELATIVE));
+  } else {
+    capture.peakLevel = Math.max(capture.peakLevel, level);
   }
+  if (capture === active) latestAudioLevel = Math.min(level * 10, 1);
 }
 
 async function setupCapture(capture: Capture): Promise<void> {
@@ -383,6 +400,8 @@ export async function startRecording(options: RecordingOptions): Promise<void> {
     stopWatchingMic: null,
     released: false,
     onStopped: null,
+    peakLevel: 0,
+    onTailBatch: null,
   };
   active = capture;
   live.add(capture);
@@ -417,14 +436,44 @@ function waitForCapture(capture: Capture, timeoutMs: number, message: string, be
 }
 
 /**
+ * Keeps recording for the release tail: at least RELEASE_TAIL_MS, then until
+ * RELEASE_TAIL_QUIET_MS without speech, never past `maxMs`. Tail length counts
+ * audio received, not arrival time, so late back-to-back batches cannot end it
+ * early; the wall-clock timer is only the hard cap. Release (cancel or failure) ends
+ * the wait at once.
+ */
+function keepReleaseTail(capture: Capture, maxMs: number): Promise<void> {
+  const base = Math.min(RELEASE_TAIL_MS, maxMs);
+  const startSamples = capture.sampleCount;
+  let lastSpeech = 0;
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      capture.onTailBatch = null;
+      capture.onStopped = null;
+      resolve();
+    };
+    const timer = setTimeout(done, maxMs);
+    capture.onStopped = done;
+    capture.onTailBatch = (speech) => {
+      const ms = (capture.sampleCount - startSamples) * 1000 / STREAM_SAMPLE_RATE;
+      if (speech) lastSpeech = ms;
+      if (ms >= base && ms - lastSpeech >= RELEASE_TAIL_QUIET_MS) done();
+    };
+  });
+}
+
+/**
  * Stops the current recording after the worklet acknowledges and main has
  * confirmed every spool write, so every sample processed before the worklet
- * handles stop is on disk and the final realtime frame sent. This does not
- * drain samples still buffered by the microphone/browser. Waits for a pending
- * start. Rejects if startup, the processor, or a spool write failed or timed
- * out; resolves null if the capture was cancelled meanwhile.
+ * handles stop is on disk and the final realtime frame sent. A future
+ * `tailEndsAt` (Date.now() ms) first keeps a release tail (see keepReleaseTail)
+ * in the same spool, never past that time. This does not drain samples still
+ * buffered by the microphone/browser. Waits for a pending start. Rejects if
+ * startup, the processor, or a spool write failed or timed out; resolves null
+ * if the capture was cancelled meanwhile.
  */
-export async function stopRecording(): Promise<CaptureBoundary | null> {
+export async function stopRecording(tailEndsAt = 0): Promise<CaptureBoundary | null> {
   const capture = active;
   if (!capture) return { chunkCount: 0, sampleCount: 0 };
   active = null;
@@ -432,6 +481,9 @@ export async function stopRecording(): Promise<CaptureBoundary | null> {
 
   try {
     await capture.ready;
+    if (capture.failure) throw capture.failure;
+    const maxTailMs = tailEndsAt - Date.now();
+    if (maxTailMs > 0 && capture.node && !capture.released) await keepReleaseTail(capture, maxTailMs);
     if (capture.failure) throw capture.failure;
     const { node } = capture;
     if (node && !capture.released) {

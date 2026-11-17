@@ -319,7 +319,12 @@ export interface MainToRendererChannels {
   'shortcuts:paused-changed': (paused: boolean) => void;
   'desktop:status-changed': (status: DesktopStatus) => void;
   'runtime:audio-start': (command: RuntimeAudioCommand) => void;
-  'runtime:audio-stop': (command: RuntimeAudioCommand) => void;
+  /**
+   * A nonzero `tailEndsAt` (Date.now() epoch ms, shared by main and renderer)
+   * keeps a Dictation release tail until at most then, so a late Stop delivery
+   * shortens the tail instead of overrunning a provider cap.
+   */
+  'runtime:audio-stop': (command: RuntimeAudioCommand, tailEndsAt: number) => void;
   'runtime:audio-cancel': (command: RuntimeAudioCommand) => void;
   'runtime:audio-chunk-accepted': (
     generation: number,
