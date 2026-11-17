@@ -333,10 +333,15 @@ export interface MainToRendererChannels {
     chunkSequence: number,
   ) => void;
   'runtime:snapshot': (snapshot: RuntimePresentationSnapshot) => void;
+  /** One-shot; never replayed, so a reloaded renderer cannot repeat a cue. */
+  'runtime:cue': (cue: RecordingCue) => void;
   'transcription:readiness-changed': (readiness: TranscriptionReadiness) => void;
   'managed-local:model-state-changed': (state: ManagedLocalModelState) => void;
   'onboarding:completed': () => void;
 }
+
+/** Start: capture is live. Stop: capture ended and the mic is released. Error: a failure toast. */
+export type RecordingCue = 'start' | 'stop' | 'error';
 
 export interface RuntimeAudioCommand {
   generation: number;
@@ -586,6 +591,8 @@ export interface AppConfig {
   pasteStrategy: PasteStrategyConfig;
   /** KDE Wayland best-effort insertion test mode. Off by default; enabled only through Settings setup. */
   waylandBestEffortInsertion?: boolean;
+  /** Start, Stop and Error cues for Dictation and Agent Mode recordings. On unless turned off, including upgrades. */
+  recordingSounds: boolean;
   setupChecklistDismissed: boolean;
   onboarding: { status: 'pending' | 'complete' };
   shortcuts: ShortcutsConfig;

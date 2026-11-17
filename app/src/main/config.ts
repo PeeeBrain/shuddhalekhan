@@ -83,6 +83,7 @@ const store = new Store<StoreConfig>({
       overrides: {},
     },
     waylandBestEffortInsertion: false,
+    recordingSounds: true,
     setupChecklistDismissed: false,
     onboarding: { status: existingInstallationExisted ? 'complete' : 'pending' },
     shortcuts: {
@@ -274,6 +275,7 @@ export function getConfig(): AppConfig {
     dictionary: store.get('dictionary') ?? [],
     pasteStrategy: store.get('pasteStrategy') ?? { default: 'ctrl-v', overrides: {} },
     waylandBestEffortInsertion: store.get('waylandBestEffortInsertion') === true,
+    recordingSounds: store.get('recordingSounds') !== false,
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
     onboarding: store.get('onboarding')?.status === 'pending'
       ? { status: 'pending' }

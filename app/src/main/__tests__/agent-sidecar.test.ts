@@ -119,6 +119,7 @@ const config: AppConfig = {
   task: 'transcribe',
   dictionary: [],
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
+  recordingSounds: true,
   setupChecklistDismissed: false,
   onboarding: { status: 'complete' },
   shortcuts: {

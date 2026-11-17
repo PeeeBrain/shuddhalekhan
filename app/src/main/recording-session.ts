@@ -27,6 +27,10 @@ import { isNearSilent, MIN_HOLD_MS } from './dictation-admission';
 const MAX_RELEASE_TAIL_MS = 600;
 // ponytail: wall-clock margin under a provider's duration cap for IPC and audio-thread lag.
 const DURATION_CAP_MARGIN_MS = 100;
+// The Start cue (150 ms, renderer/recording-cues.ts) plus IPC and output latency.
+// The silence gate skips this much after a cued start so a cue heard through
+// speakers is not mistaken for speech; recognition still gets every sample.
+const START_CUE_HEAD_SAMPLES = 16_000 * 0.3;
 
 /** Main-process-only settings and resolved formatter credential, pinned at Begin. */
 export interface DictationDeliveryContext {
@@ -50,7 +54,7 @@ type RuntimeShellBackend = Pick<import('./runtime-shell').RuntimeShell,
   'prepare' | 'beginCapture' | 'endCapture' | 'cancelCapture' | 'setSelectedDevice' |
   'destroy' | 'markReady' | 'getWebContents' | 'show' | 'hide' | 'showProcessing' |
   'finish' | 'updateDurationWarning' | 'showStreamingPreview' |
-  'markCaptureReady' | 'acceptsAudioEvent' | 'consumeAudioEvent' | 'setRecordingHandlers'>;
+  'markCaptureReady' | 'acceptsAudioEvent' | 'consumeAudioEvent' | 'setRecordingHandlers' | 'playCue'>;
 
 type KeyboardHook = Pick<import('./native/keyboard').KeyboardHook, 'start' | 'stop' | 'recordingEndedExternally'>;
 
@@ -85,6 +89,8 @@ interface RecordingRunContext {
   state: 'starting' | 'recording' | 'stopping' | 'transcribing' | 'delivering';
   /** Date.now() when capture became ready; bounds the release tail under a provider cap. */
   recordingSince: number | null;
+  /** The Start cue played at capture-ready, so the capture's head may hold it. */
+  startCued: boolean;
   abort: AbortController;
   dictation: DictationDeliveryContext | null;
   pendingEnd: {
@@ -170,6 +176,7 @@ export class RecordingSession {
       revision: 0,
       state: 'starting',
       recordingSince: null,
+      startCued: false,
       abort: new AbortController(),
       dictation: intent === 'dictation' ? structuredClone(this.getDictationContext()) : null,
       pendingEnd: null,
@@ -289,6 +296,8 @@ export class RecordingSession {
     }
     run.state = 'transcribing';
     this.clearDurationTimers();
+    // Capture has ended and the renderer has released the mic, so the cue cannot be recorded.
+    if (run.recordingSince !== null) this.runtimeShell.playCue('stop');
     const pendingEnd = run.pendingEnd;
 
     const empty = audioData.byteLength <= 44;
@@ -308,7 +317,8 @@ export class RecordingSession {
     }
 
     const pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
-    if (run.intent === 'dictation' && (empty || isNearSilent(pcm))) {
+    const gated = run.startCued ? pcm.subarray(START_CUE_HEAD_SAMPLES) : pcm;
+    if (run.intent === 'dictation' && (gated.length === 0 || isNearSilent(gated))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
       // Empty means stopped before the microphone delivered audio: a dead device still delivers zeros.
       console.info('Discarded near-silent Dictation without recognizing it', { samples: pcm.length });
@@ -643,6 +653,7 @@ export class RecordingSession {
     markTiming('capture-ready');
     run.recordingSince = Date.now();
     this.runtimeShell.markCaptureReady(run.id);
+    run.startCued = this.runtimeShell.playCue('start');
     this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
   };
 

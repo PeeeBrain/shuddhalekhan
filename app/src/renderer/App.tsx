@@ -10,6 +10,7 @@ import {
   startRecording,
   stopRecording,
 } from './audio-capture';
+import { playRecordingCue } from './recording-cues';
 import { SettingsWindow } from './SettingsWindow';
 import { RuntimeShellSurface } from './RuntimeShellSurface';
 import type { RuntimeAudioCommand } from '../types/ipc';
@@ -177,6 +178,8 @@ export function AudioWindow() {
       cancelRecording();
     };
   }, []);
+
+  useEffect(() => window.electronAPI.subscribe('runtime:cue', playRecordingCue), []);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('audio:recreate-stream', (deviceId: string | null) => {

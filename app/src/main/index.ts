@@ -125,7 +125,7 @@ let continueFromRunId: string | null = null;
 let lastRunProvider: string | null = null;
 let providerTestRevision = 0;
 let retryPaste: AbortController | null = null;
-const runtimeShell = new RuntimeShell();
+const runtimeShell = new RuntimeShell(undefined, () => getConfig().recordingSounds);
 const agentPresenter = createRuntimeShellPresenter(runtimeShell);
 const runtimeReadiness = createRuntimeReadinessBarrier(() => {
   queueMicrotask(() => {

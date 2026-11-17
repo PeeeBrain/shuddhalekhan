@@ -8,6 +8,7 @@ import type {
   AgentThread,
   DictationRecoveryAction,
   RecordingIntent,
+  RecordingCue,
   RecordingPresentationEnvelope,
   RuntimeAudioCommand,
   RuntimePresentationSnapshot,
@@ -119,6 +120,7 @@ export class RuntimeShell {
       setTimeoutFn: typeof setTimeout;
       clearTimeoutFn: typeof clearTimeout;
     } = { setTimeoutFn: setTimeout, clearTimeoutFn: clearTimeout },
+    private readonly soundsEnabled: () => boolean = () => false,
   ) {
     this.windows = createSingletonWindow({
       route: 'runtime',
@@ -285,6 +287,14 @@ export class RuntimeShell {
       recoveryActions,
     };
     this.republish();
+    this.playCue('error');
+  }
+
+  /** Plays a cue in the runtime window; false when sounds are off. Playback failure never reaches here. */
+  playCue(cue: RecordingCue): boolean {
+    if (!this.soundsEnabled()) return false;
+    this.send('runtime:cue', cue);
+    return true;
   }
 
   finish(): void {
