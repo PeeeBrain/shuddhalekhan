@@ -69,9 +69,10 @@ function longestRun(levels: number[], threshold: number): number {
 export function isNearSilent(pcm: Int16Array): boolean {
   const levels = windowLevels(pcm);
   if (longestRun(levels, LOUD_DBFS) >= SUSTAINED_WINDOWS) return false;
-  const audible = levels.filter(level => level > LEVEL_FLOOR_DBFS).sort((a, b) => a - b);
-  if (audible.length === 0) return false;
-  const noiseFloor = audible[Math.floor((audible.length - 1) / 10)];
+  if (!levels.some(level => level > LEVEL_FLOOR_DBFS)) return false;
+  // Gated (noise-suppressed) silence counts toward the floor, so a quiet word between zeros still stands out.
+  const sorted = [...levels].sort((a, b) => a - b);
+  const noiseFloor = sorted[Math.floor((sorted.length - 1) / 10)];
   const threshold = Math.max(noiseFloor + RELATIVE_MARGIN_DB, RELATIVE_FLOOR_DBFS);
   return longestRun(levels, threshold) < SUSTAINED_WINDOWS;
 }
