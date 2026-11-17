@@ -115,6 +115,8 @@ let importedLegacyEndpoint: string | undefined;
 
 // Migrate old config from ~/.speech-2-text/config.json on first run
 function maybeMigrateLegacyConfig(): void {
+  // An eval profile (store-path.ts) starts empty and must never consume or delete the user's legacy file.
+  if (process.env.SHUDDHALEKHAN_PROFILE_DIR) return;
   if (existsSync(legacyConfigPath) && !store.get('migrated')) {
     try {
       const raw = readFileSync(legacyConfigPath, 'utf-8');

@@ -1,9 +1,11 @@
 # End-to-end eval rig: drives the running app exactly like a user. It focuses its own text box, presses the
 # Dictation hotkey, plays each clip into the VB-Cable virtual mic, presses the hotkey again and waits for the
-# paste. Started by eval.ts --layer e2e:
-#   powershell -Sta -File e2e-rig.ps1 <jobs.json> <out.json> <dev electron.exe path>
+# paste. Started by eval.ts --layer e2e (or --layer idle, which passes -IdleSeconds and no jobs):
+#   powershell -Sta -File e2e-rig.ps1 <jobs.json> <out.json> <dev electron.exe path> [-IdleSeconds n]
 # jobs.json is [{ id, path, leadInMs }]. Needs Shuddhalekhan running with its microphone set to CABLE Output.
-param([string]$Jobs, [string]$Out, [string]$ElectronExe)
+# Press, release and paste-observed times are QueryPerformanceCounter nanoseconds, the clock the app's
+# SHUDDHALEKHAN_TIMING_LOG marks use, so eval.ts can line the two up.
+param([string]$Jobs, [string]$Out, [string]$ElectronExe, [int]$IdleSeconds = 0)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'
@@ -16,8 +18,13 @@ using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
-public class ClipRun { public string Id { get; set; } public string Text { get; set; } public double StopToPasteMs { get; set; } public bool ClipboardRestored { get; set; } }
+public class ClipRun {
+  public string Id { get; set; } public string Text { get; set; } public double StopToPasteMs { get; set; } public bool ClipboardRestored { get; set; }
+  // Strings: nanosecond counters outgrow a JSON double's exact range after ~100 days of uptime.
+  public string PressNs { get; set; } public string ReleaseNs { get; set; } public string ObservedNs { get; set; }
+}
 public class RigRun { public ClipRun[] Clips { get; set; } public double PeakRssMb { get; set; } public double CpuMs { get; set; } }
+public class IdleRun { public int Processes { get; set; } public double Seconds { get; set; } public double CpuMs { get; set; } public double WorkingSetMb { get; set; } public double PrivateMb { get; set; } }
 
 public static class E2eRig {
   // ponytail: Dictation hotkey fixed to F2 in toggle mode; read it from the app config if that ever varies.
@@ -116,6 +123,45 @@ public static class E2eRig {
 
   static object Ui(Func<object> action) { return form.Invoke(action); }
 
+  /** QPC ticks as nanoseconds, the way libuv's process.hrtime converts them on Windows. */
+  static string Ns(long ticks) {
+    long f = Stopwatch.Frequency;
+    return ((ticks / f) * 1000000000L + (ticks % f) * 1000000000L / f).ToString();
+  }
+
+  /** The maintainer's clipboard, every format, so the run can put it back; refuses rather than lose one. */
+  static DataObject SaveClipboard() {
+    var saved = new DataObject();
+    var current = Clipboard.GetDataObject();
+    if (current == null) return saved;
+    foreach (var format in current.GetFormats(false)) {
+      object data = null;
+      try { data = current.GetData(format, false); } catch (Exception) { }
+      if (data == null) throw new Exception("Your clipboard holds a " + format + " item the rig can't save and restore. Copy some plain text, then run again.");
+      saved.SetData(format, false, data);
+    }
+    return saved;
+  }
+
+  /** Process-tree CPU and memory over an idle window; the app is left alone while it waits. */
+  public static IdleRun Idle(string electronExe, int seconds) {
+    var startCpu = new Dictionary<int, TimeSpan>();
+    foreach (var process in AppProcesses(electronExe)) startCpu[process.Id] = process.TotalProcessorTime;
+    if (startCpu.Count == 0) throw new Exception("Shuddhalekhan isn't running. Start it (bun run dev or the installed app) first.");
+    var clock = Stopwatch.StartNew();
+    Thread.Sleep(seconds * 1000);
+    var run = new IdleRun { Seconds = clock.Elapsed.TotalSeconds };
+    foreach (var process in AppProcesses(electronExe)) {
+      TimeSpan before;
+      // ponytail: a helper that started mid-window counts from zero and one that exited is lost.
+      run.CpuMs += (process.TotalProcessorTime - (startCpu.TryGetValue(process.Id, out before) ? before : TimeSpan.Zero)).TotalMilliseconds;
+      run.WorkingSetMb += process.WorkingSet64 / 1048576.0;
+      run.PrivateMb += process.PrivateMemorySize64 / 1048576.0;
+      run.Processes++;
+    }
+    return run;
+  }
+
   static void PressHotkey() {
     keybd_event(VK_F2, 0, 0, UIntPtr.Zero);
     keybd_event(VK_F2, 0, 2, UIntPtr.Zero); // KEYEVENTF_KEYUP
@@ -126,13 +172,13 @@ public static class E2eRig {
     foreach (var process in AppProcesses(electronExe)) startCpu[process.Id] = process.TotalProcessorTime;
     if (startCpu.Count == 0) throw new Exception("Shuddhalekhan isn't running. Start it (bun run dev or the installed app) first.");
     int device = CableDevice();
+    var userClipboard = SaveClipboard();
 
-    var clock = Stopwatch.StartNew();
     form = new Form { Text = "Shuddhalekhan eval - keep this window focused, don't type", TopMost = true, Width = 900, Height = 300 };
     box = new TextBox { Multiline = true, Dock = DockStyle.Fill, Font = new System.Drawing.Font("Segoe UI", 12) };
     form.Controls.Add(box);
     box.TextChanged += delegate {
-      if (box.TextLength > 0) Interlocked.CompareExchange(ref pastedAt, clock.ElapsedTicks, 0);
+      if (box.TextLength > 0) Interlocked.CompareExchange(ref pastedAt, Stopwatch.GetTimestamp(), 0);
     };
 
     var clips = new List<ClipRun>();
@@ -153,11 +199,12 @@ public static class E2eRig {
             Thread.Sleep(500); // let the previous session fully settle
             Interlocked.Exchange(ref pastedAt, 0);
 
+            long pressAt = Stopwatch.GetTimestamp();
             PressHotkey();
             Thread.Sleep(leadIns[i]);
             Play(device, paths[i]);
             Thread.Sleep(300); // the clip's tail is still in the cable when the driver reports done
-            long stopAt = clock.ElapsedTicks;
+            long stopAt = Stopwatch.GetTimestamp();
             PressHotkey();
 
             var waited = Stopwatch.StartNew();
@@ -170,6 +217,9 @@ public static class E2eRig {
               Text = (string)Ui(delegate { return box.Text; }),
               StopToPasteMs = pasted == 0 ? -1 : (pasted - stopAt) * 1000.0 / Stopwatch.Frequency,
               ClipboardRestored = (string)Ui(delegate { return Clipboard.GetText(); }) == Sentinel,
+              PressNs = Ns(pressAt),
+              ReleaseNs = Ns(stopAt),
+              ObservedNs = pasted == 0 ? null : Ns(pasted),
             });
             Console.Error.WriteLine((i + 1) + "/" + ids.Length + " " + ids[i]);
             if (i == 2 && clips.TrueForAll(delegate (ClipRun clip) { return clip.StopToPasteMs < 0; })) {
@@ -183,7 +233,7 @@ public static class E2eRig {
         }
       }) { IsBackground = true }.Start();
     };
-    Application.Run(form);
+    try { Application.Run(form); } finally { Clipboard.SetDataObject(userClipboard, true); }
     if (failure != null) throw failure;
 
     // ponytail: summed per-process peak working sets (not a simultaneous peak), and CPU of processes that
@@ -198,6 +248,37 @@ public static class E2eRig {
   }
 }
 '@
+if ($IdleSeconds -gt 0) {
+  # GPU comes from the per-process GPU Engine counters, sampled on a background job over about the same window
+  # (the job starts a second or two late). Counter names are localized and need WDDM 2.x, so when they're
+  # unavailable the run says so, not zero.
+  $gpuJob = Start-Job -ArgumentList $IdleSeconds -ScriptBlock {
+    param($seconds)
+    # Engine instances come and go mid-run; a bad sample is skipped rather than ending the run.
+    Get-Counter '\GPU Engine(*)\Utilization Percentage' -SampleInterval 1 -MaxSamples $seconds -ErrorAction SilentlyContinue
+  }
+  $idle = [E2eRig]::Idle($ElectronExe, $IdleSeconds)
+  $gpu = $null; $gpuNote = $null
+  $samples = @(Receive-Job $gpuJob -Wait -ErrorAction SilentlyContinue)
+  Remove-Job $gpuJob -Force
+  if ($samples.Count -eq 0) {
+    $gpuNote = 'GPU Engine counters unavailable (no samples)'
+  } else {
+    $appPids = @(Get-Process | Where-Object { $_.ProcessName -eq 'Shuddhalekhan' -or ($_.ProcessName -eq 'electron' -and $_.Path -eq $ElectronExe) } | ForEach-Object { $_.Id })
+    $matched = 0
+    $perSample = foreach ($sample in $samples) {
+      $mine = @($sample.CounterSamples | Where-Object { $_.InstanceName -match '^pid_(\d+)_' -and $appPids -contains [int]$Matches[1] })
+      $matched += $mine.Count
+      ($mine | Measure-Object CookedValue -Sum).Sum
+    }
+    # Summed over every engine of every app process, averaged over samples; can exceed 100 with several engines busy.
+    if ($matched -eq 0) { $gpuNote = 'GPU Engine counters available; no engine instance belonged to the app processes' }
+    else { $gpu = ($perSample | Measure-Object -Average).Average }
+  }
+  $result = [ordered]@{ Processes = $idle.Processes; Seconds = $idle.Seconds; CpuMs = $idle.CpuMs; WorkingSetMb = $idle.WorkingSetMb; PrivateMb = $idle.PrivateMb; GpuEngineSumPercent = $gpu; GpuNote = $gpuNote }
+  [IO.File]::WriteAllText($Out, (ConvertTo-Json -InputObject $result))
+  exit 0
+}
 $jobList = Get-Content -LiteralPath $Jobs -Raw | ConvertFrom-Json
 $run = [E2eRig]::Run([string[]]$jobList.id, [string[]]$jobList.path, [int[]]$jobList.leadInMs, $ElectronExe)
 [IO.File]::WriteAllText($Out, (ConvertTo-Json -InputObject $run -Depth 4))

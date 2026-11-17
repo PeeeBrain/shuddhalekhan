@@ -1,5 +1,6 @@
 import type { DictationTargetSnapshot, PasteStrategy, InjectResult } from '../types/ipc';
 import { buildPasteStrategyEvents, type PasteDispatchResult } from './paste-strategy';
+import { markTiming } from './eval-timing';
 
 export interface ClipboardSnapshot {
   wasEmpty: boolean;
@@ -170,6 +171,7 @@ export class ClipboardTransactionManager {
         let dispatchResult: PasteDispatchResult;
         try {
           dispatchResult = this.inputSimulator(strategy);
+          markTiming('paste-dispatched', { acceptedEvents: dispatchResult.acceptedEvents });
         } catch (error) {
           return { kind: 'error', message: this.formatError('Paste dispatch failed', error) };
         }
@@ -245,6 +247,7 @@ export class ClipboardTransactionManager {
     } catch {
       return 'failed';
     }
+    markTiming('clipboard-restored');
     return 'restored';
   }
 

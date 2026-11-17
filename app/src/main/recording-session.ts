@@ -20,6 +20,7 @@ import {
 } from './transcription';
 import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from './streaming-transcript';
 import { RECOGNITION_TIMEOUT_MS } from './managed-local-runtime';
+import { markTiming } from './eval-timing';
 
 /** Main-process-only settings and resolved formatter credential, pinned at Begin. */
 export interface DictationDeliveryContext {
@@ -297,6 +298,7 @@ export class RecordingSession {
             : 'Check the microphone input level and selected device.';
         throw new TranscriptionFailure('unknown', `No speech was recognized. ${hint} Then try again.`);
       }
+      markTiming('transcript');
       const result = this.createRecordingResult(run, text, { kind: 'completed' });
       run.state = 'delivering';
       await this.onResultCallback(result);
@@ -593,6 +595,7 @@ export class RecordingSession {
     if (!event.sender || event.sender !== this.runtimeShell.getWebContents()) return;
     if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
     run.state = 'recording';
+    markTiming('capture-ready');
     this.runtimeShell.markCaptureReady(run.id);
     this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
   };
