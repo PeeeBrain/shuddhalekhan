@@ -13,9 +13,11 @@ const STORE_FILENAMES = [
  * Keep persistent settings independent of package.json's name. In unpackaged
  * Electron apps, userData otherwise changes when the package is moved or
  * renamed (for example to the scoped monorepo package @shuddhalekhan/app).
+ * SHUDDHALEKHAN_PROFILE_DIR replaces the whole directory (settings, credentials, models) so the
+ * measurement rig in scripts/eval runs against a throwaway profile, never the user's.
  */
 export function getPersistentStoreDirectory(appDataDirectory = app.getPath('appData')): string {
-  return join(appDataDirectory, STORE_DIRECTORY_NAME);
+  return process.env.SHUDDHALEKHAN_PROFILE_DIR || join(appDataDirectory, STORE_DIRECTORY_NAME);
 }
 
 /**
@@ -25,6 +27,7 @@ export function getPersistentStoreDirectory(appDataDirectory = app.getPath('appD
  */
 export function preparePersistentStoreDirectory(appDataDirectory = app.getPath('appData')): string {
   const targetDirectory = getPersistentStoreDirectory(appDataDirectory);
+  if (process.env.SHUDDHALEKHAN_PROFILE_DIR) return targetDirectory; // a throwaway profile starts empty
   const monorepoDevDirectory = join(appDataDirectory, MONOREPO_DEV_DIRECTORY);
 
   for (const filename of STORE_FILENAMES) {

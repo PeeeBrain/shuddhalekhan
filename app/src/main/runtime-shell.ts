@@ -2,6 +2,7 @@ import { handle } from './typed-ipc';
 import { ipcMain, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { AudioSpool, sweepOrphanedSpools } from './audio-spool';
+import { markTiming } from './eval-timing';
 import type {
   AgentStep,
   AgentThread,
@@ -228,6 +229,7 @@ export class RuntimeShell {
       win.webContents.send('recording:pill-show');
       if (!win.isVisible()) win.showInactive();
       win.setAlwaysOnTop(true, 'screen-saver');
+      markTiming('pill-shown');
     };
     if (win.webContents.isLoading()) win.once('ready-to-show', publish);
     else publish();
