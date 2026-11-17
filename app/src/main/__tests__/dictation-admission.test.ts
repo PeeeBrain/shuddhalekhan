@@ -26,6 +26,7 @@ describe('isNearSilent', () => {
     ['loud key clicks at press and release', clip(noise(-20, ms(5), 3), noise(-72, ms(1000)), noise(-20, ms(5), 4), noise(-72, ms(300), 2)), true],
     ['whisper-level speech in silence', clip(noise(-80, ms(500)), tone(-43, ms(100)), noise(-80, ms(400), 2)), false],
     ['a short word 10 dB over the room, then a release tail', clip(noise(-70, ms(300)), tone(-60, ms(250)), noise(-70, ms(600), 2)), false],
+    ['a word 3 dB over a -60 dBFS room', clip(noise(-60, ms(300)), tone(-57, ms(300)), noise(-60, ms(600), 2)), false],
     ['a quiet word between noise-suppressed (zeroed) pauses', clip(new Array(ms(300)).fill(0), tone(-60, ms(300)), new Array(ms(600)).fill(0)), false],
     ['ordinary speech', clip(tone(-25, ms(1000))), false],
     // A muted or broken device: recognition's no-speech notice should name the microphone.

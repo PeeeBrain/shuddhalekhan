@@ -3,7 +3,7 @@
 // level gate (github.com/anomalyco/hex, MIT, src/dictation.rs at 94cbe24) but
 // without its neural speech detector, so the level constants here are looser,
 // tuned on synthetic speech (four voices, short words, -25 to -60 dBFS over
-// -70/-80 dBFS noise): none of it is discarded. Anything the gate cannot rule
+// -70/-80 dBFS noise, and 3 dB over -56 to -64 dBFS rooms): none of it is discarded. Anything the gate cannot rule
 // out goes to recognition, so only confidently empty input is discarded.
 
 /** A push-to-talk hold shorter than this, press to release, is an accidental tap. */
@@ -13,7 +13,7 @@ const WINDOW_SAMPLES = 480; // 30 ms at 16 kHz
 /** A sustained run this loud always goes to recognition... */
 const LOUD_DBFS = -50;
 /** ...and so does one this far above the clip's own noise floor... */
-const RELATIVE_MARGIN_DB = 8;
+const RELATIVE_MARGIN_DB = 3; // Parakeet still hears words 3 dB over a -60 dBFS room; steady noise varies less
 /** ...but never below this, however quiet the floor. */
 const RELATIVE_FLOOR_DBFS = -66;
 /** Sustained: 90 ms in one run, one quiet window bridged. Short words pass; key clicks don't. */
