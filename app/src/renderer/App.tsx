@@ -13,6 +13,7 @@ import {
 import { playRecordingCue } from './recording-cues';
 import { SettingsWindow } from './SettingsWindow';
 import { RuntimeShellSurface } from './RuntimeShellSurface';
+import { PillPreview } from './PillPreview';
 import type { RuntimeAudioCommand } from '../types/ipc';
 
 async function sendAudioDevices(): Promise<void> {
@@ -235,6 +236,8 @@ function App() {
       </div>
     );
   }
+
+  if (import.meta.env.DEV && hash === 'pill-preview') return <PillPreview />;
 
   return null;
 }

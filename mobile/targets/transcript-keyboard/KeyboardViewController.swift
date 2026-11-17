@@ -32,7 +32,7 @@ final class KeyboardViewController: UIInputViewController {
   private let liveStatus = UILabel()
   private let liveClock = UILabel()
   private let stage = UIView()
-  private let bars = LevelBars()
+  private let levels = LevelDots()
   private let sentStack = UIStackView()
   private let sentText = UILabel()
   private var cancelSide = UIStackView()
@@ -181,8 +181,8 @@ final class KeyboardViewController: UIInputViewController {
     // Levels and the sent confirmation share the stage and cross-fade.
     stage.setContentHuggingPriority(.defaultLow, for: .vertical)
     live.addArrangedSubview(stage)
-    bars.translatesAutoresizingMaskIntoConstraints = false
-    stage.addSubview(bars)
+    levels.translatesAutoresizingMaskIntoConstraints = false
+    stage.addSubview(levels)
     sentText.font = scaledFont(16, .medium, .body)
     sentText.adjustsFontForContentSizeCategory = true
     sentText.textColor = Palette.parchment
@@ -202,9 +202,9 @@ final class KeyboardViewController: UIInputViewController {
     sentStack.translatesAutoresizingMaskIntoConstraints = false
     stage.addSubview(sentStack)
     NSLayoutConstraint.activate([
-      bars.centerXAnchor.constraint(equalTo: stage.centerXAnchor),
-      bars.centerYAnchor.constraint(equalTo: stage.centerYAnchor),
-      bars.heightAnchor.constraint(equalToConstant: 36),
+      levels.centerXAnchor.constraint(equalTo: stage.centerXAnchor),
+      levels.centerYAnchor.constraint(equalTo: stage.centerYAnchor),
+      levels.heightAnchor.constraint(equalToConstant: 36),
       sentStack.centerYAnchor.constraint(equalTo: stage.centerYAnchor),
       sentStack.leadingAnchor.constraint(equalTo: stage.leadingAnchor, constant: 8),
       sentStack.trailingAnchor.constraint(equalTo: stage.trailingAnchor, constant: -8),
@@ -398,11 +398,11 @@ final class KeyboardViewController: UIInputViewController {
   private func receive(_ state: KeyboardSession.State) {
     let previous = session
     session = state.isLive(now: KeyboardSession.nowMs()) || state.isBusy ? state : nil
-    // Levels arrive up to 15 times a second while recording. They only move the bars, never relayout.
+    // Levels arrive up to 15 times a second while recording. They only repaint the dots, never relayout.
     if let previous, let session, session.phase == .recording, previous.phase == .recording,
        previous.requestId == session.requestId, previous.sessionEndsAt == session.sessionEndsAt,
        previous.agentReady == session.agentReady {
-      if session.requestId == pendingId { bars.push(CGFloat(session.level ?? 0)) }
+      if session.requestId == pendingId { levels.push(CGFloat(session.level ?? 0)) }
       return
     }
     log.notice("KeyboardBridge received phase \(state.phase.rawValue, privacy: .public)")
@@ -432,7 +432,7 @@ final class KeyboardViewController: UIInputViewController {
       render()
     case .recording:
       if recordingSince == nil { recordingSince = Date() }
-      bars.push(CGFloat(state.level ?? 0))
+      levels.push(CGFloat(state.level ?? 0))
       render()
     case .transcribing:
       render()
@@ -609,12 +609,12 @@ final class KeyboardViewController: UIInputViewController {
     liveStatus.textColor = statusColor
     announce(status, in: liveStatus)
 
-    if phase != .recording { bars.settle() }
+    if phase != .recording { levels.settle() }
     if let sent { sentText.text = "“\(sent.text)”" }
     let recording = phase == .recording
     let transcribing = phase == .transcribing && sent == nil
     UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
-      self.bars.alpha = self.sent != nil ? 0 : (recording ? 1 : 0.35)
+      self.levels.alpha = self.sent != nil ? 0 : (recording ? 1 : 0.35)
       self.sentStack.alpha = self.sent != nil ? 1 : 0
       self.stopGlyph.alpha = self.sent != nil || transcribing ? 0 : (recording ? 1 : 0.5)
       self.cancelSide.alpha = self.sent != nil ? 0.35 : 1
@@ -671,7 +671,8 @@ final class KeyboardViewController: UIInputViewController {
     shutter.restingColor = accent
     shutter.pressedColor = accent.mixed(with: .black, 0.18)
     shutterRing.backgroundColor = accent.withAlphaComponent(0.18)
-    bars.color = accent
+    levels.color = accent
+    levels.square = agent
   }
 
   private func liveBackground(_ mode: KeyboardSession.Mode) -> UIColor {
@@ -777,7 +778,7 @@ final class KeyboardViewController: UIInputViewController {
         self.surface.isHidden = true
         self.live.isHidden = true
         self.shutterHost.transform = .identity
-        self.bars.settle()
+        self.levels.settle()
       }
       if reduceMotion {
         fade(0.2, {
@@ -807,7 +808,7 @@ final class KeyboardViewController: UIInputViewController {
     live.isHidden = true
     home.alpha = 1
     shutterHost.transform = .identity
-    bars.settle()
+    levels.settle()
     render()
   }
 
@@ -1030,62 +1031,88 @@ private final class ActionRow: PressControl {
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 }
 
-/// Live input level, newest in the centre and older readings rippling outward. Driven only by real levels from
-/// the app while recording; between pushes nothing animates.
-private final class LevelBars: UIView {
-  private static let count = 21
-  private static let barWidth: CGFloat = 3
-  private static let step: CGFloat = 6
-  private var history = [CGFloat](repeating: 0, count: count / 2 + 1)
-  private let bars: [CALayer] = (0..<count).map { _ in CALayer() }
+/// Live input level as a dot field, the desktop recording pill's theme: two strands braid through a 25 × 7 grid
+/// and fold onto the resting centre line at silence. Round dots for Dictate, square for Agent. Driven only by real
+/// levels from the app while recording (each push advances the braid); between pushes nothing animates.
+/// The field math mirrors `voiceField` in app/src/renderer/recording-popup-math.ts.
+private final class LevelDots: UIView {
+  private static let columns = 25
+  private static let rows = 7
+  private static let pitch: CGFloat = 5
+  private static let dot: CGFloat = 3
+  private static let baseAlpha: Float = 0.16
+  private static let lineRest: CGFloat = 0.45
+  private var level: CGFloat = 0
+  private var phase: CGFloat = 0
+  private let dots: [CALayer] = (0..<columns * rows).map { _ in CALayer() }
 
-  var color = UIColor.white { didSet { for bar in bars { bar.backgroundColor = color.cgColor } } }
+  var color = UIColor.white { didSet { for dot in dots { dot.backgroundColor = color.cgColor } } }
+  var square = false { didSet { for dot in dots { dot.cornerRadius = square ? 0 : Self.dot / 2 } } }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    for bar in bars { layer.addSublayer(bar) }
+    for dot in dots {
+      dot.cornerRadius = Self.dot / 2
+      layer.addSublayer(dot)
+    }
     isAccessibilityElement = false
     isUserInteractionEnabled = false
+    paint(animated: false)
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
   override var intrinsicContentSize: CGSize {
-    CGSize(width: CGFloat(Self.count) * Self.step - (Self.step - Self.barWidth), height: 36)
+    CGSize(width: CGFloat(Self.columns - 1) * Self.pitch + Self.dot, height: CGFloat(Self.rows - 1) * Self.pitch + Self.dot)
   }
 
-  func push(_ level: CGFloat) {
-    history.removeLast()
-    history.insert(min(max(level, 0), 1), at: 0)
-    layoutBars(animated: true)
+  /// One reading, about every 1/15 s. The level is already dB-scaled 0–1, so unlike desktop it needs no lift.
+  /// Under Reduce Motion the braid holds its shape and only its height follows the voice.
+  func push(_ next: CGFloat) {
+    level = min(max(next, 0), 1)
+    if !UIAccessibility.isReduceMotionEnabled { phase += (2 + 6 * level) / 15 }
+    paint(animated: true)
   }
 
   func settle() {
-    guard history.contains(where: { $0 > 0 }) else { return }
-    history = [CGFloat](repeating: 0, count: history.count)
-    layoutBars(animated: true)
+    guard level > 0 else { return }
+    level = 0
+    paint(animated: true)
   }
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    layoutBars(animated: false)
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    let size = intrinsicContentSize
+    let origin = CGPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
+    for (index, dot) in dots.enumerated() {
+      let x = origin.x + CGFloat(index % Self.columns) * Self.pitch
+      let y = origin.y + CGFloat(index / Self.columns) * Self.pitch
+      dot.frame = CGRect(x: x, y: y, width: Self.dot, height: Self.dot)
+    }
+    CATransaction.commit()
   }
 
-  private func layoutBars(animated: Bool) {
+  private func paint(animated: Bool) {
     CATransaction.begin()
     CATransaction.setDisableActions(!animated || UIAccessibility.isReduceMotionEnabled)
     // About one level interval, so consecutive readings blend instead of stepping.
     CATransaction.setAnimationDuration(0.1)
     CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-    let centre = Self.count / 2
-    var x = (bounds.width - intrinsicContentSize.width) / 2
-    for (index, bar) in bars.enumerated() {
-      let distance = abs(index - centre)
-      let taper = 1 - CGFloat(distance) / CGFloat(centre) * 0.45
-      let height = max(Self.barWidth, history[distance] * taper * bounds.height)
-      bar.frame = CGRect(x: x, y: (bounds.height - height) / 2, width: Self.barWidth, height: height)
-      bar.cornerRadius = Self.barWidth / 2
-      x += Self.step
+    let mid = CGFloat(Self.rows - 1) / 2
+    for column in 0..<Self.columns {
+      let u = 2 * CGFloat(column) / CGFloat(Self.columns - 1) - 1
+      let env = cos(u * .pi / 2)
+      let amplitude = level * mid * env
+      let a = amplitude * sin(phase + 2.4 * u)
+      let b = amplitude * sin(phase * 0.77 - 3.1 * u + 2)
+      let strength = Self.lineRest + (1 - Self.lineRest) * max(env, level)
+      for row in 0..<Self.rows {
+        let y = CGFloat(row) - mid
+        let lit = max(0, 1 - abs(y - a), 1 - abs(y - b)) * strength
+        dots[row * Self.columns + column].opacity = Self.baseAlpha + (1 - Self.baseAlpha) * Float(lit)
+      }
     }
     CATransaction.commit()
   }

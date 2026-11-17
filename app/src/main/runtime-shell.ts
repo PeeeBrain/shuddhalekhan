@@ -96,7 +96,7 @@ export class RuntimeShell {
   private revision = 0;
   private pendingSnapshot: RuntimePresentationSnapshot | null = null;
   private activeRecording: Extract<RuntimePresentationState, { kind: 'recording' }> | null = null;
-  private processingSessionId: string | null = null;
+  private processing: Extract<RuntimePresentationState, { kind: 'processing' }> | null = null;
   private dictationFailure: DictationFailureFact | null = null;
   private agentStatus: AgentStatusFact | null = null;
   private agentStream: AgentStreamFact | null = null;
@@ -265,9 +265,9 @@ export class RuntimeShell {
     this.republish();
   }
 
-  showProcessing(recordingSessionId: string): void {
+  showProcessing(recordingSessionId: string, intent: RecordingIntent): void {
     this.activeRecording = null;
-    this.processingSessionId = recordingSessionId;
+    this.processing = { kind: 'processing', recordingSessionId, intent };
     this.dictationFailure = null;
     this.send('recording:pill-hide');
     this.republish();
@@ -279,7 +279,7 @@ export class RuntimeShell {
     recoveryActions: DictationRecoveryAction[] = [],
   ): void {
     this.activeRecording = null;
-    this.processingSessionId = null;
+    this.processing = null;
     this.send('recording:pill-hide');
     this.dictationFailure = {
       recordingSessionId,
@@ -300,7 +300,7 @@ export class RuntimeShell {
   finish(): void {
     this.clearCommand();
     this.activeRecording = null;
-    this.processingSessionId = null;
+    this.processing = null;
     this.dictationFailure = null;
     this.send('recording:pill-hide');
     this.republish();
@@ -510,7 +510,7 @@ export class RuntimeShell {
     this.pendingBegin = null;
     this.clearCommand();
     this.activeRecording = null;
-    this.processingSessionId = null;
+    this.processing = null;
     this.dictationFailure = null;
     this.agentStatus = null;
     this.agentStream = null;
@@ -522,9 +522,7 @@ export class RuntimeShell {
 
   private derive(): RuntimePresentationState {
     if (this.activeRecording) return this.activeRecording;
-    if (this.processingSessionId) {
-      return { kind: 'processing', recordingSessionId: this.processingSessionId };
-    }
+    if (this.processing) return this.processing;
     if (this.dictationFailure) {
       return {
         kind: 'failure',

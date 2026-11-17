@@ -230,7 +230,7 @@ export class RecordingSession {
     const tailMs = release && run.intent === 'dictation' ? this.releaseTailCap(run) : 0;
     this.clearDurationTimers();
     run.state = 'stopping';
-    this.runtimeShell.showProcessing(run.id);
+    this.runtimeShell.showProcessing(run.id, run.intent);
     return new Promise((resolve, reject) => {
       run.pendingEnd = { resolve, reject };
       if (this.runtimeShell.endCapture(tailMs > 0 ? Date.now() + tailMs : 0) === false) {

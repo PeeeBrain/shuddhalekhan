@@ -743,7 +743,7 @@ describe('RecordingSession', () => {
     );
 
     const ending = session.end();
-    expect(runtimeShell.showProcessing).toHaveBeenCalledWith('runtime-session');
+    expect(runtimeShell.showProcessing).toHaveBeenCalledWith('runtime-session', 'dictation');
     await session.complete(new Uint8Array(64));
     await ending;
     expect(runtimeShell.finish).toHaveBeenCalledTimes(1);

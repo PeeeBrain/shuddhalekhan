@@ -367,7 +367,7 @@ export type RuntimePresentationState =
       committed?: string;
       tentative?: string;
     }
-  | { kind: 'processing'; recordingSessionId: string }
+  | { kind: 'processing'; recordingSessionId: string; intent: RecordingIntent }
   | {
       kind: 'failure';
       recordingSessionId: string | null;
