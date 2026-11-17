@@ -7,6 +7,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Desktop Dictation keeps recording briefly after you stop (200 ms, up to 600 ms while you are still speaking), so a last word said as you release the shortcut is no longer cut off.
 - Launching Shuddhalekhan again while it is already running now brings up Settings instead of doing nothing.
 - Agent Mode on desktop and iOS loads MCP tool definitions on demand once more than ten tools are enabled, so large MCP setups no longer fill every request with tools the command never uses.
 - Agent Mode now loads a matching skill on its own when a command fits the skill's description, instead of only when you ask for the skill by name.

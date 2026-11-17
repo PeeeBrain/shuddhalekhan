@@ -184,10 +184,10 @@ export class RuntimeShell {
     this.startAudio(envelope);
   }
 
-  endCapture(): boolean {
+  endCapture(tailEndsAt = 0): boolean {
     this.pendingBegin = null;
     if (!this.activeCommand) return false;
-    this.send('runtime:audio-stop', this.activeCommand);
+    this.send('runtime:audio-stop', this.activeCommand, tailEndsAt);
     return true;
   }
 

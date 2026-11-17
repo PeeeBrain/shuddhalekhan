@@ -22,6 +22,11 @@ import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from 
 import { RECOGNITION_TIMEOUT_MS } from './managed-local-runtime';
 import { markTiming } from './eval-timing';
 
+/** Longest Dictation release tail (Hex's cap); the capture renderer usually keeps ~200 ms. */
+const MAX_RELEASE_TAIL_MS = 600;
+// ponytail: wall-clock margin under a provider's duration cap for IPC and audio-thread lag.
+const DURATION_CAP_MARGIN_MS = 100;
+
 /** Main-process-only settings and resolved formatter credential, pinned at Begin. */
 export interface DictationDeliveryContext {
   config: DictationConfig;
@@ -77,6 +82,8 @@ interface RecordingRunContext {
   sequence: number;
   revision: number;
   state: 'starting' | 'recording' | 'stopping' | 'transcribing' | 'delivering';
+  /** Date.now() when capture became ready; bounds the release tail under a provider cap. */
+  recordingSince: number | null;
   abort: AbortController;
   dictation: DictationDeliveryContext | null;
   pendingEnd: {
@@ -161,6 +168,7 @@ export class RecordingSession {
       sequence: 0,
       revision: 0,
       state: 'starting',
+      recordingSince: null,
       abort: new AbortController(),
       dictation: intent === 'dictation' ? structuredClone(this.getDictationContext()) : null,
       pendingEnd: null,
@@ -194,16 +202,22 @@ export class RecordingSession {
     return true;
   }
 
-  async end(): Promise<RecordingResult | null> {
+  /**
+   * Stops capture. `userRelease` marks the user's own Stop: Dictation then
+   * keeps a bounded release tail so a last word still sounding is not cut.
+   * Agent Mode and the provider duration cap stop at once.
+   */
+  async end(userRelease = false): Promise<RecordingResult | null> {
     const run = this.activeRun;
     if (!run || (run.state !== 'starting' && run.state !== 'recording')) return null;
 
+    const tailMs = userRelease && run.intent === 'dictation' ? this.releaseTailCap(run) : 0;
     this.clearDurationTimers();
     run.state = 'stopping';
     this.runtimeShell.showProcessing(run.id);
     return new Promise((resolve, reject) => {
       run.pendingEnd = { resolve, reject };
-      if (this.runtimeShell.endCapture() === false) {
+      if (this.runtimeShell.endCapture(tailMs > 0 ? Date.now() + tailMs : 0) === false) {
         this.cancelStreaming(run);
         run.pendingEnd = null;
         this.runtimeShell.finish();
@@ -211,6 +225,15 @@ export class RecordingSession {
         resolve(null);
       }
     });
+  }
+
+  /** The longest tail that keeps the recording within the provider's duration cap. */
+  private releaseTailCap(run: RecordingRunContext): number {
+    if (run.recordingSince === null) return 0;
+    const maxSeconds = run.transcriber.capabilities.maxDurationSeconds;
+    if (!maxSeconds) return MAX_RELEASE_TAIL_MS;
+    const remaining = maxSeconds * 1000 - (Date.now() - run.recordingSince) - DURATION_CAP_MARGIN_MS;
+    return Math.max(0, Math.min(MAX_RELEASE_TAIL_MS, remaining));
   }
 
   async cancel(): Promise<void> {
@@ -352,7 +375,7 @@ export class RecordingSession {
   startKeyboardHook(): void {
     this.keyboardHook.start({
       onStart: (intent) => this.begin(intent),
-      onStop: () => { void this.end().catch(() => undefined); },
+      onStop: () => { void this.end(true).catch(() => undefined); },
       isAgentModeEnabled: this.isAgentModeEnabled,
       getBinding: this.getShortcutBinding,
       getActivationMode: this.getRecordingActivationMode,
@@ -596,6 +619,7 @@ export class RecordingSession {
     if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
     run.state = 'recording';
     markTiming('capture-ready');
+    run.recordingSince = Date.now();
     this.runtimeShell.markCaptureReady(run.id);
     this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
   };

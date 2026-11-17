@@ -239,6 +239,96 @@ describe('canonical PCM spool', () => {
   });
 });
 
+describe('release tail', () => {
+  const speech = () => new Float32Array(320).fill(0.2);
+  const quiet = () => new Float32Array(320).fill(0.001);
+
+  /** `ms` of 16 kHz audio at a constant level. */
+  const batch = (ms: number, level: number) => new Float32Array(ms * 16).fill(level);
+
+  async function stopWithTail(maxTailMs: number) {
+    const audio = installAudio();
+    const mod = await importFresh();
+    const rec = recorder();
+    await mod.startRecording(rec.options);
+    audio.emit(speech());
+    let boundary: Awaited<ReturnType<typeof mod.stopRecording>> | undefined;
+    const ending = mod.stopRecording(Date.now() + maxTailMs).then((value) => { boundary = value; return value; });
+    ending.catch(() => undefined);
+    /** Delivers one batch after release; returns whether stop has finished. */
+    const feed = async (samples: Float32Array) => {
+      audio.emit(samples);
+      await settle();
+      return boundary !== undefined;
+    };
+    return { audio, mod, rec, feed, ending };
+  }
+
+  it('keeps a final word that continues past release in the same contiguous spool, then ends on quiet', async () => {
+    const word = batch(100, 0.2);
+    const softer = batch(150, 0.03); // a quieter final syllable still counts as speech
+    const pause = batch(100, 0.001);
+    const rest = batch(60, 0.001);
+    const { rec, feed, ending } = await stopWithTail(600);
+    expect(await feed(word)).toBe(false);
+    expect(await feed(softer)).toBe(false); // 250 ms in: past the base tail, still talking
+    expect(await feed(pause)).toBe(false);
+    expect(await feed(rest)).toBe(true); // 160 ms of quiet
+
+    expect(await ending).toEqual({ chunkCount: 5, sampleCount: 320 + 410 * 16 });
+    expect(rec.samples()).toEqual(pcm16(speech(), word, softer, pause, rest));
+  });
+
+  it('measures the tail in audio received, so a burst after a stalled renderer still keeps the full tail', async () => {
+    const { feed } = await stopWithTail(600);
+    // Batches arrive late and back to back; each is only 20 ms of audio.
+    for (let i = 0; i < 9; i += 1) expect(await feed(quiet())).toBe(false);
+    expect(await feed(quiet())).toBe(true); // 200 ms of audio
+  });
+
+  it('a Stop that arrives after its tail end time keeps no tail', async () => {
+    const audio = installAudio();
+    const mod = await importFresh();
+    await mod.startRecording(recorder().options);
+    audio.emit(speech());
+    expect(await mod.stopRecording(Date.now() - 1)).toEqual({ chunkCount: 1, sampleCount: 320 });
+  });
+
+  it('ends a quiet release at the base tail and never past the cap main passes', async () => {
+    const base = await stopWithTail(600);
+    expect(await base.feed(batch(100, 0.001))).toBe(false);
+    expect(await base.feed(batch(100, 0.001))).toBe(true);
+
+    const capped = await stopWithTail(60);
+    expect(await capped.feed(batch(50, 0.2))).toBe(false);
+    // Batches stop arriving: the cap's own deadline still finishes the recording.
+    expect(await capped.ending).toEqual({ chunkCount: 2, sampleCount: 320 + 800 });
+  });
+
+  it('cancel during the tail discards it, and the next recording gets none of its samples', async () => {
+    const { audio, mod, rec, ending } = await stopWithTail(600);
+    const staleHandler = audio.nodes[0]?.port.onmessage;
+    mod.cancelRecording();
+    expect(await ending).toBeNull();
+    expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+
+    const next = recorder();
+    await mod.startRecording(next.options);
+    staleHandler?.({ data: { type: 'audio', samples: speech() } });
+    audio.emit(quiet());
+    expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 320 });
+    expect(next.samples()).toEqual(pcm16(quiet()));
+    expect(rec.chunks).toHaveLength(1);
+  });
+
+  it('fails the stop and releases the microphone if it disconnects during the tail', async () => {
+    const { audio, ending } = await stopWithTail(600);
+    audio.disconnectMic();
+    await expect(ending).rejects.toThrow('microphone disconnected');
+    expect(audio.close).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('bounded spool transport', () => {
   it('releases the microphone and reports once on disconnect, ignores old track events, and records again', async () => {
     const audio = installAudio();
