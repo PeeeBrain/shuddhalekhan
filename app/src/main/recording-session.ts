@@ -291,7 +291,8 @@ export class RecordingSession {
     this.clearDurationTimers();
     const pendingEnd = run.pendingEnd;
 
-    if (audioData.byteLength <= 44) {
+    const empty = audioData.byteLength <= 44;
+    if (empty && run.intent !== 'dictation') {
       console.warn(`Skipping empty WAV payload: ${audioData.byteLength} bytes`);
       const error = new TranscriptionFailure(
         'unknown',
@@ -306,9 +307,10 @@ export class RecordingSession {
       return null;
     }
 
-    const pcm = new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
-    if (run.intent === 'dictation' && isNearSilent(pcm)) {
+    const pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
+    if (run.intent === 'dictation' && (empty || isNearSilent(pcm))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
+      // Empty means stopped before the microphone delivered audio: a dead device still delivers zeros.
       console.info('Discarded near-silent Dictation without recognizing it', { samples: pcm.length });
       this.cancelStreaming(run);
       this.runtimeShell.finish();

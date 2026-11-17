@@ -470,17 +470,17 @@ describe('RecordingSession', () => {
     await expect(resultPromise).resolves.toMatchObject({ targetSnapshot: snapshot });
   });
 
-  it('reports an empty WAV payload as a capture failure', async () => {
+  it('reports an empty Agent Mode WAV payload as a capture failure', async () => {
     const onError = vi.fn();
     session = createSession({
       runtimeShell: audioStream,
       transcriber: createTranscriber(({ audio }) => transcribe(audio)),
       keyboardHook: { start: keyboardStart, stop: keyboardStop },
       captureTarget,
-      isAgentModeEnabled,
+      isAgentModeEnabled: vi.fn(() => true),
       onError,
     });
-    session.begin('dictation');
+    session.begin('agent');
 
     const resultPromise = session.end();
     await session.complete(new Uint8Array(44));
@@ -1349,7 +1349,7 @@ describe('RecordingSession', () => {
     expect(onResult).not.toHaveBeenCalled();
   });
 
-  it('cancels the per-utterance stream when capture returns an empty WAV', async () => {
+  it('ends a Dictation stopped before the microphone delivered audio quietly, cancelling its stream', async () => {
     const cancelStream = vi.fn();
     const runtimeShell = {
       prepare: vi.fn(), beginCapture: vi.fn(), endCapture: vi.fn(), cancelCapture: vi.fn(),
@@ -1359,6 +1359,7 @@ describe('RecordingSession', () => {
       getWebContents: vi.fn(() => null), consumeAudioEvent: vi.fn(() => true),
       acceptsAudioEvent: vi.fn(() => true),
     };
+    const onError = vi.fn();
     const transcriber: Transcriber = {
       ...createTranscriber(async () => 'unused'),
       id: 'whisper-live-kit',
@@ -1379,15 +1380,17 @@ describe('RecordingSession', () => {
       },
       captureTarget,
       isAgentModeEnabled,
-      onError: vi.fn(),
+      onError,
     });
 
     session.begin('dictation', 'empty-stream');
     const ending = session.end();
     await session.complete(new Uint8Array(44));
 
-    await expect(ending).rejects.toThrow('No microphone audio was captured');
+    await expect(ending).resolves.toBeNull();
+    expect(onError).not.toHaveBeenCalled();
     expect(cancelStream).toHaveBeenCalledTimes(1);
+    expect(session.begin('dictation', 'next')).toBe(true);
   });
 
   it('returns Recognized So Far when streaming and Batch fallback both fail', async () => {
