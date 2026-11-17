@@ -283,6 +283,7 @@ export async function openX11Shortcuts({ onShortcut, onLost, onTriggers }: Linux
     }
     if ((kind !== KEY_PRESS && kind !== KEY_RELEASE) || packet[0] & 0x80) return; // ignore synthetic events
     const keycode = packet[1];
+    const at = packet.readUInt32LE(4); // server time, ms
     if (kind === KEY_PRESS) {
       if (active) return; // auto-repeat, or another key typed while the chord is held
       // Low byte only: pointer-button bits must not block a chord; lock states never do.
@@ -290,11 +291,11 @@ export async function openX11Shortcuts({ onShortcut, onLost, onTriggers }: Linux
       const grab = grabs.find((candidate) => candidate.keycode === keycode && candidate.modifiers === state);
       if (!grab) return;
       active = grab.intent;
-      onShortcut(grab.intent, true);
+      onShortcut(grab.intent, true, at);
     } else if (active && chords.get(active)?.has(keycode)) {
       const intent = active;
       active = null;
-      onShortcut(intent, false);
+      onShortcut(intent, false, at);
       if (keymapStale) remap();
     }
   };

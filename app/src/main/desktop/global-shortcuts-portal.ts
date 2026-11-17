@@ -136,11 +136,14 @@ export async function openGlobalShortcutsPortal({ onShortcut, onLost, onTriggers
     }
     const id = message.body[1];
     if (!isRecordingIntent(id) || !intents.includes(id)) return;
+    // Activated/Deactivated(o session, s id, t timestamp, a{sv} options). The portal's timestamp is not
+    // usable for hold length (KDE sends 0, or a stale X11 time on Wayland), so delivery time stands in.
+    const at = Math.round(performance.now());
     if (message.member === 'Activated') {
       held.add(id);
-      onShortcut(id, true);
+      onShortcut(id, true, at);
     } else if (message.member === 'Deactivated' && held.delete(id)) {
-      onShortcut(id, false);
+      onShortcut(id, false, at);
     }
   });
   bus.onClose(lose);

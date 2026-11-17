@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { Server } from 'net';
 import { decodeMessage, encodeMessage, METHOD_CALL, SIGNAL, type DBusMessage } from '../dbus';
 import { openGlobalShortcutsPortal, preferredTrigger } from '../global-shortcuts-portal';
@@ -70,7 +70,7 @@ async function openPortal() {
 
 const CTRL_SPACE = { keyCode: 0x20, modifiers: ['ctrl' as const] };
 const shortcutSignal = (member: string, id: string): [string, string, string, unknown[]] =>
-  ['org.freedesktop.portal.GlobalShortcuts', member, 'osta{sv}', [SESSION, id, 0n, {}]];
+  ['org.freedesktop.portal.GlobalShortcuts', member, 'osta{sv}', [SESSION, id, 0n, {}]]; // KDE's timestamp
 
 describe('GlobalShortcuts portal session', () => {
   it('accepts shortcut signals only from the portal unique name', async () => {
@@ -82,8 +82,26 @@ describe('GlobalShortcuts portal session', () => {
     bus.signal(PORTAL_OWNER, SESSION, ...shortcutSignal('Activated', 'agent')); // not bound
     bus.signal(PORTAL_OWNER, SESSION, ...shortcutSignal('Activated', 'dictation'));
     await delivered;
-    expect(events.onShortcut.mock.calls).toEqual([['dictation', true]]);
+    expect(events.onShortcut.mock.calls).toEqual([['dictation', true, expect.any(Number)]]);
     portal.close();
+  });
+
+  it('times a hold by when its signals arrive, not by the portal timestamp KDE leaves at 0', async () => {
+    const now = spyOn(performance, 'now');
+    try {
+      const { bus, events, portal } = await openPortal();
+      await portal.bind({ dictation: CTRL_SPACE });
+      for (const [member, at] of [['Activated', 1_000], ['Deactivated', 1_450]] as const) {
+        const arrived = new Promise((resolve) => events.onShortcut.mockImplementation(resolve));
+        now.mockReturnValue(at);
+        bus.signal(PORTAL_OWNER, SESSION, ...shortcutSignal(member, 'dictation'));
+        await arrived;
+      }
+      expect(events.onShortcut.mock.calls).toEqual([['dictation', true, 1_000], ['dictation', false, 1_450]]);
+      portal.close();
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('releases a held chord before replacing the session on rebind', async () => {
@@ -94,7 +112,8 @@ describe('GlobalShortcuts portal session', () => {
     await pressed;
 
     const rebinding = portal.bind({ dictation: CTRL_SPACE, agent: { keyCode: 0x20, modifiers: ['alt'] } });
-    expect(events.onShortcut.mock.calls).toEqual([['dictation', true], ['dictation', false]]);
+    // The synthesized release carries no desktop time.
+    expect(events.onShortcut.mock.calls).toEqual([['dictation', true, expect.any(Number)], ['dictation', false]]);
     await rebinding;
     portal.close();
   });

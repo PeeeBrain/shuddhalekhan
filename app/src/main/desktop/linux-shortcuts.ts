@@ -26,7 +26,8 @@ export interface LinuxShortcutBackend {
 
 export type LinuxShortcutBindings = Partial<Record<RecordingIntent, ShortcutBinding>>;
 export type LinuxShortcutTriggers = Extract<DesktopShortcutStatus, { backend: 'portal' | 'x11' }>['triggers'];
-export type ShortcutEventHandler = (intent: RecordingIntent, isDown: boolean) => void;
+/** `at` is the event time in ms (X11 server time; delivery time for the portal); omitted on releases the backend synthesizes. */
+export type ShortcutEventHandler = (intent: RecordingIntent, isDown: boolean, at?: number) => void;
 
 export interface LinuxShortcutEvents {
   onShortcut: ShortcutEventHandler;

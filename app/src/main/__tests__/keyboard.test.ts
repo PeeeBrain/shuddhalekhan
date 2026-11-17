@@ -150,6 +150,35 @@ describe('KeyboardHook mode detection', () => {
     expect(stopped).toHaveBeenCalledTimes(1);
   });
 
+  it('reports how long a push-to-talk chord was held by source event time, and nothing for a toggle', async () => {
+    const hookModule = await importHook('hold-length');
+    const { hook, stopped, keys, modes } = createHarness(hookModule);
+
+    // The Windows tick count wraps at 2^32 ms mid-hold.
+    hook.handleKeyForTest(keys.leftControl, true, 2 ** 32 - 100);
+    hook.handleKeyForTest(keys.leftWin, true, 2 ** 32 - 90);
+    hook.handleKeyForTest(keys.leftWin, false, 150);
+    hook.handleKeyForTest(keys.leftControl, false, 160);
+    expect(stopped).toHaveBeenLastCalledWith(240);
+
+    // A release without a source time (keyboard unplugged) is of unknown length.
+    hook.handleKeyForTest(keys.leftControl, true, 1_000);
+    hook.handleKeyForTest(keys.leftWin, true, 1_010);
+    hook.handleKeyForTest(keys.leftWin, false);
+    hook.handleKeyForTest(keys.leftControl, false);
+    expect(stopped).toHaveBeenLastCalledWith(null);
+
+    modes.dictation = 'toggle';
+    hook.handleKeyForTest(keys.leftControl, true, 2_000);
+    hook.handleKeyForTest(keys.leftWin, true, 2_010);
+    hook.handleKeyForTest(keys.leftWin, false, 2_020);
+    hook.handleKeyForTest(keys.leftControl, false, 2_030);
+    hook.handleKeyForTest(keys.leftControl, true, 2_040);
+    hook.handleKeyForTest(keys.leftWin, true, 2_050);
+    expect(stopped).toHaveBeenCalledTimes(3);
+    expect(stopped).toHaveBeenLastCalledWith(null);
+  });
+
   it('consumes every configured modifier release when Win is pressed first', async () => {
     const hookModule = await importHook('modifier-release-consumption');
     const { hook, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
