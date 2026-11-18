@@ -230,5 +230,5 @@ export function createComputerUseRun(options: {
 
   signal.addEventListener('abort', onAbort, { once: true });
   if (signal.aborted) onAbort();
-  return { tools, close };
+  return { tools, close, get closed() { return closing !== undefined; } };
 }

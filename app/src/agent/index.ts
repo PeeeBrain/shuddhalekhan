@@ -35,6 +35,8 @@ type AgentExecution = {
   controller: AbortController;
   audit: ReturnType<AgentAuditStore['forExecution']>;
   phase: 'running' | 'completed' | 'failed' | 'cancelled';
+  /** This execution's helper session; once closed, its calls are refused without asking. */
+  native?: { readonly closed: boolean } | null;
 };
 // The audit run id survives replies; this object identifies just one execution.
 let execution: AgentExecution | null = null;
@@ -276,6 +278,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
       onToolFinished: metadata => run.audit.record('computer_use_tool_execute', metadata),
     }) : null;
     if (native) computerUseRuns.add(native);
+    run.native = native;
 
     try {
       let finalAnswer = '';
@@ -375,7 +378,7 @@ async function requestToolApproval(run: AgentExecution, request: ToolApprovalReq
     return { approved: false, message: 'Rejected: agent run is no longer active.' };
   }
 
-  if (request.serverId === COMPUTER_USE_SOURCE_ID && !computerUseExecutable) {
+  if (request.serverId === COMPUTER_USE_SOURCE_ID && (!computerUseExecutable || run.native?.closed !== false)) {
     releaseQueue();
     return { approved: false, message: 'Computer Use is unavailable for this run.' };
   }

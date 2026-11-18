@@ -512,11 +512,15 @@ describe('main process IPC orchestration', () => {
   it('restarts the sidecar and still removes Computer Use when the helper does not confirm it stopped', async () => {
     getConfig.mockReturnValue({ ...baseConfig, agent: { ...baseConfig.agent, enabled: true } });
     await import(`../index?test=${Date.now()}-computer-use-uninstall`);
+    await sessionOptions.onResult({ text: 'Use my desktop.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
+    const agentRunId = agentStartRun.mock.calls[0]?.[0];
     agentCloseComputerUse.mockRejectedValueOnce(new Error('Computer Use could not be stopped.'));
     agentStart.mockClear();
     expect(await ipcHandlers.get('computer-use:uninstall')?.({})).toMatchObject({ state: 'absent' });
     expect(agentStop).toHaveBeenCalledTimes(1);
     expect(agentStart).toHaveBeenCalledTimes(1);
+    // The run the restart ended must not stay on screen as if it were still working.
+    expect(runtimeShellShowAgentFailed).toHaveBeenCalledWith(agentRunId, expect.stringContaining('Try the command again'));
   });
 
   it('does not start a cancelled provider probe after a pending token refresh finishes', async () => {

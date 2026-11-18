@@ -716,6 +716,10 @@ handle('computer-use:uninstall', () => computerUse.uninstall(async () => {
   const config = getConfig();
   await agentSidecar.closeComputerUse(config, getAgentSidecarApiKey(config, credentialVault)).catch(async () => {
     // The helper did not confirm it stopped; stopping the sidecar ends it with its parent.
+    if (activeAgentRun) {
+      notifyAgentRuntimeStopped('Agent Mode restarted to remove Computer Use. Try the command again.');
+      activeAgentRun = null;
+    }
     await agentSidecar.stop();
     const latest = getConfig();
     if (latest.agent.enabled) agentSidecar.start(latest, getAgentSidecarApiKey(latest, credentialVault));

@@ -150,7 +150,10 @@ export class ManagedStdioMcpTransport {
         logSidecar('failed to terminate managed stdio server', err);
       }
       const stopped = await waitForExit(this.gracefulCloseTimeoutMs);
-      if (!stopped && this.pendingToolCalls) throw new Error('The Computer Use process did not stop.');
+      // A killed server cannot reap the command it was running; only the sidecar's process group can.
+      if (this.pendingToolCalls && (!stopped || this.pendingToolCalls.size > 0)) {
+        throw new Error('The Computer Use process did not stop.');
+      }
     }
 
     this.fireOnCloseOnce();

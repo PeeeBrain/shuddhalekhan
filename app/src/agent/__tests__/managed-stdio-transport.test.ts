@@ -128,6 +128,19 @@ describe('ManagedStdioMcpTransport', () => {
     await waitFor(() => !isPidAlive(pid));
   });
 
+  it('does not confirm a Computer Use close that had to kill a server mid-call', async () => {
+    const transport = track(new ManagedStdioMcpTransport({
+      launch: launchArgs(['--ignore-stdin-eof', '--hang-tool-calls']),
+      gracefulCloseTimeoutMs: 100,
+      cancelToolCallsOnClose: true,
+    }));
+    const pid = await startTransport(transport);
+    await transport.send({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'desktop_wait' } });
+    // Its command child may outlive it, so the caller must fall back to the sidecar's process group.
+    await expect(transport.close()).rejects.toThrow('did not stop');
+    await waitFor(() => !isPidAlive(pid));
+  });
+
   it('resolves close immediately for a server that already exited on its own', async () => {
     const transport = track(new ManagedStdioMcpTransport({ launch: launchArgs() }));
     let closeCount = 0;

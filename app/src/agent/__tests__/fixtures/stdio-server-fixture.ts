@@ -2,6 +2,7 @@ import { createInterface } from 'readline';
 
 const ignoreEof = process.argv.includes('--ignore-stdin-eof');
 const mcp = process.argv.includes('--mcp');
+const hangToolCalls = process.argv.includes('--hang-tool-calls');
 
 if (!mcp) process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, result: { ready: true, pid: process.pid } })}\n`);
 
@@ -10,6 +11,7 @@ input.on('line', (line) => {
   if (!line.trim()) return;
   try {
     const message = JSON.parse(line) as { id?: unknown; method?: string; params?: { name?: string } };
+    if (hangToolCalls && message.method === 'tools/call') return;
     if (mcp) {
       if (message.id === undefined) return;
       let result;
