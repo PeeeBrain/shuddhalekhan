@@ -51,7 +51,7 @@ export function useMobileApp() {
     let prepared = false;
     let recordingFile: File | null = null;
     const nativeRecorder: Recorder = {
-      failureCue: async signal => { await playRecordingCue('error', signal); },
+      playCue: async (cue, signal) => { await playRecordingCue(cue, signal); },
       async requestPermission() {
         if (Platform.OS !== 'ios') throw new Error('This build currently supports iOS recording.');
         try { return (await AudioModule.requestRecordingPermissionsAsync()).granted; }
@@ -82,7 +82,7 @@ export function useMobileApp() {
           throw new Error('Could not start recording. Check microphone permissions and audio input.');
         }
       },
-      async stop(signal) {
+      async stop() {
         try {
           await recorder.stop();
           prepared = false;
@@ -90,7 +90,6 @@ export function useMobileApp() {
           recordingFile = new File(recorder.uri);
           if (!recordingFile.exists || recordingFile.size <= 44) throw new Error();
           if (recordingFile.size > recordingLimits['on-device'].maxBytes) throw new Error('Recording is too large. Keep it under five minutes.');
-          await playRecordingCue('stop', signal);
           return recordingFile;
         } catch { throw new Error('Could not read the recording. Record again and speak for at least a second.'); }
       },

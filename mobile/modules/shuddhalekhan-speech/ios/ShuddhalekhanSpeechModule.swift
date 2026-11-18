@@ -128,11 +128,11 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
 
     AsyncFunction("playForegroundRecordingCue") { (name: String) async -> Bool in
       guard let cue = RecordingCue(rawValue: name) else { return true }
-      return await self.playForegroundCue(cue, standalone: cue == .error)
+      return await self.playForegroundCue(cue, in: .foreground)
     }
 
     AsyncFunction("previewRecordingCue") { () async in
-      _ = await self.playForegroundCue(.start, standalone: true)
+      _ = await self.playForegroundCue(.start, in: .preview)
     }
 
     AsyncFunction("cancelForegroundRecordingCue") { () async in
@@ -206,11 +206,11 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
     }
   }
 
-  @MainActor private func playForegroundCue(_ cue: RecordingCue, standalone: Bool) async -> Bool {
+  @MainActor private func playForegroundCue(_ cue: RecordingCue, in context: RecordingCuePlayer.Context) async -> Bool {
     guard keyboardSession?.ownsAudio != true, UIApplication.shared.applicationState != .background else { return false }
     // The permission dialog can briefly leave the app inactive while preparing its first recording.
     guard UIApplication.shared.applicationState == .active else { return true }
-    return await cues.play(cue, standalone: standalone, foregroundOnly: true)
+    return await cues.play(cue, in: context)
   }
 
   @MainActor private func sessionHost() -> KeyboardSessionHost {

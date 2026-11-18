@@ -36,7 +36,7 @@ describe('mobile command lifecycle', () => {
     const native = recorder(permission.promise);
     const cueAfterCleanup: number[] = [];
     const controller = createController({ ...native.port,
-      failureCue: async () => { cueAfterCleanup.push(native.calls.discards); },
+      playCue: async cue => { if (cue === 'error') cueAfterCleanup.push(native.calls.discards); },
     });
     await controller.initialize();
     const start = controller.startRecording('dictation');
@@ -54,7 +54,7 @@ describe('mobile command lifecycle', () => {
     let cues = 0;
     const controller = createController({ ...native.port,
       start: async () => { throw new RecordingInterruptedError(); },
-      failureCue: async () => { cues++; },
+      playCue: async () => { cues++; },
     });
     await controller.initialize();
     await controller.startRecording('dictation');
@@ -66,7 +66,7 @@ describe('mobile command lifecycle', () => {
   test('an encoder failure signals Error after discarding the recording', async () => {
     const native = recorder();
     const cues: number[] = [];
-    const controller = createController({ ...native.port, failureCue: async () => { cues.push(native.calls.discards); } });
+    const controller = createController({ ...native.port, playCue: async () => { cues.push(native.calls.discards); } });
     await controller.initialize();
     await controller.startRecording('dictation');
     controller.recordingInterrupted(true);
@@ -82,6 +82,32 @@ describe('mobile command lifecycle', () => {
     await controller.saveSettings({ ...defaultSettings, customInstructions: 'Be brief.' });
     expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', status });
   });
+  test('transcription starts while Stop sounds and the audio route stays open until the cue finishes', async () => {
+    const sound = Promise.withResolvers<void>();
+    const decoding = Promise.withResolvers<void>();
+    const native = recorder();
+    const controller = new MobileController({
+      recorder: { ...native.port, playCue: cue => {
+        expect(cue).toBe('stop');
+        expect(native.calls.stops).toBe(1);
+        return sound.promise;
+      } },
+      fetch,
+      loadSettings: async () => ({ ...defaultSettings, transcriptionSource: 'on-device' }),
+      saveSettings: async value => value,
+      transcribeOnDevice: async () => { decoding.resolve(); return 'A complete recording.'; },
+    });
+    await controller.initialize();
+    await controller.startRecording('dictation');
+    const stopped = controller.stopRecording();
+    await decoding.promise;
+    expect(native.calls.discards).toBe(0);
+    sound.resolve();
+    await stopped;
+    expect(native.calls.discards).toBe(1);
+    expect(controller.getSnapshot().transcript).toBe('A complete recording.');
+  });
+
   test('local dictation never uploads audio', async () => {
     const order: string[] = [];
     let selectedLanguage: string | undefined;

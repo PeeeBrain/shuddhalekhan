@@ -5,6 +5,8 @@ import UIKit
 /// The containing app owns one short-lived output, shared by capture and Settings.
 @MainActor
 final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
+  enum Context { case keyboard, foreground, preview }
+
   private lazy var tones = Dictionary(uniqueKeysWithValues: RecordingCue.allCases.map { ($0, $0.wav) })
   private var output: AVAudioPlayer?
   private var completion: CheckedContinuation<Bool, Never>?
@@ -23,7 +25,8 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
   }
 
   /// Capture owns the active session. Standalone previews/errors use an output-only session.
-  func play(_ cue: RecordingCue, standalone: Bool = false, foregroundOnly: Bool = false) async -> Bool {
+  func play(_ cue: RecordingCue, in context: Context) async -> Bool {
+    let standalone = context == .preview || (context == .foreground && cue == .error)
     guard enabled, !Task.isCancelled, !standalone || UIApplication.shared.applicationState == .active,
           let data = tones[cue] else { return true }
     stop()
@@ -47,16 +50,15 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
         let latency = session.outputLatency + session.inputLatency + 2 * session.ioBufferDuration
         inputDrain = .seconds(min(latency, 0.5) + 0.025)
       }
-      observeInterruption(foregroundOnly: foregroundOnly)
-      return await withCheckedContinuation { continuation in
-        completion = continuation
-        // Some route failures stop the player without delivering the delegate callback.
-        finish = Task {
-          do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
-          player.stop()
-          playbackEnded(ObjectIdentifier(player))
-        }
+      observeInterruption(foregroundOnly: context != .keyboard)
+      // Some route failures stop the player without delivering the delegate callback.
+      finish = Task {
+        do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+        player.stop()
+        playbackEnded(ObjectIdentifier(player))
       }
+      guard cue != .error else { return true }
+      return await withCheckedContinuation { completion = $0 }
     } catch {
       stop()
       return true

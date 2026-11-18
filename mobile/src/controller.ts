@@ -32,8 +32,8 @@ export class RecordingInterruptedError extends Error {
 export type Recorder = {
   requestPermission(): Promise<boolean>;
   start(signal: AbortSignal): Promise<void>;
-  stop(signal: AbortSignal): Promise<Blob>;
-  failureCue?(signal: AbortSignal): Promise<void>;
+  stop(): Promise<Blob>;
+  playCue?(cue: 'stop' | 'error', signal: AbortSignal): Promise<void>;
   discard(): Promise<void>;
 };
 
@@ -124,6 +124,7 @@ export class MobileController {
       const granted = await this.ports.recorder.requestPermission();
       active.signal.throwIfAborted();
       if (!granted) throw new Error('Microphone access is denied. Enable it for Shuddhalekhan in iOS Settings.');
+      this.update({ status: 'Preparing the microphone…' });
       await this.ports.recorder.start(active.signal);
       active.signal.throwIfAborted();
       this.update({ phase: 'recording', recordingStartedAt: Date.now(), status: intent === 'dictation' ? 'Recording dictation…' : 'Recording agent command…' });
@@ -136,14 +137,20 @@ export class MobileController {
     if (!active || this.state.phase !== 'recording' || active.signal.aborted || this.operation?.kind === 'finishing') return;
     this.update({ phase: 'transcribing', status: 'Transcribing…' });
     try {
-      const audio = await this.ports.recorder.stop(active.signal);
+      const audio = await this.ports.recorder.stop();
       active.signal.throwIfAborted();
+      const stopCue = this.ports.recorder.playCue?.('stop', active.signal).catch(() => {});
       let transcript: string;
-      if (this.state.settings.transcriptionSource === 'on-device') {
-        if (!this.ports.transcribeOnDevice) throw new Error('On-device Parakeet is unavailable in this build.');
-        transcript = validateTranscript((await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim(), true);
-      } else {
-        transcript = await transcribe({ audio, settings: this.state.settings, fetch: this.ports.fetch, signal: active.signal, signGoogleJwt: this.ports.signGoogleJwt });
+      try {
+        if (this.state.settings.transcriptionSource === 'on-device') {
+          if (!this.ports.transcribeOnDevice) throw new Error('On-device Parakeet is unavailable in this build.');
+          transcript = validateTranscript((await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim(), true);
+        } else {
+          transcript = await transcribe({ audio, settings: this.state.settings, fetch: this.ports.fetch, signal: active.signal, signGoogleJwt: this.ports.signGoogleJwt });
+        }
+      } finally {
+        // Recognition can start immediately. Keep the recording route until the Stop cue finishes.
+        await stopCue;
       }
       active.signal.throwIfAborted();
       this.update({ transcript });
@@ -367,7 +374,7 @@ export class MobileController {
       if (!error && !active.signal.aborted) error = new Error('Could not remove the temporary recording. It remains in the app cache.');
     }
     if (cueOnFailure && error && !active.signal.aborted && !this.backgrounded) {
-      await this.ports.recorder.failureCue?.(active.signal).catch(() => {});
+      await this.ports.recorder.playCue?.('error', active.signal).catch(() => {});
     }
     if (this.operation !== operation) return;
     if (this.state.intent === 'agent' && this.state.runId) {

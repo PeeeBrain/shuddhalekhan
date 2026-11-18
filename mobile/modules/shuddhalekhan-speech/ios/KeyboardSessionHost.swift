@@ -208,7 +208,7 @@ final class KeyboardSessionHost {
         openCapture(id)
         return
       }
-      let canStart = await cues.play(.start)
+      let canStart = await cues.play(.start, in: .keyboard)
       guard !Task.isCancelled else { return }
       guard canStart else {
         end(reason: "The microphone was interrupted.")
@@ -276,7 +276,7 @@ final class KeyboardSessionHost {
 
   private func playStopIfLive(_ id: String) async {
     guard state.requestId == id, state.phase == .transcribing, state.isLive(now: KeyboardSession.nowMs()) else { return }
-    _ = await cues.play(.stop)
+    _ = await cues.play(.stop, in: .keyboard)
   }
 
   private func complete(_ id: String, _ result: Result<String, Error>) {
@@ -327,7 +327,7 @@ final class KeyboardSessionHost {
     guard state == failed, state.isLive(now: KeyboardSession.nowMs()) else { return }
     failureCue = Task {
       guard state == failed, state.isLive(now: KeyboardSession.nowMs()) else { return }
-      _ = await cues.play(.error)
+      _ = await cues.play(.error, in: .keyboard)
     }
   }
 
