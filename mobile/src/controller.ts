@@ -25,10 +25,15 @@ type State = {
 };
 type PendingApproval = ToolApproval & { runId: string; approvalId: string };
 export type ApprovalDecision = Pick<PendingApproval, 'runId' | 'approvalId'> & { approved: boolean };
+export class RecordingInterruptedError extends Error {
+  constructor() { super('Recording was interrupted. No audio was sent. Record again.'); }
+}
+
 export type Recorder = {
   requestPermission(): Promise<boolean>;
   start(signal: AbortSignal): Promise<void>;
-  stop(): Promise<Blob>;
+  stop(signal: AbortSignal): Promise<Blob>;
+  failureCue?(signal: AbortSignal): Promise<void>;
   discard(): Promise<void>;
 };
 
@@ -122,7 +127,7 @@ export class MobileController {
       await this.ports.recorder.start(active.signal);
       active.signal.throwIfAborted();
       this.update({ phase: 'recording', recordingStartedAt: Date.now(), status: intent === 'dictation' ? 'Recording dictation…' : 'Recording agent command…' });
-    } catch (error) { await this.finish(active, error); }
+    } catch (error) { await this.finish(active, error, !(error instanceof RecordingInterruptedError)); }
   };
 
   stopRecording = async () => {
@@ -131,7 +136,7 @@ export class MobileController {
     if (!active || this.state.phase !== 'recording' || active.signal.aborted || this.operation?.kind === 'finishing') return;
     this.update({ phase: 'transcribing', status: 'Transcribing…' });
     try {
-      const audio = await this.ports.recorder.stop();
+      const audio = await this.ports.recorder.stop(active.signal);
       active.signal.throwIfAborted();
       let transcript: string;
       if (this.state.settings.transcriptionSource === 'on-device') {
@@ -150,12 +155,12 @@ export class MobileController {
         await this.agent(active, transcript);
       }
       await this.finish(active);
-    } catch (error) { await this.finish(active, error); }
+    } catch (error) { await this.finish(active, error, !this.state.transcript); }
   };
 
   /** Admits a native transcript without touching the recorder that owns the keyboard microphone. */
   handleKeyboardSession = async (event: KeyboardSessionEvent): Promise<void> => {
-    this.keyboardSessionActive = event.endsAt !== 0 || event.phase === 'recording' || event.phase === 'transcribing';
+    this.keyboardSessionActive = event.endsAt !== 0 || event.phase === 'preparing' || event.phase === 'recording' || event.phase === 'transcribing';
     if (event.phase === 'idle' && !event.requestId) this.handledKeyboardRequests.clear();
     if (event.mode !== 'agent' || !event.requestId) return;
     if ((event.phase === 'cancelled' || event.phase === 'failed') && event.requestId === this.keyboardRequestId && this.keyboardRun) {
@@ -345,18 +350,25 @@ export class MobileController {
     if (this.state.phase === 'recording') void this.finish(this.operation.controller);
   };
 
-  recordingInterrupted = () => {
+  recordingInterrupted = (encoderFailed = false) => {
     if (this.operation && this.state.phase === 'recording') {
-      void this.finish(this.operation.controller, new Error('Recording was interrupted. No audio was sent. Record again.'));
+      const error = encoderFailed ? new Error('Recording failed. No audio was sent. Record again.') : new RecordingInterruptedError();
+      void this.finish(this.operation.controller, error, encoderFailed);
     }
   };
 
-  private async finish(active: AbortController, error?: unknown) {
+  private async finish(active: AbortController, error?: unknown, cueOnFailure = false) {
     const operation = this.operation;
     if (!operation || operation.controller !== active || operation.kind === 'finishing') return;
     operation.kind = 'finishing';
     try { if (!this.keyboardRun && !this.keyboardSessionActive) await this.ports.recorder.discard(); }
-    catch { if (!error && !active.signal.aborted) error = new Error('Could not remove the temporary recording. It remains in the app cache.'); }
+    catch {
+      cueOnFailure = false;
+      if (!error && !active.signal.aborted) error = new Error('Could not remove the temporary recording. It remains in the app cache.');
+    }
+    if (cueOnFailure && error && !active.signal.aborted && !this.backgrounded) {
+      await this.ports.recorder.failureCue?.(active.signal).catch(() => {});
+    }
     if (this.operation !== operation) return;
     if (this.state.intent === 'agent' && this.state.runId) {
       const base = { runId: this.state.runId, completedSteps: this.completedSteps };

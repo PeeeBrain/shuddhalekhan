@@ -59,7 +59,7 @@ export function useKeyboardSession(onSession: (event: KeyboardSessionEvent) => P
       available: speech !== null, active, starting,
       // Native may hold the session past zero while a started utterance finishes.
       remainingSeconds: Math.max(0, Math.ceil((session.endsAt - now) / 1000)),
-      busy: session.phase === 'recording' || session.phase === 'transcribing',
+      busy: session.phase === 'preparing' || session.phase === 'recording' || session.phase === 'transcribing',
       endedReason: session.endsAt === 0 ? session.error ?? null : null,
     },
     startKeyboardSession,

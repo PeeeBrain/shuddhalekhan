@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { MobileController, type Recorder } from '../controller';
+import { MobileController, RecordingInterruptedError, type Recorder } from '../controller';
 import { defaultSettings, type MobileSettings } from '../settings';
 import { chatReply } from './model-stream';
 
@@ -31,6 +31,50 @@ function when(controller: MobileController, predicate: () => boolean): Promise<v
 }
 
 describe('mobile command lifecycle', () => {
+  test('a capture failure sounds after cleanup, while a cancelled start stays quiet', async () => {
+    const permission = Promise.withResolvers<boolean>();
+    const native = recorder(permission.promise);
+    const cueAfterCleanup: number[] = [];
+    const controller = createController({ ...native.port,
+      failureCue: async () => { cueAfterCleanup.push(native.calls.discards); },
+    });
+    await controller.initialize();
+    const start = controller.startRecording('dictation');
+    controller.cancel();
+    permission.resolve(false);
+    await start;
+    expect(cueAfterCleanup).toEqual([]);
+    await controller.startRecording('dictation');
+    expect(cueAfterCleanup).toEqual([2]);
+    expect(controller.getSnapshot().error).toContain('Microphone access is denied');
+  });
+
+  test('an interruption before capture readiness discards audio without an Error sound', async () => {
+    const native = recorder();
+    let cues = 0;
+    const controller = createController({ ...native.port,
+      start: async () => { throw new RecordingInterruptedError(); },
+      failureCue: async () => { cues++; },
+    });
+    await controller.initialize();
+    await controller.startRecording('dictation');
+    expect(native.calls.discards).toBe(1);
+    expect(cues).toBe(0);
+    expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', error: 'Recording was interrupted. No audio was sent. Record again.' });
+  });
+
+  test('an encoder failure signals Error after discarding the recording', async () => {
+    const native = recorder();
+    const cues: number[] = [];
+    const controller = createController({ ...native.port, failureCue: async () => { cues.push(native.calls.discards); } });
+    await controller.initialize();
+    await controller.startRecording('dictation');
+    controller.recordingInterrupted(true);
+    await when(controller, () => controller.getSnapshot().phase === 'idle');
+    expect(cues).toEqual([1]);
+    expect(native.calls.stops).toBe(0);
+  });
+
   test('saving settings leaves the resting Home status intact', async () => {
     const controller = createController(recorder().port);
     await controller.initialize();

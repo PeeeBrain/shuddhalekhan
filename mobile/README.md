@@ -16,6 +16,14 @@ Google Cloud Speech v2 takes a service-account JSON key, stored in the Keychain.
 
 Sarvam recording stops automatically after 28 seconds, leaving two seconds for timer and recorder latency before its 30-second limit. Model downloads wait until launch-time preparation finishes. Older on-device settings with an unsupported endpoint language upgrade to Auto-detect without clearing credentials or MCP servers.
 
+## Recording sounds
+
+On iOS, **Settings → Recording Sounds** controls the short Start, Stop and Error tones for in-app and keyboard-session Dictation and Agent Mode. It defaults to on, saves immediately on this device, and is independent of desktop Settings. **Preview Sound** plays the Start tone while the app is open and no recording or keyboard session is active. Preview uses output only. Agent setup, tool and response errors have no recording sounds.
+
+Wait for **Listening** on the keyboard or **Recording** in the app before speaking. Start plays after microphone preparation and before the app writes speech audio. Stop plays after the app closes the audio file. Failed recording or transcription can play Error. Cancellation, expiry and interruptions drop pending sounds.
+
+Recording tones use the active iOS recording route, using the speaker when no headset is routed, and can play in Silent Mode. Preview and errors outside an active audio session respect Silent Mode and can mix with existing media. The keyboard session keeps its existing nonmixing media policy. It enables output for cues and releases both input and output when it ends. When iOS selects a Bluetooth hands-free headset, its microphone can sound different from the iPhone microphone.
+
 ## Use Parakeet on this iPhone
 
 In Settings, select **Transcription → On this iPhone**, choose a language, confirm **Download model**, and keep the app open through download and preparation. Each model is about 0.5 GB; Core ML also needs storage for its prepared models. Save the source selection, then record a short dictation. After setup, test it in airplane mode with Dictation selected. Agent Mode still sends the resulting text to its configured model endpoint.
@@ -80,6 +88,7 @@ Verify the installed build number, device model, iOS version, and the artifact r
 4. **Session exits.** Cancel, hide and reopen the keyboard mid-utterance, stop and restart the session, let it expire, and interrupt it (Siri or a call). The reason is visible, the microphone releases, and a new session works. With no session, Dictate opens the app and resumes recording on return.
 5. **Agent Mode.** From Home and the background keyboard: prompts never insert into the host app; approve one tool, deny another, cancel while waiting; a stale approval never executes; a second command while busy is refused; Dictation still works after. The Live Activity shows progress, approvals open the right request, and the answer survives a restart.
 6. **Providers.** Exercise each provider you have credentials for and record the others as untested. Sarvam auto-stops around 28 seconds, Google around 55.
+7. **Recording sounds.** With USB logging active, confirm one Start and one Stop for in-app Dictation and for keyboard Dictation in two host apps. Say distinct words immediately at the ready indicator and just before Stop, and confirm both appear with no added words from the tones. Repeat on the speaker, wired headphones and Bluetooth, and check Silent Mode. Try a current capture failure, cancel during Starting, interrupt with a call and let a session expire. Confirm mute persists across relaunch and silences both entry points. Preview must leave the microphone indicator off and produce no transcript or upload. Repeat the capture checks with Agent Mode and confirm tools and responses remain quiet. Filter on the `RecordingCues` log category alongside `KeyboardBridge` to correlate cues with capture transitions.
 
 ### Local checks on Windows
 
@@ -165,7 +174,7 @@ For more than one connected device, pass `--udid DEVICE_IDENTIFIER` to the app a
 
 ```powershell
 $captureArgs = @('-u', '-m', 'pymobiledevice3', 'syslog', 'live', '--label',
-  '--insensitive-regex', '"Shuddhalekhan|KeyboardBridge|Parakeet|AsrManager|pasteboard"')
+  '--insensitive-regex', '"Shuddhalekhan|KeyboardBridge|RecordingCues|Parakeet|AsrManager|pasteboard"')
 $capture = Start-Process -FilePath $iosPython -ArgumentList $captureArgs -WindowStyle Hidden -PassThru `
   -RedirectStandardOutput "$PWD/.cache/ios-device-live.log" `
   -RedirectStandardError "$PWD/.cache/ios-device-live.err"
@@ -176,7 +185,7 @@ Keep the capture running while the maintainer reproduces. Inspect the error file
 
 ```powershell
 Stop-Process -Id $capture.Id
-rg -n 'KeyboardBridge|AsrManager|not foreground|PBErrorDomain' .cache/ios-device-live.log
+rg -n 'KeyboardBridge|RecordingCues|AsrManager|not foreground|PBErrorDomain' .cache/ios-device-live.log
 ```
 
 The keyboard path should show listener readiness, keyboard authentication, a start command, recording, stop, transcribing, and done. Check that text actually appears on the phone; logs alone do not prove insertion. Log phases and IDs without tokens, audio, transcripts, credentials, or private endpoint details. Keep raw captures local and redact excerpts before sharing them.

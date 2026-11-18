@@ -9,6 +9,11 @@ type NativeSpeech = {
   installModel(language: string): Promise<void>;
   transcribe(uri: string, language: string): Promise<string>;
   signGoogleJwt(privateKey: string, input: string): Promise<string>;
+  getRecordingSounds?(): Promise<boolean>;
+  setRecordingSounds?(enabled: boolean): Promise<void>;
+  playForegroundRecordingCue?(cue: 'start' | 'stop' | 'error'): Promise<boolean>;
+  cancelForegroundRecordingCue?(): Promise<void>;
+  previewRecordingCue?(): Promise<void>;
   getKeyboardSession(): Promise<KeyboardSessionEvent>;
   startKeyboardSession(minutes: number, language: string, agentReady: boolean): Promise<KeyboardSessionEvent>;
   resolveKeyboardAgentRequest(id: string, error: string | null): Promise<void>;

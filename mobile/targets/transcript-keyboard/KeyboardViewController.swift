@@ -434,7 +434,7 @@ final class KeyboardViewController: UIInputViewController {
       if recordingSince == nil { recordingSince = Date() }
       levels.push(CGFloat(state.level ?? 0))
       render()
-    case .transcribing:
+    case .preparing, .transcribing:
       render()
     }
   }

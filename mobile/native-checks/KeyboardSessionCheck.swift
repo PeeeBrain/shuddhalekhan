@@ -22,12 +22,20 @@ struct KeyboardSessionCheck {
     }
 
     // Commands only drive the request they name, and only inside a live session.
-    let recording = S.transition(live, on: command("a", .start), now: now)
-    precondition(recording?.phase == .recording && recording?.requestId == "a")
+    let preparing = S.transition(live, on: command("a", .start), now: now)!
+    precondition(preparing.phase == .preparing && preparing.isBusy)
+    precondition(S.transition(preparing, on: command("a", .stop), now: now) == nil, "no Stop before capture")
+    precondition(S.captureReady(preparing, requestId: "b", now: now) == nil, "stale ready")
+    precondition(S.captureReady(preparing, requestId: "a", now: live.sessionEndsAt) == nil, "expired during cue")
+    let cancelled = S.transition(preparing, on: command("a", .cancel), now: now)!
+    precondition(S.captureReady(cancelled, requestId: "a", now: now) == nil, "cancelled during cue")
+    let recording = S.captureReady(preparing, requestId: "a", now: now)!
+    precondition(recording.phase == .recording && recording.requestId == "a")
+    precondition(S.captureReady(recording, requestId: "a", now: now) == nil, "duplicate ready")
     precondition(S.transition(S.State.ended, on: command("a", .start), now: now) == nil, "no session")
-    precondition(S.transition(recording!, on: command("b", .start), now: now) == nil, "busy")
-    precondition(S.transition(recording!, on: command("b", .stop), now: now) == nil, "wrong request")
-    let transcribing = S.transition(recording!, on: command("a", .stop), now: now)!
+    precondition(S.transition(recording, on: command("b", .start), now: now) == nil, "busy")
+    precondition(S.transition(recording, on: command("b", .stop), now: now) == nil, "wrong request")
+    let transcribing = S.transition(recording, on: command("a", .stop), now: now)!
     precondition(transcribing.phase == .transcribing)
     precondition(S.transition(transcribing, on: command("a", .stop), now: now) == nil, "duplicate stop")
     precondition(S.transition(transcribing, on: command("a", .cancel), now: now)?.phase == .cancelled)
@@ -54,7 +62,8 @@ struct KeyboardSessionCheck {
     // Agent commands round-trip without ever becoming host-app insertion text.
     let agentStart = command("agent", .start, mode: .agent)
     precondition(S.decodeCommand(S.encode(agentStart)!, now: now) == agentStart)
-    let agentRecording = S.transition(live, on: agentStart, now: now)!
+    let agentPreparing = S.transition(live, on: agentStart, now: now)!
+    let agentRecording = S.captureReady(agentPreparing, requestId: "agent", now: now)!
     precondition(agentRecording.mode == .agent)
     precondition(S.transition(agentRecording, on: command("agent", .stop), now: now) == nil, "wrong mode")
     let agentTranscribing = S.transition(agentRecording, on: command("agent", .stop, mode: .agent), now: now)!
@@ -65,7 +74,7 @@ struct KeyboardSessionCheck {
       phase: .idle, text: nil, error: nil, level: nil)
     let refused = S.transition(unconfigured, on: agentStart, now: now)!
     precondition(refused.phase == .failed && refused.error != nil && refused.mode == .agent, "visible setup failure")
-    precondition(S.transition(unconfigured, on: command("dictate", .start), now: now)?.phase == .recording,
+    precondition(S.transition(unconfigured, on: command("dictate", .start), now: now)?.phase == .preparing,
       "dictation must work without Agent Mode")
 
     // Meter frames cannot leak past recording or accept unbounded values at the socket boundary.

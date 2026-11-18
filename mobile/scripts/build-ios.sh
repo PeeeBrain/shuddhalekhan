@@ -82,6 +82,16 @@ swiftc \
   -o "$build_dir/check-keyboard-session"
 "$build_dir/check-keyboard-session"
 swiftc -swift-version 6 \
+  "$mobile_dir/modules/shuddhalekhan-speech/ios/RecordingCue.swift" \
+  "$mobile_dir/native-checks/RecordingCueCheck.swift" \
+  -o "$build_dir/check-recording-cues"
+"$build_dir/check-recording-cues"
+swiftc -swift-version 6 \
+  "$mobile_dir/modules/shuddhalekhan-speech/ios/KeyboardUtteranceSink.swift" \
+  "$mobile_dir/native-checks/KeyboardUtteranceCheck.swift" \
+  -o "$build_dir/check-recording-window"
+"$build_dir/check-recording-window"
+swiftc -swift-version 6 \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/SpeechWorkQueue.swift" \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/KeyboardAudioStore.swift" \
   "$mobile_dir/native-checks/SpeechWorkCheck.swift" \
