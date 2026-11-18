@@ -382,7 +382,7 @@ final class KeyboardViewController: UIInputViewController {
       if !self.receivedState {
         self.render(message: "Tap Dictate or Ask the agent to open Shuddhalekhan and start a session.")
         if let intent = self.pendingStartIntent() { self.openSession(for: intent.mode) }
-      } else if endedNormally { self.render() } else {
+      } else if !endedNormally {
         self.log.error("KeyboardBridge connection lost")
         self.render(message: "Keyboard connection lost. Open Shuddhalekhan and start a new session.")
       }

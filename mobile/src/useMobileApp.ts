@@ -51,6 +51,34 @@ export function useMobileApp() {
   const [controller] = useState(() => {
     let prepared = false;
     let recordingFile: File | null = null;
+    const closeRecorder = async (signal: AbortSignal) => {
+      // Expo resolves stop() before AVAudioRecorder's delegate reports whether the file closed successfully.
+      const result = Promise.withResolvers<RecordingStatus | undefined>();
+      const subscription = recorder.addListener('recordingStatusUpdate', status => {
+        if (status.isFinished) result.resolve(status);
+      });
+      const cancel = () => result.resolve(undefined);
+      signal.addEventListener('abort', cancel, { once: true });
+      const deadline = setTimeout(cancel, 2_000);
+      try {
+        await recorder.stop();
+        prepared = false;
+        if (await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
+        const closed = await result.promise;
+        signal.throwIfAborted();
+        if (closed?.mediaServicesDidReset) throw new RecordingInterruptedError();
+        if (!closed || closed.hasError) throw new Error();
+      } finally {
+        clearTimeout(deadline);
+        signal.removeEventListener('abort', cancel);
+        subscription.remove();
+      }
+    };
+    const prepareRecorder = async () => {
+      await recorder.prepareToRecordAsync();
+      prepared = true;
+      recordingFile = recorder.uri ? new File(recorder.uri) : null;
+    };
     const nativeRecorder: Recorder = {
       playCue: async (cue, signal) => { await playRecordingCue(cue, signal); },
       async requestPermission() {
@@ -67,16 +95,17 @@ export function useMobileApp() {
           if (preparing === false) throw new RecordingInterruptedError();
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: false });
           signal.throwIfAborted();
-          await recorder.prepareToRecordAsync();
-          prepared = true;
-          if (recorder.uri) recordingFile = new File(recorder.uri);
+          await prepareRecorder();
+          const soundsEnabled = await speech?.getRecordingSounds?.().catch(() => false);
           signal.throwIfAborted();
-          if (speech?.playForegroundRecordingCue) {
-            // Verify the recorder can capture, then pause it while the tone clears the output route.
+          if (soundsEnabled && speech?.playForegroundRecordingCue) {
+            // Verify actual capture, then discard the probe so the user's file starts after the cue.
             recorder.record();
             if (!recorder.isRecording) throw new Error();
-            recorder.pause();
-            if (recorder.isRecording) throw new Error();
+            await closeRecorder(signal);
+            if (recordingFile?.exists) recordingFile.delete();
+            await prepareRecorder();
+            signal.throwIfAborted();
             const canStart = await playRecordingCue('start', signal);
             signal.throwIfAborted();
             if (canStart === false) throw new RecordingInterruptedError();
@@ -95,23 +124,9 @@ export function useMobileApp() {
         }
       },
       async stop(onClosed, signal) {
-        // Expo resolves stop() before AVAudioRecorder's delegate reports whether the file closed successfully.
-        const result = Promise.withResolvers<RecordingStatus | undefined>();
-        const subscription = recorder.addListener('recordingStatusUpdate', status => {
-          if (status.isFinished) result.resolve(status);
-        });
-        const cancel = () => result.resolve(undefined);
-        signal.addEventListener('abort', cancel, { once: true });
-        const deadline = setTimeout(cancel, 2_000);
         try {
           const wasRecording = recorder.isRecording;
-          await recorder.stop();
-          prepared = false;
-          if (await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
-          const closed = await result.promise;
-          signal.throwIfAborted();
-          if (closed?.mediaServicesDidReset) throw new RecordingInterruptedError();
-          if (!closed || closed.hasError) throw new Error();
+          await closeRecorder(signal);
           if (!wasRecording) throw new RecordingInterruptedError();
           onClosed();
           if (!recorder.uri) throw new Error();
@@ -123,10 +138,6 @@ export function useMobileApp() {
           if (signal.aborted || error instanceof RecordingInterruptedError) throw error;
           // oxlint-disable-next-line preserve-caught-error
           throw new Error('Could not read the recording. Record again and speak for at least a second.');
-        } finally {
-          clearTimeout(deadline);
-          signal.removeEventListener('abort', cancel);
-          subscription.remove();
         }
       },
       async discard() {
