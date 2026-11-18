@@ -100,7 +100,8 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
     var names = [AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification]
     if foregroundOnly { names.append(UIApplication.willResignActiveNotification) }
     observers = names.map { name in
-      center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+      center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+        guard !notification.isAudioInterruptionEnd else { return }
         MainActor.assumeIsolated { self?.stop(interrupted: true) }
       }
     }
@@ -118,5 +119,12 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
     restoreSession = nil
     completion?.resume(returning: !interrupted)
     completion = nil
+  }
+}
+
+extension Notification {
+  var isAudioInterruptionEnd: Bool {
+    name == AVAudioSession.interruptionNotification &&
+      userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt == AVAudioSession.InterruptionType.ended.rawValue
   }
 }

@@ -165,11 +165,15 @@ final class KeyboardSessionHost {
   }
 
   private func expire() {
-    // Let a started utterance finish; the utterance cap keeps this bounded.
-    if state.phase == .recording || state.phase == .transcribing {
+    // Only utterances that have reached the microphone get time to finish.
+    switch state.phase {
+    case .recording, .transcribing:
       endWhenIdle = true
       cues.stop()
-    } else { end() }
+    case .preparing:
+      end(reason: "The keyboard session expired before recording started.")
+    default: end()
+    }
   }
 
   private func handleCommand(_ command: KeyboardSession.Command) {
@@ -221,7 +225,7 @@ final class KeyboardSessionHost {
 
   private func openCapture(_ id: String) {
     guard let next = KeyboardSession.captureReady(state, requestId: id, now: KeyboardSession.nowMs()) else {
-      if state.phase == .preparing, state.requestId == id { end() }
+      if state.phase == .preparing, state.requestId == id { expire() }
       return
     }
     sink.start(at: mach_absolute_time())

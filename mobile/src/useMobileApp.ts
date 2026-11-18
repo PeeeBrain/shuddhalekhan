@@ -1,7 +1,7 @@
 import type { RecordingCue } from '@shuddhalekhan/shared/recording-cue';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions } from 'expo-audio';
+import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions, type RecordingStatus } from 'expo-audio';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
 import { MobileController, RecordingInterruptedError, type Recorder, type RecordingIntent } from './controller';
@@ -44,7 +44,7 @@ async function playRecordingCue(cue: RecordingCue, signal: AbortSignal) {
 export function useMobileApp() {
   const controllerRef = useRef<MobileController | null>(null);
   const recorder = useAudioRecorder(recordingOptions, status => {
-    if (status.hasError || status.isFinished || status.mediaServicesDidReset) {
+    if (status.hasError || status.mediaServicesDidReset) {
       controllerRef.current?.recordingInterrupted(status.hasError && !status.mediaServicesDidReset);
     }
   });
@@ -94,12 +94,25 @@ export function useMobileApp() {
           throw new Error('Could not start recording. Check microphone permissions and audio input.');
         }
       },
-      async stop(onClosed) {
+      async stop(onClosed, signal) {
+        // Expo resolves stop() before AVAudioRecorder's delegate reports whether the file closed successfully.
+        const result = Promise.withResolvers<RecordingStatus | undefined>();
+        const subscription = recorder.addListener('recordingStatusUpdate', status => {
+          if (status.isFinished) result.resolve(status);
+        });
+        const cancel = () => result.resolve(undefined);
+        signal.addEventListener('abort', cancel, { once: true });
+        const deadline = setTimeout(cancel, 2_000);
         try {
           const wasRecording = recorder.isRecording;
           await recorder.stop();
           prepared = false;
-          if (!wasRecording || await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
+          if (await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
+          const closed = await result.promise;
+          signal.throwIfAborted();
+          if (closed?.mediaServicesDidReset) throw new RecordingInterruptedError();
+          if (!closed || closed.hasError) throw new Error();
+          if (!wasRecording) throw new RecordingInterruptedError();
           onClosed();
           if (!recorder.uri) throw new Error();
           recordingFile = new File(recorder.uri);
@@ -107,9 +120,13 @@ export function useMobileApp() {
           if (recordingFile.size > recordingLimits['on-device'].maxBytes) throw new Error('Recording is too large. Keep it under five minutes.');
           return recordingFile;
         } catch (error) {
-          if (error instanceof RecordingInterruptedError) throw error;
+          if (signal.aborted || error instanceof RecordingInterruptedError) throw error;
           // oxlint-disable-next-line preserve-caught-error
           throw new Error('Could not read the recording. Record again and speak for at least a second.');
+        } finally {
+          clearTimeout(deadline);
+          signal.removeEventListener('abort', cancel);
+          subscription.remove();
         }
       },
       async discard() {

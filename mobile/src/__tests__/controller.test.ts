@@ -92,6 +92,40 @@ describe('mobile command lifecycle', () => {
     expect(controller.getSnapshot().error).toContain('Recording was interrupted');
   });
 
+  test('an encoder error while Stop is pending discards partial audio without a Stop cue', async () => {
+    const native = recorder();
+    const closing = Promise.withResolvers<void>();
+    const file = Promise.withResolvers<Blob>();
+    const cues: string[] = [];
+    let decodes = 0;
+    const controller = new MobileController({
+      recorder: { ...native.port,
+        stop: async onClosed => {
+          closing.resolve();
+          const audio = await file.promise;
+          onClosed();
+          return audio;
+        },
+        playCue: async cue => { cues.push(cue); },
+      },
+      fetch,
+      loadSettings: async () => ({ ...defaultSettings, transcriptionSource: 'on-device' }),
+      saveSettings: async value => value,
+      transcribeOnDevice: async () => { decodes++; return 'Partial audio.'; },
+    });
+    await controller.initialize();
+    await controller.startRecording('dictation');
+    const stopping = controller.stopRecording();
+    await closing.promise;
+    controller.recordingInterrupted(true);
+    file.resolve(new Blob(['partial']));
+    await stopping;
+    expect(cues).toEqual(['error']);
+    expect(native.calls.discards).toBe(1);
+    expect(decodes).toBe(0);
+    expect(controller.getSnapshot().error).toContain('Recording failed');
+  });
+
   test('an encoder failure signals Error after discarding the recording', async () => {
     const native = recorder();
     const cues: number[] = [];

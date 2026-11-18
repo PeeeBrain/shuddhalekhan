@@ -230,8 +230,7 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
       AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification, background,
     ].map { name in
       center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
-        if notification.name == AVAudioSession.interruptionNotification,
-           notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt == AVAudioSession.InterruptionType.ended.rawValue { return }
+        guard !notification.isAudioInterruptionEnd else { return }
         let notify = name != background
         MainActor.assumeIsolated {
           guard let self, !self.foregroundRecordingInterrupted else { return }
