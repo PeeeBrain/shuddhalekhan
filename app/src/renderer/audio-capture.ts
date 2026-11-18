@@ -26,9 +26,11 @@ const STOP_ACK_TIMEOUT_MS = 500;
 const SPOOL_ACK_TIMEOUT_MS = 2_000;
 // Fail closed if mic permission/open or worklet load never settles; generous for a permission prompt.
 const SETUP_TIMEOUT_MS = 30_000;
-// ponytail: fixed hold, not per-cue. Covers the longest cue (450 ms) plus Bluetooth
-// output latency so a speaker cue never becomes pre-roll; measure latency if it clips speech.
-const CUE_PRE_ROLL_HOLD_MS = 750;
+// A cue holds pre-roll back until it has sounded, at most this long should its context never run.
+const CUE_MAX_HOLD_MS = 3_000;
+// ponytail: fixed allowance for output latency after a cue's last sample renders
+// (Bluetooth runs ~150–250 ms); measure the device if a cue still leaks into pre-roll.
+const CUE_OUTPUT_LATENCY_MS = 350;
 // A Dictation release often lands while the last word still sounds, so stop
 // keeps this much audio (Hex's base tail), growing while speech continues
 // until this much quiet or main's cap.
@@ -557,9 +559,15 @@ export async function startRecording(options: RecordingOptions): Promise<number>
   return adopted && !capture.released ? capture.sampleCount : 0;
 }
 
-/** A speaker cue starts now: keep it out of the next recording's pre-roll. */
-export function holdPreRollForCue(): void {
-  cueHeldUntil = performance.now() + CUE_PRE_ROLL_HOLD_MS;
+/**
+ * A speaker cue starts now: keep it out of the next recording's pre-roll.
+ * Call the returned function once every cue has stopped sounding.
+ */
+export function holdPreRollForCue(): () => void {
+  cueHeldUntil = performance.now() + CUE_MAX_HOLD_MS;
+  return () => {
+    cueHeldUntil = performance.now() + CUE_OUTPUT_LATENCY_MS;
+  };
 }
 
 /**
@@ -663,6 +671,10 @@ export async function stopRecording(tailEndsAt = 0): Promise<CaptureBoundary | n
     // The worklet acknowledged stop, so it is idle again with an empty ring: the mic may park.
     clean = true;
     return { chunkCount: capture.chunkCount, sampleCount: capture.sampleCount };
+  } catch (error) {
+    // A stop that timed out is an audio failure: its mic is not reopened at once.
+    capture.failure ??= error instanceof Error ? error : new Error(String(error));
+    throw error;
   } finally {
     capture.onStopped = null;
     release(capture, clean);

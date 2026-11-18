@@ -27,8 +27,11 @@ const SILENT_GAIN = 0.0001;
 let context: AudioContext | null = null;
 let sounding = 0;
 
-/** Plays a cue; the context is suspended whenever nothing sounds. Never throws. */
-export function playRecordingCue(cue: RecordingCue): void {
+/**
+ * Plays a cue; the context is suspended whenever nothing sounds, and then
+ * `onSilent` runs. Never throws.
+ */
+export function playRecordingCue(cue: RecordingCue, onSilent?: () => void): void {
   try {
     context ??= new AudioContext({ latencyHint: 'interactive' });
     const ctx = context;
@@ -60,7 +63,10 @@ export function playRecordingCue(cue: RecordingCue): void {
         oscillator.onended = () => {
           oscillator.disconnect();
           if (--voices === 0) envelope.disconnect();
-          if (--sounding === 0) void ctx.suspend().catch(() => undefined);
+          if (--sounding === 0) {
+            void ctx.suspend().catch(() => undefined);
+            onSilent?.();
+          }
         };
         oscillator.start(start);
         oscillator.stop(end);
@@ -68,5 +74,6 @@ export function playRecordingCue(cue: RecordingCue): void {
     }
   } catch (error) {
     console.warn('Recording cue could not play:', error);
+    if (sounding === 0) onSilent?.();
   }
 }

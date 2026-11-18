@@ -111,7 +111,8 @@ export function AudioWindow() {
         onFailure: reportProcessorFailure,
       })
         .then((preRollSamples) => {
-          if (captureRef.current !== capturing) return;
+          // Sent even if a Stop beat it, so main's gate still skips the pre-roll.
+          if (!ownsCommand(captureRef.current, command)) return;
           window.electronAPI.send('runtime:audio-ready',
             command.generation, command.recordingSessionId, command.sequence, preRollSamples);
         })
@@ -183,8 +184,7 @@ export function AudioWindow() {
   }, []);
 
   useEffect(() => window.electronAPI.subscribe('runtime:cue', (cue) => {
-    holdPreRollForCue();
-    playRecordingCue(cue);
+    playRecordingCue(cue, holdPreRollForCue());
   }), []);
 
   useEffect(() => {

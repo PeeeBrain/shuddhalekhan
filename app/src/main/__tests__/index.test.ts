@@ -120,6 +120,7 @@ const runtimeShellDismissAgentCard = vi.fn();
 const runtimeShellGetPendingApproval = vi.fn((): { serverId: string; toolName: string } | null => null);
 const runtimeShellGetPresentedCompletedRunId = vi.fn((): string | null => null);
 const runtimeShellHandleAgentCardSize = vi.fn();
+const runtimeShellSetWarmMicrophone = vi.fn();
 const applyDictationFormatter = vi.fn();
 
 // Mock RecordingSession
@@ -239,6 +240,7 @@ mock.module('../runtime-shell', () => ({
     getPendingApproval = runtimeShellGetPendingApproval;
     getPresentedCompletedRunId = runtimeShellGetPresentedCompletedRunId;
     handleAgentCardSize = runtimeShellHandleAgentCardSize;
+    setWarmMicrophone = runtimeShellSetWarmMicrophone;
   },
 }));
 mock.module('../dictation-formatter', () => ({ applyDictationFormatter }));
@@ -411,6 +413,7 @@ describe('main process IPC orchestration', () => {
     runtimeShellShowAgentFailed.mockClear();
     runtimeShellDismissAgentCard.mockClear();
     runtimeShellHandleAgentCardSize.mockClear();
+    runtimeShellSetWarmMicrophone.mockClear();
     applyDictationFormatter.mockReset();
     applyDictationFormatter.mockResolvedValue({ kind: 'success', text: 'formatted text' });
     getConfig.mockReturnValue(baseConfig);
@@ -1269,12 +1272,18 @@ describe('main process IPC orchestration', () => {
     );
   });
 
-  it('fails active recording closed on screen lock and suspend', async () => {
+  it('releases the warm microphone and fails active recording closed on screen lock and suspend', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, warmMicrophone: true });
     await import(`../index?test=${Date.now()}-power-events`);
     await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(true);
 
     powerMonitorListeners.get('lock-screen')?.();
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
+    powerMonitorListeners.get('unlock-screen')?.();
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(true);
     powerMonitorListeners.get('suspend')?.();
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
 
     expect(recordingSessionCancel).toHaveBeenCalledTimes(2);
   });

@@ -650,13 +650,15 @@ export class RecordingSession {
     preRollSamples: unknown,
   ): void => {
     const run = this.activeRun;
-    if (!run || run.id !== recordingSessionId || run.sequence !== sequence
-      || run.state !== 'starting') return;
+    if (!run || run.id !== recordingSessionId || run.sequence !== sequence) return;
     if (!event.sender || event.sender !== this.runtimeShell.getWebContents()) return;
     if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
     const preRoll = Number.isSafeInteger(preRollSamples) && Number(preRollSamples) > 0
       ? Math.min(Number(preRollSamples), MAX_PRE_ROLL_SAMPLES)
       : 0;
+    // A Stop that beat this ack still spools the pre-roll: the gate must skip it.
+    if (run.state === 'stopping' && run.recordingSince === null) run.gateSkipSamples = preRoll;
+    if (run.state !== 'starting') return;
     run.state = 'recording';
     markTiming('capture-ready', { preRollSamples: preRoll });
     const preRollMs = preRoll * 1000 / 16_000;

@@ -462,11 +462,11 @@ setSettingsWindowClosedHandler(() => keyboardHook.setCaptureSuspended(false));
 let suspended = false;
 let screenLocked = false;
 
-/** Keeps the mic warm only while opted in, a shortcut can start a recording, and the machine is awake and unlocked. */
+/** Keeps the mic warm only while opted in, the Dictation shortcut can start a recording, and the machine is awake and unlocked. */
 function publishWarmMicrophone(): void {
-  const { warmMicrophone, shortcuts, agent } = getConfig();
-  const canRecord = shortcuts.dictation.binding !== null || (agent.enabled && shortcuts.agent.binding !== null);
-  runtimeShell.setWarmMicrophone(warmMicrophone && canRecord && !keyboardHook.isPaused() && !suspended && !screenLocked);
+  const { warmMicrophone, shortcuts } = getConfig();
+  const canDictate = shortcuts.dictation.binding !== null && desktopShortcuts.backend !== 'unavailable';
+  runtimeShell.setWarmMicrophone(warmMicrophone && canDictate && !keyboardHook.isPaused() && !suspended && !screenLocked);
 }
 
 function setShortcutsPaused(paused: boolean): void {
@@ -824,6 +824,7 @@ if (!gotSingleInstanceLock) {
     keyboardHook.setLinuxShortcutStatusListener(status => {
       desktopShortcuts = status;
       publishDesktopStatus();
+      publishWarmMicrophone();
       if (status.backend === 'unavailable') {
         void dialog.showMessageBox({
           type: 'warning', title: 'Shortcuts unavailable',

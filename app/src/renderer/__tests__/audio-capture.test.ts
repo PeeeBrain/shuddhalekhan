@@ -803,14 +803,26 @@ describe('warm audio stream', () => {
       expect(audio.close).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps a recording cue out of the pre-roll', async () => {
-      const { audio, mod } = await parked();
-      audio.hearWhileIdle(idle());
-      mod.holdPreRollForCue();
-      const rec = recorder();
-      expect(await mod.startRecording(rec.options)).toBe(0);
-      audio.emit(new Float32Array([0.2]));
-      expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 1 });
+    it('keeps a recording cue out of the pre-roll until it has sounded, however late', async () => {
+      const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+      try {
+        const { audio, mod } = await parked();
+        audio.hearWhileIdle(idle());
+        const silent = mod.holdPreRollForCue();
+        // Still sounding a second later: its output woke late.
+        now.mockReturnValue(1_000);
+        expect(await mod.startRecording(recorder().options)).toBe(0);
+        audio.emit(new Float32Array([0.2]));
+        expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 1 });
+
+        // 400 ms after it fell silent, only the 50 ms past its output latency is pre-roll.
+        silent();
+        now.mockReturnValue(1_400);
+        audio.hearWhileIdle(idle());
+        expect(await mod.startRecording(recorder().options)).toBe(800);
+      } finally {
+        now.mockRestore();
+      }
     });
 
     it('closes the mic on cancel so the dropped utterance never becomes pre-roll', async () => {

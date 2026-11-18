@@ -1410,8 +1410,9 @@ describe('RecordingSession', () => {
     { name: 'discards a Dictation whose only sound is in the warm pre-roll', cued: false, preRoll: 7_200, toneAt: 0, recognized: false },
     { name: 'skips the Start cue after the pre-roll, not over it', cued: true, preRoll: 7_200, toneAt: 12_000, recognized: true },
     { name: 'never lets a claimed pre-roll hide more than 450 ms', cued: false, preRoll: 1e9, toneAt: 7_200, recognized: true },
-  ])('$name', async ({ cued, preRoll, toneAt, recognized }: {
-    cued: boolean; preRoll: number; toneAt: number; recognized: boolean;
+    { name: 'skips a pre-roll whose ready ack lands after Stop', cued: false, preRoll: 7_200, toneAt: 0, recognized: false, stopFirst: true },
+  ])('$name', async ({ cued, preRoll, toneAt, recognized, stopFirst = false }: {
+    cued: boolean; preRoll: number; toneAt: number; recognized: boolean; stopFirst?: boolean;
   }) => {
     audioStream.playCue.mockReturnValue(cued);
     const markReady = captureReadyEmitter();
@@ -1424,8 +1425,9 @@ describe('RecordingSession', () => {
     wav.set(new Uint8Array(pcm.buffer), 44);
 
     session.begin('dictation', 'head');
-    markReady(preRoll);
+    if (!stopFirst) markReady(preRoll);
     const ending = session.end();
+    if (stopFirst) markReady(preRoll);
     await session.complete(wav);
     await ending;
     expect(transcribe).toHaveBeenCalledTimes(recognized ? 1 : 0);
