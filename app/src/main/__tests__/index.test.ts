@@ -203,6 +203,14 @@ mock.module('../config', () => ({
   getLastSeenReleaseNotesVersion,
   setLastSeenReleaseNotesVersion,
 }));
+// The real installer is Linux-only and would touch the profile's helper.
+mock.module('../computer-use', () => ({
+  createComputerUseInstaller: () => ({
+    executable: () => undefined, status: async () => ({ state: 'absent' }), install: async () => ({ state: 'absent' }),
+    cancelInstall: async () => undefined,
+    uninstall: async (cleanup: () => Promise<void>) => { await cleanup(); return { state: 'absent' }; },
+  }),
+}));
 mock.module('../credential-vault', () => ({ credentialVault }));
 mock.module('../credential-ipc', () => ({ registerCredentialIpcHandlers }));
 mock.module('../updater', () => ({ setupUpdater: vi.fn(), checkForUpdates, getUpdateStatus }));
