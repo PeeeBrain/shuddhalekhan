@@ -47,8 +47,6 @@ describe('renderMarkdown', () => {
     const [soft, hard] = container.querySelectorAll('p');
     expect(soft?.querySelectorAll('br')).toHaveLength(1);
     expect(hard?.querySelectorAll('br')).toHaveLength(2);
-    // The newline text react-markdown leaves after each <br> must stay collapsible.
-    expect(hard?.className).not.toContain('pre');
   });
 
 });

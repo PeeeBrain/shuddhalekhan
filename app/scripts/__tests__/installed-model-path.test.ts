@@ -33,11 +33,11 @@ for (const platform of ['win32', 'linux']) {
       const base = platform === 'win32' ? join(homedir(), 'AppData', 'Roaming') : join(homedir(), '.config');
       expect(installedModelPath('model-v1')).toBe(join(base, 'Shuddhalekhan', 'models', 'model-v1'));
     });
-
-    it('keeps the explicit model directory override', () => {
-      Object.defineProperty(process, 'platform', { value: platform });
-      process.env.SHUDDHALEKHAN_MODEL_DIR = join('custom', 'model');
-      expect(installedModelPath('model-v1')).toBe(process.env.SHUDDHALEKHAN_MODEL_DIR);
-    });
   });
 }
+
+it('uses the explicit model directory override as-is', () => {
+  const override = join('custom', 'model');
+  process.env.SHUDDHALEKHAN_MODEL_DIR = override;
+  expect(installedModelPath('model-v1')).toBe(override);
+});

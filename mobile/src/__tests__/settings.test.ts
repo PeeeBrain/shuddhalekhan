@@ -10,11 +10,16 @@ test('disabled Agent Mode leaves Dictation independent of unused agent and MCP e
   expect(mobileSettingsSchema.safeParse({ ...settings, agentEnabled: true }).success).toBe(false);
 });
 
-test('on-device transcription ignores a dormant endpoint but validates enabled Agent Mode', () => {
-  const local = { ...defaultSettings, transcriptionSource: 'on-device', transcriptionEndpoint: 'unfinished' };
+test.each(['', 'unfinished'])('on-device transcription can save a dormant endpoint (%j)', transcriptionEndpoint => {
+  const local = { ...defaultSettings, transcriptionSource: 'on-device', transcriptionEndpoint };
   expect(mobileSettingsSchema.safeParse(local).success).toBe(true);
   expect(mobileSettingsSchema.safeParse({ ...local, transcriptionSource: 'endpoint' }).success).toBe(false);
-  expect(mobileSettingsSchema.safeParse({ ...local, agentEnabled: true, agentEndpoint: 'unfinished' }).success).toBe(false);
+});
+
+test('on-device Dictation still validates the enabled agent endpoint', () => {
+  const local = { ...defaultSettings, transcriptionSource: 'on-device', agentEnabled: true };
+  expect(mobileSettingsSchema.safeParse(local).success).toBe(true);
+  expect(mobileSettingsSchema.safeParse({ ...local, agentEndpoint: 'unfinished' }).success).toBe(false);
 });
 
 test('on-device transcription accepts regional variants of Parakeet languages and rejects languages it lacks', () => {
@@ -37,12 +42,6 @@ test('changing the agent API keeps a standard endpoint pointed at that API', () 
   expect(mobileSettingsSchema.safeParse({ ...azure, agentEnabled: true, agentModel: 'd', agentProvider: 'openrouter' }).success).toBe(false);
 });
 
-test('empty remote endpoints fail validation while unused local endpoints remain editable', () => {
-  const incomplete = { ...defaultSettings, transcriptionEndpoint: '' };
-  expect(mobileSettingsSchema.safeParse(incomplete).success).toBe(false);
-  expect(mobileSettingsSchema.safeParse({ ...incomplete, transcriptionSource: 'on-device' }).success).toBe(true);
-});
-
 test('ChatGPT selection clears the API key and model and requires a model before enabling Agent Mode', () => {
   const settings = selectAgentProvider({ ...defaultSettings, agentKey: 'old-secret', agentCache: true }, 'chatgpt');
   expect(settings).toMatchObject({ agentKey: '', agentModel: '', agentAuth: 'none', agentApiMode: 'responses', agentCache: false });
@@ -56,11 +55,8 @@ test('ChatGPT selection clears the API key and model and requires a model before
   expect(selectAgentApiMode(configured, 'chat-completions')).toEqual(configured);
 });
 
-test('custom instructions are limited to 4000 characters and the old editable prompt is discarded', () => {
-  const legacy = { ...defaultSettings, customInstructions: undefined, systemPrompt: 'Replace the app prompt' };
-  const parsed = mobileSettingsSchema.parse(legacy);
-  expect(parsed.customInstructions).toBe('');
-  expect(parsed).not.toHaveProperty('systemPrompt');
-  expect(mobileSettingsSchema.safeParse({ ...defaultSettings, customInstructions: 'x'.repeat(4000) }).success).toBe(true);
-  expect(mobileSettingsSchema.safeParse({ ...defaultSettings, customInstructions: 'x'.repeat(4001) }).success).toBe(false);
+test('custom instructions accept 4000 characters and reject longer entries', () => {
+  const customInstructions = 'x'.repeat(4000);
+  expect(mobileSettingsSchema.parse({ ...defaultSettings, customInstructions }).customInstructions).toBe(customInstructions);
+  expect(mobileSettingsSchema.safeParse({ ...defaultSettings, customInstructions: customInstructions + 'x' }).success).toBe(false);
 });

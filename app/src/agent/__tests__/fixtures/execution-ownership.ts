@@ -91,7 +91,15 @@ await until(() => closed.has(0));
 start();
 await until(() => runs.length === 3);
 assert.deepEqual(runs[2].history, latestMessages, 'late completion cannot replace the current conversation history');
-runs[2].callbacks.onCancelled();
+async function cancel(agentRunId: string): Promise<void> {
+  const cursor = events.length;
+  send({ type: 'agent:cancel', agentRunId });
+  await until(() => events.slice(cursor).some(event => event.type === 'agent:cancelled' && event.agentRunId === agentRunId));
+}
+await cancel('old-conversation');
+assert.equal(runs[2].signal.aborted, false, 'cancelling a different run cannot interrupt the active command');
+await cancel('conversation');
+assert.equal(runs[2].signal.aborted, true, 'the correlated cancellation must abort the running command');
 runs[2].resolve(null);
 await until(() => closed.has(2));
 send({ type: 'sidecar:shutdown' });

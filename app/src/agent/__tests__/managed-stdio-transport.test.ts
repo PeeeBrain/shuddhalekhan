@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { join } from 'path';
+import { dirname, join } from 'path';
+import { createMCPClient } from '@ai-sdk/mcp';
 import { ManagedStdioMcpTransport } from '../managed-stdio-transport';
+import { AisdkMcpClientFactory } from '../mcp-registry-adapters';
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'stdio-server-fixture.ts');
 const closedTransports = new WeakSet<ManagedStdioMcpTransport>();
@@ -24,7 +26,7 @@ function launchArgs(extra: string[] = []): { command: string; args: string[]; en
   return {
     command: process.execPath,
     args: [FIXTURE, ...extra],
-    env: { FIXTURE_TOKEN: 's3cret-value' },
+    env: {},
   };
 }
 
@@ -50,29 +52,47 @@ describe('ManagedStdioMcpTransport', () => {
     return transport;
   }
 
-  it('launches shell-free with only declared env and pipes JSON-RPC both ways', async () => {
-    const transport = track(new ManagedStdioMcpTransport({ launch: launchArgs() }));
-    const messages: unknown[] = [];
-    transport.onmessage = (message) => messages.push(message);
+  it('passes only declared secrets to stdio tools and redacts malformed output without losing the reply', async () => {
+    const previousToken = process.env.FIXTURE_TOKEN;
+    const previousUndeclared = process.env.FIXTURE_UNDECLARED;
+    const previousPath = process.env.PATH;
+    const fixturePath = dirname(process.execPath);
+    process.env.FIXTURE_TOKEN = 's3cret-value';
+    process.env.FIXTURE_UNDECLARED = 'sidecar-secret';
+    process.env.PATH = fixturePath;
+    const errors: string[] = [];
+    const factory = new AisdkMcpClientFactory({ resolve: () => undefined }, config =>
+      createMCPClient({ ...config, onUncaughtError: error => { errors.push(String(error)); } }));
 
-    const pid = await startTransport(transport);
-    expect(isPidAlive(pid)).toBe(true);
-
-    await transport.send({ jsonrpc: '2.0', id: 1, method: 'getEnv' });
-    await transport.send({ jsonrpc: '2.0', id: 2, method: 'ping' });
-
-    // The fixture also announces itself with id 0, so wait for both replies by id.
-    await waitFor(() => [1, 2].every((id) => messages.some((message) => (message as { id?: number }).id === id)));
-    const envReply = messages.find((message) => (message as { id?: number }).id === 1) as {
-      result?: { declared?: string | null; home?: string | null; userProfile?: string | null };
-    };
-    expect(envReply.result?.declared).toBe('s3cret-value');
-    expect(envReply.result?.home).toBeNull();
-
-    const echoReply = messages.find((message) => (message as { id?: number }).id === 2) as {
-      result?: { echoed?: string };
-    };
-    expect(echoReply.result?.echoed).toBe('ping');
+    try {
+      const client = await factory.connect({
+        id: 'stdio-fixture',
+        displayName: 'Fixture',
+        enabled: true,
+        transport: { type: 'stdio', command: process.execPath, args: [FIXTURE, '--mcp'], envVarNames: ['FIXTURE_TOKEN'] },
+        discoveredTools: [],
+        toolPolicies: {},
+      });
+      try {
+        const { check_environment: checkEnvironment } = await client.tools();
+        if (!checkEnvironment?.execute) throw new Error('The stdio fixture tool was not discovered');
+        const result = await checkEnvironment.execute({}, { messages: [], toolCallId: 'check-env', context: {} });
+        expect(result).toMatchObject({
+          structuredContent: { declared: true, path: fixturePath, undeclared: false },
+        });
+        expect(errors).toContainEqual(expect.stringContaining('not-json [redacted]'));
+        expect(errors.join('\n')).not.toContain('s3cret-value');
+      } finally {
+        await client.close();
+      }
+    } finally {
+      if (previousToken === undefined) delete process.env.FIXTURE_TOKEN;
+      else process.env.FIXTURE_TOKEN = previousToken;
+      if (previousUndeclared === undefined) delete process.env.FIXTURE_UNDECLARED;
+      else process.env.FIXTURE_UNDECLARED = previousUndeclared;
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
   });
 
   it('closes gracefully through stdin EOF and fires onclose once', async () => {
@@ -175,25 +195,6 @@ describe('ManagedStdioMcpTransport', () => {
     const first = transport.close();
     expect(transport.close()).toBe(first);
     await first;
-  });
-
-  it('reports malformed stdout as an error without crashing the transport', async () => {
-    const transport = track(new ManagedStdioMcpTransport({
-      launch: launchArgs(),
-      redactValues: ['s3cret-value'],
-    }));
-    const errors: unknown[] = [];
-    const messages: unknown[] = [];
-    transport.onerror = (error) => errors.push(error);
-    transport.onmessage = (message) => messages.push(message);
-
-    await transport.start();
-    await waitFor(() => messages.length > 0);
-    await transport.send({ jsonrpc: '2.0', id: 7, method: 'emitSecretMalformed' });
-
-    await waitFor(() => errors.length > 0);
-    expect(String(errors[0])).toContain('not-json [redacted]');
-    expect(String(errors[0])).not.toContain('s3cret-value');
   });
 });
 

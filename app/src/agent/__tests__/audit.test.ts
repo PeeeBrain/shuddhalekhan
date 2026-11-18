@@ -1,18 +1,16 @@
 import { describe, expect, it } from 'bun:test';
-import { existsSync, rmSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { createRequire } from 'module';
 import { AgentAuditStore, sanitizeAuditPayload } from '../audit';
+import { queryAuditRunDetail } from '../../main/audit-queries';
 
 const require = createRequire(import.meta.url);
 const { Database } = require('bun:sqlite') as {
   Database: new (path: string, options?: { readonly?: boolean }) => {
-    query(sql: string): {
-      get(): unknown;
-      all(): unknown[];
-      finalize(): void;
-    };
-    close(): void;
+    prepare(sql: string): { all(...args: string[]): unknown[] };
+    close(throwOnError?: boolean): void;
   };
 };
 
@@ -41,44 +39,9 @@ describe('sanitizeAuditPayload', () => {
 });
 
 describe('AgentAuditStore', () => {
-  const testDir = join(process.cwd(), '.tmp-agent-audit-test');
-  const dbPath = join(testDir, 'agent-audit.sqlite');
-
-  function cleanup(): void {
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true, force: true });
-    }
-  }
-
-  it('creates and writes the audit database under Bun runtime', () => {
-    cleanup();
-
-    try {
-      const store = new AgentAuditStore(dbPath);
-      store.record('run-1', 'status', { status: 'Thinking...' });
-      store.close();
-
-      const db = new Database(dbPath, { readonly: true });
-      const select = db.query('SELECT agent_run_id, event_type, payload_json FROM agent_audit_events');
-      const row = select.get() as {
-        agent_run_id: string;
-        event_type: string;
-        payload_json: string;
-      };
-      select.finalize();
-      db.close();
-
-      expect(row.agent_run_id).toBe('run-1');
-      expect(row.event_type).toBe('status');
-      expect(JSON.parse(row.payload_json)).toEqual({ status: 'Thinking...' });
-    } finally {
-      cleanup();
-    }
-  });
-
-  it('suppresses consecutive equivalent status events for the same run', () => {
-    cleanup();
-
+  it('stores status changes without repeated entries in each run timeline', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'agent-audit-'));
+    const dbPath = join(directory, 'agent-audit.sqlite');
     try {
       const store = new AgentAuditStore(dbPath);
       store.record('run-1', 'status', { status: 'Thinking...' });
@@ -89,22 +52,18 @@ describe('AgentAuditStore', () => {
       store.close();
 
       const db = new Database(dbPath, { readonly: true });
-      const select = db.query('SELECT agent_run_id, event_type, payload_json FROM agent_audit_events ORDER BY id ASC');
-      const rows = select.all() as {
-        agent_run_id: string;
-        event_type: string;
-        payload_json: string;
-      }[];
-      select.finalize();
-      db.close();
-
-      expect(rows.map((row) => [row.agent_run_id, JSON.parse(row.payload_json).status])).toEqual([
-        ['run-1', 'Thinking...'],
-        ['run-1', 'Calling tool...'],
-        ['run-2', 'Calling tool...'],
-      ]);
+      try {
+        const timeline = (runId: string) => queryAuditRunDetail(db, runId).map(event => [event.eventType, event.payload]);
+        expect(timeline('run-1')).toEqual([
+          ['status', { status: 'Thinking...' }],
+          ['status', { status: 'Calling tool...' }],
+        ]);
+        expect(timeline('run-2')).toEqual([['status', { status: 'Calling tool...' }]]);
+      } finally {
+        db.close(true);
+      }
     } finally {
-      cleanup();
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 });

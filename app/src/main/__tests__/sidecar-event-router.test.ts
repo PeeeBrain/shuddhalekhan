@@ -104,9 +104,7 @@ describe('SidecarEventRouter', () => {
       expiresAt: '2026-05-11T12:00:00.000Z',
     });
 
-    // The waiting indicator belongs to the presentation layer, not the router:
-    // the shared shell shows the approval itself, while the legacy presenter
-    // synthesizes its own preceding status toast.
+    // The approval card is the waiting presentation; no separate status is needed.
     expect(harness.presenter.approval).toHaveBeenCalledTimes(1);
     expect(harness.presenter.approval).toHaveBeenCalledWith({
       agentRunId: 'run-1',

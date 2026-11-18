@@ -66,10 +66,66 @@ function makeServer(
 }
 
 function renderSettings(servers: McpServerConfig[], agentEnabled = true) {
-  const onChange = mock(() => undefined);
+  const onChange = mock((_servers: McpServerConfig[]) => undefined);
   render(<McpSettings servers={servers} statuses={{}} agentEnabled={agentEnabled} onChange={onChange} onTest={async () => undefined} />);
   return onChange;
 }
+
+it('adds an unnamed HTTP server with redirects denied and preserves the existing server', async () => {
+  const existing = makeServer(httpTransport, [], 'saved-server');
+  const onChange = renderSettings([existing]);
+  const url = 'https://other.example.test/mcp';
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+  fireEvent.click(screen.getByRole('combobox', { name: 'Transport' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'HTTP' }));
+  expect(screen.getByRole('switch', { name: 'Follow HTTP redirects' })).not.toBeChecked();
+  fireEvent.change(screen.getByLabelText('URL'), { target: { value: url } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Server' }));
+
+  expect(onChange).toHaveBeenCalledTimes(1);
+  const saved = onChange.mock.calls[0]?.[0];
+  expect(saved).toEqual([existing, expect.objectContaining({
+    id: expect.any(String),
+    displayName: 'MCP Server',
+    transport: { type: 'http', url, redirect: 'error' },
+  })]);
+  expect(saved?.[1]?.id).not.toBe(existing.id);
+});
+
+it('gives a new server an unused ID when the clock repeats', () => {
+  const time = 1_800_000_000_000;
+  const id = `mcp-${time.toString(36)}`;
+  const existing = [makeServer(httpTransport, [], id), makeServer(httpTransport, [], `${id}-1`)];
+  const onChange = renderSettings(existing);
+  const clock = spyOn(Date, 'now').mockReturnValue(time);
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+  } finally {
+    clock.mockRestore();
+  }
+  fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'bun' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Server' }));
+
+  expect(onChange).toHaveBeenCalledTimes(1);
+  const saved: McpServerConfig[] | undefined = onChange.mock.calls[0]?.[0];
+  expect(saved?.slice(0, 2)).toEqual(existing);
+  expect(new Set(saved?.map(server => server.id)).size).toBe(3);
+});
+
+it.each([
+  ['   ', 'MCP Server'],
+  ['  Lookup  ', 'Lookup'],
+])('normalizes the edited MCP name %j and keeps the saved server identity', (name: string, displayName: string) => {
+  const server = makeServer(httpTransport, [], 'saved-server');
+  const onChange = renderSettings([server]);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: name } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+  expect(onChange).toHaveBeenCalledWith([{ ...server, displayName }]);
+});
 
 describe('McpSettings pre-registered OAuth client', () => {
   it('saves optional OAuth client fields from the HTTP server editor', () => {
@@ -112,8 +168,11 @@ describe('McpSettings pre-registered OAuth client', () => {
   });
 
   it('hides OAuth fields for stdio servers', () => {
-    renderSettings([makeServer({ type: 'stdio', command: 'bun', args: [], envVarNames: [] })]);
+    renderSettings([makeServer({ type: 'stdio', command: 'bun', args: ['run', 'server.ts'], envVarNames: [] })]);
 
+    expect(screen.getByText('bun run server.ts')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByLabelText('Command')).toHaveValue('bun');
     expect(screen.queryByLabelText('OAuth client ID')).toBeNull();
   });
 });
@@ -121,6 +180,11 @@ describe('McpSettings pre-registered OAuth client', () => {
 it('requires Agent Mode before reconnecting a server', () => {
   renderSettings([makeServer(httpTransport)], false);
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();
+});
+
+it('labels an HTTP server with a missing endpoint', () => {
+  renderSettings([makeServer({ ...httpTransport, url: '' })]);
+  expect(screen.getByText('HTTP endpoint not set')).toBeInTheDocument();
 });
 
 describe('McpSettings tool policy collapse', () => {
