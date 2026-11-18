@@ -230,6 +230,15 @@ describe('config store', () => {
     expect(getConfig().waylandBestEffortInsertion).toBe(false);
   });
 
+  it('turns recording sounds on for upgrades and keeps them off once turned off', async () => {
+    existsSync.mockReturnValue(true);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-recording-sounds`);
+
+    expect(getConfig().recordingSounds).toBe(true);
+    setConfig('recordingSounds', false);
+    expect(getConfig().recordingSounds).toBe(false);
+  });
+
   it('sets typed config values', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-2`);

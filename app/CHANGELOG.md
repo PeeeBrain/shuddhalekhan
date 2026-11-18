@@ -7,6 +7,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Desktop Dictation and Agent Mode recordings now play a quiet cue when the microphone is live, when recording stops, and when a recording or paste fails. The cues are on for new installs and upgrades. Turn them off, or preview them, under Shortcuts > Input > Recording sounds.
 - Desktop Dictation now quietly drops an accidental tap of a push-to-talk shortcut (held under 300 ms), a Toggle stopped before the microphone started, and recordings with nothing but room noise in them. They no longer show a "No speech was recognized" or "No microphone audio was captured" error, or paste a made-up word like "Yeah." Toggle shortcuts and Agent Mode are unchanged.
 - Desktop Dictation keeps recording briefly after you stop (200 ms, up to 600 ms while you are still speaking), so a last word said as you release the shortcut is no longer cut off.
 - Launching Shuddhalekhan again while it is already running now brings up Settings instead of doing nothing.

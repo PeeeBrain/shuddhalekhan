@@ -27,6 +27,7 @@ import {
 } from './shortcut-capture';
 import type { DesktopStatus } from '../../shared/desktop-status';
 import { activeTrigger, useDesktopStatus } from './use-desktop-status';
+import { playRecordingCue } from '../recording-cues';
 
 /** Starting and capturing own main's shortcut suspension; confirming has already released it. */
 type CaptureFlow =
@@ -38,7 +39,7 @@ type CaptureFlow =
 const IDLE_FLOW: CaptureFlow = { phase: 'idle' };
 
 export function ShortcutsSettings(props: SettingsSectionProps) {
-  const { settingsIpc, config } = props;
+  const { settingsIpc, config, persistence } = props;
   const desktopStatus = useDesktopStatus(settingsIpc);
   const [paused, setPaused] = useState(false);
   const [pauseError, setPauseError] = useState<string | undefined>();
@@ -111,6 +112,24 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
             label="Microphone"
             value={hasChosenMicrophone(config.selectedDeviceId) ? config.selectedDeviceId : 'System default'}
           />
+          <ToggleRow
+            title="Recording sounds"
+            description="A quiet cue when recording starts, when it stops, and when something fails."
+            checked={config.recordingSounds}
+            errorId="recording-sounds-error"
+            error={persistence.fieldErrors['recording-sounds']}
+            onChange={(value) => void persistence.commit('recordingSounds', value, 'recording-sounds')}
+          />
+          {config.recordingSounds ? (
+            <div className="-mt-1 flex items-center gap-1 pb-3">
+              <span className="mr-1 text-xs text-muted-foreground">Preview</span>
+              {(['start', 'stop', 'error'] as const).map((cue) => (
+                <Button key={cue} type="button" variant="ghost" size="sm" onClick={() => playRecordingCue(cue)}>
+                  {cue[0].toUpperCase() + cue.slice(1)}
+                </Button>
+              ))}
+            </div>
+          ) : null}
         </SettingsCard>
       </SettingsPanel>
     </div>

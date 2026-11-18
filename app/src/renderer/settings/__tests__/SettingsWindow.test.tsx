@@ -57,6 +57,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     task: 'transcribe',
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
+    recordingSounds: true,
     setupChecklistDismissed: true,
     onboarding: { status: 'complete' },
     shortcuts: {

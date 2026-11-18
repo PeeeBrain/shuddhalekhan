@@ -46,6 +46,7 @@ function createRuntimeShellMock() {
     showInsertionHalted: vi.fn(),
     acceptsAudioEvent: vi.fn(() => true),
     consumeAudioEvent: vi.fn(() => true),
+    playCue: vi.fn(() => true),
   };
 }
 
@@ -1347,6 +1348,63 @@ describe('RecordingSession', () => {
     await expect(completion).resolves.toBeNull();
     expect(onError).not.toHaveBeenCalled();
     expect(onResult).not.toHaveBeenCalled();
+  });
+
+  /** Starts the IPC listeners and returns a helper that marks a begun run's capture ready. */
+  function captureReadyEmitter() {
+    const sender = {};
+    audioStream.getWebContents.mockReturnValue(sender);
+    session.start();
+    const ready = electronMock.ipcMain.on.mock.calls.find((call: unknown[]) => call[0] === 'runtime:audio-ready')?.[1];
+    return () => {
+      const command = audioStream.beginCapture.mock.calls.at(-1)?.[0];
+      ready({ sender }, 1, command.recordingSessionId, command.sequence);
+    };
+  }
+
+  it('cues Start once at capture-ready and Stop once after capture ends, and neither for a capture that never started', async () => {
+    const markReady = captureReadyEmitter();
+    session.begin('dictation', 'cued');
+    markReady();
+    markReady();
+    expect(audioStream.playCue.mock.calls).toEqual([['start']]);
+
+    const ending = session.end();
+    await session.end();
+    await session.complete(new Uint8Array(64));
+    await ending;
+    expect(audioStream.playCue.mock.calls).toEqual([['start'], ['stop']]);
+
+    session.begin('dictation', 'never-ready');
+    const unstarted = session.end();
+    await session.complete(new Uint8Array(44));
+    await unstarted;
+    session.begin('dictation', 'cancelled');
+    markReady();
+    await session.cancel();
+    expect(audioStream.playCue.mock.calls).toEqual([['start'], ['stop'], ['start']]);
+  });
+
+  it.each([
+    { name: 'discards a Dictation whose only sound is the Start cue', cued: true, recognized: false },
+    { name: 'still recognizes a sound in the head when no Start cue played', cued: false, recognized: true },
+  ])('$name', async ({ cued, recognized }: { cued: boolean; recognized: boolean }) => {
+    audioStream.playCue.mockReturnValue(cued);
+    const markReady = captureReadyEmitter();
+    // 250 ms of a -23 dBFS tone, as a speaker playing the cue would leave, then a second of faint room noise.
+    const pcm = new Int16Array(16_000 * 1.25);
+    for (let i = 0; i < pcm.length; i++) {
+      pcm[i] = i < 4_000 ?Math.round(2_300 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2;
+    }
+    const wav = new Uint8Array(44 + pcm.byteLength);
+    wav.set(new Uint8Array(pcm.buffer), 44);
+
+    session.begin('dictation', 'head');
+    markReady();
+    const ending = session.end();
+    await session.complete(wav);
+    await ending;
+    expect(transcribe).toHaveBeenCalledTimes(recognized ? 1 : 0);
   });
 
   it('ends a Dictation stopped before the microphone delivered audio quietly, cancelling its stream', async () => {

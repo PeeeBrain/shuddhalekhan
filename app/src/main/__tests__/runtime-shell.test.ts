@@ -58,6 +58,32 @@ describe('Batch Dictation runtime shell', () => {
     expect(send.mock.calls.map((call: unknown[]) => call[0])).not.toContain('runtime:audio-start');
   });
 
+  it('plays the Error cue with each failure toast only while recording sounds are on', async () => {
+    const send = vi.fn();
+    const window = {
+      webContents: { send, on: vi.fn(), setWindowOpenHandler: vi.fn(), isLoading: vi.fn(() => false) },
+      loadURL: vi.fn(), loadFile: vi.fn(), on: vi.fn(), once: vi.fn(),
+      isDestroyed: vi.fn(() => false), isVisible: vi.fn(() => false),
+      setPosition: vi.fn(), setAlwaysOnTop: vi.fn(), showInactive: vi.fn(),
+      setBounds: vi.fn(), setFocusable: vi.fn(), setIgnoreMouseEvents: vi.fn(),
+      hide: vi.fn(), destroy: vi.fn(),
+    };
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const { RuntimeShell } = await import(`../runtime-shell?test=${Date.now()}-cues`);
+    let sounds = true;
+    const shell = new RuntimeShell(undefined, () => sounds);
+    shell.prepare();
+    const cues = () => send.mock.calls.filter((call: unknown[]) => call[0] === 'runtime:cue').map((call: unknown[]) => call[1]);
+
+    shell.showFailure('session-1', 'Paste failed');
+    expect(cues()).toEqual(['error']);
+
+    sounds = false;
+    shell.showFailure('session-2', 'Paste failed');
+    expect(shell.playCue('start')).toBe(false);
+    expect(cues()).toEqual(['error']);
+  });
+
   it('publishes complete monotonic recording, processing, failure, and idle snapshots', async () => {
     const send = vi.fn();
     const window = {
