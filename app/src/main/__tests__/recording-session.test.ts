@@ -1391,10 +1391,10 @@ describe('RecordingSession', () => {
   ])('$name', async ({ cued, recognized }: { cued: boolean; recognized: boolean }) => {
     audioStream.playCue.mockReturnValue(cued);
     const markReady = captureReadyEmitter();
-    // 150 ms of a -23 dBFS tone, as a speaker playing the cue would leave, then a second of faint room noise.
-    const pcm = new Int16Array(16_000 * 1.15);
+    // 250 ms of a -23 dBFS tone, as a speaker playing the cue would leave, then a second of faint room noise.
+    const pcm = new Int16Array(16_000 * 1.25);
     for (let i = 0; i < pcm.length; i++) {
-      pcm[i] = i < 2_400 ? Math.round(2_300 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2;
+      pcm[i] = i < 4_000 ?Math.round(2_300 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2;
     }
     const wav = new Uint8Array(44 + pcm.byteLength);
     wav.set(new Uint8Array(pcm.buffer), 44);

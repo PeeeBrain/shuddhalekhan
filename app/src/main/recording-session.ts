@@ -27,7 +27,7 @@ import { isNearSilent, MIN_HOLD_MS } from './dictation-admission';
 const MAX_RELEASE_TAIL_MS = 600;
 // ponytail: wall-clock margin under a provider's duration cap for IPC and audio-thread lag.
 const DURATION_CAP_MARGIN_MS = 100;
-// The Start cue (150 ms, renderer/recording-cues.ts) plus IPC and output latency.
+// The Start cue (250 ms, renderer/recording-cues.ts) plus IPC and output latency.
 // The silence gate skips this much after a cued start so a cue heard through
 // speakers is not mistaken for speech; recognition still gets every sample.
 const START_CUE_HEAD_SAMPLES = 16_000 * 0.3;
