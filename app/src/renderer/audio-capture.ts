@@ -26,8 +26,6 @@ const STOP_ACK_TIMEOUT_MS = 500;
 const SPOOL_ACK_TIMEOUT_MS = 2_000;
 // Fail closed if mic permission/open or worklet load never settles; generous for a permission prompt.
 const SETUP_TIMEOUT_MS = 30_000;
-// A cue holds pre-roll back until it has sounded, at most this long should its context never run.
-const CUE_MAX_HOLD_MS = 3_000;
 // ponytail: fixed allowance for output latency after a cue's last sample renders
 // (Bluetooth runs ~150–250 ms); measure the device if a cue still leaks into pre-roll.
 const CUE_OUTPUT_LATENCY_MS = 350;
@@ -334,7 +332,12 @@ function ensureWarm(): void {
     return;
   }
   warm = mic;
-  mic.ready.catch((error: unknown) => {
+  // A parked setup that never settles must not hold the device; a recording that adopts it has its own deadline.
+  const timer = setTimeout(() => {
+    if (!mic.running && !mic.owner) closeMic(mic);
+  }, SETUP_TIMEOUT_MS);
+  mic.ready.then(() => clearTimeout(timer), (error: unknown) => {
+    clearTimeout(timer);
     if (mic.owner) return;
     console.error('Failed to open the warm microphone:', error);
     closeMic(mic);
@@ -568,10 +571,11 @@ export async function startRecording(options: RecordingOptions): Promise<number>
 
 /**
  * A speaker cue starts now: keep it out of the next recording's pre-roll.
- * Call the returned function once every cue has stopped sounding.
+ * Call the returned function once every cue has stopped sounding. Until then
+ * there is no pre-roll, however late the cue's context starts.
  */
 export function holdPreRollForCue(): () => void {
-  cueHeldUntil = performance.now() + CUE_MAX_HOLD_MS;
+  cueHeldUntil = Infinity;
   return () => {
     cueHeldUntil = performance.now() + CUE_OUTPUT_LATENCY_MS;
   };

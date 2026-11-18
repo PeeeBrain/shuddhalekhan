@@ -854,11 +854,15 @@ if (!gotSingleInstanceLock) {
     try {
       recordingSession.start();
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      // Nothing can start a Dictation now, so the warm mic stays closed and Settings says why.
+      desktopShortcuts = { backend: 'unavailable', error: detail };
+      publishDesktopStatus();
       void dialog.showMessageBox({
         type: 'warning',
         title: 'Shortcuts unavailable',
         message: 'Shuddhalekhan could not listen for its keyboard shortcuts.',
-        detail: error instanceof Error ? error.message : String(error),
+        detail,
       });
     }
     // Sleep and lock release the warm mic before cancelling, so the cancel does not reopen it.

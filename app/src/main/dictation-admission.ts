@@ -65,11 +65,16 @@ function longestRun(levels: number[], threshold: number): number {
  * empty utterance, so it is not discarded: recognition's no-speech error tells
  * the user to check the microphone. Trailing quiet audio, such as a release
  * tail, only lowers the noise floor and so never turns speech into silence.
+ * The first `skipSamples` (pre-roll, cue head) are not judged, but if they hold
+ * signal the device works, so a flat remainder is discarded: recognition would
+ * hear only the skipped audio.
  */
-export function isNearSilent(pcm: Int16Array): boolean {
-  const levels = windowLevels(pcm);
+export function isNearSilent(pcm: Int16Array, skipSamples = 0): boolean {
+  const levels = windowLevels(pcm.subarray(skipSamples));
   if (longestRun(levels, LOUD_DBFS) >= SUSTAINED_WINDOWS) return false;
-  if (!levels.some(level => level > LEVEL_FLOOR_DBFS)) return false;
+  if (!levels.some(level => level > LEVEL_FLOOR_DBFS)) {
+    return windowLevels(pcm.subarray(0, skipSamples)).some(level => level > LEVEL_FLOOR_DBFS);
+  }
   // Gated (noise-suppressed) silence counts toward the floor, so a quiet word between zeros still stands out.
   const sorted = [...levels].sort((a, b) => a - b);
   const noiseFloor = sorted[Math.floor((sorted.length - 1) / 10)];

@@ -838,15 +838,15 @@ describe('warm audio stream', () => {
         const { audio, mod } = await parked();
         audio.hearWhileIdle(idle());
         const silent = mod.holdPreRollForCue();
-        // Still sounding a second later: its output woke late.
-        now.mockReturnValue(1_000);
+        // Still not sounded five seconds later: its output woke late.
+        now.mockReturnValue(5_000);
         expect(await mod.startRecording(recorder({ preRoll: true }).options)).toBe(0);
         audio.emit(new Float32Array([0.2]));
         expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 1 });
 
         // 400 ms after it fell silent, only the 50 ms past its output latency is pre-roll.
         silent();
-        now.mockReturnValue(1_400);
+        now.mockReturnValue(5_400);
         audio.hearWhileIdle(idle());
         expect(await mod.startRecording(recorder({ preRoll: true }).options)).toBe(800);
       } finally {
@@ -894,6 +894,28 @@ describe('warm audio stream', () => {
       await settle();
       expect(audio.stopTrack).toHaveBeenCalledTimes(1);
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes a parked mic whose audio never finishes starting', async () => {
+      const audio = installAudio();
+      const mod = await importFresh();
+      audio.suspendContext();
+      audio.resume.mockImplementationOnce(() => new Promise(() => undefined));
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      try {
+        mod.setWarmMicrophone(true);
+        await settle();
+        expect(audio.nodes).toHaveLength(1);
+        expect(audio.stopTrack).not.toHaveBeenCalled();
+        const calls: unknown[][] = timers.mock.calls;
+        const deadline = calls.find(([, ms]) => ms === 30_000)?.[0] as () => void;
+        deadline();
+      } finally {
+        timers.mockRestore();
+      }
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      mod.setWarmMicrophone(false);
     });
 
     it('closes the mic on cancel so the dropped utterance never becomes pre-roll', async () => {

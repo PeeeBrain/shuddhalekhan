@@ -317,8 +317,7 @@ export class RecordingSession {
 
     const pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
     // Pre-roll alone never admits a Dictation: media or room noise before the press is not speech.
-    const gated = pcm.subarray(run.gateSkipSamples);
-    if (run.intent === 'dictation' && (gated.length === 0 || isNearSilent(gated))) {
+    if (run.intent === 'dictation' && (pcm.length <= run.gateSkipSamples || isNearSilent(pcm, run.gateSkipSamples))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
       // Empty means stopped before the microphone delivered audio: a dead device still delivers zeros.
       console.info('Discarded near-silent Dictation without recognizing it', { samples: pcm.length });

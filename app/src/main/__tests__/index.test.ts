@@ -1289,6 +1289,14 @@ describe('main process IPC orchestration', () => {
     expect(recordingSessionCancel).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the warm microphone closed when the keyboard hook cannot be installed', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, warmMicrophone: true });
+    recordingSessionStart.mockImplementationOnce(() => { throw new Error('Failed to install keyboard hook'); });
+    await import(`../index?test=${Date.now()}-hook-failed`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(runtimeShellSetWarmMicrophone).not.toHaveBeenLastCalledWith(true);
+  });
+
   it('keeps the warm microphone only while the Linux desktop has assigned a Dictation trigger', async () => {
     getConfig.mockReturnValue({ ...baseConfig, warmMicrophone: true });
     await import(`../index?test=${Date.now()}-linux-trigger`);
