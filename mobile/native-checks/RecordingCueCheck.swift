@@ -18,6 +18,11 @@ struct RecordingCueCheck {
       let player = try AVAudioPlayer(data: cue.wav)
       precondition(player.duration > 0 && player.duration <= 0.1, "Cues must stay short.")
     }
+    var start = RecordingStartDrain.playing(.milliseconds(75))
+    precondition(start.onMute == .stopAndDrain, "Muting stops Start immediately and still drains queued audio.")
+    precondition(start.playbackEnded() == .milliseconds(75))
+    precondition(start.onMute == .keepDraining, "Muting an existing drain must not open the microphone early.")
+    precondition(start.playbackEnded() == nil, "A repeated playback completion cannot restart the drain.")
     print("RecordingCueCheck passed")
   }
 }

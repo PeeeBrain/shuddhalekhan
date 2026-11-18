@@ -11,7 +11,7 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
   private var output: AVAudioPlayer?
   private var completion: CheckedContinuation<Bool, Never>?
   private var finish: Task<Void, Never>?
-  private var inputDrain: Duration?
+  private var inputDrain = RecordingStartDrain.idle
   private var observers: [NSObjectProtocol] = []
   private var restoreSession: (() -> Void)?
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "RecordingCues")
@@ -20,7 +20,17 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
     get { RecordingSoundPreference.enabled }
     set {
       RecordingSoundPreference.enabled = newValue
-      if !newValue { stop() }
+      if !newValue {
+        switch inputDrain.onMute {
+        case .stop: stop()
+        case .stopAndDrain:
+          if let output {
+            output.stop()
+            playbackEnded(ObjectIdentifier(output))
+          }
+        case .keepDraining: break
+        }
+      }
     }
   }
 
@@ -48,7 +58,7 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
       log.notice("Recording cue \(cue.rawValue, privacy: .public)")
       if cue == .start && !standalone {
         let latency = session.outputLatency + session.inputLatency + 2 * session.ioBufferDuration
-        inputDrain = .seconds(min(latency, 0.5) + 0.025)
+        inputDrain = .playing(.seconds(min(latency, 0.5) + 0.025))
       }
       observeInterruption(foregroundOnly: context != .keyboard)
       // Some route failures stop the player without delivering the delegate callback.
@@ -72,11 +82,12 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
 
   private func playbackEnded(_ id: ObjectIdentifier) {
     guard let output, ObjectIdentifier(output) == id else { return }
+    guard inputDrain.onMute != .keepDraining else { return }
     finish?.cancel()
-    guard let inputDrain else { stop(); return }
+    guard let drain = inputDrain.playbackEnded() else { stop(); return }
     // Render completion can precede the last samples clearing the physical route.
     finish = Task {
-      do { try await Task.sleep(for: inputDrain) } catch { return }
+      do { try await Task.sleep(for: drain) } catch { return }
       stop()
     }
   }
@@ -95,7 +106,7 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
   func stop(interrupted: Bool = false) {
     output?.stop()
     output = nil
-    inputDrain = nil
+    inputDrain = .idle
     finish?.cancel()
     finish = nil
     for observer in observers { NotificationCenter.default.removeObserver(observer) }

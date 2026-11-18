@@ -46,3 +46,22 @@ enum RecordingSoundPreference {
     set { UserDefaults.standard.set(newValue, forKey: "recordingSounds") }
   }
 }
+
+enum RecordingStartDrain {
+  case idle, playing(Duration), draining
+
+  enum MuteAction { case stop, stopAndDrain, keepDraining }
+  var onMute: MuteAction {
+    switch self {
+    case .idle: .stop
+    case .playing: .stopAndDrain
+    case .draining: .keepDraining
+    }
+  }
+
+  mutating func playbackEnded() -> Duration? {
+    guard case .playing(let duration) = self else { return nil }
+    self = .draining
+    return duration
+  }
+}

@@ -32,7 +32,7 @@ export class RecordingInterruptedError extends Error {
 export type Recorder = {
   requestPermission(): Promise<boolean>;
   start(signal: AbortSignal): Promise<void>;
-  stop(): Promise<Blob>;
+  stop(onClosed: () => void): Promise<Blob>;
   playCue?(cue: 'stop' | 'error', signal: AbortSignal): Promise<void>;
   discard(): Promise<void>;
 };
@@ -136,22 +136,21 @@ export class MobileController {
     // An interruption's cleanup keeps the phase at recording; its audio must never be sent.
     if (!active || this.state.phase !== 'recording' || active.signal.aborted || this.operation?.kind === 'finishing') return;
     this.update({ phase: 'transcribing', status: 'Transcribing…' });
+    let stopCue: Promise<void> | undefined;
     try {
-      const audio = await this.ports.recorder.stop();
+      const audio = await this.ports.recorder.stop(() => {
+        if (!active.signal.aborted) stopCue = this.ports.recorder.playCue?.('stop', active.signal).catch(() => {});
+      });
       active.signal.throwIfAborted();
-      const stopCue = this.ports.recorder.playCue?.('stop', active.signal).catch(() => {});
       let transcript: string;
-      try {
-        if (this.state.settings.transcriptionSource === 'on-device') {
-          if (!this.ports.transcribeOnDevice) throw new Error('On-device Parakeet is unavailable in this build.');
-          transcript = validateTranscript((await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim(), true);
-        } else {
-          transcript = await transcribe({ audio, settings: this.state.settings, fetch: this.ports.fetch, signal: active.signal, signGoogleJwt: this.ports.signGoogleJwt });
-        }
-      } finally {
-        // Recognition can start immediately. Keep the recording route until the Stop cue finishes.
-        await stopCue;
+      if (this.state.settings.transcriptionSource === 'on-device') {
+        if (!this.ports.transcribeOnDevice) throw new Error('On-device Parakeet is unavailable in this build.');
+        transcript = validateTranscript((await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim(), true);
+      } else {
+        transcript = await transcribe({ audio, settings: this.state.settings, fetch: this.ports.fetch, signal: active.signal, signGoogleJwt: this.ports.signGoogleJwt });
       }
+      // Recognition can start immediately. Keep the recording route until the Stop cue finishes.
+      if (stopCue) await stopCue;
       active.signal.throwIfAborted();
       this.update({ transcript });
       if (this.state.intent === 'agent') {
@@ -162,7 +161,10 @@ export class MobileController {
         await this.agent(active, transcript);
       }
       await this.finish(active);
-    } catch (error) { await this.finish(active, error, !this.state.transcript); }
+    } catch (error) {
+      if (stopCue) await stopCue;
+      await this.finish(active, error, !this.state.transcript);
+    }
   };
 
   /** Admits a native transcript without touching the recorder that owns the keyboard microphone. */

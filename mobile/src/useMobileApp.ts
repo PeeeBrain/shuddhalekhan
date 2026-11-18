@@ -60,32 +60,43 @@ export function useMobileApp() {
       async start(signal) {
         signal.throwIfAborted();
         try {
-          // Preview owns an output-only session. Release it before configuring the recorder.
-          await speech?.cancelForegroundRecordingCue?.().catch(() => {});
+          // Release preview and watch for interruptions before opening the recorder.
+          const preparing = await speech?.beginForegroundRecordingPreparation?.();
           signal.throwIfAborted();
+          if (preparing === false) throw new RecordingInterruptedError();
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: false });
           signal.throwIfAborted();
           await recorder.prepareToRecordAsync();
           prepared = true;
           if (recorder.uri) recordingFile = new File(recorder.uri);
           signal.throwIfAborted();
-          // Do not write microphone input until the native cue has cleared the output route.
-          const canStart = await playRecordingCue('start', signal);
-          signal.throwIfAborted();
-          if (canStart === false || AppState.currentState === 'background') throw new RecordingInterruptedError();
+          if (speech?.playForegroundRecordingCue) {
+            // Verify the recorder can capture, then pause it while the tone clears the output route.
+            recorder.record();
+            if (!recorder.isRecording) throw new Error();
+            recorder.pause();
+            if (recorder.isRecording) throw new Error();
+            const canStart = await playRecordingCue('start', signal);
+            signal.throwIfAborted();
+            if (canStart === false) throw new RecordingInterruptedError();
+          }
+          if (AppState.currentState === 'background') throw new RecordingInterruptedError();
           recorder.record();
           if (!recorder.isRecording) throw new Error();
         } catch (error) {
           if (signal.aborted || error instanceof RecordingInterruptedError) throw error;
+          const interrupted = await speech?.cancelForegroundRecordingCue?.().catch(() => false);
+          if (interrupted || AppState.currentState === 'background') throw new RecordingInterruptedError();
           // Native error causes can include local recording paths; keep the UI error bounded.
           // oxlint-disable-next-line preserve-caught-error
           throw new Error('Could not start recording. Check microphone permissions and audio input.');
         }
       },
-      async stop() {
+      async stop(onClosed) {
         try {
           await recorder.stop();
           prepared = false;
+          onClosed();
           if (!recorder.uri) throw new Error();
           recordingFile = new File(recorder.uri);
           if (!recordingFile.exists || recordingFile.size <= 44) throw new Error();
@@ -94,6 +105,7 @@ export function useMobileApp() {
         } catch { throw new Error('Could not read the recording. Record again and speak for at least a second.'); }
       },
       async discard() {
+        await speech?.cancelForegroundRecordingCue?.().catch(() => {});
         try {
           if (prepared) { await recorder.stop(); prepared = false; }
         } finally {

@@ -11,8 +11,9 @@ type NativeSpeech = {
   signGoogleJwt(privateKey: string, input: string): Promise<string>;
   getRecordingSounds?(): Promise<boolean>;
   setRecordingSounds?(enabled: boolean): Promise<void>;
+  beginForegroundRecordingPreparation?(): Promise<boolean>;
   playForegroundRecordingCue?(cue: 'start' | 'stop' | 'error'): Promise<boolean>;
-  cancelForegroundRecordingCue?(): Promise<void>;
+  cancelForegroundRecordingCue?(): Promise<boolean>;
   previewRecordingCue?(): Promise<void>;
   getKeyboardSession(): Promise<KeyboardSessionEvent>;
   startKeyboardSession(minutes: number, language: string, agentReady: boolean): Promise<KeyboardSessionEvent>;

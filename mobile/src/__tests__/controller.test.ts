@@ -10,7 +10,7 @@ function recorder(permission = Promise.resolve(true)) {
     port: {
       requestPermission: () => permission,
       start: async () => { calls.starts++; },
-      stop: async () => { calls.stops++; return new Blob(['RIFF-audio'], { type: 'audio/wav' }); },
+      stop: async (onClosed: () => void) => { calls.stops++; onClosed(); return new Blob(['RIFF-audio'], { type: 'audio/wav' }); },
       discard: async () => { calls.discards++; },
     } satisfies Recorder,
   };
@@ -106,6 +106,20 @@ describe('mobile command lifecycle', () => {
     await stopped;
     expect(native.calls.discards).toBe(1);
     expect(controller.getSnapshot().transcript).toBe('A complete recording.');
+  });
+
+  test('a closed capture with unreadable audio plays Stop before Error', async () => {
+    const native = recorder();
+    const cues: string[] = [];
+    const controller = createController({ ...native.port,
+      stop: async onClosed => { onClosed(); throw new Error('Could not read the recording.'); },
+      playCue: async cue => { cues.push(cue); },
+    });
+    await controller.initialize();
+    await controller.startRecording('dictation');
+    await controller.stopRecording();
+    expect(cues).toEqual(['stop', 'error']);
+    expect(controller.getSnapshot().error).toBe('Could not read the recording.');
   });
 
   test('local dictation never uploads audio', async () => {
