@@ -53,6 +53,8 @@ describe.skipIf(process.platform !== 'win32')('native transient clipboard write'
   let writeTransientClipboardText: typeof WriteTransientClipboardText;
   let published: [number, Buffer][];
   let rejectFormat: number | null;
+  let sequence: number;
+  let openResults: number[];
 
   beforeEach(async () => {
     funcs.clear();
@@ -60,29 +62,43 @@ describe.skipIf(process.platform !== 'win32')('native transient clipboard write'
     lastErrorCode = 0;
     published = [];
     rejectFormat = null;
+    sequence = 7;
+    openResults = [];
+    let open = false;
     const copied = new Map<object, Buffer>();
+    const whileOpen = <T>(call: () => T) => {
+      if (!open) throw new Error('clipboard used outside OpenClipboard/CloseClipboard');
+      return call();
+    };
     impls.set('RegisterClipboardFormatW', (name: string) =>
       ({ CanIncludeInClipboardHistory: HISTORY_FORMAT, CanUploadToCloudClipboard: CLOUD_FORMAT })[name] ?? 0);
     impls.set('CreateWindowExW', () => ({ owner: true }));
-    impls.set('OpenClipboard', () => true);
-    impls.set('EmptyClipboard', () => true);
-    impls.set('CloseClipboard', () => true);
+    impls.set('GetClipboardSequenceNumber', () => sequence);
+    impls.set('OpenClipboard', () => {
+      open = (openResults.shift() ?? 1) === 1;
+      return Number(open);
+    });
+    impls.set('EmptyClipboard', () => whileOpen(() => 1));
+    impls.set('CloseClipboard', () => whileOpen(() => {
+      open = false;
+      return 1;
+    }));
     impls.set('GlobalAlloc', () => ({}));
     impls.set('GlobalLock', (memory: object) => memory);
     impls.set('RtlMoveMemory', (target: object, bytes: Buffer, length: number) => {
       copied.set(target, Buffer.from(bytes.subarray(0, length)));
     });
-    impls.set('SetClipboardData', (format: number, memory: object) => {
+    impls.set('SetClipboardData', (format: number, memory: object) => whileOpen(() => {
       if (format === rejectFormat) return null;
       published.push([format, copied.get(memory) ?? Buffer.alloc(0)]);
       return memory;
-    });
+    }));
     const mod = await import(`../../native/clipboard?test=${Date.now()}-${Math.random()}`);
     writeTransientClipboardText = mod.writeTransientClipboardText;
   });
 
   it('publishes the text with history and cloud exclusions in one owned clipboard transaction', () => {
-    writeTransientClipboardText('private words');
+    expect(writeTransientClipboardText('private words', 7)).toBe('staged');
 
     expect(published).toEqual([
       [HISTORY_FORMAT, DWORD_ZERO],
@@ -94,15 +110,39 @@ describe.skipIf(process.platform !== 'win32')('native transient clipboard write'
     expect(funcs.get('GlobalFree')).not.toHaveBeenCalled();
   });
 
+  it('leaves a copy made since the snapshot untouched', () => {
+    sequence = 8;
+
+    expect(writeTransientClipboardText('private words', 7)).toBe('changed');
+
+    expect(funcs.get('EmptyClipboard')).not.toHaveBeenCalled();
+    expect(funcs.get('CloseClipboard')).toHaveBeenCalledTimes(1);
+  });
+
   it('never publishes unmarked text when an exclusion cannot be set', () => {
     rejectFormat = CLOUD_FORMAT;
-    lastErrorCode = 5;
 
-    expect(() => writeTransientClipboardText('private words')).toThrow('SetClipboardData failed (Win32 error 5)');
+    expect(writeTransientClipboardText('private words', 7)).toBe('cleared');
 
     expect(published.map(([format]) => format)).not.toContain(CF_UNICODETEXT);
     expect(funcs.get('GlobalFree')).toHaveBeenCalledTimes(1);
     expect(funcs.get('CloseClipboard')).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits briefly for another app to release the clipboard', () => {
+    openResults = [0, 0, 1];
+
+    expect(writeTransientClipboardText('private words', 7)).toBe('staged');
+    expect(funcs.get('Sleep')).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up untouched when the clipboard stays locked', () => {
+    openResults = [0, 0, 0, 0, 0];
+    lastErrorCode = 5;
+
+    expect(() => writeTransientClipboardText('private words', 7)).toThrow('OpenClipboard failed (Win32 error 5)');
+    expect(funcs.get('EmptyClipboard')).not.toHaveBeenCalled();
+    expect(funcs.get('CloseClipboard')).not.toHaveBeenCalled();
   });
 });
 

@@ -5,6 +5,7 @@ import { openX11ClipboardMonitor } from './x11-clipboard';
 import { simulateX11Paste } from './x11-paste';
 import { classifyDesktopSession } from '../dictation-delivery-policy';
 import type { PasteDispatchResult } from '../paste-strategy';
+import type { TransientWrite } from '../clipboard-transaction-manager';
 
 const INPUT_KEYBOARD = 1;
 
@@ -34,14 +35,14 @@ function loadWin32Api() {
     GetLastError: kernel32.func('uint32_t __stdcall GetLastError()'),
     GetClipboardSequenceNumber: user32.func('uint32_t __stdcall GetClipboardSequenceNumber()'),
     CreateWindowExW: user32.func('void * __stdcall CreateWindowExW(uint32_t dwExStyle, str16 lpClassName, str16 lpWindowName, uint32_t dwStyle, int x, int y, int nWidth, int nHeight, intptr_t hWndParent, void *hMenu, void *hInstance, void *lpParam)'),
-    OpenClipboard: user32.func('bool __stdcall OpenClipboard(void *hWndNewOwner)'),
-    EmptyClipboard: user32.func('bool __stdcall EmptyClipboard()'),
+    OpenClipboard: user32.func('int32_t __stdcall OpenClipboard(void *hWndNewOwner)'),
+    EmptyClipboard: user32.func('int32_t __stdcall EmptyClipboard()'),
     SetClipboardData: user32.func('void * __stdcall SetClipboardData(uint32_t uFormat, void *hMem)'),
-    CloseClipboard: user32.func('bool __stdcall CloseClipboard()'),
+    CloseClipboard: user32.func('int32_t __stdcall CloseClipboard()'),
     RegisterClipboardFormatW: user32.func('uint32_t __stdcall RegisterClipboardFormatW(str16 lpszFormat)'),
     GlobalAlloc: kernel32.func('void * __stdcall GlobalAlloc(uint32_t uFlags, uintptr_t dwBytes)'),
     GlobalLock: kernel32.func('void * __stdcall GlobalLock(void *hMem)'),
-    GlobalUnlock: kernel32.func('bool __stdcall GlobalUnlock(void *hMem)'),
+    GlobalUnlock: kernel32.func('int32_t __stdcall GlobalUnlock(void *hMem)'),
     GlobalFree: kernel32.func('void * __stdcall GlobalFree(void *hMem)'),
     RtlMoveMemory: kernel32.func('void __stdcall RtlMoveMemory(void *Destination, const uint8_t *Source, uintptr_t Length)'),
     Sleep: kernel32.func('void __stdcall Sleep(uint32_t dwMilliseconds)'),
@@ -75,11 +76,11 @@ function setClipboardBytes(api: Win32Api, format: number, bytes: Buffer): void {
 }
 
 /**
- * Stages paste text that Windows keeps out of clipboard history (Win+V) and cloud sync.
- * Deliberate copies go through Electron's ordinary clipboard write instead.
- * Errors never include the text.
+ * Stages paste text that Windows keeps out of clipboard history (Win+V) and cloud sync, only while
+ * the clipboard still has `expectedSequence`. Deliberate copies go through Electron's ordinary write.
+ * Throws only before touching the clipboard. Errors and logs never include the text.
  */
-export function writeTransientClipboardText(text: string): void {
+export function writeTransientClipboardText(text: string, expectedSequence: number): TransientWrite {
   const api = win32();
   const formats = EXCLUSION_FORMATS.map((name) => {
     const format = Number(api.RegisterClipboardFormatW(name));
@@ -97,10 +98,19 @@ export function writeTransientClipboardText(text: string): void {
     api.Sleep(5);
   }
   try {
+    // Checked under the lock, so a copy made after the snapshot is never overwritten.
+    if (Number(api.GetClipboardSequenceNumber()) !== expectedSequence) return 'changed';
     if (!api.EmptyClipboard()) throw win32Failure(api, 'EmptyClipboard');
-    // Exclusions go first so a failed write can never publish unmarked text to history.
-    for (const format of formats) setClipboardBytes(api, format, DWORD_ZERO);
-    setClipboardBytes(api, CF_UNICODETEXT, Buffer.from(`${text}\0`, 'utf16le'));
+    try {
+      // Exclusions go first so a failed write can never publish unmarked text to history.
+      for (const format of formats) setClipboardBytes(api, format, DWORD_ZERO);
+      setClipboardBytes(api, CF_UNICODETEXT, Buffer.from(`${text}\0`, 'utf16le'));
+    }
+    catch (error) {
+      console.warn('Transient clipboard write failed after emptying the clipboard:', error);
+      return 'cleared';
+    }
+    return 'staged';
   }
   finally {
     api.CloseClipboard();

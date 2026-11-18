@@ -5,6 +5,7 @@ import { writeTransientClipboardText } from './native/clipboard';
 import type {
   ClipboardIO,
   ClipboardSnapshot,
+  TransientWrite,
 } from './clipboard-transaction-manager';
 
 const PLAIN_TEXT_FORMAT = 'text/plain';
@@ -143,10 +144,12 @@ export class ElectronClipboardAdapter implements ClipboardIO {
     clipboard.writeText(text);
   }
 
-  public writeTransientText(text: string): void {
-    // Electron cannot add Windows' history and cloud exclusion formats; other desktops have none to add.
-    if (process.platform === 'win32') writeTransientClipboardText(text);
-    else clipboard.writeText(text);
+  public writeTransientText(text: string, expectedSequence: number): TransientWrite {
+    // Electron cannot add Windows' history and cloud exclusion formats or check the sequence under
+    // the clipboard lock; other desktops have neither, so the manager's earlier check stands.
+    if (process.platform === 'win32') return writeTransientClipboardText(text, expectedSequence);
+    clipboard.writeText(text);
+    return 'staged';
   }
 }
 

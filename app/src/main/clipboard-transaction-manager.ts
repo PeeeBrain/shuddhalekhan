@@ -20,9 +20,16 @@ export interface ClipboardIO {
   restoreSnapshot(snapshot: ClipboardSnapshot): void;
   /** A deliberate copy: an ordinary clipboard entry the user keeps. */
   writeText(text: string): void;
-  /** Paste staging that is restored right away; kept out of clipboard history where the OS allows. */
-  writeTransientText(text: string): void;
+  /**
+   * Paste staging that is restored right away; kept out of clipboard history where the OS allows.
+   * Where the OS allows, it writes only while the clipboard still has `expectedSequence`.
+   * 'changed' means nothing was written; 'cleared' means the write failed after emptying the clipboard.
+   * Throws only when the clipboard was left untouched.
+   */
+  writeTransientText(text: string, expectedSequence: number): TransientWrite;
 }
+
+export type TransientWrite = 'staged' | 'changed' | 'cleared';
 
 export type ForegroundInspector = () => DictationTargetSnapshot | null;
 export type InputSimulator = (strategy: PasteStrategy) => PasteDispatchResult;
@@ -153,11 +160,14 @@ export class ClipboardTransactionManager {
         if (sequenceBeforeCapture !== this.clipboardMonitor()) {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
-        try {
-          this.clipboardIO.writeTransientText(text);
-        } finally {
-          // A write can fail after emptying the clipboard; mark it staged so the snapshot is restored.
-          sequenceAfterStage = this.clipboardMonitor();
+        const staging = this.clipboardIO.writeTransientText(text, sequenceBeforeCapture);
+        if (staging === 'changed') {
+          return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
+        }
+        // Only a write that touched the clipboard may restore over it.
+        sequenceAfterStage = this.clipboardMonitor();
+        if (staging === 'cleared') {
+          return { kind: 'error', message: 'Clipboard transaction failed: the transcript could not be staged' };
         }
         await this.delay(50);
         if (signal?.aborted) {
