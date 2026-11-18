@@ -825,6 +825,18 @@ describe('warm audio stream', () => {
       }
     });
 
+    it('does not reopen a mic whose stop timed out', async () => {
+      const audio = installAudio(false);
+      const mod = await importFresh();
+      mod.setWarmMicrophone(true);
+      await settle();
+      await mod.startRecording(recorder().options);
+      await expect(mod.stopRecording()).rejects.toThrow('did not acknowledge stopping');
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+    });
+
     it('closes the mic on cancel so the dropped utterance never becomes pre-roll', async () => {
       const { audio, mod } = await parked();
       await mod.startRecording(recorder().options);
