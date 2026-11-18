@@ -3,19 +3,30 @@ import type { ShortcutBinding } from '../../types/ipc';
 
 type KeyboardEvent = { vkCode: number; time: number };
 type KeyboardCallback = (code: number, message: bigint, event: KeyboardEvent) => bigint;
-let registeredCallback: KeyboardCallback | undefined;
+const nextHookResult = 37n;
+let registeredHook: { handle: symbol; callback: KeyboardCallback } | undefined;
+let installedCallback: KeyboardCallback | undefined;
 
 mock.module('koffi', () => ({
   default: {
     load: mock(() => ({
-      func: (signature: string) => () => signature.includes('CallNextHookEx') ? 0n : 1,
+      func: (signature: string) => {
+        if (signature.includes('SetWindowsHookExW')) {
+          return (_hookId: number, handle: symbol) => {
+            installedCallback = registeredHook?.handle === handle ? registeredHook.callback : undefined;
+            return installedCallback ? 1 : 0;
+          };
+        }
+        return () => signature.includes('CallNextHookEx') ? nextHookResult : 1;
+      },
     })),
     struct: mock((_name: string, shape: unknown) => shape),
     proto: mock(() => ({})),
     pointer: mock((value: unknown) => value),
     register: mock((callback: KeyboardCallback) => {
-      registeredCallback = callback;
-      return { id: 'callback' };
+      const handle = Symbol('keyboard callback');
+      registeredHook = { handle, callback };
+      return handle;
     }),
     unregister: mock(),
     decode: (event: KeyboardEvent) => event,
@@ -25,7 +36,9 @@ mock.module('koffi', () => ({
 // The state machine is platform-neutral; keep Linux test runs off real evdev.
 // Spread the real module: Bun module mocks leak into other test files.
 const linuxInput = await import('../native/linux-input');
-const startEvdevKeyboardReader = mock((_onKey: (vkCode: number, isDown: boolean) => void): () => void => () => undefined);
+const startEvdevKeyboardReader = mock(
+  (_onKey: Parameters<typeof linuxInput.startEvdevKeyboardReader>[0]): () => void => () => undefined,
+);
 mock.module('../native/linux-input', () => ({
   ...linuxInput,
   startEvdevKeyboardReader,
@@ -57,21 +70,24 @@ const keys = {
 
 function key(hook: KeyboardHook, vkCode: number, isDown: boolean, time = 0): boolean {
   const callback = nativeCallbacks.get(hook);
-  if (!callback) throw new Error('Expected a registered Windows keyboard callback');
-  return callback(0, isDown ? 0x0100n : 0x0101n, { vkCode, time }) === 1n;
+  if (!callback) throw new Error('Expected an installed Windows keyboard callback');
+  const result = callback(0, isDown ? 0x0100n : 0x0101n, { vkCode, time });
+  if (result === 1n) return true;
+  expect(result).toBe(nextHookResult);
+  return false;
 }
 
 function startWindowsHook(hook: KeyboardHook, options: Parameters<KeyboardHook['start']>[0]): void {
   const platform = process.platform;
-  registeredCallback = undefined;
+  installedCallback = undefined;
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
     hook.start(options);
   } finally {
     Object.defineProperty(process, 'platform', { value: platform });
   }
-  if (!registeredCallback) throw new Error('The hook did not register a Windows keyboard callback');
-  nativeCallbacks.set(hook, registeredCallback);
+  if (!installedCallback) throw new Error('The Windows keyboard callback was not installed');
+  nativeCallbacks.set(hook, installedCallback);
 }
 
 async function importHook(testName: string): Promise<HookModule> {
@@ -171,26 +187,16 @@ describe('KeyboardHook mode detection', () => {
     expect(stopped).toHaveBeenCalledTimes(1);
   });
 
-  it('reports how long a push-to-talk chord was held by source event time, and nothing for a toggle', async () => {
+  it('reports the push-to-talk hold across a Windows tick count wraparound', async () => {
     const hookModule = await importHook('hold-length');
-    const { hook, stopped, keys, modes } = createHarness(hookModule);
+    const { hook, stopped, keys } = createHarness(hookModule);
 
     // The Windows tick count wraps at 2^32 ms mid-hold.
     key(hook, keys.leftControl, true, 2 ** 32 - 100);
     key(hook, keys.leftWin, true, 2 ** 32 - 90);
     key(hook, keys.leftWin, false, 150);
     key(hook, keys.leftControl, false, 160);
-    expect(stopped).toHaveBeenLastCalledWith(240);
-
-    modes.dictation = 'toggle';
-    key(hook, keys.leftControl, true, 2_000);
-    key(hook, keys.leftWin, true, 2_010);
-    key(hook, keys.leftWin, false, 2_020);
-    key(hook, keys.leftControl, false, 2_030);
-    key(hook, keys.leftControl, true, 2_040);
-    key(hook, keys.leftWin, true, 2_050);
-    expect(stopped).toHaveBeenCalledTimes(2);
-    expect(stopped).toHaveBeenLastCalledWith(null);
+    expect(stopped.mock.calls).toEqual([[240]]);
   });
 
   it('consumes every configured modifier release when Win is pressed first', async () => {
@@ -219,7 +225,7 @@ describe('KeyboardHook mode detection', () => {
     key(hook, keys.leftWin, true);
 
     expect(started).toHaveBeenCalledTimes(1);
-    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(stopped.mock.calls).toEqual([[null]]);
   });
 
   it('starts a clean toggle session on the next press after an external duration stop', async () => {
@@ -891,11 +897,22 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('falls back to evdev when the desktop has no shortcut API', async () => {
     startEvdevKeyboardReader.mockClear();
-    const { hook } = createLinuxHarness(await importHook('desktop-fallback'));
-    expect(await nextStatus(hook)).toEqual({ backend: 'evdev' });
-    expect(startEvdevKeyboardReader).toHaveBeenCalledTimes(1);
-    // KDE best-effort paste waits on this; evdev has no portal backend but does see key release.
-    expect(await hook.waitForShortcutDeactivation(new AbortController().signal, 0)).toBe(true);
-    hook.stop();
+    const { hook, started, stopped } = createLinuxHarness(await importHook('desktop-fallback'));
+    try {
+      expect(await nextStatus(hook)).toEqual({ backend: 'evdev' });
+      const onKey = startEvdevKeyboardReader.mock.calls[0]?.[0];
+      if (!onKey) throw new Error('Expected evdev to receive a keyboard event handler');
+      onKey(keys.leftControl, true, 1_000);
+      onKey(keys.leftWin, true, 1_010);
+      expect(started).toHaveBeenCalledWith('dictation');
+      // Unplugging a keyboard releases its keys without a source timestamp.
+      onKey(keys.leftWin, false);
+      onKey(keys.leftControl, false);
+      expect(stopped.mock.calls).toEqual([[null]]);
+      // KDE best-effort paste waits on this; evdev has no portal backend but does see key release.
+      expect(await hook.waitForShortcutDeactivation(new AbortController().signal, 0)).toBe(true);
+    } finally {
+      hook.stop();
+    }
   });
 });

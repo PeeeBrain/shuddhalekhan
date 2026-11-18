@@ -86,6 +86,7 @@ describe('SidecarOAuthProvider', () => {
   it('authenticates MCP discovery with the saved OAuth token', async () => {
     const server = httpServer();
     const fetchMcp: typeof fetch = async (_input, init) => {
+      if (init?.method !== 'POST') return new Response(null, { status: 405 });
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer saved-token');
       const { id, method } = JSON.parse(String(init?.body));
       if (method === 'initialize') {

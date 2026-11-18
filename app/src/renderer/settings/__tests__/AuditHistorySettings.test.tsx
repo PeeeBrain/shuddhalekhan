@@ -245,13 +245,16 @@ describe('Audit history navigation', () => {
         expect(screen.getByRole('heading', { name: transcript })).toBeInTheDocument();
       }
 
-      fireEvent.change(screen.getByRole('searchbox', { name: 'Search runs' }), { target: { value: 'Last' } });
-      const remaining = screen.getByRole('option', { name: /Last run/ });
-      expect(remaining).toHaveAttribute('tabindex', '0');
-      remaining.focus();
-      await press(remaining, 'ArrowDown');
-      expect(remaining).toHaveAttribute('aria-selected', 'true');
-      expect(screen.getByRole('heading', { name: 'Last run' })).toBeInTheDocument();
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search runs' }), { target: { value: 'a' } });
+      expect(screen.getAllByRole('option', { selected: false })).toHaveLength(2);
+      expect(screen.queryByRole('option', { selected: true })).toBeNull();
+      const first = screen.getByRole('option', { name: /Active run/ });
+      expect(first).toHaveAttribute('tabindex', '0');
+      first.focus();
+      await press(first, 'ArrowDown');
+      expect(first).toHaveAttribute('aria-selected', 'true');
+      expect(first).toHaveFocus();
+      expect(screen.getByRole('heading', { name: 'Active run' })).toBeInTheDocument();
     } finally {
       requestFrame.mockRestore();
     }

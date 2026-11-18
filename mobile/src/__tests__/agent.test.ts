@@ -56,18 +56,21 @@ type MCPFixtureState = {
   sessionId: string;
   calls: Array<{ name: string; arguments: Record<string, unknown> }>;
   closes: number;
+  lists: number;
 };
 
 function agentMCPHandler(state: MCPFixtureState) {
   return async (request: Request): Promise<Response> => {
     if (request.headers.get('authorization') !== 'Bearer mcp-secret') return new Response(null, { status: 401 });
+    const hasSession = request.headers.get('mcp-session-id') === state.sessionId;
     if (request.method === 'DELETE') {
-      if (request.headers.get('mcp-session-id') !== state.sessionId) return new Response(null, { status: 404 });
+      if (!hasSession) return new Response(null, { status: 404 });
       state.closes++;
       return new Response(null, { status: 202 });
     }
 
     const body = rpcRequestSchema.parse(await request.json());
+    if (body.method !== 'initialize' && !hasSession) return new Response(null, { status: 404 });
     if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
     if (body.id === undefined) return Response.json({ error: 'Expected a JSON-RPC request id.' }, { status: 400 });
     if (body.method === 'initialize') {
@@ -77,6 +80,7 @@ function agentMCPHandler(state: MCPFixtureState) {
       }, { headers: { 'Mcp-Session-Id': state.sessionId } });
     }
     if (body.method === 'tools/list') {
+      state.lists++;
       return Response.json({ jsonrpc: '2.0', id: body.id, result: { tools: [{
         name: 'search',
         description: 'Search user documents',
@@ -93,7 +97,7 @@ function agentMCPHandler(state: MCPFixtureState) {
 }
 
 function newMCPFixtureState(sessionId = 'agent-session'): MCPFixtureState {
-  return { sessionId, calls: [], closes: 0 };
+  return { sessionId, calls: [], closes: 0, lists: 0 };
 }
 
 const modelRequestSchema = z.object({
@@ -316,6 +320,7 @@ describe('agent HTTP and MCP flow', () => {
           approve: async () => { approvals++; return true; },
         });
         expect(text).toBe('That tool is unavailable.');
+        expect(mcp.lists).toBe(1);
         expect(advertised).toEqual([]);
         expect(approvals).toBe(0);
         expect(mcp.calls).toHaveLength(0);

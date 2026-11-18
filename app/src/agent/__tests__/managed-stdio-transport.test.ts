@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { createMCPClient } from '@ai-sdk/mcp';
 import { ManagedStdioMcpTransport } from '../managed-stdio-transport';
 import { AisdkMcpClientFactory } from '../mcp-registry-adapters';
@@ -55,8 +55,11 @@ describe('ManagedStdioMcpTransport', () => {
   it('passes only declared secrets to stdio tools and redacts malformed output without losing the reply', async () => {
     const previousToken = process.env.FIXTURE_TOKEN;
     const previousUndeclared = process.env.FIXTURE_UNDECLARED;
+    const previousPath = process.env.PATH;
+    const fixturePath = dirname(process.execPath);
     process.env.FIXTURE_TOKEN = 's3cret-value';
     process.env.FIXTURE_UNDECLARED = 'sidecar-secret';
+    process.env.PATH = fixturePath;
     const errors: string[] = [];
     const factory = new AisdkMcpClientFactory({ resolve: () => undefined }, config =>
       createMCPClient({ ...config, onUncaughtError: error => { errors.push(String(error)); } }));
@@ -75,7 +78,7 @@ describe('ManagedStdioMcpTransport', () => {
         if (!checkEnvironment?.execute) throw new Error('The stdio fixture tool was not discovered');
         const result = await checkEnvironment.execute({}, { messages: [], toolCallId: 'check-env', context: {} });
         expect(result).toMatchObject({
-          structuredContent: { declared: true, pathAvailable: true, undeclared: false },
+          structuredContent: { declared: true, path: fixturePath, undeclared: false },
         });
         expect(errors).toContainEqual(expect.stringContaining('not-json [redacted]'));
         expect(errors.join('\n')).not.toContain('s3cret-value');
@@ -87,6 +90,8 @@ describe('ManagedStdioMcpTransport', () => {
       else process.env.FIXTURE_TOKEN = previousToken;
       if (previousUndeclared === undefined) delete process.env.FIXTURE_UNDECLARED;
       else process.env.FIXTURE_UNDECLARED = previousUndeclared;
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
     }
   });
 

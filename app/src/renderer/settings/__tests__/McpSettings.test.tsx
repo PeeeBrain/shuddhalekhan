@@ -71,7 +71,7 @@ function renderSettings(servers: McpServerConfig[], agentEnabled = true) {
   return onChange;
 }
 
-it('adds an unnamed HTTP server with a separate id and redirects denied', async () => {
+it('adds an unnamed HTTP server with redirects denied and preserves the existing server', async () => {
   const existing = makeServer(httpTransport, [], 'saved-server');
   const onChange = renderSettings([existing]);
   const url = 'https://other.example.test/mcp';
@@ -83,12 +83,14 @@ it('adds an unnamed HTTP server with a separate id and redirects denied', async 
   fireEvent.change(screen.getByLabelText('URL'), { target: { value: url } });
   fireEvent.click(screen.getByRole('button', { name: 'Save Server' }));
 
-  expect(onChange).toHaveBeenCalledWith([existing, expect.objectContaining({
+  expect(onChange).toHaveBeenCalledTimes(1);
+  const saved = onChange.mock.calls[0]?.[0];
+  expect(saved).toEqual([existing, expect.objectContaining({
     id: expect.any(String),
     displayName: 'MCP Server',
     transport: { type: 'http', url, redirect: 'error' },
   })]);
-  expect(onChange.mock.calls[0]?.[0][1]?.id).not.toBe(existing.id);
+  expect(saved?.[1]?.id).not.toBe(existing.id);
 });
 
 it.each([
@@ -156,9 +158,13 @@ describe('McpSettings pre-registered OAuth client', () => {
 });
 
 it('requires Agent Mode before reconnecting a server', () => {
-  renderSettings([makeServer({ ...httpTransport, url: '' })], false);
-  expect(screen.getByText('HTTP endpoint not set')).toBeInTheDocument();
+  renderSettings([makeServer(httpTransport)], false);
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();
+});
+
+it('labels an HTTP server with a missing endpoint', () => {
+  renderSettings([makeServer({ ...httpTransport, url: '' })]);
+  expect(screen.getByText('HTTP endpoint not set')).toBeInTheDocument();
 });
 
 describe('McpSettings tool policy collapse', () => {

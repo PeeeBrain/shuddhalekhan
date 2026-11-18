@@ -9,7 +9,7 @@ const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', (line) => {
   if (!line.trim()) return;
   try {
-    const message = JSON.parse(line) as { id?: unknown; method?: string };
+    const message = JSON.parse(line) as { id?: unknown; method?: string; params?: { name?: string } };
     if (mcp) {
       if (message.id === undefined) return;
       let result;
@@ -21,11 +21,15 @@ input.on('line', (line) => {
           result = { tools: [{ name: 'check_environment', inputSchema: { type: 'object' } }] };
           break;
         case 'tools/call': {
+          if (message.params?.name !== 'check_environment') {
+            process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, error: { code: -32602, message: 'Unknown tool' } })}\n`);
+            return;
+          }
           const token = process.env.FIXTURE_TOKEN;
           process.stdout.write(`not-json ${token ?? ''}\n`);
           result = { content: [], structuredContent: {
             declared: token === 's3cret-value',
-            pathAvailable: Boolean(process.env.PATH),
+            path: process.env.PATH,
             undeclared: process.env.FIXTURE_UNDECLARED !== undefined,
           } };
           break;
