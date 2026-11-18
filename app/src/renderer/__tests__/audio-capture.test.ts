@@ -833,17 +833,17 @@ describe('warm audio stream', () => {
       mod.setWarmMicrophone(false);
     });
 
-    it('takes no pre-roll from a warm mic that was still opening at the press', async () => {
+    it('records all a still-opening mic heard, and reports it so the Start cue is found after it', async () => {
       const audio = installAudio();
       const mod = await importFresh();
       const open = audio.holdMic();
       mod.setWarmMicrophone(true);
       const starting = mod.startRecording(recorder({ preRoll: true }).options);
-      // A cue starts while the mic opens, and the ring then fills with it.
+      // A cue hold set while the mic opens cannot trim audio heard after the press.
       mod.holdPreRollForCue();
       audio.hearWhileIdle(idle());
       open();
-      expect(await starting).toBe(0);
+      expect(await starting).toBe(PRE_ROLL);
       expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: PRE_ROLL });
       mod.setWarmMicrophone(false);
     });
@@ -987,6 +987,9 @@ describe('warm audio stream', () => {
       const { audio, mod } = await parked();
       audio.disconnectMic();
       expect(audio.close).toHaveBeenCalledTimes(1);
+      // Nor when the device list then changes, as it does for an unplug.
+      audio.changeDevices('mic-a');
+      await settle();
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
 
       expect(await mod.startRecording(recorder().options)).toBe(0);

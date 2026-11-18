@@ -531,8 +531,9 @@ async function admit(capture: Capture, warmAtPress: boolean): Promise<void> {
 /**
  * Starts one recording on the warm mic, or opens the selected mic. The device
  * is fixed at start; later device switches only affect the next recording.
- * Resolves with the 16 kHz samples recorded before the press (warm pre-roll,
- * minus any speaker cue), which head the spool. Resolves without starting if
+ * Resolves with the 16 kHz ring samples that head the spool: the warm pre-roll
+ * (minus any speaker cue), or what a mic still opening at the press heard
+ * before capture began. Resolves without starting if
  * cancelRecording() lands while permission or worklet setup is pending.
  */
 export async function startRecording(options: RecordingOptions): Promise<number> {
@@ -570,7 +571,8 @@ export async function startRecording(options: RecordingOptions): Promise<number>
     release(capture);
     throw error;
   }
-  return warmAtPress && !capture.released ? capture.sampleCount : 0;
+  // Ring frames precede main's Start cue, whether heard before the press or while the mic opened.
+  return capture.released ? 0 : capture.sampleCount;
 }
 
 /**
@@ -619,15 +621,17 @@ async function deviceListChanged(): Promise<void> {
   const chosen = getDeviceId();
   const target = inputs.find((device) => device.deviceId === chosen)
     ?? inputs.find((device) => device.deviceId === 'default');
+  const parked = warm;
   const mics = [...live].map((capture) => capture.mic);
-  if (warm) mics.push(warm);
+  if (parked) mics.push(parked);
   for (const mic of mics) {
     const stream = await mic.stream.catch(() => null);
     const groupId = stream?.getAudioTracks()[0]?.getSettings().groupId;
     if (target && groupId === target.groupId) continue;
     retireMic(mic);
   }
-  ensureWarm();
+  // Only a parked mic this change retired reopens; a closed or failed one waits for the next recording.
+  if (parked && warm !== parked) ensureWarm();
 }
 
 navigator.mediaDevices?.addEventListener?.('devicechange', () => void deviceListChanged());
