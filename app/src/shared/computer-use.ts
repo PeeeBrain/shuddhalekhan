@@ -59,5 +59,5 @@ export type ComputerUseStatus =
   | { state: 'unsupported'; reason: string }
   | { state: 'absent' }
   | { state: 'installing'; receivedBytes: number; totalBytes: number }
-  | { state: 'installed'; version: string }
+  | { state: 'installed' }
   | { state: 'failed'; reason: string };

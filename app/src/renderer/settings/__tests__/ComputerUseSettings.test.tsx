@@ -12,7 +12,7 @@ async function renderPage(initial: ComputerUseStatus, agent: Partial<AppConfig['
   let push: (next: ComputerUseStatus) => void = () => undefined;
   const settingsIpc = {
     getComputerUseStatus: mock(() => Promise.resolve(initial)),
-    installComputerUse: mock(() => Promise.resolve<ComputerUseStatus>({ state: 'installed', version: '1.3.1' })),
+    installComputerUse: mock(() => Promise.resolve<ComputerUseStatus>({ state: 'installed' })),
     cancelComputerUseInstall: mock(() => Promise.resolve()),
     uninstallComputerUse: mock(() => Promise.resolve<ComputerUseStatus>({ state: 'absent' })),
     onComputerUseStatusChanged: mock((callback: (next: ComputerUseStatus) => void) => {
@@ -48,7 +48,7 @@ describe('ComputerUseSettings', () => {
     await push({ state: 'installing', receivedBytes: 1, totalBytes: 4 });
     expect(screen.getByRole('status')).toHaveTextContent('Downloading… 25%');
     expect(settingsIpc.installComputerUse).toHaveBeenCalledTimes(1);
-    await push({ state: 'installed', version: '1.3.1' });
+    await push({ state: 'installed' });
 
     await click(screen.getByRole('switch', { name: 'Let the agent use your desktop' }));
     expect(commit).toHaveBeenCalledWith('agent', {
@@ -57,7 +57,7 @@ describe('ComputerUseSettings', () => {
   });
 
   it('lets the opt-in be turned off while Agent Mode is off', async () => {
-    const { commit } = await renderPage({ state: 'installed', version: '1.3.1' },
+    const { commit } = await renderPage({ state: 'installed' },
       { enabled: false, computerUse: { enabled: true, toolPolicies: {} } });
     await click(screen.getByRole('switch', { name: 'Let the agent use your desktop' }));
     expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({
@@ -74,7 +74,7 @@ describe('ComputerUseSettings', () => {
   });
 
   it('starts clipboard tools disabled and saves a changed policy by tool name', async () => {
-    const { commit } = await renderPage({ state: 'installed', version: '1.3.1' });
+    const { commit } = await renderPage({ state: 'installed' });
     expect(screen.getByRole('combobox', { name: 'Approval policy for Read the clipboard' })).toHaveTextContent('Disabled');
     const snapshot = screen.getByRole('combobox', { name: 'Approval policy for Read a window' });
     expect(snapshot).toHaveTextContent('Always ask');

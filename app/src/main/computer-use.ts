@@ -119,7 +119,7 @@ export function createComputerUseInstaller(dataDirectory: string, onChange: (sta
   function status(): ComputerUseStatus {
     if (!release) return { state: 'unsupported', reason: 'Computer Use requires Linux on x64 or ARM64.' };
     if (current?.state === 'installing') return current;
-    if (executable()) return { state: 'installed', version: COMPUTER_USE_VERSION };
+    if (executable()) return { state: 'installed' };
     return current?.state === 'failed' ? current : { state: 'absent' };
   }
 
@@ -150,7 +150,7 @@ export function createComputerUseInstaller(dataDirectory: string, onChange: (sta
             onChange(current);
           }
         });
-        return publish({ state: 'installed', version: COMPUTER_USE_VERSION });
+        return publish({ state: 'installed' });
       } catch (error) {
         return publish(controller.signal.aborted ? { state: 'absent' } : {
           state: 'failed',
