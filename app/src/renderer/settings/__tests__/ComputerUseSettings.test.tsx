@@ -56,6 +56,15 @@ describe('ComputerUseSettings', () => {
     }, 'computer-use-enabled');
   });
 
+  it('lets the opt-in be turned off while Agent Mode is off', async () => {
+    const { commit } = await renderPage({ state: 'installed', version: '1.3.1' },
+      { enabled: false, computerUse: { enabled: true, toolPolicies: {} } });
+    await click(screen.getByRole('switch', { name: 'Let the agent use your desktop' }));
+    expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({
+      computerUse: { enabled: false, toolPolicies: {} },
+    }), 'computer-use-enabled');
+  });
+
   it('shows why an unsupported platform cannot use it, with nothing to turn on', async () => {
     await renderPage({ state: 'unsupported', reason: 'Computer Use is not available on Windows yet.' });
     expect(screen.getByRole('status')).toHaveTextContent('Computer Use is not available on Windows yet.');

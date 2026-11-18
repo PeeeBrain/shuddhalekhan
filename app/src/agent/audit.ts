@@ -94,6 +94,10 @@ export class AgentAuditStore {
           case 'provider_warnings':
             if (privateContent) return;
             break;
+          case 'skill_resource_read':
+            // The model may pick the path from window text.
+            if (privateContent) payload = { name: payload.name };
+            break;
           case 'run_failed':
             if (privateContent) payload = { error: 'The Agent run failed after Computer Use.' };
             break;

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createWriteStream, lstatSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, chmod } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
@@ -96,7 +96,8 @@ export async function installComputerUseRelease(
 }
 
 export function createComputerUseInstaller(dataDirectory: string, onChange: (status: ComputerUseStatus) => void) {
-  const root = join(dataDirectory, 'computer-use');
+  // The version check runs from a staging cwd, so a relative profile directory must not stay relative.
+  const root = resolve(dataDirectory, 'computer-use');
   const destination = join(root, `agent-desktop-v${COMPUTER_USE_VERSION}`);
   let current: ComputerUseStatus | undefined;
   let pending: { controller: AbortController; result: Promise<ComputerUseStatus> } | undefined;

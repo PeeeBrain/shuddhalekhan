@@ -88,7 +88,8 @@ export function ComputerUseSettings({ config, persistence, settingsIpc }: Settin
               ? 'What the agent reads from a window is sent to your selected model. Each tool asks before it runs unless you change it below.'
               : 'Turn on Agent Mode first. What the agent reads from a window is sent to your selected model.'}
             checked={installed && computerUse.enabled}
-            disabled={busy || !installed || !config.agent.enabled}
+            // Turning it off never needs Agent Mode.
+            disabled={busy || !installed || (!computerUse.enabled && !config.agent.enabled)}
             tone="agent"
             errorId={enabledErrorId}
             error={persistence.fieldErrors[FIELD_ID_ENABLED]}

@@ -57,6 +57,7 @@ describe('AgentAuditStore', () => {
       run.markComputerUseExecuted();
       run.record('tool_results', { toolResults: [{ ...nativeCall, output: marker }] });
       run.record('mcp_tool_execute_started', { serverId: 'mail', toolName: 'search', arguments: marker });
+      run.record('skill_resource_read', { name: 'crm', path: `customers/${marker}.md` });
       run.record('computer_use_tool_execute', { toolName: 'desktop_set_value', ok: true, durationMs: 2, resultBytes: 10 });
       run.record('run_completed', { response: marker, toolSummary: [] });
       store.close();

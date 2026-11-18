@@ -126,7 +126,7 @@ export function createComputerUseRun(options: {
       cancelToolCallsOnClose: true,
     });
     const client = await createMCPClient({ transport, maxRetries: 0 });
-    const { tools: catalog } = await client.listTools({ options: { timeout: 5000 } });
+    const { tools: catalog } = await client.listTools();
     const names = new Set(catalog.map(tool => tool.name));
     if (COMPUTER_USE_TOOLS.some(tool => !names.has(tool.name))) {
       await close();
