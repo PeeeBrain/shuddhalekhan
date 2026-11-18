@@ -881,6 +881,21 @@ describe('warm audio stream', () => {
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
     });
 
+    it('does not reopen a mic cancelled while its audio was still resuming', async () => {
+      const audio = installAudio();
+      const mod = await importFresh();
+      audio.suspendContext();
+      audio.resume.mockImplementationOnce(() => new Promise(() => undefined));
+      mod.setWarmMicrophone(true);
+      void mod.startRecording(recorder().options).catch(() => undefined);
+      await settle();
+      expect(audio.nodes).toHaveLength(1);
+      mod.cancelRecording();
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+    });
+
     it('closes the mic on cancel so the dropped utterance never becomes pre-roll', async () => {
       const { audio, mod } = await parked();
       await mod.startRecording(recorder().options);

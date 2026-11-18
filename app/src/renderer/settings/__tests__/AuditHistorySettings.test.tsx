@@ -14,6 +14,7 @@ function auditIpc(overrides: Pick<SettingsIpc, 'getAuditRuns' | 'getAuditRunDeta
     setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
     beginShortcutCapture: mock(() => Promise.resolve()),
     endShortcutCapture: mock(() => Promise.resolve()),
+    previewCue: mock(() => Promise.resolve()),
     onShortcutsPausedChanged: mock(() => undefined),
     getConfig: mock(unused),
     setConfig: mock(() => Promise.resolve()),

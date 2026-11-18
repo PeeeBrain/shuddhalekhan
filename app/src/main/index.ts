@@ -465,12 +465,12 @@ let screenLocked = false;
 /** Keeps the mic warm only while opted in, the Dictation shortcut can start a recording, and the machine is awake and unlocked. */
 function publishWarmMicrophone(): void {
   const { warmMicrophone, shortcuts } = getConfig();
-  // Portal and X11 report the trigger the desktop actually assigned, which can refuse the saved chord;
-  // until Linux has answered, nothing can start a Dictation.
+  // Portal and X11 report the trigger the desktop actually assigned, which can refuse the saved chord
+  // or lag a cleared one; until Linux has answered, nothing can start a Dictation.
   const { backend } = desktopShortcuts;
-  const canDictate = backend === 'portal' || backend === 'x11'
+  const canDictate = shortcuts.dictation.binding !== null && (backend === 'portal' || backend === 'x11'
     ? Boolean(desktopShortcuts.triggers.dictation)
-    : backend !== 'initializing' && backend !== 'unavailable' && shortcuts.dictation.binding !== null;
+    : backend !== 'initializing' && backend !== 'unavailable');
   runtimeShell.setWarmMicrophone(warmMicrophone && canDictate && !keyboardHook.isPaused() && !suspended && !screenLocked);
 }
 
@@ -679,6 +679,10 @@ handle('shortcuts:begin-capture', () => {
 
 handle('shortcuts:end-capture', () => {
   keyboardHook.setCaptureSuspended(false);
+});
+
+handle('cue:preview', (_event, cue) => {
+  if (cue === 'start' || cue === 'stop' || cue === 'error') runtimeShell.playCue(cue);
 });
 
 handle('transcription:check-server', () => checkTranscriptionServer(getConfig()));

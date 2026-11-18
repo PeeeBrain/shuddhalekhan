@@ -148,6 +148,8 @@ interface Mic {
   analyser: AnalyserNode | null;
   owner: Capture | null;
   stopWatching: (() => void) | null;
+  /** Setup finished: the context is running and the worklet can start. */
+  running: boolean;
   closed: boolean;
   /** A device change landed while it recorded: close it after, never park it. */
   stale: boolean;
@@ -446,6 +448,7 @@ function openMic(): Mic {
     analyser: null,
     owner: null,
     stopWatching: null,
+    running: false,
     closed: false,
     stale: false,
   };
@@ -495,6 +498,7 @@ async function setupMic(mic: Mic): Promise<void> {
   mic.source.connect(analyser);
   mic.analyser = analyser;
   if (context.state === 'suspended') await context.resume();
+  mic.running = true;
 }
 
 /**
@@ -715,8 +719,8 @@ export async function stopRecording(tailEndsAt = 0): Promise<CaptureBoundary | n
  */
 export function cancelRecording(): void {
   for (const capture of live) {
-    // Main cancels a mic that never opened in time: treat it as failed, so it is not reopened at once.
-    if (!capture.mic.node) capture.failure ??= new Error('Cancelled before the microphone opened.');
+    // Main cancels a mic that never finished opening in time: treat it as failed, so it is not reopened at once.
+    if (!capture.mic.running) capture.failure ??= new Error('Cancelled before the microphone opened.');
     release(capture);
   }
 }

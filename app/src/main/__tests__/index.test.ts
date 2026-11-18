@@ -1300,6 +1300,15 @@ describe('main process IPC orchestration', () => {
     expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
     onStatus({ backend: 'portal', triggers: { dictation: 'Ctrl+Alt+D' } });
     expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(true);
+
+    // Dictation cleared: the portal still reports the old trigger until its rebind finishes.
+    getConfig.mockReturnValue({
+      ...baseConfig,
+      warmMicrophone: true,
+      shortcuts: { ...baseConfig.shortcuts, dictation: { ...baseConfig.shortcuts.dictation, binding: null } },
+    });
+    onStatus({ backend: 'portal', triggers: { dictation: 'Ctrl+Alt+D' } });
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
   });
 
   it('starts the agent sidecar on app ready when persisted Agent Mode is enabled', async () => {

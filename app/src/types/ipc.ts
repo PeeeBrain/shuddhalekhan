@@ -304,6 +304,8 @@ export interface RendererToMainInvokeChannels {
   'shortcuts:set-paused': (paused: boolean) => Promise<boolean>;
   'shortcuts:begin-capture': () => void;
   'shortcuts:end-capture': () => void;
+  /** Plays in the runtime window, where a warm mic keeps it out of the pre-roll. */
+  'cue:preview': (cue: RecordingCue) => void;
   'credential:get-status': (credential: CredentialKind) => Promise<CredentialStatus>;
   'credential:save': (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
   'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;

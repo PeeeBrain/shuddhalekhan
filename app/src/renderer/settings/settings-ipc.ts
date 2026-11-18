@@ -22,6 +22,7 @@ import type {
   TranscriptionSettingsPatch,
   PluginCatalog,
   PluginInstallResult,
+  RecordingCue,
 } from '../../types/ipc';
 import type {
   AgentMemorySnapshot,
@@ -57,6 +58,7 @@ export interface SettingsIpc {
   setShortcutsPaused: (paused: boolean) => Promise<boolean>;
   beginShortcutCapture: () => Promise<void>;
   endShortcutCapture: () => Promise<void>;
+  previewCue: (cue: RecordingCue) => Promise<void>;
   onShortcutsPausedChanged: (callback: (paused: boolean) => void) => Unsubscribe | undefined;
   getDesktopStatus: () => Promise<DesktopStatus>;
   setWaylandInsertion: (enabled: boolean) => Promise<DesktopStatus>;
@@ -124,6 +126,9 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     },
     endShortcutCapture: async () => {
       await requireElectronApi(electronAPI).invoke('shortcuts:end-capture');
+    },
+    previewCue: async (cue) => {
+      await requireElectronApi(electronAPI).invoke('cue:preview', cue);
     },
     onShortcutsPausedChanged: (callback) => requireElectronApi(electronAPI).subscribe('shortcuts:paused-changed', callback),
     getDesktopStatus: () => requireElectronApi(electronAPI).invoke('desktop:get-status'),

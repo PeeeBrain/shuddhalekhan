@@ -1145,6 +1145,8 @@ describe('RecordingSession', () => {
 
     session.start();
     session.begin('dictation', 'live-session');
+    // Live recognition cannot wait for the silence gate, so it takes no warm-mic pre-roll.
+    expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.anything(), false);
     publishSnapshot({ sequence: 0, committed: 'Hello ', tentative: 'Hello wor' });
     expect(runtimeShell.showStreamingPreview).toHaveBeenCalledWith(
       'live-session',

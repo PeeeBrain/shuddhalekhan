@@ -184,7 +184,7 @@ export class RecordingSession {
       streaming: null,
     };
     this.activeRun = run;
-    this.startStreamingIfEligible(run);
+    const streaming = this.startStreamingIfEligible(run);
 
     this.onBeginCallback?.(intent);
 
@@ -193,7 +193,9 @@ export class RecordingSession {
 
     const presentation = this.createPresentationEnvelope(run);
     this.runtimeShell.prepare();
-    this.runtimeShell.beginCapture(presentation, intent === 'dictation');
+    // Pre-roll waits for the silence gate, so only a Dictation recognized after it ends takes it:
+    // live streaming would recognize, and preview, pre-press audio before the gate could refuse it.
+    this.runtimeShell.beginCapture(presentation, intent === 'dictation' && !streaming);
     this.runtimeShell.show(
       intent,
       run.id,
