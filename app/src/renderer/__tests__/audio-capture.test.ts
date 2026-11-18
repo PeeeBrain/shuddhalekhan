@@ -1,4 +1,4 @@
-import { subscribeAudioLevel } from '../audio-level';
+import { BAND_COUNT, readBands, subscribeAudioLevel } from '../audio-level';
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { RecordingOptions } from '../audio-capture';
 
@@ -127,7 +127,17 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
         resume,
         audioWorklet: { addModule: vi.fn(() => moduleGate) },
         createMediaStreamSource: vi.fn(() => ({ connect: vi.fn(), disconnect })),
-        createAnalyser: vi.fn(() => ({})),
+        // A mic holding one 300 Hz tone, so the pill's bands have something to find.
+        createAnalyser: vi.fn(() => ({
+          fftSize: 512,
+          frequencyBinCount: 256,
+          context: { sampleRate: 16_000 },
+          connect: vi.fn(),
+          getFloatFrequencyData: (db: Float32Array) => {
+            db.fill(-120);
+            db[Math.round(300 / (16_000 / 512))] = -30;
+          },
+        })),
         close,
       };
     }),
@@ -450,6 +460,20 @@ describe('bounded spool transport', () => {
 });
 
 describe('recording lifecycle', () => {
+  it('feeds the pill the live mic spectrum only while a capture is running', async () => {
+    installAudio();
+    const mod = await importFresh();
+    const bands = new Float32Array(BAND_COUNT);
+    expect(readBands(bands)).toBe(false);
+
+    await mod.startRecording(recorder().options);
+    expect(readBands(bands)).toBe(true);
+    expect(bands.indexOf(1)).toBeLessThan(BAND_COUNT / 2);
+
+    await mod.stopRecording();
+    expect(readBands(bands)).toBe(false);
+  });
+
   it('resumes a suspended audio context before declaring capture started', async () => {
     const audio = installAudio();
     audio.suspendContext();
