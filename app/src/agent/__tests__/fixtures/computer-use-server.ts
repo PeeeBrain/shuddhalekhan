@@ -27,6 +27,8 @@ input.on('line', line => {
     if (params.name === 'desktop_snapshot') {
       const id = `snap${++snapshot}`;
       output({ snapshot_id: id, tree: { ref_id: `@${id}:e1` } });
+    } else if (params.name === 'desktop_list_windows') {
+      send({ content: [{ type: 'text', text: 'agent-desktop panicked' }] });
     } else if (params.name === 'desktop_wait') {
       waiting = setInterval(() => undefined, 60_000);
     } else {

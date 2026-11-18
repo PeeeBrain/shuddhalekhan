@@ -93,6 +93,7 @@ const keyboardWaitForRelease = vi.fn(async () => true);
 const agentStartRun = vi.fn();
 const agentStart = vi.fn();
 const agentStop = vi.fn();
+const agentCloseComputerUse = vi.fn(async () => undefined);
 const agentCancelRun = vi.fn();
 const agentSendApprovalDecision = vi.fn();
 const agentTestMcpServer = vi.fn();
@@ -217,6 +218,7 @@ mock.module('../agent-sidecar', () => ({
     start = agentStart;
     startRun = agentStartRun;
     stop = agentStop;
+    closeComputerUse = agentCloseComputerUse;
     cancelRun = agentCancelRun;
     sendApprovalDecision = agentSendApprovalDecision;
     testMcpServer = agentTestMcpServer;
@@ -483,6 +485,38 @@ describe('main process IPC orchestration', () => {
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'Do the task.', config, 'private-plan-token', expect.any(Object), undefined);
     expect(JSON.stringify(send.mock.calls)).not.toContain('private-');
     expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('starts a run with Computer Use off when it was turned off during a pending token refresh', async () => {
+    const provider = { ...baseConfig.agent.provider, kind: 'chatgpt', model: 'gpt-plan' };
+    const agent = { ...baseConfig.agent, enabled: true, provider };
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...agent, computerUse: { enabled: true, toolPolicies: {} } } });
+    credentialVault.read.mockReturnValue(JSON.stringify({
+      clientId: 'issued-client', issuer: 'https://auth.openai.com', subject: 'account', email: 'user@example.com',
+      tokens: { accessToken: 'old-token', refreshToken: 'old-refresh', idToken: 'identity', expiresAt: 0, scopes: ['chatgpt.tokens.use.direct'] },
+    }));
+    await import(`../index?test=${Date.now()}-computer-use-refresh`);
+    let finishRefresh!: (response: Response) => void;
+    let refreshed!: () => void;
+    const started = new Promise<void>(resolve => { refreshed = resolve; });
+    globalThis.fetch = vi.fn(() => new Promise<Response>(resolve => { finishRefresh = resolve; refreshed(); }));
+    const dispatched = new Promise<void>(resolve => { agentStartRun.mockImplementationOnce(() => resolve()); });
+    void sessionOptions.onResult({ text: 'Use my desktop.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
+    await started;
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...agent, computerUse: { enabled: false, toolPolicies: {} } } });
+    finishRefresh(Response.json({ access_token: 'new-token', refresh_token: 'new-refresh', expires_in: 3600, scope: 'chatgpt.tokens.use.direct' }));
+    await dispatched;
+    expect(agentStartRun.mock.calls[0]?.[2]).toMatchObject({ agent: { computerUse: { enabled: false } } });
+  });
+
+  it('restarts the sidecar and still removes Computer Use when the helper does not confirm it stopped', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...baseConfig.agent, enabled: true } });
+    await import(`../index?test=${Date.now()}-computer-use-uninstall`);
+    agentCloseComputerUse.mockRejectedValueOnce(new Error('Computer Use could not be stopped.'));
+    agentStart.mockClear();
+    expect(await ipcHandlers.get('computer-use:uninstall')?.({})).toMatchObject({ state: 'absent' });
+    expect(agentStop).toHaveBeenCalledTimes(1);
+    expect(agentStart).toHaveBeenCalledTimes(1);
   });
 
   it('does not start a cancelled provider probe after a pending token refresh finishes', async () => {

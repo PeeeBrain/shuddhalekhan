@@ -20,7 +20,7 @@ const FIELD_ID_POLICIES = 'computer-use-policies';
 const GROUPS: Array<{ id: ComputerUseToolGroup; title: string; description: string }> = [
   { id: 'observe', title: 'Read', description: 'List apps and windows, and read what a window shows.' },
   { id: 'act', title: 'Act', description: 'Change a window: click, fill fields, choose options.' },
-  { id: 'apps', title: 'Apps', description: 'Open and quit apps by name.' },
+  { id: 'apps', title: 'Apps', description: 'Start any program on your PATH by name, not only apps, and quit apps. Always allow lets the agent run any of them without asking.' },
   { id: 'clipboard', title: 'Clipboard', description: 'Off until you turn it on. The clipboard can hold passwords.' },
 ];
 
@@ -88,7 +88,7 @@ export function ComputerUseSettings({ config, persistence, settingsIpc }: Settin
               ? 'What the agent reads from a window is sent to your selected model. Each tool asks before it runs unless you change it below.'
               : 'Turn on Agent Mode first. What the agent reads from a window is sent to your selected model.'}
             checked={installed && computerUse.enabled}
-            disabled={!installed || !config.agent.enabled}
+            disabled={busy || !installed || !config.agent.enabled}
             tone="agent"
             errorId={enabledErrorId}
             error={persistence.fieldErrors[FIELD_ID_ENABLED]}
@@ -128,6 +128,7 @@ export function ComputerUseSettings({ config, persistence, settingsIpc }: Settin
                       <ToolPolicySelect
                         value={computerUseToolPolicy(computerUse, tool.name)}
                         label={tool.label}
+                        disabled={busy}
                         onChange={(policy) => save({ ...computerUse, toolPolicies: { ...computerUse.toolPolicies, [tool.name]: policy } }, FIELD_ID_POLICIES)}
                       />
                     </div>

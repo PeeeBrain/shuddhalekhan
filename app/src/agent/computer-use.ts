@@ -67,7 +67,16 @@ const nodeSchema = z.object({ ref_id: refId.optional(), children: z.array(z.unkn
 const maxResultBytes = 64 * 1024;
 const truncationNote = '\n[Computer Use result truncated at 64 KiB. Use a shallower snapshot or a narrower query.]';
 
-type ComputerUseAudit = { toolName: ComputerUseToolName; durationMs: number; resultBytes: number }
+/** A non-JSON result is one bad call, not a reason to stop Computer Use for the run. */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+type ComputerUseAudit ={ toolName: ComputerUseToolName; durationMs: number; resultBytes: number }
   & ({ ok: true } | { ok: false; errorCode: string });
 
 export function createComputerUseRun(options: {
@@ -172,7 +181,7 @@ export function createComputerUseRun(options: {
       const [{ text }] = decoded.data.content;
       const output = Buffer.from(text);
       resultBytes = output.length;
-      const envelope = envelopeSchema.safeParse(JSON.parse(text));
+      const envelope = envelopeSchema.safeParse(parseJson(text));
       if (!envelope.success) return fail('INVALID_RESULT', 'Computer Use returned an unexpected result.');
       if (!envelope.data.ok) errorCode = envelope.data.error.code;
       if (name === 'desktop_snapshot' && envelope.data.ok) {

@@ -546,11 +546,13 @@ async function startAgentRun(text: string, config: AppConfig): Promise<void> {
     return;
   }
   if (activeAgentRun !== execution) return;
-  if (!getConfig().agent.enabled) { activeAgentRun = null; return; }
+  const latest = getConfig();
+  if (!latest.agent.enabled) { activeAgentRun = null; return; }
   agentSidecar.startRun(
     agentRunId,
     text,
-    config,
+    // Computer Use may have been turned off while the token refreshed; never resend the older opt-in.
+    { ...config, agent: { ...config.agent, computerUse: latest.agent.computerUse } },
     apiKey,
     agentContext.createRunContext(),
     continueFrom,
@@ -712,7 +714,12 @@ handle('computer-use:uninstall', () => computerUse.uninstall(async () => {
   disableComputerUse();
   publishAgentConfig();
   const config = getConfig();
-  await agentSidecar.closeComputerUse(config, getAgentSidecarApiKey(config, credentialVault));
+  await agentSidecar.closeComputerUse(config, getAgentSidecarApiKey(config, credentialVault)).catch(async () => {
+    // The helper did not confirm it stopped; stopping the sidecar ends it with its parent.
+    await agentSidecar.stop();
+    const latest = getConfig();
+    if (latest.agent.enabled) agentSidecar.start(latest, getAgentSidecarApiKey(latest, credentialVault));
+  });
   if (getConfig().agent.computerUse?.enabled) {
     disableComputerUse();
     publishAgentConfig();

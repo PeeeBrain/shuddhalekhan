@@ -34,7 +34,7 @@ export const COMPUTER_USE_TOOLS = [
   { name: 'desktop_collapse', group: 'act', label: 'Collapse', defaultPolicy: 'alwaysAsk' },
   { name: 'desktop_scroll', group: 'act', label: 'Scroll', defaultPolicy: 'alwaysAsk' },
   { name: 'desktop_scroll_to', group: 'act', label: 'Scroll into view', defaultPolicy: 'alwaysAsk' },
-  { name: 'desktop_launch', group: 'apps', label: 'Open an app', defaultPolicy: 'alwaysAsk' },
+  { name: 'desktop_launch', group: 'apps', label: 'Run a program by name', defaultPolicy: 'alwaysAsk' },
   { name: 'desktop_close_app', group: 'apps', label: 'Quit an app', defaultPolicy: 'alwaysAsk' },
   { name: 'desktop_clipboard_get', group: 'clipboard', label: 'Read the clipboard', defaultPolicy: 'disabled' },
   { name: 'desktop_clipboard_set', group: 'clipboard', label: 'Write the clipboard', defaultPolicy: 'disabled' },

@@ -81,7 +81,7 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       });
     }),
     'agent:completed': whenActive((event) => {
-      console.log(`Agent run ${event.agentRunId} completed: ${event.response}`);
+      console.log(`Agent run ${event.agentRunId} completed`);
       deps.presenter.completed(event.agentRunId, event.response, event.toolSummary, event.steps);
       deps.getSettingsWindow()?.webContents.send('audit:run-updated', event.agentRunId);
       deps.onAgentTerminal?.(event.agentRunId);

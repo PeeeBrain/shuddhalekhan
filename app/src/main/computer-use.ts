@@ -176,7 +176,8 @@ export function createComputerUseInstaller(dataDirectory: string, onChange: (sta
         await cancelInstall();
         await disableAndClose();
         if (!release) return status();
-        await rm(destination, { recursive: true, force: true });
+        // The whole root: a crashed install leaves a staging folder beside the release.
+        await rm(root, { recursive: true, force: true });
         return publish({ state: 'absent' });
       } finally {
         removal = undefined;

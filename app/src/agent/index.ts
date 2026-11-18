@@ -1,4 +1,4 @@
-import { COMPUTER_USE_SOURCE_ID } from '../shared/computer-use';
+import { COMPUTER_USE_SOURCE_ID, COMPUTER_USE_TOOLS, computerUseToolPolicy } from '../shared/computer-use';
 import { createComputerUseRun } from './computer-use';
 import { APPROVAL_TIMEOUT_MESSAGE } from '@shuddhalekhan/shared/agent-prompt';
 import { createInterface } from 'readline';
@@ -146,10 +146,15 @@ function handleLine(line: string): void {
       // A disabled agent keeps nothing.
       if (!message.config.agent.enabled) lastConversation = null;
       const previousExecutable = computerUseExecutable;
+      const previousComputerUse = config?.agent.computerUse;
       config = message.config;
       computerUseExecutable = config.agent.enabled && config.agent.computerUse?.enabled
         ? message.computerUseExecutable : undefined;
-      if (computerUseExecutable !== previousExecutable || message.computerUseCloseRequestId) {
+      // An action already running without asking must stop once it would have to ask.
+      const lostAlwaysAllow = COMPUTER_USE_TOOLS.some(({ name }) =>
+        computerUseToolPolicy(previousComputerUse, name) === 'alwaysAllow'
+        && computerUseToolPolicy(message.config.agent.computerUse, name) !== 'alwaysAllow');
+      if (computerUseExecutable !== previousExecutable || lostAlwaysAllow || message.computerUseCloseRequestId) {
         if (pendingApproval?.serverId === COMPUTER_USE_SOURCE_ID) {
           rejectPendingApproval(pendingApproval.execution, 'Computer Use is unavailable for this run.');
         }
@@ -240,8 +245,13 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     const priorNativeClosed = !nativeExecutable || computerUseRuns.size === 0
       || await closeComputerUseRuns().then(() => true, () => false);
     if (!ownsExecution(run) || runController.signal.aborted) return;
+    if (!priorNativeClosed) {
+      const status = 'Computer Use is unavailable until Agent Mode restarts.';
+      run.audit.record('status', { status });
+      writeJsonLine({ type: 'agent:status', agentRunId, status });
+    }
 
-    const reportTool = (serverId: string, name: string) => {
+    const reportTool =(serverId: string, name: string) => {
       if (!ownsExecution(run)) return;
       const status = `Using tool: ${serverId}.${name}`;
       run.audit.record('status', { status });

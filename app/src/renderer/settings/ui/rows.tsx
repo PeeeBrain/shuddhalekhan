@@ -341,14 +341,15 @@ export function ReadOnlyRow({ label, value, description }: ReadOnlyRowProps) {
 }
 
 /** The Ask / Allow / Disabled choice shared by MCP and Computer Use tools. */
-export function ToolPolicySelect({ value, label, onChange }: {
+export function ToolPolicySelect({ value, label, disabled, onChange }: {
   value: AgentToolApprovalPolicy;
   /** Names the tool for screen readers. */
   label: string;
+  disabled?: boolean;
   onChange: (policy: AgentToolApprovalPolicy) => void;
 }) {
   return (
-    <Select value={value} onValueChange={(next) => onChange(next as AgentToolApprovalPolicy)}>
+    <Select value={value} disabled={disabled} onValueChange={(next) => onChange(next as AgentToolApprovalPolicy)}>
       <SelectTrigger aria-label={`Approval policy for ${label}`} className="h-8 w-full">
         <SelectValue />
       </SelectTrigger>

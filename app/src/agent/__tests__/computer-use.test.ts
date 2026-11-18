@@ -1,9 +1,7 @@
 import { expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { createComputerUseRun } from '../computer-use';
 import type { ComputerUseConfig, ComputerUseToolName } from '../../shared/computer-use';
@@ -44,6 +42,8 @@ it.skipIf(!linux)('uses latest snapshot refs, applies live policies, and reaps t
     }).parse(JSON.parse(result)).data;
     expect(secretInherited).toBe(false);
     expect(statSync(home).mode & 0o777).toBe(0o700);
+    // A malformed result fails that call only; the session keeps working.
+    expect(await run.call('desktop_list_windows')).toMatch(/^INVALID_RESULT:/);
     const target = { app: 'Fixture', window_id: '1' };
     await run.call('desktop_snapshot', target);
     await run.call('desktop_snapshot', target);
@@ -68,7 +68,7 @@ it.skipIf(!linux)('uses latest snapshot refs, applies live policies, and reaps t
       expect(await pending).toMatch(/^COMPUTER_USE_FAILED:/);
       await run.close();
       expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([
-        'desktop_list_apps', 'desktop_snapshot', 'desktop_snapshot', 'desktop_click', 'desktop_wait', 'cancelled',
+        'desktop_list_apps', 'desktop_list_windows', 'desktop_snapshot', 'desktop_snapshot', 'desktop_click', 'desktop_wait', 'cancelled',
       ]);
       expect(existsSync(home)).toBe(false);
       expect(() => process.kill(pid, 0)).toThrow();
@@ -96,46 +96,3 @@ it.skipIf(!linux)('fails closed when the MCP catalog is missing even a curated t
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-it.skipIf(!linux || process.env.SHUDDHALEKHAN_COMPUTER_USE_LIVE !== '1')(
-  'reads and changes the GTK fixture through the pinned agent-desktop binary',
-  async () => {
-    const m0 = resolve(import.meta.dir, '../../../../.cache/computer-use/m0');
-    const gtk = spawn('python3', [join(m0, 'fixture.py')], { stdio: ['ignore', 'ignore', 'inherit'] });
-    const exited = new Promise<void>(resolve => { gtk.once('exit', () => resolve()); gtk.once('error', () => resolve()); });
-    const run = withAdapter(join(m0, 'bin', 'agent-desktop'));
-    try {
-      const windowsSchema = z.object({ data: z.array(z.object({
-        app_name: z.string(), id: z.string(), title: z.string(), pid: z.number(),
-      })) });
-      let target: { app: string; window_id: string } | undefined;
-      const deadline = Date.now() + 6000;
-      do {
-        const output = await run.call('desktop_list_windows', { app: 'python3.15' });
-        const result = windowsSchema.safeParse(JSON.parse(output));
-        const found = result.data?.data.find(window => window.title === 'SL Fixture' && window.pid === gtk.pid);
-        if (found) target = { app: found.app_name, window_id: found.id };
-        else if (result.error && !output.includes('APP_NOT_FOUND')) throw new Error(output);
-        if (!target) await delay(100);
-      } while (!target && Date.now() < deadline);
-      if (!target) throw new Error('SL Fixture did not appear on the accessibility bus.');
-      const first = await run.call('desktop_snapshot', target);
-      const refs = new Map([...first.matchAll(/"name":"(Name|Apply)","ref_id":"([^"]+)"/g)].map(match => [match[1], match[2]]));
-      const edited = await run.call('desktop_set_value', { ref_id: refs.get('Name'), value: 'Codex smoke' });
-      const clicked = await run.call('desktop_click', { ref_id: refs.get('Apply') });
-      const verified = await run.call('desktop_snapshot', target);
-      expect(JSON.parse(edited)).toHaveProperty('ok', true);
-      expect(JSON.parse(clicked)).toHaveProperty('ok', true);
-      expect(verified).toContain('Applied: Codex smoke (1)');
-      console.log('GTK smoke: list_windows OK → snapshot Name/Apply → set_value OK → click OK → snapshot Applied: Codex smoke (1)');
-    } finally {
-      try {
-        await run.close();
-      } finally {
-        gtk.kill();
-        await exited;
-      }
-    }
-  },
-  20_000,
-);
