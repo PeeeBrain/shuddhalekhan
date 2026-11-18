@@ -1,18 +1,27 @@
 import type { RecordingCue } from '../types/ipc';
 
 // Original cues synthesized here, so there are no asset files to load or decode.
-// Each note is a soft chime: a sine with quieter overtones that fade faster than
-// it, like a bell. Overlapping notes ring together as an interval. Start rises a
-// fifth, Stop falls a fifth, Error falls a minor third in a lower register.
-// Start must end within START_CUE_HEAD_SAMPLES in main/recording-session.ts.
-const NOTES: Record<RecordingCue, Array<{ hz: number; at: number; seconds: number }>> = {
-  start: [{ hz: 659.25, at: 0, seconds: 0.17 }, { hz: 987.77, at: 0.07, seconds: 0.17 }],
-  stop: [{ hz: 987.77, at: 0, seconds: 0.24 }, { hz: 659.25, at: 0.08, seconds: 0.24 }],
-  error: [{ hz: 392, at: 0, seconds: 0.28 }, { hz: 329.63, at: 0.12, seconds: 0.28 }],
+// Each cue is a short synth swell: a chord of slightly detuned sawtooth pairs
+// that glides into pitch while a low-pass filter sweeps across it. Start opens
+// upward on a major chord, Stop closes downward on one, and Error sinks on a darker
+// minor chord. Start must end within START_CUE_HEAD_SAMPLES in main/recording-session.ts.
+const CUES: Record<RecordingCue, {
+  root: number;
+  chord: number[];
+  /** Pitch ratio the chord glides in from. */
+  glideFrom: number;
+  /** Low-pass cutoff in Hz at the start of the cue and halfway through it. */
+  cutoff: [number, number];
+  seconds: number;
+}> = {
+  start: { root: 523.25, chord: [1, 1.25, 1.5, 2], glideFrom: 0.75, cutoff: [500, 4200], seconds: 0.26 },
+  stop: { root: 392, chord: [1, 1.25, 1.5, 2], glideFrom: 1.33, cutoff: [4200, 600], seconds: 0.4 },
+  error: { root: 329.63, chord: [1, 1.19, 1.5], glideFrom: 1.06, cutoff: [1600, 400], seconds: 0.45 },
 };
-const OVERTONES = [{ ratio: 1, level: 1 }, { ratio: 2, level: 0.3 }, { ratio: 3, level: 0.08 }];
-const PEAK_GAIN = 0.07;
-const ATTACK_SECONDS = 0.012;
+const DETUNE_CENTS = [-7, 7];
+const GLIDE_SECONDS = 0.12;
+const ATTACK_SECONDS = 0.03;
+const PEAK_GAIN = 0.03;
 const SILENT_GAIN = 0.0001;
 
 let context: AudioContext | null = null;
@@ -24,20 +33,33 @@ export function playRecordingCue(cue: RecordingCue): void {
     context ??= new AudioContext({ latencyHint: 'interactive' });
     const ctx = context;
     void ctx.resume().catch(() => undefined);
-    const now = ctx.currentTime + 0.01;
-    for (const { hz, at, seconds } of NOTES[cue]) {
-      for (const { ratio, level } of OVERTONES) {
-        const start = now + at;
-        const end = start + seconds / ratio;
-        const oscillator = new OscillatorNode(ctx, { frequency: hz * ratio });
-        const gain = new GainNode(ctx, { gain: SILENT_GAIN });
-        gain.gain.setValueAtTime(SILENT_GAIN, start);
-        gain.gain.exponentialRampToValueAtTime(PEAK_GAIN * level, start + ATTACK_SECONDS);
-        gain.gain.exponentialRampToValueAtTime(SILENT_GAIN, end);
-        oscillator.connect(gain).connect(ctx.destination);
+    const { root, chord, glideFrom, cutoff, seconds } = CUES[cue];
+    const start = ctx.currentTime + 0.01;
+    const end = start + seconds;
+
+    const filter = new BiquadFilterNode(ctx, { type: 'lowpass', Q: 2, frequency: cutoff[0] });
+    filter.frequency.setValueAtTime(cutoff[0], start);
+    // The sweep finishes mid-cue, while the swell is still loud enough to hear it.
+    filter.frequency.exponentialRampToValueAtTime(cutoff[1], start + seconds / 2);
+    const envelope = new GainNode(ctx, { gain: SILENT_GAIN });
+    envelope.gain.setValueAtTime(SILENT_GAIN, start);
+    envelope.gain.exponentialRampToValueAtTime(PEAK_GAIN, start + ATTACK_SECONDS);
+    envelope.gain.exponentialRampToValueAtTime(SILENT_GAIN, end);
+    filter.connect(envelope).connect(ctx.destination);
+
+    let voices = 0;
+    for (const ratio of chord) {
+      for (const detune of DETUNE_CENTS) {
+        const hz = root * ratio;
+        const oscillator = new OscillatorNode(ctx, { type: 'sawtooth', frequency: hz * glideFrom, detune });
+        oscillator.frequency.setValueAtTime(hz * glideFrom, start);
+        oscillator.frequency.exponentialRampToValueAtTime(hz, start + GLIDE_SECONDS);
+        oscillator.connect(filter);
+        voices += 1;
         sounding += 1;
         oscillator.onended = () => {
-          gain.disconnect();
+          oscillator.disconnect();
+          if (--voices === 0) envelope.disconnect();
           if (--sounding === 0) void ctx.suspend().catch(() => undefined);
         };
         oscillator.start(start);
