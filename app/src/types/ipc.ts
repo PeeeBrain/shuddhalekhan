@@ -3,6 +3,7 @@ import type { ManagedLocalSelection } from '../shared/managed-local-selection';
 import type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
 import type { DesktopStatus } from '../shared/desktop-status';
+import type { ComputerUseConfig, ComputerUseStatus } from '../shared/computer-use';
 import type { AgentProviderKind, TranscriptionProviderId } from '@shuddhalekhan/shared/providers';
 import type { AgentStep } from '@shuddhalekhan/shared/agent-loop';
 
@@ -317,6 +318,12 @@ export interface RendererToMainInvokeChannels {
   'managed-local:get-model': () => Promise<ManagedLocalModelSnapshot>;
   'managed-local:install-model': (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
   'managed-local:delete-model': (target?: ManagedLocalDeleteTarget) => Promise<ManagedLocalModelSnapshot>;
+  'computer-use:get-status': () => Promise<ComputerUseStatus>;
+  /** Resolves once the install settles (installed, failed, or absent after cancel); progress arrives as status events. */
+  'computer-use:install': () => Promise<ComputerUseStatus>;
+  'computer-use:cancel-install': () => Promise<void>;
+  /** Also turns Computer Use off. Tool policies are kept. */
+  'computer-use:uninstall': () => Promise<ComputerUseStatus>;
 }
 
 export interface MainToRendererChannels {
@@ -354,6 +361,7 @@ export interface MainToRendererChannels {
   'runtime:cue': (cue: RecordingCue) => void;
   'transcription:readiness-changed': (readiness: TranscriptionReadiness) => void;
   'managed-local:model-state-changed': (state: ManagedLocalModelState) => void;
+  'computer-use:status-changed': (status: ComputerUseStatus) => void;
   'onboarding:completed': () => void;
 }
 
@@ -632,6 +640,7 @@ export interface AppConfig {
     memoryEnabled?: boolean;
     /** Appended to the agent system prompt; part of the cached prefix, so it never carries per-run data. */
     customInstructions?: string;
+    computerUse: ComputerUseConfig;
   };
 }
 
