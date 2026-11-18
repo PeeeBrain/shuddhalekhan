@@ -519,11 +519,10 @@ async function admit(capture: Capture, warmAtPress: boolean): Promise<void> {
   if (capture.released || !node) return;
   if (capture === active) startLevelTelemetry();
   // Judged at the handoff, so a cue that started while the mic opened stays out.
-  // A mic that was not running at the press heard nothing before it: its whole ring is recording.
-  const cueFree = capture.options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
-  const preRoll = warmAtPress
-    ? Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000)
-    : preRollFrames(mic.context);
+  // A mic not yet running at the press heard nothing before it, so it hands over no ring
+  // (only the few ms it heard while starting): the spool's head is then pre-press audio or nothing.
+  const cueFree = warmAtPress && capture.options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
+  const preRoll = Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000);
   await waitForCapture(capture, STOP_ACK_TIMEOUT_MS, 'Microphone did not start in time.',
     () => node.port.postMessage({ type: 'start', preRollFrames: preRoll }));
 }
@@ -531,9 +530,8 @@ async function admit(capture: Capture, warmAtPress: boolean): Promise<void> {
 /**
  * Starts one recording on the warm mic, or opens the selected mic. The device
  * is fixed at start; later device switches only affect the next recording.
- * Resolves with the 16 kHz ring samples that head the spool: the warm pre-roll
- * (minus any speaker cue), or what a mic still opening at the press heard
- * before capture began. Resolves without starting if
+ * Resolves with the 16 kHz samples recorded before the press (warm pre-roll,
+ * minus any speaker cue), which head the spool. Resolves without starting if
  * cancelRecording() lands while permission or worklet setup is pending.
  */
 export async function startRecording(options: RecordingOptions): Promise<number> {
@@ -571,7 +569,6 @@ export async function startRecording(options: RecordingOptions): Promise<number>
     release(capture);
     throw error;
   }
-  // Ring frames precede main's Start cue, whether heard before the press or while the mic opened.
   return capture.released ? 0 : capture.sampleCount;
 }
 
@@ -624,14 +621,17 @@ async function deviceListChanged(): Promise<void> {
   const parked = warm;
   const mics = [...live].map((capture) => capture.mic);
   if (parked) mics.push(parked);
+  let reopen = false;
   for (const mic of mics) {
     const stream = await mic.stream.catch(() => null);
-    const groupId = stream?.getAudioTracks()[0]?.getSettings().groupId;
+    // A mic that failed or closed meanwhile is its own handler's; it waits for the next recording.
+    if (!stream || mic.closed) continue;
+    const groupId = stream.getAudioTracks()[0]?.getSettings().groupId;
     if (target && groupId === target.groupId) continue;
     retireMic(mic);
+    if (mic === parked) reopen = true;
   }
-  // Only a parked mic this change retired reopens; a closed or failed one waits for the next recording.
-  if (parked && warm !== parked) ensureWarm();
+  if (reopen) ensureWarm();
 }
 
 navigator.mediaDevices?.addEventListener?.('devicechange', () => void deviceListChanged());

@@ -315,7 +315,7 @@ export class RecordingSession {
       return null;
     }
 
-    let pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
+    let pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, audioData.byteOffset + 44, (audioData.byteLength - 44) >> 1);
     // A stalled cap timer can let capture run long; the provider's limit holds on the samples
     // themselves, and the gate judges only what the provider will hear.
     const maxSamples = (run.transcriber.capabilities.maxDurationSeconds ?? 0) * 16_000;

@@ -833,18 +833,17 @@ describe('warm audio stream', () => {
       mod.setWarmMicrophone(false);
     });
 
-    it('records all a still-opening mic heard, and reports it so the Start cue is found after it', async () => {
+    it('hands over no ring from a mic still opening at the press', async () => {
+      // Its ring is startup audio from after the press, maybe a cue: neither is pre-roll.
       const audio = installAudio();
       const mod = await importFresh();
       const open = audio.holdMic();
       mod.setWarmMicrophone(true);
       const starting = mod.startRecording(recorder({ preRoll: true }).options);
-      // A cue hold set while the mic opens cannot trim audio heard after the press.
-      mod.holdPreRollForCue();
       audio.hearWhileIdle(idle());
       open();
-      expect(await starting).toBe(PRE_ROLL);
-      expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: PRE_ROLL });
+      expect(await starting).toBe(0);
+      expect(await mod.stopRecording()).toEqual({ chunkCount: 0, sampleCount: 0 });
       mod.setWarmMicrophone(false);
     });
 
@@ -931,6 +930,28 @@ describe('warm audio stream', () => {
       }
       await settle();
       expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      mod.setWarmMicrophone(false);
+    });
+
+    it('does not reopen a parked mic that closed while a device change was checking it', async () => {
+      const audio = installAudio();
+      const mod = await importFresh();
+      const open = audio.holdMic();
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      try {
+        mod.setWarmMicrophone(true);
+        audio.changeDevices('mic-b');
+        await settle();
+        // The idle setup deadline closes it while the check waits on its stream.
+        const calls: unknown[][] = timers.mock.calls;
+        const deadline = calls.find(([, ms]) => ms === 30_000)?.[0] as () => void;
+        deadline();
+      } finally {
+        timers.mockRestore();
+      }
+      open();
+      await settle();
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
       mod.setWarmMicrophone(false);
     });
 
