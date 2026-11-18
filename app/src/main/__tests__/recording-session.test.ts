@@ -887,12 +887,14 @@ describe('RecordingSession', () => {
   });
 
   it.each([
-    ['unlimited Dictation', 'dictation', null, 5_000, 600],
-    ['Agent Mode', 'agent', null, 5_000, 0],
-    ['Dictation near a 30 s cap', 'dictation', 30, 29_500, 400],
-    ['Dictation at a 30 s cap', 'dictation', 30, 29_950, 0],
+    ['unlimited Dictation', 'dictation', null, 5_000, 600, 0],
+    ['Agent Mode', 'agent', null, 5_000, 0, 0],
+    ['Dictation near a 30 s cap', 'dictation', 30, 29_500, 400, 0],
+    ['Dictation at a 30 s cap', 'dictation', 30, 29_950, 0, 0],
+    ['Dictation whose 450 ms pre-roll counts against a 30 s cap', 'dictation', 30, 29_000, 450, 7_200],
   ] as const)('a user Stop keeps a release tail bounded by intent and provider cap: %s', async (
     _case: string, intent: RecordingIntent, maxDurationSeconds: number | null, elapsedMs: number, tailMs: number,
+    preRollSamples: number,
   ) => {
     session = createSession({
       runtimeShell: audioStream,
@@ -910,7 +912,7 @@ describe('RecordingSession', () => {
     const now = Date.now();
     const clock = spyOn(Date, 'now').mockReturnValue(now);
     try {
-      ready({ sender }, 1, command.recordingSessionId, command.sequence);
+      ready({ sender }, 1, command.recordingSessionId, command.sequence, preRollSamples);
       clock.mockReturnValue(now + elapsedMs);
       hook?.onStop();
     } finally {
@@ -1038,6 +1040,23 @@ describe('RecordingSession', () => {
     expect(audioStream.markCaptureReady).toHaveBeenCalledTimes(1);
     session.begin('agent');
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts warm pre-roll against a duration-limited provider', () => {
+    const delays: number[] = [];
+    session = createSession({
+      runtimeShell: audioStream,
+      transcriber: { ...createTranscriber(async () => 'text'), capabilities: { maxDurationSeconds: 55 } },
+      setTimeoutFn: ((_callback: () => void, delay: number) => { delays.push(delay); return 0; }) as unknown as typeof setTimeout,
+      clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    });
+    const markReady = captureReadyEmitter();
+    session.begin('dictation', 'warm-limited');
+    delays.length = 0;
+    markReady(7_200);
+    expect(delays.at(0)).toBe(45_000 - 450);
+    expect(delays.at(-1)).toBe(55_000 - 450);
+    void session.cancel();
   });
 
   it('does not double-invoke onResult when triggered via keyboard hook', async () => {
@@ -1356,9 +1375,9 @@ describe('RecordingSession', () => {
     audioStream.getWebContents.mockReturnValue(sender);
     session.start();
     const ready = electronMock.ipcMain.on.mock.calls.find((call: unknown[]) => call[0] === 'runtime:audio-ready')?.[1];
-    return () => {
+    return (preRollSamples: unknown = 0) => {
       const command = audioStream.beginCapture.mock.calls.at(-1)?.[0];
-      ready({ sender }, 1, command.recordingSessionId, command.sequence);
+      ready({ sender }, 1, command.recordingSessionId, command.sequence, preRollSamples);
     };
   }
 
@@ -1386,21 +1405,26 @@ describe('RecordingSession', () => {
   });
 
   it.each([
-    { name: 'discards a Dictation whose only sound is the Start cue', cued: true, recognized: false },
-    { name: 'still recognizes a sound in the head when no Start cue played', cued: false, recognized: true },
-  ])('$name', async ({ cued, recognized }: { cued: boolean; recognized: boolean }) => {
+    { name: 'discards a Dictation whose only sound is the Start cue', cued: true, preRoll: 0, toneAt: 0, recognized: false },
+    { name: 'still recognizes a sound in the head when no Start cue played', cued: false, preRoll: 0, toneAt: 0, recognized: true },
+    { name: 'discards a Dictation whose only sound is in the warm pre-roll', cued: false, preRoll: 7_200, toneAt: 0, recognized: false },
+    { name: 'skips the Start cue after the pre-roll, not over it', cued: true, preRoll: 7_200, toneAt: 12_000, recognized: true },
+    { name: 'never lets a claimed pre-roll hide more than 450 ms', cued: false, preRoll: 1e9, toneAt: 7_200, recognized: true },
+  ])('$name', async ({ cued, preRoll, toneAt, recognized }: {
+    cued: boolean; preRoll: number; toneAt: number; recognized: boolean;
+  }) => {
     audioStream.playCue.mockReturnValue(cued);
     const markReady = captureReadyEmitter();
-    // 250 ms of a -23 dBFS tone, as a speaker playing the cue would leave, then a second of faint room noise.
+    // 250 ms of a -23 dBFS tone, as a speaker playing the cue would leave, in faint room noise.
     const pcm = new Int16Array(16_000 * 1.25);
     for (let i = 0; i < pcm.length; i++) {
-      pcm[i] = i < 4_000 ?Math.round(2_300 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2;
+      pcm[i] = i >= toneAt && i < toneAt + 4_000 ? Math.round(2_300 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2;
     }
     const wav = new Uint8Array(44 + pcm.byteLength);
     wav.set(new Uint8Array(pcm.buffer), 44);
 
     session.begin('dictation', 'head');
-    markReady();
+    markReady(preRoll);
     const ending = session.end();
     await session.complete(wav);
     await ending;

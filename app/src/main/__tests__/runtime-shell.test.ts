@@ -879,6 +879,23 @@ describe('Agent Mode runtime shell presentation', () => {
     );
   });
 
+  it('tells each ready renderer whether to keep the microphone warm', async () => {
+    const { send, window } = createWindowMock();
+    electronMock.BrowserWindow.mockImplementation(() => window);
+    const shell = await createShell('warm-microphone');
+    shell.prepare();
+    const warm = () => send.mock.calls.filter((call: unknown[]) => call[0] === 'audio:set-warm-microphone').map((call: unknown[]) => call[1]);
+
+    shell.setWarmMicrophone(true);
+    expect(warm()).toEqual([]);
+    shell.markReady();
+    shell.setWarmMicrophone(true);
+    shell.setWarmMicrophone(false);
+    // A recreated renderer starts cold and hears the current state again.
+    shell.markReady();
+    expect(warm()).toEqual([true, false, false]);
+  });
+
   it('clears cancelled runs silently without flashing a cancelled card', async () => {
     const { send, window } = createWindowMock();
     electronMock.BrowserWindow.mockImplementation(() => window);

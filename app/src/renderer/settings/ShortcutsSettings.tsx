@@ -113,6 +113,14 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
             value={hasChosenMicrophone(config.selectedDeviceId) ? config.selectedDeviceId : 'System default'}
           />
           <ToggleRow
+            title="Keep microphone ready"
+            description="Starts recording instantly and keeps the half second before you press the shortcut, so your first word is not cut off. The microphone stays on between recordings: your system shows it in use, and Bluetooth headsets may stay in lower-quality call audio. That half second is held only in memory and is sent only when you record."
+            checked={config.warmMicrophone}
+            errorId="warm-microphone-error"
+            error={persistence.fieldErrors['warm-microphone']}
+            onChange={(value) => void persistence.commit('warmMicrophone', value, 'warm-microphone')}
+          />
+          <ToggleRow
             title="Recording sounds"
             description="A quiet cue when recording starts, when it stops, and when something fails."
             checked={config.recordingSounds}

@@ -1,12 +1,13 @@
 import { randomUUID } from 'crypto';
 import { ipcMain, type IpcMainEvent } from 'electron';
-import type {
-  DictationConfig,
-  DictationTargetSnapshot,
-  RecordingActivationMode,
-  RecordingIntent,
-  RecordingPresentationEnvelope,
-  ShortcutBinding,
+import {
+  PRE_ROLL_MS,
+  type DictationConfig,
+  type DictationTargetSnapshot,
+  type RecordingActivationMode,
+  type RecordingIntent,
+  type RecordingPresentationEnvelope,
+  type ShortcutBinding,
 } from '../types/ipc';
 import {
   createRecordingPresentationEnvelope,
@@ -31,6 +32,7 @@ const DURATION_CAP_MARGIN_MS = 100;
 // The silence gate skips this much after a cued start so a cue heard through
 // speakers is not mistaken for speech; recognition still gets every sample.
 const START_CUE_HEAD_SAMPLES = 16_000 * 0.3;
+const MAX_PRE_ROLL_SAMPLES = 16_000 * PRE_ROLL_MS / 1000;
 
 /** Main-process-only settings and resolved formatter credential, pinned at Begin. */
 export interface DictationDeliveryContext {
@@ -87,10 +89,10 @@ interface RecordingRunContext {
   sequence: number;
   revision: number;
   state: 'starting' | 'recording' | 'stopping' | 'transcribing' | 'delivering';
-  /** Date.now() when capture became ready; bounds the release tail under a provider cap. */
+  /** Date.now() at the capture's first sample, pre-roll included; bounds the release tail under a provider cap. */
   recordingSince: number | null;
-  /** The Start cue played at capture-ready, so the capture's head may hold it. */
-  startCued: boolean;
+  /** Head samples the silence gate skips: warm pre-roll, then the Start cue if it played at capture-ready. */
+  gateSkipSamples: number;
   abort: AbortController;
   dictation: DictationDeliveryContext | null;
   pendingEnd: {
@@ -176,7 +178,7 @@ export class RecordingSession {
       revision: 0,
       state: 'starting',
       recordingSince: null,
-      startCued: false,
+      gateSkipSamples: 0,
       abort: new AbortController(),
       dictation: intent === 'dictation' ? structuredClone(this.getDictationContext()) : null,
       pendingEnd: null,
@@ -296,7 +298,7 @@ export class RecordingSession {
     }
     run.state = 'transcribing';
     this.clearDurationTimers();
-    // Capture has ended and the renderer has released the mic, so the cue cannot be recorded.
+    // Capture has ended, so the cue cannot be recorded; a warm mic keeps it out of the next pre-roll.
     if (run.recordingSince !== null) this.runtimeShell.playCue('stop');
     const pendingEnd = run.pendingEnd;
 
@@ -317,7 +319,8 @@ export class RecordingSession {
     }
 
     const pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
-    const gated = run.startCued ? pcm.subarray(START_CUE_HEAD_SAMPLES) : pcm;
+    // Pre-roll alone never admits a Dictation: media or room noise before the press is not speech.
+    const gated = pcm.subarray(run.gateSkipSamples);
     if (run.intent === 'dictation' && (gated.length === 0 || isNearSilent(gated))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
       // Empty means stopped before the microphone delivered audio: a dead device still delivers zeros.
@@ -608,7 +611,8 @@ export class RecordingSession {
     });
   }
 
-  private scheduleDurationLimit(maxDurationSeconds: number | null): void {
+  /** `recordedMs` of audio (the pre-roll) already counts against the provider's cap. */
+  private scheduleDurationLimit(maxDurationSeconds: number | null, recordedMs: number): void {
     this.clearDurationTimers();
     if (!maxDurationSeconds) return;
     const warningSeconds = Math.min(10, maxDurationSeconds);
@@ -617,13 +621,13 @@ export class RecordingSession {
       const remaining = maxDurationSeconds - elapsed;
       this.durationTimers.push(this.setTimeoutFn(() => {
         if (this.activeRun?.state === 'recording') this.runtimeShell.updateDurationWarning(remaining);
-      }, elapsed * 1000));
+      }, Math.max(0, elapsed * 1000 - recordedMs)));
     }
     this.durationTimers.push(this.setTimeoutFn(() => {
       if (this.activeRun?.state !== 'recording') return;
       this.keyboardHook.recordingEndedExternally();
       void this.end().catch(() => undefined);
-    }, maxDurationSeconds * 1000));
+    }, Math.max(0, maxDurationSeconds * 1000 - recordedMs)));
   }
 
   private clearDurationTimers(): void {
@@ -643,18 +647,23 @@ export class RecordingSession {
     generation: number,
     recordingSessionId: string,
     sequence: number,
+    preRollSamples: unknown,
   ): void => {
     const run = this.activeRun;
     if (!run || run.id !== recordingSessionId || run.sequence !== sequence
       || run.state !== 'starting') return;
     if (!event.sender || event.sender !== this.runtimeShell.getWebContents()) return;
     if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
+    const preRoll = Number.isSafeInteger(preRollSamples) && Number(preRollSamples) > 0
+      ? Math.min(Number(preRollSamples), MAX_PRE_ROLL_SAMPLES)
+      : 0;
     run.state = 'recording';
-    markTiming('capture-ready');
-    run.recordingSince = Date.now();
+    markTiming('capture-ready', { preRollSamples: preRoll });
+    const preRollMs = preRoll * 1000 / 16_000;
+    run.recordingSince = Date.now() - preRollMs;
     this.runtimeShell.markCaptureReady(run.id);
-    run.startCued = this.runtimeShell.playCue('start');
-    this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
+    run.gateSkipSamples = preRoll + (this.runtimeShell.playCue('start') ? START_CUE_HEAD_SAMPLES : 0);
+    this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds, preRollMs);
   };
 
   private handleRuntimeAudioChunk = async (

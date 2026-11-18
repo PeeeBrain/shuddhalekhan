@@ -59,6 +59,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
     recordingSounds: true,
+    warmMicrophone: false,
     setupChecklistDismissed: true,
     onboarding: { status: 'complete' },
     shortcuts: {

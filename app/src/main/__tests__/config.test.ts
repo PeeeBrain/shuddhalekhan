@@ -232,6 +232,15 @@ describe('config store', () => {
     expect(getConfig().recordingSounds).toBe(false);
   });
 
+  it('keeps the microphone released between recordings for upgrades until opted in', async () => {
+    existsSync.mockReturnValue(true);
+    const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-warm-microphone`);
+
+    expect(getConfig().warmMicrophone).toBe(false);
+    setConfig('warmMicrophone', true);
+    expect(getConfig().warmMicrophone).toBe(true);
+  });
+
   it('sets typed config values', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-2`);

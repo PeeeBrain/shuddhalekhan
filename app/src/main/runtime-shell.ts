@@ -88,6 +88,7 @@ export interface RecordingHandlers {
 /** Startup-warmed renderer shared by Batch Dictation capture and presentation. */
 export class RuntimeShell {
   private ready = false;
+  private warmMicrophone = false;
   private pendingBegin: RecordingPresentationEnvelope | null = null;
   private activeCommand: RuntimeAudioCommand | null = null;
   /** The active command's canonical audio; lives exactly as long as that command. */
@@ -170,6 +171,8 @@ export class RuntimeShell {
 
   markReady(): void {
     this.ready = true;
+    // A recreated renderer starts cold: tell it again.
+    this.send('audio:set-warm-microphone', this.warmMicrophone);
     if (this.pendingBegin) {
       const envelope = this.pendingBegin;
       this.pendingBegin = null;
@@ -203,6 +206,13 @@ export class RuntimeShell {
 
   setSelectedDevice(deviceId: string | null): void {
     this.send('audio:recreate-stream', deviceId);
+  }
+
+  /** Whether the renderer keeps the mic open between recordings; false releases it and its pre-roll. */
+  setWarmMicrophone(enabled: boolean): void {
+    if (this.warmMicrophone === enabled) return;
+    this.warmMicrophone = enabled;
+    if (this.ready) this.send('audio:set-warm-microphone', enabled);
   }
 
   show(

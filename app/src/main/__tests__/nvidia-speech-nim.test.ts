@@ -34,7 +34,7 @@ function config(auth: 'none' | 'bearer' | 'header' = 'none'): AppConfig {
       },
     },
     selectedDeviceId: null, removeFillerWords: false, language: 'en', task: 'transcribe', dictionary: [],
-    pasteStrategy: { default: 'ctrl-v', overrides: {} }, recordingSounds: true, setupChecklistDismissed: true,
+    pasteStrategy: { default: 'ctrl-v', overrides: {} }, recordingSounds: true, warmMicrophone: false, setupChecklistDismissed: true,
     onboarding: { status: 'complete' },
     shortcuts: {
       dictation: { binding: { keyCode: null, modifiers: ['ctrl', 'win'] }, activationMode: 'push-to-talk' },

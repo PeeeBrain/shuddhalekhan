@@ -7,6 +7,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- Desktop can keep your microphone ready between recordings, so Dictation and Agent Mode start at once and keep the half second before you press the shortcut. It is off by default. Turn it on under Shortcuts > Input > Keep microphone ready. While it is on, your system shows the microphone in use, and Bluetooth headsets may stay in call audio. That half second is held only in memory and sent only when you record.
 - On Windows, Dictation's automatic paste no longer leaves your transcript in clipboard history (Win+V) or syncs it to your other devices. Copy transcript still adds an ordinary clipboard entry.
 - Adding an MCP server in desktop Settings now keeps its ID distinct, so editing or removing it cannot affect another server with the same timestamp.
 - Desktop Dictation and Agent Mode recordings now play a quiet cue when the microphone is live, when recording stops, and when a recording or paste fails. The cues are on for new installs and upgrades. Turn them off, or preview them, under Shortcuts > Input > Recording sounds.

@@ -459,8 +459,19 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
 // Never leave global shortcut activation suspended after capture ends.
 setSettingsWindowClosedHandler(() => keyboardHook.setCaptureSuspended(false));
 
+let suspended = false;
+let screenLocked = false;
+
+/** Keeps the mic warm only while opted in, a shortcut can start a recording, and the machine is awake and unlocked. */
+function publishWarmMicrophone(): void {
+  const { warmMicrophone, shortcuts, agent } = getConfig();
+  const canRecord = shortcuts.dictation.binding !== null || (agent.enabled && shortcuts.agent.binding !== null);
+  runtimeShell.setWarmMicrophone(warmMicrophone && canRecord && !keyboardHook.isPaused() && !suspended && !screenLocked);
+}
+
 function setShortcutsPaused(paused: boolean): void {
   keyboardHook.setPaused(paused);
+  publishWarmMicrophone();
   updateShortcutPauseState(paused);
   const settingsWin = getSettingsWindow();
   if (settingsWin && !settingsWin.isDestroyed()) {
@@ -699,6 +710,7 @@ async function applyConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K
   }
   cachedAgentEnabled = config.agent.enabled;
   if (key === 'shortcuts' || key === 'agent') keyboardHook.refreshShortcuts();
+  publishWarmMicrophone();
   await releaseUnusedTranscriber(previousConfig, config);
   const sidecarAction = getSidecarConfigAction(previousConfig, config);
   if (sidecarAction === 'stop') {
@@ -839,9 +851,26 @@ if (!gotSingleInstanceLock) {
         detail: error instanceof Error ? error.message : String(error),
       });
     }
-    const failClosed = () => { void recordingSession.cancel(); };
-    powerMonitor.on('suspend', failClosed);
-    powerMonitor.on('lock-screen', failClosed);
+    // Sleep and lock release the warm mic before cancelling, so the cancel does not reopen it.
+    powerMonitor.on('suspend', () => {
+      suspended = true;
+      publishWarmMicrophone();
+      void recordingSession.cancel();
+    });
+    powerMonitor.on('lock-screen', () => {
+      screenLocked = true;
+      publishWarmMicrophone();
+      void recordingSession.cancel();
+    });
+    powerMonitor.on('resume', () => {
+      suspended = false;
+      publishWarmMicrophone();
+    });
+    powerMonitor.on('unlock-screen', () => {
+      screenLocked = false;
+      publishWarmMicrophone();
+    });
+    publishWarmMicrophone();
 
     createTray({
       onOpenSettings: () => openSettingsWindow(),

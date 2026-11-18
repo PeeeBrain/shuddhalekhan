@@ -2,62 +2,79 @@ import { describe, expect, it } from 'bun:test';
 import { runInNewContext } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
-type Message = { type: 'audio'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
+type Message = { type: 'audio' | 'started'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
+type Command = { type: 'start'; preRollFrames: number } | { type: 'stop' } | { type: 'credit' };
 
 /** Runs the real worklet source against a fake audio-thread global at 16 kHz (320-frame batches). */
-async function loadProcessor() {
+async function loadProcessor(preRollFrames = 0) {
   const sent: Message[] = [];
   class ProcessorBase {
     port = {
-      onmessage: null as ((event: { data: { type: string } }) => void) | null,
+      onmessage: null as ((event: { data: Command }) => void) | null,
       postMessage: (message: Message) => { sent.push(message); },
     };
   }
   type Processor = ProcessorBase & { process(inputs: Float32Array[][]): boolean };
+  type Options = { processorOptions: { preRollFrames: number } };
   let create: (() => Processor) | undefined;
   runInNewContext(await Bun.file(fileURLToPath(new URL('../audio-capture-worklet.js', import.meta.url))).text(), {
     AudioWorkletProcessor: ProcessorBase,
     sampleRate: 16000,
     Float32Array,
-    registerProcessor: (_name: string, Constructor: new () => Processor) => {
-      create = () => new Constructor();
+    registerProcessor: (_name: string, Constructor: new (options: Options) => Processor) => {
+      create = () => new Constructor({ processorOptions: { preRollFrames } });
     },
   });
   if (!create) throw new Error('processor was not registered');
-  return { processor: create(), sent };
+  const processor = create();
+  const command = (data: Command) => processor.port.onmessage?.({ data });
+  return { processor, sent, command };
 }
 
+const ramp = (from: number, length: number) => Float32Array.from({ length }, (_, index) => from + index);
+
 describe('capture audio-thread boundary', () => {
-  it('batches input and flushes its remaining samples before acknowledging stop exactly once', async () => {
-    const { processor, sent } = await loadProcessor();
+  it('idles silently on a bounded ring, hands its newest frames to start, and returns to idle on stop', async () => {
+    const { processor, sent, command } = await loadProcessor(200);
+    for (let block = 0; block < 3; block++) expect(processor.process([[ramp(block * 128, 128)]])).toBe(true);
+    expect(sent).toHaveLength(0);
+
+    command({ type: 'start', preRollFrames: 150 });
+    expect(sent).toEqual([{ type: 'started', samples: ramp(384 - 150, 150) }]);
     for (let block = 0; block < 3; block++) processor.process([[new Float32Array(128).fill(0.25)]]);
-    expect(sent).toHaveLength(1);
-    processor.port.onmessage?.({ data: { type: 'stop' } });
-    expect(sent.map(message => message.type)).toEqual(['audio', 'audio', 'stopped']);
+    command({ type: 'stop' });
+    expect(sent.map(message => message.type)).toEqual(['started', 'audio', 'audio', 'stopped']);
     expect(sent.flatMap(message => message.type === 'audio' ? [...message.samples] : []))
       .toEqual([...new Float32Array(384).fill(0.25)]);
-    processor.port.onmessage?.({ data: { type: 'stop' } });
-    expect(processor.process([[new Float32Array(128)]])).toBe(false);
-    expect(sent).toHaveLength(3);
+    command({ type: 'stop' });
+    expect(sent).toHaveLength(4);
+
+    // Idle again: the recording is not in the ring, only what came after it.
+    expect(processor.process([[ramp(1000, 128)]])).toBe(true);
+    command({ type: 'start', preRollFrames: 200 });
+    expect(sent.at(-1)).toEqual({ type: 'started', samples: ramp(1000, 128) });
   });
 
   it('stops with overflow once uncredited batches hit the bound, and keeps going while credits return', async () => {
-    const { processor, sent } = await loadProcessor();
+    const { processor, sent, command } = await loadProcessor();
+    command({ type: 'start', preRollFrames: 0 });
     const block = () => processor.process([[new Float32Array(320).fill(0.5)]]);
     // Credits flowing back: far more batches than the bound pass without overflow.
     for (let index = 0; index < 600; index += 1) {
       expect(block()).toBe(true);
-      processor.port.onmessage?.({ data: { type: 'credit' } });
+      command({ type: 'credit' });
     }
-    expect(sent.every((message) => message.type === 'audio')).toBe(true);
+    const audio = () => sent.filter((message) => message.type === 'audio');
+    expect(audio()).toHaveLength(600);
 
-    // Credits stop (renderer or main stalled): the bound is finite and ends capture.
+    // Credits stop (renderer or main stalled): the bound is finite and ends capture for good.
     let blocks = 0;
     while (block()) blocks += 1;
     expect(blocks).toBe(250);
     expect(sent.at(-1)?.type).toBe('overflow');
-    expect(sent.filter((message) => message.type === 'audio')).toHaveLength(600 + 250);
-    processor.port.onmessage?.({ data: { type: 'stop' } });
+    expect(audio()).toHaveLength(600 + 250);
+    command({ type: 'stop' });
+    command({ type: 'start', preRollFrames: 0 });
     expect(sent.at(-1)?.type).toBe('overflow');
   });
 });
