@@ -109,7 +109,7 @@ export function AudioWindow() {
           },
         } : undefined,
         onFailure: reportProcessorFailure,
-        preRoll: command.preRoll,
+        pressedAt: command.pressedAt,
       })
         .then((preRollSamples) => {
           // Sent even if a Stop beat it, so main's gate still skips the pre-roll.

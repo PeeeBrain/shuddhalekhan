@@ -89,7 +89,7 @@ export interface RecordingHandlers {
 export class RuntimeShell {
   private ready = false;
   private warmMicrophone = false;
-  private pendingBegin: { envelope: RecordingPresentationEnvelope; preRoll: boolean } | null = null;
+  private pendingBegin: { envelope: RecordingPresentationEnvelope; pressedAt: number | null } | null = null;
   private activeCommand: RuntimeAudioCommand | null = null;
   /** The active command's canonical audio; lives exactly as long as that command. */
   private spool: AudioSpool | null = null;
@@ -174,19 +174,20 @@ export class RuntimeShell {
     // A recreated renderer starts cold: tell it again.
     this.send('audio:set-warm-microphone', this.warmMicrophone);
     if (this.pendingBegin) {
-      const { envelope, preRoll } = this.pendingBegin;
+      const { envelope, pressedAt } = this.pendingBegin;
       this.pendingBegin = null;
-      this.startAudio(envelope, preRoll);
+      this.startAudio(envelope, pressedAt);
     }
   }
 
-  beginCapture(envelope?: RecordingPresentationEnvelope, preRoll = false): void {
+  /** `pressedAt` takes warm pre-roll heard before it (see RuntimeAudioCommand). */
+  beginCapture(envelope?: RecordingPresentationEnvelope, pressedAt: number | null = null): void {
     if (!envelope) return;
     if (!this.ready) {
-      this.pendingBegin = { envelope, preRoll };
+      this.pendingBegin = { envelope, pressedAt };
       return;
     }
-    this.startAudio(envelope, preRoll);
+    this.startAudio(envelope, pressedAt);
   }
 
   endCapture(tailEndsAt = 0): boolean {
@@ -820,14 +821,14 @@ export class RuntimeShell {
     if (this.activeCommand === command) this.clearCommand();
   }
 
-  private startAudio(envelope: RecordingPresentationEnvelope, preRoll: boolean): void {
+  private startAudio(envelope: RecordingPresentationEnvelope, pressedAt: number | null): void {
     this.clearCommand();
     this.activeCommand = {
       generation: this.generation,
       recordingSessionId: envelope.recordingSessionId,
       sequence: envelope.sequence,
       streaming: envelope.streamingActive === true,
-      preRoll,
+      pressedAt,
     };
     this.send('runtime:audio-start', this.activeCommand);
   }

@@ -61,8 +61,8 @@ export interface RecordingOptions {
   onSpoolChunk: (chunkSequence: number, pcm: Uint8Array<ArrayBuffer>) => Promise<void>;
   streaming?: StreamingRecordingOptions;
   onFailure?: (error: Error) => void;
-  /** Head the recording with the warm mic's pre-roll (Dictation only). */
-  preRoll?: boolean;
+  /** Main's Date.now() at the hotkey: head the recording with the warm mic's pre-roll heard before it (Dictation only). */
+  pressedAt?: number | null;
 }
 
 /** What stop declares was spooled; main rejects the recording unless it matches. */
@@ -522,7 +522,7 @@ async function admit(capture: Capture, pressFrame: number | null): Promise<void>
   // A mic not yet running at the press heard nothing before it, so it hands over no ring
   // (only the few ms it heard while starting): the spool's head is then pre-press audio or nothing.
   // A warm mic's ring frames after `pressFrame` follow the pre-roll as ordinary audio.
-  const cueFree = pressFrame !== null && capture.options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
+  const cueFree = pressFrame !== null ? Math.max(0, performance.now() - cueHeldUntil) : 0;
   const preRoll = Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000);
   await waitForCapture(capture, STOP_ACK_TIMEOUT_MS, 'Microphone did not start in time.',
     () => node.port.postMessage({ type: 'start', preRollFrames: preRoll, pressFrame }));
@@ -559,8 +559,11 @@ export async function startRecording(options: RecordingOptions): Promise<number>
   mic.owner = capture;
   active = capture;
   live.add(capture);
-  // The audio clock at the press: ring frames after it are this recording's audio, not pre-roll.
-  const pressFrame = adopted?.running ? Math.round(mic.context.currentTime * mic.context.sampleRate) : null;
+  // The hotkey on the audio clock: ring frames after it are this recording's audio, not pre-roll.
+  const { pressedAt } = options;
+  const pressFrame = adopted?.running && pressedAt != null
+    ? Math.round((mic.context.currentTime - Math.max(0, Date.now() - pressedAt) / 1000) * mic.context.sampleRate)
+    : null;
   capture.ready = admit(capture, pressFrame);
 
   try {

@@ -94,6 +94,8 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     port: { onmessage: ((event: { data: PortMessage }) => void) | null };
   }> = [];
   const queued: Float32Array[] = [];
+  /** Start commands the worklet received. */
+  const starts: Array<{ preRollFrames?: number; pressFrame?: number | null }> = [];
   /** What the worklet heard while idle; `start` hands out its newest frames. */
   let ring: Float32Array = new Float32Array(0);
   /** The physical device behind the system default; new tracks open on it. */
@@ -132,6 +134,7 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     value: vi.fn(function AudioContext() {
       return {
         sampleRate,
+        currentTime: 2,
         get state() { return contextState; },
         resume,
         audioWorklet: { addModule: vi.fn(() => moduleGate) },
@@ -160,9 +163,10 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
         port: {
           close: closePort,
           onmessage: null as ((event: { data: PortMessage }) => void) | null,
-          postMessage: (message: { type: string; preRollFrames?: number }) => {
+          postMessage: (message: { type: string; preRollFrames?: number; pressFrame?: number | null }) => {
             if (message.type === 'credit') credits += 1;
             if (message.type === 'start') {
+              starts.push(message);
               const samples = ring.slice(Math.max(0, ring.length - (message.preRollFrames ?? 0)));
               ring = new Float32Array(0);
               void Promise.resolve().then(() => deliver({ type: 'started', samples }));
@@ -201,6 +205,7 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     },
     /** Audio the worklet captured but has not delivered yet. */
     queued,
+    starts,
     hearWhileIdle: (samples: Float32Array) => { ring = samples; },
     tracks,
     emit: (samples: Float32Array) => deliver({ type: 'audio', samples }),
@@ -797,7 +802,7 @@ describe('warm audio stream', () => {
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
       const heard = idle();
       audio.hearWhileIdle(heard);
-      const rec = recorder({ preRoll: true });
+      const rec = recorder({ pressedAt: Date.now() });
       expect(await mod.startRecording(rec.options)).toBe(PRE_ROLL);
       const speech = new Float32Array(320).fill(0.2);
       audio.emit(speech);
@@ -818,10 +823,24 @@ describe('warm audio stream', () => {
       expect(audio.close).toHaveBeenCalledTimes(1);
     });
 
+    it("places the press at main's hotkey time on the audio clock, not when the command arrived", async () => {
+      const { audio, mod } = await parked();
+      const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+      try {
+        // The renderer acted 100 ms after the hotkey; the context clock reads 2 s.
+        await mod.startRecording(recorder({ pressedAt: 9_900 }).options);
+      } finally {
+        now.mockRestore();
+      }
+      expect(audio.starts.at(-1)?.pressFrame).toBe(30_400);
+      await mod.stopRecording();
+      mod.setWarmMicrophone(false);
+    });
+
     it('keeps a soft final word after release even when the pre-roll was loud', async () => {
       const { audio, mod } = await parked();
       audio.hearWhileIdle(new Float32Array(16_000).fill(0.9)); // media playing before the press
-      await mod.startRecording(recorder({ preRoll: true }).options);
+      await mod.startRecording(recorder({ pressedAt: Date.now() }).options);
       audio.emit(new Float32Array(320).fill(0.2));
       let done = false;
       const ending = mod.stopRecording(Date.now() + 600).then((boundary) => { done = true; return boundary; });
@@ -839,7 +858,7 @@ describe('warm audio stream', () => {
       const mod = await importFresh();
       const open = audio.holdMic();
       mod.setWarmMicrophone(true);
-      const starting = mod.startRecording(recorder({ preRoll: true }).options);
+      const starting = mod.startRecording(recorder({ pressedAt: Date.now() }).options);
       audio.hearWhileIdle(idle());
       open();
       expect(await starting).toBe(0);
@@ -855,7 +874,7 @@ describe('warm audio stream', () => {
         const silent = mod.holdPreRollForCue();
         // Still not sounded five seconds later: its output woke late.
         now.mockReturnValue(5_000);
-        expect(await mod.startRecording(recorder({ preRoll: true }).options)).toBe(0);
+        expect(await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).toBe(0);
         audio.emit(new Float32Array([0.2]));
         expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 1 });
 
@@ -863,7 +882,7 @@ describe('warm audio stream', () => {
         silent();
         now.mockReturnValue(5_400);
         audio.hearWhileIdle(idle());
-        expect(await mod.startRecording(recorder({ preRoll: true }).options)).toBe(800);
+        expect(await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).toBe(800);
       } finally {
         now.mockRestore();
       }

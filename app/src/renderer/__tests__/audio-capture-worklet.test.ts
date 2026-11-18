@@ -11,7 +11,8 @@ async function loadProcessor(preRollFrames = 0) {
   class ProcessorBase {
     port = {
       onmessage: null as ((event: { data: Command }) => void) | null,
-      postMessage: (message: Message) => { sent.push(message); },
+      // Transfers detach the sender's buffers, as a real MessagePort does.
+      postMessage: (message: Message, transfer: ArrayBuffer[] = []) => { sent.push(structuredClone(message, { transfer })); },
     };
   }
   type Processor = ProcessorBase & { process(inputs: Float32Array[][]): boolean };

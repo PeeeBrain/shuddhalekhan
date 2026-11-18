@@ -611,7 +611,7 @@ describe('RecordingSession', () => {
       const ending = phase === 'stopping' ? recording.end() : null;
       await recording.cancel();
       expect(send).toHaveBeenCalledWith('runtime:audio-cancel', {
-        generation: 1, recordingSessionId: 'cancelled-capture', sequence: 1, streaming: false, preRoll: true,
+        generation: 1, recordingSessionId: 'cancelled-capture', sequence: 1, streaming: false, pressedAt: expect.any(Number),
       });
       expect(shell.acceptsAudioEvent(1, 'cancelled-capture', 1)).toBe(false);
       expect(recording.isBusy()).toBe(false);
@@ -735,7 +735,7 @@ describe('RecordingSession', () => {
     expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.objectContaining({
       recordingSessionId: 'runtime-session',
       capabilities: { batch: true, streaming: false },
-    }), true);
+    }), expect.any(Number));
     expect(runtimeShell.show).toHaveBeenCalledWith(
       'dictation',
       'runtime-session',
@@ -1146,7 +1146,7 @@ describe('RecordingSession', () => {
     session.start();
     session.begin('dictation', 'live-session');
     // Live recognition cannot wait for the silence gate, so it takes no warm-mic pre-roll.
-    expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.anything(), false);
+    expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.anything(), null);
     publishSnapshot({ sequence: 0, committed: 'Hello ', tentative: 'Hello wor' });
     expect(runtimeShell.showStreamingPreview).toHaveBeenCalledWith(
       'live-session',
@@ -1464,12 +1464,17 @@ describe('RecordingSession', () => {
     expect(sent).toEqual(expected);
   });
 
+  const tone = (i: number) => Math.round(8_000 * Math.sin(i * 0.25));
+  const room = (i: number) => ((i * 7919) % 5) - 2;
   it.each([
-    // A TV word 0-150 ms, then quiet through the press at 450 ms: all but the last 30 ms of that pause goes.
-    ['drops pre-roll a pause separates from the press', (i: number) => i < 2_400 || i >= 9_600, 24_000 - 6_720],
+    // A TV word ending 15 ms before the press at 450 ms, speech from 650 ms: the whole pre-roll goes.
+    ['drops pre-roll a pause across the press separates from speech',
+      (i: number) => i < 6_960 || i >= 10_400 ? tone(i) : room(i), [16_800, 16_800, 16_800]],
     // Speech from 300 ms, running into the press: kept from 30 ms before it.
-    ['keeps pre-roll speech running into the press', (i: number) => i >= 4_800, 24_000 - 4_320],
-  ] as const)('%s', async (_case: string, speech: (i: number) => boolean, expected: number) => {
+    ['keeps pre-roll speech running into the press', (i: number) => i >= 4_800 ? tone(i) : room(i), [19_680, 19_680, 19_680]],
+    // The dropped TV word still shows the mic works, so the flat rest is not sent as a device problem.
+    ['discards a Dictation whose only sound is pre-roll it drops', (i: number) => i < 2_400 ? tone(i) : 0, []],
+  ] as const)('%s', async (_case: string, sample: (i: number) => number, expected: readonly number[]) => {
     const sent: number[] = [];
     session = createSession({
       transcriber: createTranscriber(async ({ audio }) => {
@@ -1479,7 +1484,7 @@ describe('RecordingSession', () => {
       }),
     });
     const markReady = captureReadyEmitter();
-    const pcm = new Int16Array(24_000).map((_, i) => speech(i) ? Math.round(8_000 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2);
+    const pcm = new Int16Array(24_000).map((_, i) => sample(i));
     const wav = new Uint8Array(44 + pcm.byteLength);
     wav.set(new Uint8Array(pcm.buffer), 44);
 
@@ -1488,7 +1493,7 @@ describe('RecordingSession', () => {
     const ending = session.end();
     await session.complete(wav);
     await ending;
-    expect(sent).toEqual([expected * 2, expected * 2, expected * 2]);
+    expect(sent).toEqual(expected.map(samples => samples * 2));
   });
 
   it('ends a Dictation stopped before the microphone delivered audio quietly, cancelling its stream', async () => {

@@ -88,17 +88,19 @@ function relativeThreshold(levels: number[]): number {
 /**
  * How many head samples of a recording to drop: the part of its first
  * `preRoll` samples that a pause (two quiet windows, so one is bridged as in
- * the gate) separates from the press, such as a TV line or a cough before the
- * user spoke. Speech running into the press keeps its start, with one quiet
- * window before it.
+ * the gate) separates from the speech after it, such as a TV line or a cough
+ * before the user spoke. The pause may run across the press; the cut never
+ * does. Speech running into the press keeps its start, with one quiet window
+ * before it.
  */
 export function detachedPreRoll(pcm: Int16Array, preRoll: number): number {
-  const windows = Math.floor(Math.min(preRoll, pcm.length) / WINDOW_SAMPLES);
-  if (windows < 2) return 0;
+  const head = Math.min(preRoll, pcm.length);
+  if (head < 2 * WINDOW_SAMPLES) return 0;
   const levels = windowLevels(pcm);
   const quiet = Math.min(LOUD_DBFS, relativeThreshold(levels));
-  for (let index = windows - 1; index > 0; index--) {
-    if (levels[index] < quiet && levels[index - 1] < quiet) return index * WINDOW_SAMPLES;
+  // The newest pair checked starts in the press's window.
+  for (let index = Math.min(Math.floor(head / WINDOW_SAMPLES) + 1, levels.length - 1); index > 0; index--) {
+    if (levels[index] < quiet && levels[index - 1] < quiet) return Math.min(index * WINDOW_SAMPLES, head);
   }
   return 0;
 }

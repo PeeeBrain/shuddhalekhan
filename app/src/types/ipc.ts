@@ -361,8 +361,11 @@ export interface RuntimeAudioCommand {
   recordingSessionId: string;
   sequence: number;
   streaming: boolean;
-  /** Head the recording with the warm mic's pre-roll. Dictation only: Agent Mode has no silence gate to keep pre-press audio from becoming a command. */
-  preRoll: boolean;
+  /**
+   * Main's Date.now() at the accepted hotkey: the recording heads with the warm mic's pre-roll heard
+   * before it. Null takes none: Agent Mode has no silence gate to keep pre-press audio from becoming a command.
+   */
+  pressedAt: number | null;
 }
 
 export type DictationRecoveryAction = 'retry-paste' | 'copy-full-transcript' | 'copy-partial-transcript';

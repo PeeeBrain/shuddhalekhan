@@ -159,6 +159,7 @@ export class RecordingSession {
   }
 
   begin(intent: RecordingIntent = 'dictation', recordingSessionId: string = randomUUID()): boolean {
+    const pressedAt = Date.now();
     if (this.activeRun !== null) {
       return false;
     }
@@ -198,7 +199,7 @@ export class RecordingSession {
     this.runtimeShell.prepare();
     // Pre-roll waits for the silence gate, so only a Dictation recognized after it ends takes it:
     // live streaming would recognize, and preview, pre-press audio before the gate could refuse it.
-    this.runtimeShell.beginCapture(presentation, intent === 'dictation' && !streaming);
+    this.runtimeShell.beginCapture(presentation, intent === 'dictation' && !streaming ? pressedAt : null);
     this.runtimeShell.show(
       intent,
       run.id,
@@ -319,24 +320,16 @@ export class RecordingSession {
     }
 
     const spooled = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, audioData.byteOffset + 44, (audioData.byteLength - 44) >> 1);
-    // Pre-roll that a pause separates from the press is not this utterance's start. A stalled
-    // cap timer can let capture run long; the provider's limit holds on the samples themselves.
-    // The gate judges only what the provider will hear.
+    // Pre-roll that a pause separates from the speech after it is not this utterance's start. A
+    // stalled cap timer can let capture run long; the provider's limit holds on the samples themselves.
     const lead = detachedPreRoll(spooled, run.preRollSamples);
     const maxSamples = (run.transcriber.capabilities.maxDurationSeconds ?? 0) * 16_000;
-    const pcm = spooled.subarray(lead, maxSamples ? lead + maxSamples : spooled.length);
-    let wav = audioData;
-    if (pcm.length !== spooled.length) {
-      // The header moves to just before the first kept sample; `finally` zeroes the dropped head with the rest.
-      audioData.copyWithin(lead * 2, 0, 44);
-      wav = audioData.subarray(lead * 2, lead * 2 + 44 + pcm.byteLength);
-      const header = new DataView(wav.buffer, wav.byteOffset);
-      header.setUint32(4, 36 + pcm.byteLength, true);
-      header.setUint32(40, pcm.byteLength, true);
-    }
-    const gateSkip = Math.max(0, run.gateSkipSamples - lead);
+    // The gate judges only what the provider will hear, but sees the whole pre-roll: a dropped
+    // head that held sound still shows the device works, so a flat remainder is discarded.
+    const judged = spooled.subarray(0, maxSamples ? lead + maxSamples : spooled.length);
+    const pcm = judged.subarray(lead);
     // Pre-roll alone never admits a Dictation: media or room noise before the press is not speech.
-    if (run.intent === 'dictation' && (pcm.length <= gateSkip || isNearSilent(pcm, gateSkip))) {
+    if (run.intent === 'dictation' && (judged.length <= run.gateSkipSamples || isNearSilent(judged, run.gateSkipSamples))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
       // Empty means stopped before the microphone delivered audio: a dead device still delivers zeros.
       console.info('Discarded near-silent Dictation without recognizing it', { samples: pcm.length });
@@ -348,6 +341,15 @@ export class RecordingSession {
       return null;
     }
 
+    let wav = audioData;
+    if (pcm.length !== spooled.length) {
+      // The header moves to just before the first kept sample; `finally` zeroes the dropped head with the rest.
+      audioData.copyWithin(lead * 2, 0, 44);
+      wav = audioData.subarray(lead * 2, lead * 2 + 44 + pcm.byteLength);
+      const header = new DataView(wav.buffer, wav.byteOffset);
+      header.setUint32(4, 36 + pcm.byteLength, true);
+      header.setUint32(40, pcm.byteLength, true);
+    }
     const transcriber = run.transcriber;
     try {
       const recognized = await this.recognizeWithinDeadline(run, transcriber, wav);
