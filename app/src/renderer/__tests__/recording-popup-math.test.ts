@@ -5,40 +5,44 @@ import {
   isWaveformSettled,
   layoutDots,
   smoothLevel,
-  spectrumField,
   sweepField,
   VOICE_COLUMNS,
+  voiceField,
   WORK_COLUMNS,
 } from '../recording-popup-math';
 
 const MID = (FIELD_ROWS - 1) / 2;
-const CENTRE = (VOICE_COLUMNS - 1) / 2;
 const rowsOf = (field: number[], columns: number) =>
   Array.from({ length: FIELD_ROWS }, (_, row) => field.slice(row * columns, (row + 1) * columns));
-const columnOf = (field: number[], column: number) => rowsOf(field, VOICE_COLUMNS).map((row) => row[column]);
-const bandsWith = (entries: Record<number, number>) => {
-  const bands = new Float32Array(BAND_COUNT);
-  for (const [band, level] of Object.entries(entries)) bands[Number(band)] = level;
-  return bands;
-};
+const offLine = (field: number[]) =>
+  rowsOf(field, VOICE_COLUMNS)
+    .filter((_, index) => index !== MID)
+    .flat()
+    .reduce((sum, lit) => sum + lit, 0);
+const voice = (lows: number, highs: number) =>
+  Float32Array.from({ length: BAND_COUNT }, (_, band) => (band < BAND_COUNT / 2 ? lows : highs));
 
-describe('spectrumField', () => {
-  it('folds into one still centre line at silence', () => {
-    rowsOf(spectrumField(new Float32Array(BAND_COUNT)), VOICE_COLUMNS).forEach((row, index) => {
-      if (index === MID) expect(Math.min(...row)).toBeGreaterThan(0);
-      else expect(Math.max(...row)).toBe(0);
-    });
+describe('voiceField', () => {
+  it('folds into one still centre line at silence, whatever the phase', () => {
+    for (const phase of [0, 1.3, 4]) {
+      rowsOf(voiceField(voice(0, 0), phase), VOICE_COLUMNS).forEach((row, index) => {
+        if (index === MID) expect(Math.min(...row)).toBeGreaterThan(0);
+        else expect(Math.max(...row)).toBe(0);
+      });
+    }
   });
 
-  it('raises only the columns of the bands that carry sound, mirrored lows-in-the-centre', () => {
-    const field = spectrumField(bandsWith({ 0: 1, 6: 0.5 }));
-    const lit = (column: number) => columnOf(field, column).reduce((sum, value) => sum + value, 0);
-    // The loudest band, the lows, fills the centre column top to bottom.
-    expect(Math.min(...columnOf(field, CENTRE))).toBe(1);
-    // Band 6 lights the same height on both sides; a silent band between stays on the line.
-    expect(columnOf(field, CENTRE - 6)).toEqual(columnOf(field, CENTRE + 6));
-    expect(lit(CENTRE + 6)).toBeGreaterThan(lit(CENTRE + 3));
-    expect(lit(CENTRE)).toBeGreaterThan(lit(CENTRE + 6));
+  it('lights dots away from the centre line as the voice gets louder', () => {
+    expect(offLine(voiceField(voice(0.6, 0.3), 1.3))).toBeGreaterThan(offLine(voiceField(voice(0.2, 0.1), 1.3)));
+    expect(offLine(voiceField(voice(0.2, 0.1), 1.3))).toBeGreaterThan(0);
+  });
+
+  it('draws a different braid for a vowel than for a sibilant at the same loudness', () => {
+    const vowel = voiceField(voice(0.4, 0), 1.3);
+    const sibilant = voiceField(voice(0, 0.4), 1.3);
+    expect(offLine(vowel)).toBeGreaterThan(0);
+    expect(offLine(sibilant)).toBeGreaterThan(0);
+    expect(vowel).not.toEqual(sibilant);
   });
 });
 

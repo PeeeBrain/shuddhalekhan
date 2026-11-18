@@ -12,10 +12,10 @@ import {
   MIN_FRAME_MS,
   SILENCE_LEVEL,
   smoothLevel,
-  spectrumField,
   SWEEP_MS,
   sweepField,
   VOICE_COLUMNS,
+  voiceField,
   WORK_COLUMNS,
 } from './recording-popup-math';
 import './RecordingPopup.css';
@@ -51,8 +51,8 @@ function drawField(canvas: HTMLCanvasElement, intensities: number[], columns: nu
   context.globalAlpha = 1;
 }
 
-const drawVoice = (canvas: HTMLCanvasElement, bands: Float32Array) =>
-  drawField(canvas, spectrumField(bands), VOICE_COLUMNS);
+const drawVoice = (canvas: HTMLCanvasElement, bands: Float32Array, phase: number) =>
+  drawField(canvas, voiceField(bands, phase), VOICE_COLUMNS);
 
 function PillGlyph({ intent }: { intent: RecordingIntent }) {
   const Glyph = intent === 'agent' ? Bot : Mic;
@@ -207,11 +207,12 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
   const [bands] = useState(() => new Float32Array(BAND_COUNT));
   const [incoming] = useState(() => new Float32Array(BAND_COUNT));
   const loudestRef = useRef(0);
+  const phaseRef = useRef(0);
   const wakeRef = useRef<(() => void) | null>(null);
   // Sizes and draws the canvas during commit, so its first paint is never the default 300×150.
   const attachCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     canvasRef.current = canvas;
-    if (canvas) drawVoice(canvas, bands);
+    if (canvas) drawVoice(canvas, bands, phaseRef.current);
   }, [bands]);
 
   useEffect(() => {
@@ -223,7 +224,7 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
   }, []);
 
   useScaleChange(useCallback(() => {
-    if (canvasRef.current) drawVoice(canvasRef.current, bands);
+    if (canvasRef.current) drawVoice(canvasRef.current, bands, phaseRef.current);
   }, [bands]));
 
   // Optional so the dev pill preview also runs in a plain browser without the preload.
@@ -251,7 +252,7 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
     const canvas = canvasRef.current;
     if (!canvas) return;
     // Repaint for the new tint on mode change; under reduced motion this static shape is the whole waveform.
-    drawVoice(canvas, bands);
+    drawVoice(canvas, bands, phaseRef.current);
     if (reducedMotion) return;
 
     let raf = 0;
@@ -268,18 +269,20 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
       const elapsed = last ? now - last : 0;
       last = now;
       // Room noise below the silence gate never reaches the field, so a quiet mic rests on the line.
-      // The bands give the voice's shape; its loudness gives the height.
+      // The bands give the voice's shape; its loudness scales them.
       const audible = target >= SILENCE_LEVEL && readBands(incoming);
       let loudest = 0;
       for (let band = 0; band < BAND_COUNT; band++) {
         bands[band] = smoothLevel(bands[band], audible ? incoming[band] * target : 0, elapsed);
         loudest = Math.max(loudest, bands[band]);
       }
+      // The braid turns faster as the voice gets louder.
+      phaseRef.current += ((2 + 6 * loudest) * elapsed) / 1000;
       // Park once silent, on the exact resting line; the next audible level wakes the loop again.
       const settled = isWaveformSettled(target, loudest);
       if (settled) bands.fill(0);
       loudestRef.current = settled ? 0 : loudest;
-      drawVoice(canvas, bands);
+      drawVoice(canvas, bands, phaseRef.current);
       if (!settled) raf = requestAnimationFrame(frame);
     };
     const wake = () => {

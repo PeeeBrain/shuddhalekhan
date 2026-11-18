@@ -1,14 +1,12 @@
-import { BAND_COUNT } from './audio-level';
-
 /**
  * The pill's dot field: a fixed grid of faint dots in the intent's tint.
- * While recording, each column is a frequency band of the live mic, mirrored
- * so the lows sit in the centre and the highs at the ends; at silence the
- * field folds into one still centre line. While processing, a narrower field
- * carries a soft beam across that line.
+ * While recording, two braided strands light the dots they pass through: one
+ * swells with the voice's lows, the other with its highs, and a brighter
+ * voice twists them tighter. At silence they fold into one still centre line.
+ * While processing, a narrower field carries a soft beam across that line.
  */
 export const FIELD_ROWS = 7;
-export const VOICE_COLUMNS = 2 * BAND_COUNT - 1;
+export const VOICE_COLUMNS = 15;
 export const WORK_COLUMNS = 7;
 /** Unlit dots stay visible at this alpha so the field keeps its shape at rest. */
 export const DOT_BASE_ALPHA = 0.16;
@@ -45,31 +43,50 @@ export function layoutDots(columns: number, rows: number, dpr: number) {
 
 /** 1 at the field's centre column, easing to 0 at its ends: the capsule taper. */
 function taper(column: number, columns: number): number {
-  const spread = (2 * column) / (columns - 1) - 1;
-  return Math.cos((spread * Math.PI) / 2);
+  return Math.cos((spread(column, columns) * Math.PI) / 2);
 }
 
+/** A column's position from -1 at the left edge to 1 at the right. */
+const spread = (column: number, columns: number) => (2 * column) / (columns - 1) - 1;
+
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+// Speech mostly arrives at 0.1–0.4; the root lifts it so ordinary talking fills the field.
+const lift = (level: number) => Math.min(1, Math.sqrt(Math.max(0, level)) * 1.3);
 
 /**
- * Row-major dot intensities (0–1) for band levels (0–1, low to high). A band
- * rises from the centre line in both directions, so its column grows taller
- * the stronger that band is.
+ * Row-major dot intensities (0–1) for band levels (0–1, low to high, already
+ * scaled by loudness) and a braid phase in radians. The lower half of the
+ * bands drives one strand and the upper half the other; the spectrum's centre
+ * of mass sets how tightly they twist.
  */
-export function spectrumField(bands: ArrayLike<number>): number[] {
+export function voiceField(bands: ArrayLike<number>, phase: number): number[] {
+  const columns = VOICE_COLUMNS;
   const mid = (FIELD_ROWS - 1) / 2;
-  const centre = (VOICE_COLUMNS - 1) / 2;
+  const half = bands.length / 2;
+  let lows = 0;
+  let highs = 0;
+  let moment = 0;
+  for (let band = 0; band < bands.length; band++) {
+    if (band < half) lows += bands[band];
+    else highs += bands[band];
+    moment += band * bands[band];
+  }
+  const total = lows + highs;
+  const pitch = total > 0 ? moment / total / (bands.length - 1) : 0;
+  const low = lift(lows / half);
+  const high = lift(highs / half);
+  const loud = Math.max(low, high);
+  const twist = 0.6 + 1.0 * pitch;
   const out: number[] = [];
   for (let row = 0; row < FIELD_ROWS; row++) {
-    const y = Math.abs(row - mid);
-    for (let column = 0; column < VOICE_COLUMNS; column++) {
-      const height = mid * clamp01(bands[Math.abs(column - centre)]);
-      if (y === 0) {
-        const rest = LINE_REST + (1 - LINE_REST) * taper(column, VOICE_COLUMNS);
-        out.push(rest + (1 - rest) * Math.min(1, height));
-      } else {
-        out.push(clamp01(height - y + 1));
-      }
+    const y = row - mid;
+    for (let column = 0; column < columns; column++) {
+      const env = taper(column, columns);
+      const u = spread(column, columns);
+      const a = low * mid * env * Math.sin(phase + 2.4 * twist * u);
+      const b = high * mid * env * Math.sin(phase * 0.77 - 3.1 * twist * u + 2);
+      const lit = Math.max(0, 1 - Math.abs(y - a), 1 - Math.abs(y - b));
+      out.push(lit * (LINE_REST + (1 - LINE_REST) * Math.max(env, loud)));
     }
   }
   return out;
