@@ -66,7 +66,12 @@ export function McpSettings({
     if (editingServerId) {
       onChange(servers.map((item) => (item.id === editingServerId ? server : item)));
     } else {
-      onChange([...servers, server]);
+      const usedIds = new Set(servers.map((item) => item.id));
+      let id = server.id;
+      for (let suffix = 1; usedIds.has(id); suffix++) {
+        id = `${server.id}-${suffix.toString(36)}`;
+      }
+      onChange([...servers, { ...server, id }]);
     }
     closeForm();
   };

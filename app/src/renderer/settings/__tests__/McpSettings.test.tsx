@@ -93,6 +93,26 @@ it('adds an unnamed HTTP server with redirects denied and preserves the existing
   expect(saved?.[1]?.id).not.toBe(existing.id);
 });
 
+it('gives a new server an unused ID when the clock repeats', () => {
+  const time = 1_800_000_000_000;
+  const id = `mcp-${time.toString(36)}`;
+  const existing = [makeServer(httpTransport, [], id), makeServer(httpTransport, [], `${id}-1`)];
+  const onChange = renderSettings(existing);
+  const clock = spyOn(Date, 'now').mockReturnValue(time);
+  try {
+    fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+  } finally {
+    clock.mockRestore();
+  }
+  fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'bun' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Server' }));
+
+  expect(onChange).toHaveBeenCalledTimes(1);
+  const saved: McpServerConfig[] | undefined = onChange.mock.calls[0]?.[0];
+  expect(saved?.slice(0, 2)).toEqual(existing);
+  expect(new Set(saved?.map(server => server.id)).size).toBe(3);
+});
+
 it.each([
   ['   ', 'MCP Server'],
   ['  Lookup  ', 'Lookup'],
