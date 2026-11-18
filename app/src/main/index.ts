@@ -701,14 +701,8 @@ handle('transcription:check-readiness', () => checkTranscriptionReadiness(
 ));
 
 handle('computer-use:get-status', computerUse.status);
-handle('computer-use:install', async () => {
-  const status = await computerUse.install();
-  const config = getConfig();
-  if (status.state === 'installed' && config.agent.enabled && config.agent.computerUse?.enabled) {
-    agentSidecar.start(config, getAgentSidecarApiKey(config, credentialVault));
-  }
-  return status;
-});
+// Each Agent command resolves the helper again, so an install needs no sidecar restart.
+handle('computer-use:install', computerUse.install);
 handle('computer-use:cancel-install', computerUse.cancelInstall);
 handle('computer-use:uninstall', () => computerUse.uninstall(async () => {
   disableComputerUse();
