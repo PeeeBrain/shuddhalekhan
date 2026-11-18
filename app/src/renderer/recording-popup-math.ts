@@ -1,11 +1,14 @@
+import { BAND_COUNT } from './audio-level';
+
 /**
  * The pill's dot field: a fixed grid of faint dots in the intent's tint.
- * While recording, two braided strands light the dots they pass through and
- * swell with the voice; at silence they fold into one still centre line.
- * While processing, a narrower field carries a soft beam across that line.
+ * While recording, each column is a frequency band of the live mic, mirrored
+ * so the lows sit in the centre and the highs at the ends; at silence the
+ * field folds into one still centre line. While processing, a narrower field
+ * carries a soft beam across that line.
  */
 export const FIELD_ROWS = 7;
-export const VOICE_COLUMNS = 15;
+export const VOICE_COLUMNS = 2 * BAND_COUNT - 1;
 export const WORK_COLUMNS = 7;
 /** Unlit dots stay visible at this alpha so the field keeps its shape at rest. */
 export const DOT_BASE_ALPHA = 0.16;
@@ -42,30 +45,31 @@ export function layoutDots(columns: number, rows: number, dpr: number) {
 
 /** 1 at the field's centre column, easing to 0 at its ends: the capsule taper. */
 function taper(column: number, columns: number): number {
-  return Math.cos((spread(column, columns) * Math.PI) / 2);
+  const spread = (2 * column) / (columns - 1) - 1;
+  return Math.cos((spread * Math.PI) / 2);
 }
 
-/** A column's position from -1 at the left edge to 1 at the right. */
-const spread = (column: number, columns: number) => (2 * column) / (columns - 1) - 1;
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
-/** Row-major dot intensities (0–1) for a voice level (0–1) and braid phase (radians). */
-export function voiceField(level: number, phase: number): number[] {
-  const columns = VOICE_COLUMNS;
-  const rows = FIELD_ROWS;
-  const mid = (rows - 1) / 2;
-  // Speech mostly arrives at 0.1–0.4; the root lifts it so ordinary talking fills the field.
-  const loud = Math.min(1, Math.sqrt(Math.max(0, level)) * 1.3);
+/**
+ * Row-major dot intensities (0–1) for band levels (0–1, low to high). A band
+ * rises from the centre line in both directions, so its column grows taller
+ * the stronger that band is.
+ */
+export function spectrumField(bands: ArrayLike<number>): number[] {
+  const mid = (FIELD_ROWS - 1) / 2;
+  const centre = (VOICE_COLUMNS - 1) / 2;
   const out: number[] = [];
-  for (let row = 0; row < rows; row++) {
-    const y = row - mid;
-    for (let column = 0; column < columns; column++) {
-      const env = taper(column, columns);
-      const u = spread(column, columns);
-      const amplitude = loud * mid * env;
-      const a = amplitude * Math.sin(phase + 2.4 * u);
-      const b = amplitude * Math.sin(phase * 0.77 - 3.1 * u + 2);
-      const lit = Math.max(0, 1 - Math.abs(y - a), 1 - Math.abs(y - b));
-      out.push(lit * (LINE_REST + (1 - LINE_REST) * Math.max(env, loud)));
+  for (let row = 0; row < FIELD_ROWS; row++) {
+    const y = Math.abs(row - mid);
+    for (let column = 0; column < VOICE_COLUMNS; column++) {
+      const height = mid * clamp01(bands[Math.abs(column - centre)]);
+      if (y === 0) {
+        const rest = LINE_REST + (1 - LINE_REST) * taper(column, VOICE_COLUMNS);
+        out.push(rest + (1 - rest) * Math.min(1, height));
+      } else {
+        out.push(clamp01(height - y + 1));
+      }
     }
   }
   return out;
@@ -132,28 +136,21 @@ export function computeField(timeMs: number): number[] {
 }
 
 /**
- * Advances the voice by elapsed time, not per frame, so a 240 Hz display moves
- * at the same speed as a 60 Hz one. The level rises fast and decays slowly, and
- * the braid turns faster as the voice gets louder.
+ * Moves a band toward its target by elapsed time, not per frame, so a 240 Hz
+ * display moves at the same speed as a 60 Hz one. It rises fast and decays slowly.
  */
-export function stepVoice(level: number, phase: number, target: number, elapsedMs: number) {
+export function smoothLevel(level: number, target: number, elapsedMs: number): number {
   const dt = Math.min(Math.max(elapsedMs, 0), 4 * FRAME_MS);
   const tau = target > level ? ATTACK_MS : RELEASE_MS;
-  const approach = (target - level) * (1 - Math.exp(-dt / tau));
-  // The level's exact integral over the step, so the braid's turn doesn't depend on frame rate.
-  const levelMs = target * dt - approach * tau;
-  return {
-    level: level + approach,
-    phase: phase + (2 * dt + 6 * levelMs) / 1000,
-  };
+  return level + (target - level) * (1 - Math.exp(-dt / tau));
 }
 
 /** Below this level the mic counts as silent and the field stops repainting. */
 export const SILENCE_LEVEL = 0.03;
 
-/** True once both the incoming and smoothed levels are silent, so the rAF loop can park. */
-export function isWaveformSettled(target: number, level: number): boolean {
-  return target < SILENCE_LEVEL && level < SILENCE_LEVEL;
+/** True once the incoming level and the loudest smoothed band are silent, so the rAF loop can park. */
+export function isWaveformSettled(target: number, loudestBand: number): boolean {
+  return target < SILENCE_LEVEL && loudestBand < SILENCE_LEVEL;
 }
 
 /** A synthetic voice for the pill preview: phrases of syllables with breaths between, 0–1. */
@@ -163,4 +160,14 @@ export function demoLevel(timeMs: number): number {
   const phrase = Math.sin((Math.PI * within) / 1.7);
   const syllable = 0.5 + 0.5 * Math.sin(2 * Math.PI * 4.5 * within);
   return 0.05 + 0.6 * phrase * syllable;
+}
+
+/** The preview's spectral shape: two drifting formant-like bumps; `demoLevel` sets their height. */
+export function demoBands(timeMs: number, out: Float32Array): void {
+  const seconds = timeMs / 1000;
+  const low = 1.2 + 0.9 * Math.sin(2 * Math.PI * 0.9 * seconds);
+  const high = 4.2 + 1.6 * Math.sin(2 * Math.PI * 1.7 * seconds + 1);
+  for (let band = 0; band < out.length; band++) {
+    out[band] = clamp01(Math.exp(-((band - low) ** 2) / 1.5) + 0.7 * Math.exp(-((band - high) ** 2) / 2));
+  }
 }

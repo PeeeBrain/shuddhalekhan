@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { publishAudioLevel } from './audio-level';
-import { demoLevel } from './recording-popup-math';
+import { publishAudioLevel, setBandReader } from './audio-level';
+import { demoBands, demoLevel } from './recording-popup-math';
 import { ProcessingPill, RecordingPopup, ThinkingField } from './RecordingPopup';
 
 /**
@@ -15,8 +15,13 @@ export function PillPreview() {
     const start = performance.now();
     // About the rate the capture window publishes real levels.
     const id = setInterval(() => publishAudioLevel(demoLevel(performance.now() - start)), 66);
+    setBandReader((out) => {
+      demoBands(performance.now() - start, out);
+      return true;
+    });
     return () => {
       clearInterval(id);
+      setBandReader(null);
       publishAudioLevel(0);
     };
   }, []);

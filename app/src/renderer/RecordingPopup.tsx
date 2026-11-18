@@ -1,4 +1,4 @@
-import { subscribeAudioLevel } from './audio-level';
+import { BAND_COUNT, readBands, subscribeAudioLevel } from './audio-level';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Mic, Bot } from 'lucide-react';
 import type { RecordingIntent } from '../types/ipc';
@@ -10,11 +10,12 @@ import {
   isWaveformSettled,
   layoutDots,
   MIN_FRAME_MS,
-  stepVoice,
+  SILENCE_LEVEL,
+  smoothLevel,
+  spectrumField,
   SWEEP_MS,
   sweepField,
   VOICE_COLUMNS,
-  voiceField,
   WORK_COLUMNS,
 } from './recording-popup-math';
 import './RecordingPopup.css';
@@ -50,8 +51,8 @@ function drawField(canvas: HTMLCanvasElement, intensities: number[], columns: nu
   context.globalAlpha = 1;
 }
 
-const drawVoice = (canvas: HTMLCanvasElement, level: number, phase: number) =>
-  drawField(canvas, voiceField(level, phase), VOICE_COLUMNS);
+const drawVoice = (canvas: HTMLCanvasElement, bands: Float32Array) =>
+  drawField(canvas, spectrumField(bands), VOICE_COLUMNS);
 
 function PillGlyph({ intent }: { intent: RecordingIntent }) {
   const Glyph = intent === 'agent' ? Bot : Mic;
@@ -202,26 +203,28 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
   // The waveform is painted straight to a canvas from refs: a level change must
   // not re-render React, and a silent mic must not repaint at all.
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const levelRef = useRef(0);
-  const phaseRef = useRef(0);
+  // Smoothed band levels, and the latest raw read they move toward each frame.
+  const [bands] = useState(() => new Float32Array(BAND_COUNT));
+  const [incoming] = useState(() => new Float32Array(BAND_COUNT));
+  const loudestRef = useRef(0);
   const wakeRef = useRef<(() => void) | null>(null);
   // Sizes and draws the canvas during commit, so its first paint is never the default 300×150.
   const attachCanvas = useCallback((canvas: HTMLCanvasElement | null) => {
     canvasRef.current = canvas;
-    if (canvas) drawVoice(canvas, levelRef.current, phaseRef.current);
-  }, []);
+    if (canvas) drawVoice(canvas, bands);
+  }, [bands]);
 
   useEffect(() => {
     const unsubscribe = subscribeAudioLevel( (nextLevel) => {
       targetLevelRef.current = nextLevel;
-      if (!isWaveformSettled(nextLevel, levelRef.current)) wakeRef.current?.();
+      if (!isWaveformSettled(nextLevel, loudestRef.current)) wakeRef.current?.();
     });
     return unsubscribe;
   }, []);
 
   useScaleChange(useCallback(() => {
-    if (canvasRef.current) drawVoice(canvasRef.current, levelRef.current, phaseRef.current);
-  }, []));
+    if (canvasRef.current) drawVoice(canvasRef.current, bands);
+  }, [bands]));
 
   // Optional so the dev pill preview also runs in a plain browser without the preload.
   useEffect(() => window.electronAPI?.subscribe('recording:pill-show', () => {
@@ -248,7 +251,7 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
     const canvas = canvasRef.current;
     if (!canvas) return;
     // Repaint for the new tint on mode change; under reduced motion this static shape is the whole waveform.
-    drawVoice(canvas, levelRef.current, phaseRef.current);
+    drawVoice(canvas, bands);
     if (reducedMotion) return;
 
     let raf = 0;
@@ -262,13 +265,21 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
         return;
       }
       const target = targetLevelRef.current;
-      const next = stepVoice(levelRef.current, phaseRef.current, target, last ? now - last : 0);
+      const elapsed = last ? now - last : 0;
       last = now;
+      // Room noise below the silence gate never reaches the field, so a quiet mic rests on the line.
+      // The bands give the voice's shape; its loudness gives the height.
+      const audible = target >= SILENCE_LEVEL && readBands(incoming);
+      let loudest = 0;
+      for (let band = 0; band < BAND_COUNT; band++) {
+        bands[band] = smoothLevel(bands[band], audible ? incoming[band] * target : 0, elapsed);
+        loudest = Math.max(loudest, bands[band]);
+      }
       // Park once silent, on the exact resting line; the next audible level wakes the loop again.
-      const settled = isWaveformSettled(target, next.level);
-      levelRef.current = settled ? 0 : next.level;
-      phaseRef.current = next.phase;
-      drawVoice(canvas, levelRef.current, next.phase);
+      const settled = isWaveformSettled(target, loudest);
+      if (settled) bands.fill(0);
+      loudestRef.current = settled ? 0 : loudest;
+      drawVoice(canvas, bands);
       if (!settled) raf = requestAnimationFrame(frame);
     };
     const wake = () => {
@@ -285,7 +296,7 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener('visibilitychange', wake);
     };
-  }, [reducedMotion, pillState, mode, ready]);
+  }, [reducedMotion, pillState, mode, ready, bands, incoming]);
 
   // No ticking while preparing: the clock starts at audio-ready, never at pill show.
   useEffect(() => {

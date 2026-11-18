@@ -1,37 +1,59 @@
 import { describe, expect, it } from 'bun:test';
+import { BAND_COUNT, bandsFromSpectrum } from '../audio-level';
 import {
   FIELD_ROWS,
   isWaveformSettled,
   layoutDots,
-  stepVoice,
+  smoothLevel,
+  spectrumField,
   sweepField,
   VOICE_COLUMNS,
-  voiceField,
   WORK_COLUMNS,
 } from '../recording-popup-math';
 
 const MID = (FIELD_ROWS - 1) / 2;
+const CENTRE = (VOICE_COLUMNS - 1) / 2;
 const rowsOf = (field: number[], columns: number) =>
   Array.from({ length: FIELD_ROWS }, (_, row) => field.slice(row * columns, (row + 1) * columns));
+const columnOf = (field: number[], column: number) => rowsOf(field, VOICE_COLUMNS).map((row) => row[column]);
+const bandsWith = (entries: Record<number, number>) => {
+  const bands = new Float32Array(BAND_COUNT);
+  for (const [band, level] of Object.entries(entries)) bands[Number(band)] = level;
+  return bands;
+};
 
-describe('voiceField', () => {
-  it('folds into one still centre line at silence, whatever the phase', () => {
-    for (const phase of [0, 1.3, 4]) {
-      rowsOf(voiceField(0, phase), VOICE_COLUMNS).forEach((row, index) => {
-        if (index === MID) expect(Math.min(...row)).toBeGreaterThan(0);
-        else expect(Math.max(...row)).toBe(0);
-      });
-    }
+describe('spectrumField', () => {
+  it('folds into one still centre line at silence', () => {
+    rowsOf(spectrumField(new Float32Array(BAND_COUNT)), VOICE_COLUMNS).forEach((row, index) => {
+      if (index === MID) expect(Math.min(...row)).toBeGreaterThan(0);
+      else expect(Math.max(...row)).toBe(0);
+    });
   });
 
-  it('lights dots away from the centre line as the voice gets louder', () => {
-    const offLine = (level: number) =>
-      rowsOf(voiceField(level, 1.3), VOICE_COLUMNS)
-        .filter((_, index) => index !== MID)
-        .flat()
-        .reduce((sum, lit) => sum + lit, 0);
-    expect(offLine(0.6)).toBeGreaterThan(offLine(0.2));
-    expect(offLine(0.2)).toBeGreaterThan(0);
+  it('raises only the columns of the bands that carry sound, mirrored lows-in-the-centre', () => {
+    const field = spectrumField(bandsWith({ 0: 1, 6: 0.5 }));
+    const lit = (column: number) => columnOf(field, column).reduce((sum, value) => sum + value, 0);
+    // The loudest band, the lows, fills the centre column top to bottom.
+    expect(Math.min(...columnOf(field, CENTRE))).toBe(1);
+    // Band 6 lights the same height on both sides; a silent band between stays on the line.
+    expect(columnOf(field, CENTRE - 6)).toEqual(columnOf(field, CENTRE + 6));
+    expect(lit(CENTRE + 6)).toBeGreaterThan(lit(CENTRE + 3));
+    expect(lit(CENTRE)).toBeGreaterThan(lit(CENTRE + 6));
+  });
+});
+
+describe('bandsFromSpectrum', () => {
+  it('puts a voiced tone in its own band and leaves silent bands at rest', () => {
+    const binHz = 16_000 / 512;
+    const db = new Float32Array(256).fill(-120);
+    db[Math.round(300 / binHz)] = -30;
+    const bands = new Float32Array(BAND_COUNT);
+    bandsFromSpectrum(db, binHz, bands);
+    const loudest = bands.indexOf(Math.max(...bands));
+    expect(bands[loudest]).toBeGreaterThan(0.8);
+    expect([...bands].filter((_, band) => band !== loudest)).toEqual(new Array(BAND_COUNT - 1).fill(0));
+    // 300 Hz is low voice: it lands in the lower half, near the field's centre.
+    expect(loudest).toBeLessThan(BAND_COUNT / 2);
   });
 });
 
@@ -59,21 +81,17 @@ describe('layoutDots', () => {
   });
 });
 
-describe('stepVoice', () => {
+describe('smoothLevel', () => {
   it('animates at the same speed on a 240 Hz display as on 60 Hz', () => {
-    let at60 = { level: 0, phase: 0 };
-    for (let i = 0; i < 6; i++) at60 = stepVoice(at60.level, at60.phase, 1, 1000 / 60);
-    let at240 = { level: 0, phase: 0 };
-    for (let i = 0; i < 24; i++) at240 = stepVoice(at240.level, at240.phase, 1, 1000 / 240);
-
-    expect(at240.level).toBeCloseTo(at60.level, 10);
-    expect(at240.phase).toBeCloseTo(at60.phase, 10);
+    let at60 = 0;
+    for (let i = 0; i < 6; i++) at60 = smoothLevel(at60, 1, 1000 / 60);
+    let at240 = 0;
+    for (let i = 0; i < 24; i++) at240 = smoothLevel(at240, 1, 1000 / 240);
+    expect(at240).toBeCloseTo(at60, 10);
   });
 
   it('rises to a syllable faster than it decays after one', () => {
-    const rise = stepVoice(0, 0, 1, 50).level;
-    const fall = 1 - stepVoice(1, 0, 0, 50).level;
-    expect(rise).toBeGreaterThan(fall);
+    expect(smoothLevel(0, 1, 50)).toBeGreaterThan(1 - smoothLevel(1, 0, 50));
   });
 });
 

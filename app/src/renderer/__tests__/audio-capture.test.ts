@@ -127,6 +127,7 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
         resume,
         audioWorklet: { addModule: vi.fn(() => moduleGate) },
         createMediaStreamSource: vi.fn(() => ({ connect: vi.fn(), disconnect })),
+        createAnalyser: vi.fn(() => ({})),
         close,
       };
     }),
