@@ -1435,7 +1435,10 @@ describe('RecordingSession', () => {
     expect(transcribe).toHaveBeenCalledTimes(recognized ? 1 : 0);
   });
 
-  it('never sends a provider more samples than its duration cap, however late capture stopped', async () => {
+  it.each([
+    ['sends a provider no more samples than its duration cap', 0, [32_000, 32_000, 32_000]],
+    ['judges silence only on samples within the cap', 16_000, []],
+  ] as const)('%s, however late capture stopped', async (_case: string, speechFrom: number, expected: readonly number[]) => {
     const sent: number[] = [];
     session = createSession({
       transcriber: {
@@ -1448,8 +1451,8 @@ describe('RecordingSession', () => {
       },
     });
     const markReady = captureReadyEmitter();
-    // 1.5 s of speech-level tone: a stalled cap timer let capture run 0.5 s past a 1 s limit.
-    const pcm = new Int16Array(24_000).map((_, i) => Math.round(8_000 * Math.sin(i * 0.25)));
+    // 1.5 s, where a stalled cap timer let capture run 0.5 s past a 1 s limit; faint room noise before the speech.
+    const pcm = new Int16Array(24_000).map((_, i) => i >= speechFrom ? Math.round(8_000 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2);
     const wav = new Uint8Array(44 + pcm.byteLength);
     wav.set(new Uint8Array(pcm.buffer), 44);
 
@@ -1458,7 +1461,7 @@ describe('RecordingSession', () => {
     const ending = session.end();
     await session.complete(wav);
     await ending;
-    expect(sent).toEqual([32_000, 32_000, 32_000]);
+    expect(sent).toEqual(expected);
   });
 
   it('ends a Dictation stopped before the microphone delivered audio quietly, cancelling its stream', async () => {

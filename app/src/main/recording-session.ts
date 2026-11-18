@@ -315,7 +315,18 @@ export class RecordingSession {
       return null;
     }
 
-    const pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
+    let pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
+    // A stalled cap timer can let capture run long; the provider's limit holds on the samples
+    // themselves, and the gate judges only what the provider will hear.
+    const maxSamples = (run.transcriber.capabilities.maxDurationSeconds ?? 0) * 16_000;
+    let wav = audioData;
+    if (maxSamples && pcm.length > maxSamples) {
+      pcm = pcm.subarray(0, maxSamples);
+      wav = audioData.subarray(0, 44 + maxSamples * 2);
+      const header = new DataView(audioData.buffer, audioData.byteOffset);
+      header.setUint32(4, 36 + maxSamples * 2, true);
+      header.setUint32(40, maxSamples * 2, true);
+    }
     // Pre-roll alone never admits a Dictation: media or room noise before the press is not speech.
     if (run.intent === 'dictation' && (pcm.length <= run.gateSkipSamples || isNearSilent(pcm, run.gateSkipSamples))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
@@ -330,15 +341,6 @@ export class RecordingSession {
     }
 
     const transcriber = run.transcriber;
-    // A stalled cap timer can let capture run long; the provider's limit holds on the samples themselves.
-    const maxSamples = (transcriber.capabilities.maxDurationSeconds ?? 0) * 16_000;
-    let wav = audioData;
-    if (maxSamples && pcm.length > maxSamples) {
-      wav = audioData.subarray(0, 44 + maxSamples * 2);
-      const header = new DataView(audioData.buffer);
-      header.setUint32(4, 36 + maxSamples * 2, true);
-      header.setUint32(40, maxSamples * 2, true);
-    }
     try {
       const recognized = await this.recognizeWithinDeadline(run, transcriber, wav);
       if (recognized === null || this.activeRun !== run) return null;
