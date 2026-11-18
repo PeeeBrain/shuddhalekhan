@@ -411,7 +411,8 @@ function handleWorkletMessage(capture: Capture, message: WorkletMessage): void {
   const level = samples.length > 0 ? sum / samples.length : 0;
   if (capture.onTailBatch) {
     capture.onTailBatch(level > Math.max(SPEECH_FLOOR, capture.peakLevel * SPEECH_RELATIVE));
-  } else {
+  } else if (message.type === 'audio') {
+    // Pre-roll may hold a cue or media from before the press; it never sets the speech reference.
     capture.peakLevel = Math.max(capture.peakLevel, level);
   }
   if (capture === active) latestAudioLevel = Math.min(level * 10, 1);
@@ -580,17 +581,42 @@ export function setWarmMicrophone(enabled: boolean): void {
   else if (warm) closeMic(warm);
 }
 
-/**
- * The selected or default device changed: close the parked mic and reopen it
- * on the current device; a recording in progress finishes on its mic.
- */
+/** A recording in progress finishes on its mic and closes after; a parked mic closes now. */
+function retireMic(mic: Mic): void {
+  if (mic.owner) mic.stale = true;
+  else closeMic(mic);
+}
+
+/** The selected device changed: retire every mic and reopen the warm mic on the new device. */
 function retireMics(): void {
-  for (const capture of live) capture.mic.stale = true;
-  if (warm) closeMic(warm);
+  for (const capture of live) retireMic(capture.mic);
+  if (warm) retireMic(warm);
   ensureWarm();
 }
 
-navigator.mediaDevices?.addEventListener?.('devicechange', retireMics);
+/**
+ * The device list changed: retire only mics no longer on the device the next
+ * recording would open. A headset switching profiles, or another device
+ * plugged in, keeps the mic, so reopening it cannot loop.
+ */
+async function deviceListChanged(): Promise<void> {
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  const inputs = devices.filter((device) => device.kind === 'audioinput');
+  const chosen = getDeviceId();
+  const target = inputs.find((device) => device.deviceId === chosen)
+    ?? inputs.find((device) => device.deviceId === 'default');
+  const mics = [...live].map((capture) => capture.mic);
+  if (warm) mics.push(warm);
+  for (const mic of mics) {
+    const stream = await mic.stream.catch(() => null);
+    const groupId = stream?.getAudioTracks()[0]?.getSettings().groupId;
+    if (target && groupId === target.groupId) continue;
+    retireMic(mic);
+  }
+  ensureWarm();
+}
+
+navigator.mediaDevices?.addEventListener?.('devicechange', () => void deviceListChanged());
 
 /** Resolves when `onStopped` fires (see Capture), rejects after the deadline. */
 function waitForCapture(capture: Capture, timeoutMs: number, message: string, begin: () => void): Promise<void> {

@@ -96,8 +96,12 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
   const queued: Float32Array[] = [];
   /** What the worklet heard while idle; `start` hands out its newest frames. */
   let ring: Float32Array = new Float32Array(0);
+  /** The physical device behind the system default; new tracks open on it. */
+  let defaultGroup = 'mic-a';
   class MicrophoneTrack extends EventTarget {
     readyState = 'live';
+    readonly groupId = defaultGroup;
+    getSettings() { return { groupId: this.groupId }; }
     stop() { this.readyState = 'ended'; stopTrack(); }
     disconnect() { this.readyState = 'ended'; this.dispatchEvent(new Event('ended')); }
   }
@@ -117,7 +121,10 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     writable: true,
-    value: Object.assign(new EventTarget(), { getUserMedia, enumerateDevices: vi.fn(async () => []) }),
+    value: Object.assign(new EventTarget(), {
+      getUserMedia,
+      enumerateDevices: vi.fn(async () => [{ kind: 'audioinput', deviceId: 'default', groupId: defaultGroup }]),
+    }),
   });
   Object.defineProperty(globalThis, 'AudioContext', {
     configurable: true,
@@ -187,6 +194,11 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     getUserMedia,
     nodes,
     disconnectMic: () => tracks.at(-1)?.disconnect(),
+    /** The OS device list changed, with the system default now on `group`. */
+    changeDevices: (group: string) => {
+      defaultGroup = group;
+      navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+    },
     /** Audio the worklet captured but has not delivered yet. */
     queued,
     hearWhileIdle: (samples: Float32Array) => { ring = samples; },
@@ -803,6 +815,21 @@ describe('warm audio stream', () => {
       expect(audio.close).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps a soft final word after release even when the pre-roll was loud', async () => {
+      const { audio, mod } = await parked();
+      audio.hearWhileIdle(new Float32Array(16_000).fill(0.9)); // media playing before the press
+      await mod.startRecording(recorder().options);
+      audio.emit(new Float32Array(320).fill(0.2));
+      let done = false;
+      const ending = mod.stopRecording(Date.now() + 600).then((boundary) => { done = true; return boundary; });
+      audio.emit(new Float32Array(250 * 16).fill(0.03)); // 250 ms of a softer syllable
+      await settle();
+      expect(done).toBe(false);
+      audio.emit(new Float32Array(160 * 16).fill(0.001));
+      expect(await ending).toEqual({ chunkCount: 4, sampleCount: PRE_ROLL + 320 + 410 * 16 });
+      mod.setWarmMicrophone(false);
+    });
+
     it('keeps a recording cue out of the pre-roll until it has sounded, however late', async () => {
       const now = vi.spyOn(performance, 'now').mockReturnValue(0);
       try {
@@ -849,12 +876,23 @@ describe('warm audio stream', () => {
       expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
     });
 
-    it('reopens on the current device when the system device changes', async () => {
+    it('reopens on the new device when the system default changes', async () => {
       const { audio, mod } = await parked();
-      navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+      audio.changeDevices('mic-b');
       await settle();
       expect(audio.stopTrack).toHaveBeenCalledTimes(1);
       expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
+      expect(audio.tracks.at(-1)?.groupId).toBe('mic-b');
+      mod.setWarmMicrophone(false);
+    });
+
+    it('keeps the parked mic when the device list changes but its device does not', async () => {
+      // A Bluetooth headset switching profiles, or another device plugged in.
+      const { audio, mod } = await parked();
+      audio.changeDevices('mic-a');
+      await settle();
+      expect(audio.stopTrack).not.toHaveBeenCalled();
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
       mod.setWarmMicrophone(false);
     });
 
