@@ -734,7 +734,8 @@ export async function recreateStream(deviceId: string | null): Promise<void> {
   setSelectedDeviceId(deviceId);
   retireMics();
   isStreamPrepared = false;
-  await prepareStream();
+  // Not mid-recording: probing the new mic then could switch a Bluetooth headset's profile under the take.
+  if (live.size === 0) await prepareStream();
 }
 
 export function acknowledgeRealtimeChunk(recordingSessionId: string, sequence: number): void {

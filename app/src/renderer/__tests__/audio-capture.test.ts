@@ -651,12 +651,13 @@ describe('recording lifecycle', () => {
     audio.emit(new Float32Array([0.25, 0.25]));
 
     await mod.recreateStream('mic-2');
-    // Only the short-lived permission probe for mic-2 is stopped.
-    expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+    // mic-2 is not even probed until the take ends.
+    expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
     expect(audio.close).not.toHaveBeenCalled();
     audio.emit(new Float32Array([0.5]));
 
     expect(await mod.stopRecording()).toEqual({ chunkCount: 2, sampleCount: 3 });
+    await mod.startRecording(recorder().options);
     expect(audio.getUserMedia).toHaveBeenLastCalledWith({
       audio: expect.objectContaining({ advanced: [{ deviceId: { exact: 'mic-2' } }] }) as MediaTrackConstraints,
     });
@@ -954,6 +955,8 @@ describe('warm audio stream', () => {
       const { audio, mod } = await parked();
       await mod.startRecording(recorder().options);
       await mod.recreateStream('mic-2');
+      // Nothing opens the new mic while the take is still recording.
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
       expect(audio.tracks[0]?.readyState).toBe('live');
       await mod.stopRecording();
       await settle();
