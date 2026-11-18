@@ -122,7 +122,11 @@ export class ManagedStdioMcpTransport {
       return;
     }
 
-    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    let exitedCleanly = false;
+    const exited = new Promise<void>((resolve) => child.once('exit', (code, signal) => {
+      exitedCleanly = code === 0 && signal === null;
+      resolve();
+    }));
 
     // MCP lifecycle order: end stdin so the server can shut down cleanly,
     // then enforce termination after a bounded wait.
@@ -156,6 +160,9 @@ export class ManagedStdioMcpTransport {
       if (this.pendingToolCalls && (!stopped || this.pendingToolCalls.size > 0)) {
         throw new Error('The Computer Use process did not stop.');
       }
+    } else if (this.pendingToolCalls?.size && !exitedCleanly) {
+      // agent-desktop exits 0 once it has reaped a cancelled command; a crash may not have.
+      throw new Error('The Computer Use process did not stop.');
     }
 
     this.fireOnCloseOnce();

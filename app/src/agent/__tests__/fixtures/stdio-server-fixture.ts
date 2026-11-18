@@ -3,6 +3,7 @@ import { createInterface } from 'readline';
 const ignoreEof = process.argv.includes('--ignore-stdin-eof');
 const mcp = process.argv.includes('--mcp');
 const hangToolCalls = process.argv.includes('--hang-tool-calls');
+if (process.argv.includes('--crash-on-stdin-eof')) process.stdin.once('end', () => process.exit(1));
 
 if (!mcp) process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, result: { ready: true, pid: process.pid } })}\n`);
 

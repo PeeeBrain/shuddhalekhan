@@ -274,7 +274,11 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
         run.audit.markComputerUseExecuted();
         reportTool(COMPUTER_USE_SOURCE_ID, name);
       },
-      onToolFinished: metadata => run.audit.record('computer_use_tool_execute', metadata),
+      onToolFinished: metadata => {
+        run.audit.record('computer_use_tool_execute', metadata);
+        // A failed call already closed the helper; a close that could not stop it must not wait for the run to end.
+        if (native?.closed) void closeComputerUseRuns([native]);
+      },
     }) : null;
     if (native) computerUseRuns.add(native);
     run.native = native;
