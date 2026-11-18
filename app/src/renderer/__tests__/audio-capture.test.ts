@@ -913,6 +913,21 @@ describe('warm audio stream', () => {
       mod.setWarmMicrophone(false);
     });
 
+    it('finishes a recording on the old mic when a new one is chosen, then keeps the new one ready', async () => {
+      const { audio, mod } = await parked();
+      await mod.startRecording(recorder().options);
+      await mod.recreateStream('mic-2');
+      expect(audio.tracks[0]?.readyState).toBe('live');
+      await mod.stopRecording();
+      await settle();
+      expect(audio.tracks[0]?.readyState).toBe('ended');
+      expect(audio.getUserMedia).toHaveBeenLastCalledWith({
+        audio: expect.objectContaining({ advanced: [{ deviceId: { exact: 'mic-2' } }] }) as MediaTrackConstraints,
+      });
+      expect(audio.tracks.at(-1)?.readyState).toBe('live');
+      mod.setWarmMicrophone(false);
+    });
+
     it('releases a parked mic that disconnects and does not reopen it until the next recording', async () => {
       const { audio, mod } = await parked();
       audio.disconnectMic();
