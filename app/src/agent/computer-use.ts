@@ -76,7 +76,7 @@ function parseJson(text: string): unknown {
   }
 }
 
-type ComputerUseAudit ={ toolName: ComputerUseToolName; durationMs: number; resultBytes: number }
+type ComputerUseAudit = { toolName: ComputerUseToolName; durationMs: number; resultBytes: number }
   & ({ ok: true } | { ok: false; errorCode: string });
 
 export function createComputerUseRun(options: {

@@ -158,6 +158,11 @@ function handleLine(line: string): void {
         if (pendingApproval?.serverId === COMPUTER_USE_SOURCE_ID) {
           rejectPendingApproval(pendingApproval.execution, 'Computer Use is unavailable for this run.');
         }
+        if (execution?.phase === 'running' && computerUseRuns.size > 0) {
+          const status = 'Computer Use stopped for this command because its settings changed.';
+          execution.audit.record('status', { status });
+          writeJsonLine({ type: 'agent:status', agentRunId: execution.agentRunId, status });
+        }
         const requestId = message.computerUseCloseRequestId;
         void closeComputerUseRuns().then(
           () => { if (requestId) writeJsonLine({ type: 'computer-use:closed', requestId, closed: true }); },
@@ -251,7 +256,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
       writeJsonLine({ type: 'agent:status', agentRunId, status });
     }
 
-    const reportTool =(serverId: string, name: string) => {
+    const reportTool = (serverId: string, name: string) => {
       if (!ownsExecution(run)) return;
       const status = `Using tool: ${serverId}.${name}`;
       run.audit.record('status', { status });
