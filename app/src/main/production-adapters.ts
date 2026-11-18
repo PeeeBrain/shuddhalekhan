@@ -1,6 +1,7 @@
 import { clipboard, nativeImage } from 'electron';
 import { resolvePasteStrategy } from './paste-strategy';
 import { getConfig } from './config';
+import { writeTransientClipboardText } from './native/clipboard';
 import type {
   ClipboardIO,
   ClipboardSnapshot,
@@ -140,6 +141,12 @@ export class ElectronClipboardAdapter implements ClipboardIO {
 
   public writeText(text: string): void {
     clipboard.writeText(text);
+  }
+
+  public writeTransientText(text: string): void {
+    // Electron cannot add Windows' history and cloud exclusion formats; other desktops have none to add.
+    if (process.platform === 'win32') writeTransientClipboardText(text);
+    else clipboard.writeText(text);
   }
 }
 

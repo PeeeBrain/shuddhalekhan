@@ -7,6 +7,7 @@ tags and commit history, not from this file. Keep new entries under
 
 ## Unreleased
 
+- On Windows, Dictation's automatic paste no longer leaves your transcript in clipboard history (Win+V) or syncs it to your other devices. Copy transcript still adds an ordinary clipboard entry.
 - Adding an MCP server in desktop Settings now keeps its ID distinct, so editing or removing it cannot affect another server with the same timestamp.
 - Desktop Dictation and Agent Mode recordings now play a quiet cue when the microphone is live, when recording stops, and when a recording or paste fails. The cues are on for new installs and upgrades. Turn them off, or preview them, under Shortcuts > Input > Recording sounds.
 - The desktop recording pill and the iOS keyboard show your voice as a dot field that braids as you speak and settles to a still line when you pause. On desktop the two strands follow your voice's frequencies: one swells with the lows, the other with the highs, and a brighter voice twists them tighter. Dictation stays blue with round dots, and Agent Mode stays vermilion with square dots. Transcribing keeps the same pill with a sweeping beam, and a thinking agent shows a flickering dot matrix instead of three dots. On desktop, reduced motion holds a still frame.

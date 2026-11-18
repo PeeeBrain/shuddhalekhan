@@ -18,7 +18,10 @@ export interface ClipboardSnapshot {
 export interface ClipboardIO {
   captureSnapshot(): ClipboardSnapshot;
   restoreSnapshot(snapshot: ClipboardSnapshot): void;
+  /** A deliberate copy: an ordinary clipboard entry the user keeps. */
   writeText(text: string): void;
+  /** Paste staging that is restored right away; kept out of clipboard history where the OS allows. */
+  writeTransientText(text: string): void;
 }
 
 export type ForegroundInspector = () => DictationTargetSnapshot | null;
@@ -150,8 +153,12 @@ export class ClipboardTransactionManager {
         if (sequenceBeforeCapture !== this.clipboardMonitor()) {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
-        this.clipboardIO.writeText(text);
-        sequenceAfterStage = this.clipboardMonitor();
+        try {
+          this.clipboardIO.writeTransientText(text);
+        } finally {
+          // A write can fail after emptying the clipboard; mark it staged so the snapshot is restored.
+          sequenceAfterStage = this.clipboardMonitor();
+        }
         await this.delay(50);
         if (signal?.aborted) {
           return { kind: 'input-blocked', acceptedEvents: 0, reason: 'Dictation was cancelled.' };

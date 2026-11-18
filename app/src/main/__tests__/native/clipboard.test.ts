@@ -5,13 +5,18 @@ let sendInputResult = 4;
 let lastErrorCode = 0;
 
 const funcs = new Map<string, ReturnType<typeof vi.fn>>();
+const impls = new Map<string, (...args: never[]) => unknown>();
 
 mock.module('koffi', () => ({
   default: {
     load: vi.fn(() => ({
     func: vi.fn((signature: string) => {
       const name = signature.split('(')[0].trim().split(' ').pop() ?? signature;
-      const fn = vi.fn((..._args: unknown[]) => {
+      const fn = vi.fn((...args: unknown[]) => {
+          const impl = impls.get(name);
+          if (impl) {
+            return impl(...(args as never[]));
+          }
           if (name === 'SendInput') {
             return sendInputResult;
           }
@@ -35,7 +40,71 @@ mock.module('koffi', () => ({
 
 import type {
   simulatePaste as SimulatePaste,
+  writeTransientClipboardText as WriteTransientClipboardText,
 } from '../../native/clipboard';
+
+// The registered marker formats Windows reads; ids are arbitrary in the mock.
+const HISTORY_FORMAT = 0xc001;
+const CLOUD_FORMAT = 0xc002;
+const CF_UNICODETEXT = 13;
+const DWORD_ZERO = Buffer.alloc(4);
+
+describe.skipIf(process.platform !== 'win32')('native transient clipboard write', () => {
+  let writeTransientClipboardText: typeof WriteTransientClipboardText;
+  let published: [number, Buffer][];
+  let rejectFormat: number | null;
+
+  beforeEach(async () => {
+    funcs.clear();
+    impls.clear();
+    lastErrorCode = 0;
+    published = [];
+    rejectFormat = null;
+    const copied = new Map<object, Buffer>();
+    impls.set('RegisterClipboardFormatW', (name: string) =>
+      ({ CanIncludeInClipboardHistory: HISTORY_FORMAT, CanUploadToCloudClipboard: CLOUD_FORMAT })[name] ?? 0);
+    impls.set('CreateWindowExW', () => ({ owner: true }));
+    impls.set('OpenClipboard', () => true);
+    impls.set('EmptyClipboard', () => true);
+    impls.set('CloseClipboard', () => true);
+    impls.set('GlobalAlloc', () => ({}));
+    impls.set('GlobalLock', (memory: object) => memory);
+    impls.set('RtlMoveMemory', (target: object, bytes: Buffer, length: number) => {
+      copied.set(target, Buffer.from(bytes.subarray(0, length)));
+    });
+    impls.set('SetClipboardData', (format: number, memory: object) => {
+      if (format === rejectFormat) return null;
+      published.push([format, copied.get(memory) ?? Buffer.alloc(0)]);
+      return memory;
+    });
+    const mod = await import(`../../native/clipboard?test=${Date.now()}-${Math.random()}`);
+    writeTransientClipboardText = mod.writeTransientClipboardText;
+  });
+
+  it('publishes the text with history and cloud exclusions in one owned clipboard transaction', () => {
+    writeTransientClipboardText('private words');
+
+    expect(published).toEqual([
+      [HISTORY_FORMAT, DWORD_ZERO],
+      [CLOUD_FORMAT, DWORD_ZERO],
+      [CF_UNICODETEXT, Buffer.from('private words\0', 'utf16le')],
+    ]);
+    expect(funcs.get('OpenClipboard')).toHaveBeenCalledWith({ owner: true });
+    expect(funcs.get('CloseClipboard')).toHaveBeenCalledTimes(1);
+    expect(funcs.get('GlobalFree')).not.toHaveBeenCalled();
+  });
+
+  it('never publishes unmarked text when an exclusion cannot be set', () => {
+    rejectFormat = CLOUD_FORMAT;
+    lastErrorCode = 5;
+
+    expect(() => writeTransientClipboardText('private words')).toThrow('SetClipboardData failed (Win32 error 5)');
+
+    expect(published.map(([format]) => format)).not.toContain(CF_UNICODETEXT);
+    expect(funcs.get('GlobalFree')).toHaveBeenCalledTimes(1);
+    expect(funcs.get('CloseClipboard')).toHaveBeenCalledTimes(1);
+  });
+});
 
 // SendInput dispatch; native X11 dispatch has an isolated-server integration test.
 describe.skipIf(process.platform !== 'win32')('native clipboard paste dispatch', () => {
@@ -45,6 +114,7 @@ describe.skipIf(process.platform !== 'win32')('native clipboard paste dispatch',
     sendInputResult = 4;
     lastErrorCode = 0;
     funcs.clear();
+    impls.clear();
     const mod = await import(`../../native/clipboard?test=${Date.now()}-${Math.random()}`);
     simulatePaste = mod.simulatePaste;
   });
