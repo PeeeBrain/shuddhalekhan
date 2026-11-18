@@ -1,8 +1,9 @@
 // AudioWorklet half of audio-capture.ts. Runs on the audio thread. Idle, it
 // posts nothing and keeps only the last `processorOptions.preRollFrames` of
-// input in a ring. {type:'start', preRollFrames} answers {type:'started'} with
-// up to that many of the newest ring frames, clears the ring, and starts
-// capturing: mono input is batched (~20 ms per message) and posted to the
+// input in a ring. {type:'start', preRollFrames, pressFrame} answers
+// {type:'started'} with up to that many of the newest ring frames heard before
+// `pressFrame` (the audio clock at the press); the newer ones open the capture.
+// It clears the ring and starts capturing: mono input is batched (~20 ms per message) and posted to the
 // renderer. Each posted message with samples spends one credit; the renderer returns it
 // ({type:'credit'}) only once main has written that batch to the spool. With no
 // credit left, a stalled renderer or main would otherwise queue audio without
@@ -35,9 +36,14 @@ class CaptureProcessor extends AudioWorkletProcessor {
       if (this.overflowed) return;
       if (type === 'start' && !this.capturing) {
         this.capturing = true;
-        const samples = this.takeRing(event.data.preRollFrames);
+        const ring = this.takeRing(event.data.preRollFrames);
+        // Frames heard after the press are the recording's own audio, so they go out as capture, not pre-roll.
+        const { pressFrame } = event.data;
+        const late = Number.isFinite(pressFrame) ? Math.min(ring.length, Math.max(0, globalThis.currentFrame - pressFrame)) : 0;
+        const samples = ring.slice(0, ring.length - late);
         this.credits = MAX_OUTSTANDING_BATCHES - (samples.length > 0 ? 1 : 0);
         this.port.postMessage({ type: 'started', samples }, [samples.buffer]);
+        this.capture(ring.subarray(samples.length));
         return;
       }
       if (type !== 'stop' || !this.capturing || !this.flush()) return;
@@ -87,6 +93,11 @@ class CaptureProcessor extends AudioWorkletProcessor {
       this.ringFilled = Math.min(ring.length, this.ringFilled + mono.length);
       return true;
     }
+    return this.capture(mono);
+  }
+
+  /** Batches capture frames; false once overflow ended capture. */
+  capture(mono) {
     let offset = 0;
     while (offset < mono.length) {
       const count = Math.min(mono.length - offset, BATCH_FRAMES - this.filled);

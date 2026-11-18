@@ -3,7 +3,7 @@ import { runInNewContext } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 type Message = { type: 'audio' | 'started'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
-type Command = { type: 'start'; preRollFrames: number } | { type: 'stop' } | { type: 'credit' };
+type Command = { type: 'start'; preRollFrames: number; pressFrame?: number } | { type: 'stop' } | { type: 'credit' };
 
 /** Runs the real worklet source against a fake audio-thread global at 16 kHz (320-frame batches). */
 async function loadProcessor(preRollFrames = 0) {
@@ -17,18 +17,20 @@ async function loadProcessor(preRollFrames = 0) {
   type Processor = ProcessorBase & { process(inputs: Float32Array[][]): boolean };
   type Options = { processorOptions: { preRollFrames: number } };
   let create: (() => Processor) | undefined;
-  runInNewContext(await Bun.file(fileURLToPath(new URL('../audio-capture-worklet.js', import.meta.url))).text(), {
+  const scope = {
     AudioWorkletProcessor: ProcessorBase,
     sampleRate: 16000,
+    currentFrame: 0,
     Float32Array,
     registerProcessor: (_name: string, Constructor: new (options: Options) => Processor) => {
       create = () => new Constructor({ processorOptions: { preRollFrames } });
     },
-  });
+  };
+  runInNewContext(await Bun.file(fileURLToPath(new URL('../audio-capture-worklet.js', import.meta.url))).text(), scope);
   if (!create) throw new Error('processor was not registered');
   const processor = create();
   const command = (data: Command) => processor.port.onmessage?.({ data });
-  return { processor, sent, command };
+  return { processor, sent, command, scope };
 }
 
 const ramp = (from: number, length: number) => Float32Array.from({ length }, (_, index) => from + index);
@@ -53,6 +55,18 @@ describe('capture audio-thread boundary', () => {
     expect(processor.process([[ramp(1000, 128)]])).toBe(true);
     command({ type: 'start', preRollFrames: 200 });
     expect(sent.at(-1)).toEqual({ type: 'started', samples: ramp(1000, 128) });
+  });
+
+  it('hands over only ring frames heard before the press; later ones open the capture', async () => {
+    const { processor, sent, command, scope } = await loadProcessor(400);
+    for (let block = 0; block < 3; block++) processor.process([[ramp(block * 128, 128)]]);
+    scope.currentFrame = 384;
+
+    // The start reached the audio thread 100 frames after the press.
+    command({ type: 'start', preRollFrames: 300, pressFrame: 284 });
+    expect(sent).toEqual([{ type: 'started', samples: ramp(84, 200) }]);
+    processor.process([[ramp(384, 220)]]);
+    expect(sent.at(-1)).toEqual({ type: 'audio', samples: ramp(284, 320) });
   });
 
   it('stops with overflow once uncredited batches hit the bound, and keeps going while credits return', async () => {

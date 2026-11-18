@@ -509,7 +509,7 @@ async function setupMic(mic: Mic): Promise<void> {
  * first. A setup that outlives the deadline finds the capture released;
  * closing the mic still stops the tracks if it opens late.
  */
-async function admit(capture: Capture, warmAtPress: boolean): Promise<void> {
+async function admit(capture: Capture, pressFrame: number | null): Promise<void> {
   const { mic } = capture;
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([mic.ready, new Promise<never>((_, reject) => {
@@ -521,10 +521,11 @@ async function admit(capture: Capture, warmAtPress: boolean): Promise<void> {
   // Judged at the handoff, so a cue that started while the mic opened stays out.
   // A mic not yet running at the press heard nothing before it, so it hands over no ring
   // (only the few ms it heard while starting): the spool's head is then pre-press audio or nothing.
-  const cueFree = warmAtPress && capture.options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
+  // A warm mic's ring frames after `pressFrame` follow the pre-roll as ordinary audio.
+  const cueFree = pressFrame !== null && capture.options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
   const preRoll = Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000);
   await waitForCapture(capture, STOP_ACK_TIMEOUT_MS, 'Microphone did not start in time.',
-    () => node.port.postMessage({ type: 'start', preRollFrames: preRoll }));
+    () => node.port.postMessage({ type: 'start', preRollFrames: preRoll, pressFrame }));
 }
 
 /**
@@ -558,8 +559,9 @@ export async function startRecording(options: RecordingOptions): Promise<number>
   mic.owner = capture;
   active = capture;
   live.add(capture);
-  const warmAtPress = adopted?.running === true;
-  capture.ready = admit(capture, warmAtPress);
+  // The audio clock at the press: ring frames after it are this recording's audio, not pre-roll.
+  const pressFrame = adopted?.running ? Math.round(mic.context.currentTime * mic.context.sampleRate) : null;
+  capture.ready = admit(capture, pressFrame);
 
   try {
     await capture.ready;

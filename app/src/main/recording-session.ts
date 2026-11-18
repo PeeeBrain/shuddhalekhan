@@ -22,7 +22,7 @@ import {
 import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from './streaming-transcript';
 import { RECOGNITION_TIMEOUT_MS } from './managed-local-runtime';
 import { markTiming } from './eval-timing';
-import { isNearSilent, MIN_HOLD_MS } from './dictation-admission';
+import { detachedPreRoll, isNearSilent, MIN_HOLD_MS } from './dictation-admission';
 
 /** Longest Dictation release tail (Hex's cap); the capture renderer usually keeps ~200 ms. */
 const MAX_RELEASE_TAIL_MS = 600;
@@ -91,6 +91,8 @@ interface RecordingRunContext {
   state: 'starting' | 'recording' | 'stopping' | 'transcribing' | 'delivering';
   /** Date.now() at the capture's first sample, pre-roll included; bounds the release tail under a provider cap. */
   recordingSince: number | null;
+  /** Warm pre-roll heading the spool, in 16 kHz samples. */
+  preRollSamples: number;
   /** Head samples the silence gate skips: warm pre-roll, then the Start cue if it played at capture-ready. */
   gateSkipSamples: number;
   abort: AbortController;
@@ -177,6 +179,7 @@ export class RecordingSession {
       revision: 0,
       state: 'starting',
       recordingSince: null,
+      preRollSamples: 0,
       gateSkipSamples: 0,
       abort: new AbortController(),
       dictation: intent === 'dictation' ? structuredClone(this.getDictationContext()) : null,
@@ -315,20 +318,25 @@ export class RecordingSession {
       return null;
     }
 
-    let pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, audioData.byteOffset + 44, (audioData.byteLength - 44) >> 1);
-    // A stalled cap timer can let capture run long; the provider's limit holds on the samples
-    // themselves, and the gate judges only what the provider will hear.
+    const spooled = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, audioData.byteOffset + 44, (audioData.byteLength - 44) >> 1);
+    // Pre-roll that a pause separates from the press is not this utterance's start. A stalled
+    // cap timer can let capture run long; the provider's limit holds on the samples themselves.
+    // The gate judges only what the provider will hear.
+    const lead = detachedPreRoll(spooled, run.preRollSamples);
     const maxSamples = (run.transcriber.capabilities.maxDurationSeconds ?? 0) * 16_000;
+    const pcm = spooled.subarray(lead, maxSamples ? lead + maxSamples : spooled.length);
     let wav = audioData;
-    if (maxSamples && pcm.length > maxSamples) {
-      pcm = pcm.subarray(0, maxSamples);
-      wav = audioData.subarray(0, 44 + maxSamples * 2);
-      const header = new DataView(audioData.buffer, audioData.byteOffset);
-      header.setUint32(4, 36 + maxSamples * 2, true);
-      header.setUint32(40, maxSamples * 2, true);
+    if (pcm.length !== spooled.length) {
+      // The header moves to just before the first kept sample; `finally` zeroes the dropped head with the rest.
+      audioData.copyWithin(lead * 2, 0, 44);
+      wav = audioData.subarray(lead * 2, lead * 2 + 44 + pcm.byteLength);
+      const header = new DataView(wav.buffer, wav.byteOffset);
+      header.setUint32(4, 36 + pcm.byteLength, true);
+      header.setUint32(40, pcm.byteLength, true);
     }
+    const gateSkip = Math.max(0, run.gateSkipSamples - lead);
     // Pre-roll alone never admits a Dictation: media or room noise before the press is not speech.
-    if (run.intent === 'dictation' && (pcm.length <= run.gateSkipSamples || isNearSilent(pcm, run.gateSkipSamples))) {
+    if (run.intent === 'dictation' && (pcm.length <= gateSkip || isNearSilent(pcm, gateSkip))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
       // Empty means stopped before the microphone delivered audio: a dead device still delivers zeros.
       console.info('Discarded near-silent Dictation without recognizing it', { samples: pcm.length });
@@ -663,9 +671,10 @@ export class RecordingSession {
       ? Math.min(Number(preRollSamples), MAX_PRE_ROLL_SAMPLES)
       : 0;
     // A Stop that beat this ack still spools the pre-roll: the gate must skip it.
-    if (run.state === 'stopping' && run.recordingSince === null) run.gateSkipSamples = preRoll;
+    if (run.state === 'stopping' && run.recordingSince === null) run.gateSkipSamples = run.preRollSamples = preRoll;
     if (run.state !== 'starting') return;
     run.state = 'recording';
+    run.preRollSamples = preRoll;
     markTiming('capture-ready', { preRollSamples: preRoll });
     const preRollMs = preRoll * 1000 / 16_000;
     run.recordingSince = Date.now() - preRollMs;

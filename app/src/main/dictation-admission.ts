@@ -75,9 +75,30 @@ export function isNearSilent(pcm: Int16Array, skipSamples = 0): boolean {
   if (!levels.some(level => level > LEVEL_FLOOR_DBFS)) {
     return windowLevels(pcm.subarray(0, skipSamples)).some(level => level > LEVEL_FLOOR_DBFS);
   }
+  return longestRun(levels, relativeThreshold(levels)) < SUSTAINED_WINDOWS;
+}
+
+/** The level a window must reach over the clip's own noise floor (its 10th-percentile window) to count as sound. */
+function relativeThreshold(levels: number[]): number {
   // Gated (noise-suppressed) silence counts toward the floor, so a quiet word between zeros still stands out.
   const sorted = [...levels].sort((a, b) => a - b);
-  const noiseFloor = sorted[Math.floor((sorted.length - 1) / 10)];
-  const threshold = Math.max(noiseFloor + RELATIVE_MARGIN_DB, RELATIVE_FLOOR_DBFS);
-  return longestRun(levels, threshold) < SUSTAINED_WINDOWS;
+  return Math.max(sorted[Math.floor((sorted.length - 1) / 10)] + RELATIVE_MARGIN_DB, RELATIVE_FLOOR_DBFS);
+}
+
+/**
+ * How many head samples of a recording to drop: the part of its first
+ * `preRoll` samples that a pause (two quiet windows, so one is bridged as in
+ * the gate) separates from the press, such as a TV line or a cough before the
+ * user spoke. Speech running into the press keeps its start, with one quiet
+ * window before it.
+ */
+export function detachedPreRoll(pcm: Int16Array, preRoll: number): number {
+  const windows = Math.floor(Math.min(preRoll, pcm.length) / WINDOW_SAMPLES);
+  if (windows < 2) return 0;
+  const levels = windowLevels(pcm);
+  const quiet = Math.min(LOUD_DBFS, relativeThreshold(levels));
+  for (let index = windows - 1; index > 0; index--) {
+    if (levels[index] < quiet && levels[index - 1] < quiet) return index * WINDOW_SAMPLES;
+  }
+  return 0;
 }

@@ -1457,11 +1457,38 @@ describe('RecordingSession', () => {
     wav.set(new Uint8Array(pcm.buffer), 44);
 
     session.begin('dictation', 'cap');
-    markReady(7_200);
+    markReady();
     const ending = session.end();
     await session.complete(wav);
     await ending;
     expect(sent).toEqual(expected);
+  });
+
+  it.each([
+    // A TV word 0-150 ms, then quiet through the press at 450 ms: all but the last 30 ms of that pause goes.
+    ['drops pre-roll a pause separates from the press', (i: number) => i < 2_400 || i >= 9_600, 24_000 - 6_720],
+    // Speech from 300 ms, running into the press: kept from 30 ms before it.
+    ['keeps pre-roll speech running into the press', (i: number) => i >= 4_800, 24_000 - 4_320],
+  ] as const)('%s', async (_case: string, speech: (i: number) => boolean, expected: number) => {
+    const sent: number[] = [];
+    session = createSession({
+      transcriber: createTranscriber(async ({ audio }) => {
+        const view = new DataView(audio.buffer, audio.byteOffset, audio.byteLength);
+        sent.push(audio.byteLength - 44, view.getUint32(40, true), view.getUint32(4, true) - 36);
+        return 'text';
+      }),
+    });
+    const markReady = captureReadyEmitter();
+    const pcm = new Int16Array(24_000).map((_, i) => speech(i) ? Math.round(8_000 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2);
+    const wav = new Uint8Array(44 + pcm.byteLength);
+    wav.set(new Uint8Array(pcm.buffer), 44);
+
+    session.begin('dictation', 'lead');
+    markReady(7_200);
+    const ending = session.end();
+    await session.complete(wav);
+    await ending;
+    expect(sent).toEqual([expected * 2, expected * 2, expected * 2]);
   });
 
   it('ends a Dictation stopped before the microphone delivered audio quietly, cancelling its stream', async () => {
