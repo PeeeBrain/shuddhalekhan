@@ -110,8 +110,12 @@ describe.skipIf(process.platform !== 'win32')('native transient clipboard write'
     expect(funcs.get('GlobalFree')).not.toHaveBeenCalled();
   });
 
-  it('leaves a copy made since the snapshot untouched', () => {
-    sequence = 8;
+  it('leaves a copy made while waiting for the clipboard untouched', () => {
+    const open = impls.get('OpenClipboard');
+    impls.set('OpenClipboard', (...args: never[]) => {
+      sequence = 8;
+      return open?.(...args);
+    });
 
     expect(writeTransientClipboardText('private words', 7)).toBe('changed');
 
