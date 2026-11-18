@@ -1,3 +1,4 @@
+import type { RecordingCue } from '@shuddhalekhan/shared/recording-cue';
 import { requireOptionalNativeModule } from 'expo';
 import { isParakeetLanguage, languageBase } from './languages';
 import type { KeyboardSessionEvent } from './keyboard-session';
@@ -9,10 +10,18 @@ type NativeSpeech = {
   installModel(language: string): Promise<void>;
   transcribe(uri: string, language: string): Promise<string>;
   signGoogleJwt(privateKey: string, input: string): Promise<string>;
+  getRecordingSounds?(): Promise<boolean>;
+  setRecordingSounds?(enabled: boolean): Promise<void>;
+  beginForegroundRecording?(): Promise<boolean>;
+  getForegroundRecordingInterrupted?(): Promise<boolean>;
+  playForegroundRecordingCue?(cue: RecordingCue): Promise<boolean>;
+  cancelForegroundRecordingCue?(): Promise<boolean>;
+  previewRecordingCue?(): Promise<void>;
   getKeyboardSession(): Promise<KeyboardSessionEvent>;
   startKeyboardSession(minutes: number, language: string, agentReady: boolean): Promise<KeyboardSessionEvent>;
   resolveKeyboardAgentRequest(id: string, error: string | null): Promise<void>;
   stopKeyboardSession(): Promise<void>;
+  addListener(event: 'onForegroundRecordingInterrupted', listener: () => void): { remove(): void };
   addListener(event: 'onModelProgress', listener: (progress: Progress) => void): { remove(): void };
   addListener(event: 'onKeyboardSession', listener: (session: KeyboardSessionEvent) => void): { remove(): void };
 };

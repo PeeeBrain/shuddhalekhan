@@ -1,13 +1,15 @@
+import type { RecordingCue } from '@shuddhalekhan/shared/recording-cue';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
-import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions } from 'expo-audio';
+import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions, type RecordingStatus } from 'expo-audio';
 import { fetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
-import { MobileController, type Recorder, type RecordingIntent } from './controller';
+import { MobileController, RecordingInterruptedError, type Recorder, type RecordingIntent } from './controller';
 import { chatGptAuth, loadSettings, saveSettings } from './native-settings';
 import { localModelKey, transcribeOnDevice, useOnDeviceModel } from './on-device';
 import { signGoogleJwt } from './native-google-auth';
 import { useKeyboardSession } from './useKeyboardSession';
+import { speech } from './native-speech';
 import { agentCredentialsReady, recordingLimitSeconds, recordingLimits } from './providers';
 import { agentActivity, onAgentApprovalAction, onAgentRunStopped } from './native-agent-activity';
 
@@ -30,15 +32,55 @@ const whenActive = () => new Promise<boolean>(resolve => {
   });
 });
 
+async function playRecordingCue(cue: RecordingCue, signal: AbortSignal) {
+  if (signal.aborted) return;
+  const cancel = () => { void speech?.cancelForegroundRecordingCue?.().catch(() => {}); };
+  signal.addEventListener('abort', cancel, { once: true });
+  try { return await speech?.playForegroundRecordingCue?.(cue); }
+  catch { /* Sound must never fail a recording. */ }
+  finally { signal.removeEventListener('abort', cancel); }
+}
+
 export function useMobileApp() {
   const controllerRef = useRef<MobileController | null>(null);
   const recorder = useAudioRecorder(recordingOptions, status => {
-    if (status.hasError || status.isFinished || status.mediaServicesDidReset) controllerRef.current?.recordingInterrupted();
+    if (status.hasError || status.mediaServicesDidReset) {
+      controllerRef.current?.recordingInterrupted(status.hasError && !status.mediaServicesDidReset);
+    }
   });
   const [controller] = useState(() => {
     let prepared = false;
     let recordingFile: File | null = null;
+    const closeRecorder = async (signal: AbortSignal) => {
+      // Expo resolves stop() before AVAudioRecorder's delegate reports whether the file closed successfully.
+      const result = Promise.withResolvers<RecordingStatus | undefined>();
+      const subscription = recorder.addListener('recordingStatusUpdate', status => {
+        if (status.isFinished) result.resolve(status);
+      });
+      const cancel = () => result.resolve(undefined);
+      signal.addEventListener('abort', cancel, { once: true });
+      const deadline = setTimeout(cancel, 2_000);
+      try {
+        await recorder.stop();
+        prepared = false;
+        if (await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
+        const closed = await result.promise;
+        signal.throwIfAborted();
+        if (closed?.mediaServicesDidReset) throw new RecordingInterruptedError();
+        if (!closed || closed.hasError) throw new Error();
+      } finally {
+        clearTimeout(deadline);
+        signal.removeEventListener('abort', cancel);
+        subscription.remove();
+      }
+    };
+    const prepareRecorder = async () => {
+      await recorder.prepareToRecordAsync();
+      prepared = true;
+      recordingFile = recorder.uri ? new File(recorder.uri) : null;
+    };
     const nativeRecorder: Recorder = {
+      playCue: async (cue, signal) => { await playRecordingCue(cue, signal); },
       async requestPermission() {
         if (Platform.OS !== 'ios') throw new Error('This build currently supports iOS recording.');
         try { return (await AudioModule.requestRecordingPermissionsAsync()).granted; }
@@ -47,33 +89,59 @@ export function useMobileApp() {
       async start(signal) {
         signal.throwIfAborted();
         try {
+          // Release preview and watch for interruptions before opening the recorder.
+          const preparing = await speech?.beginForegroundRecording?.();
+          signal.throwIfAborted();
+          if (preparing === false) throw new RecordingInterruptedError();
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: false });
           signal.throwIfAborted();
-          await recorder.prepareToRecordAsync();
-          prepared = true;
-          if (recorder.uri) recordingFile = new File(recorder.uri);
+          await prepareRecorder();
+          const soundsEnabled = await speech?.getRecordingSounds?.().catch(() => false);
           signal.throwIfAborted();
+          if (soundsEnabled && speech?.playForegroundRecordingCue) {
+            // Verify actual capture, then discard the probe so the user's file starts after the cue.
+            recorder.record();
+            if (!recorder.isRecording) throw new Error();
+            await closeRecorder(signal);
+            if (recordingFile?.exists) recordingFile.delete();
+            await prepareRecorder();
+            signal.throwIfAborted();
+            const canStart = await playRecordingCue('start', signal);
+            signal.throwIfAborted();
+            if (canStart === false) throw new RecordingInterruptedError();
+          }
+          if (AppState.currentState === 'background') throw new RecordingInterruptedError();
           recorder.record();
+          if (await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
           if (!recorder.isRecording) throw new Error();
         } catch (error) {
-          if (signal.aborted) throw error;
+          if (signal.aborted || error instanceof RecordingInterruptedError) throw error;
+          const interrupted = await speech?.cancelForegroundRecordingCue?.().catch(() => false);
+          if (interrupted || AppState.currentState === 'background') throw new RecordingInterruptedError();
           // Native error causes can include local recording paths; keep the UI error bounded.
           // oxlint-disable-next-line preserve-caught-error
           throw new Error('Could not start recording. Check microphone permissions and audio input.');
         }
       },
-      async stop() {
+      async stop(onClosed, signal) {
         try {
-          await recorder.stop();
-          prepared = false;
+          const wasRecording = recorder.isRecording;
+          await closeRecorder(signal);
+          if (!wasRecording) throw new RecordingInterruptedError();
+          onClosed();
           if (!recorder.uri) throw new Error();
           recordingFile = new File(recorder.uri);
           if (!recordingFile.exists || recordingFile.size <= 44) throw new Error();
           if (recordingFile.size > recordingLimits['on-device'].maxBytes) throw new Error('Recording is too large. Keep it under five minutes.');
           return recordingFile;
-        } catch { throw new Error('Could not read the recording. Record again and speak for at least a second.'); }
+        } catch (error) {
+          if (signal.aborted || error instanceof RecordingInterruptedError) throw error;
+          // oxlint-disable-next-line preserve-caught-error
+          throw new Error('Could not read the recording. Record again and speak for at least a second.');
+        }
       },
       async discard() {
+        await speech?.cancelForegroundRecordingCue?.().catch(() => {});
         try {
           if (prepared) { await recorder.stop(); prepared = false; }
         } finally {
@@ -122,6 +190,9 @@ export function useMobileApp() {
     controllerRef.current = controller;
     void controller.initialize();
     void chatGptAuth.initialize();
+    const recordingInterrupted = speech?.getForegroundRecordingInterrupted
+      ? speech.addListener('onForegroundRecordingInterrupted', () => controller.recordingInterrupted())
+      : undefined;
     const stopped = onAgentRunStopped(controller.agentRunStopped);
     const approvalAction = onAgentApprovalAction(() => { void controller.consumeApprovalAction(); });
     const open = (url: string) => {
@@ -136,10 +207,13 @@ export function useMobileApp() {
     void Linking.getInitialURL().then(url => { if (url) open(url); }).catch(() => {});
     const subscription = AppState.addEventListener('change', next => {
       // The permission prompt and share sheet can make iOS inactive without backgrounding the app.
-      if (next === 'background') void controller.enterBackground();
+      if (next === 'background') {
+        void speech?.cancelForegroundRecordingCue?.().catch(() => {});
+        void controller.enterBackground();
+      }
       if (next === 'active') void controller.enterForeground();
     });
-    return () => { subscription.remove(); links.remove(); stopped?.remove(); approvalAction?.remove(); controllerRef.current = null; controller.cancel(); };
+    return () => { subscription.remove(); links.remove(); recordingInterrupted?.remove(); stopped?.remove(); approvalAction?.remove(); controllerRef.current = null; controller.cancel(); };
   }, [controller]);
 
   useEffect(() => {

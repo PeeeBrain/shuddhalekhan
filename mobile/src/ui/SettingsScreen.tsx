@@ -12,6 +12,7 @@ import { SARVAM_MODELS, SARVAM_MODES } from '@shuddhalekhan/shared/sarvam';
 import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '@shuddhalekhan/shared/agent-prompt';
 import type { ChatGptModel } from '../chatgpt';
 import { normalizeLanguage, parakeetLanguages, speechLanguages } from '../languages';
+import { speech } from '../native-speech';
 import { localModelKey, type LocalModelState } from '../on-device';
 import { agentProviders, selectAgentApiMode, selectAgentProvider, selectTranscriptionProvider, transcriptionProviders } from '../providers';
 import { settingsError, type MCPServerSettings, type MobileSettings } from '../settings';
@@ -98,6 +99,7 @@ export function SettingsScreen({ app, initialPage, onClose }: { app: App; initia
               <Nav value="transcription" title="Transcription" icon="waveform" detail={transcriptionSummary} />
               <Nav value="keyboard" title="Keyboard" icon="keyboard" />
             </Section>
+            <RecordingSounds unavailable={app.keyboardSession.active || app.keyboardSession.starting || app.phase !== 'idle'} />
             <Section footer={<Text>One spoken command, one run. No chat history.</Text>}>
               <Nav value="agent" title="Agent Mode" icon="sparkles" detail={draft.agentEnabled ? 'On' : 'Off'} />
             </Section>
@@ -270,6 +272,34 @@ function Field({ label, value, onChange, placeholder, secret, url, multiline, pr
       <Input text={text} placeholder={placeholder ?? 'Required'} maxLength={maxLength} onTextChange={onChange}
         modifiers={[...input, multilineTextAlignment('trailing')]} />
     </LabeledContent>
+  );
+}
+
+function RecordingSounds({ unavailable }: { unavailable: boolean }) {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    void speech?.getRecordingSounds?.().then(setEnabled).catch(() => {});
+  }, []);
+  if (enabled === null) return null;
+  const toggle = async (value: boolean) => {
+    setSaving(true);
+    try {
+      await speech?.setRecordingSounds?.(value);
+      setEnabled(value);
+    } catch {
+      Alert.alert('Not saved', 'Could not change recording sounds.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Section footer={<Text>Applies immediately to in-app and keyboard recordings.</Text>}>
+      <Toggle label="Recording Sounds" isOn={enabled} onIsOnChange={value => { void toggle(value); }} modifiers={[disabled(saving)]} />
+      <Button label="Preview Sound" systemImage="speaker.wave.2"
+        modifiers={[disabled(!enabled || saving || unavailable)]}
+        onPress={() => { void speech?.previewRecordingCue?.().catch(() => {}); }} />
+    </Section>
   );
 }
 

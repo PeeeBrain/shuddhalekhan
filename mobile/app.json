@@ -11,7 +11,7 @@
       "ios"
     ],
     "ios": {
-      "buildNumber": "15",
+      "buildNumber": "21",
       "bundleIdentifier": "com.shuddhalekhan.mobile",
       "supportsTablet": true,
       "infoPlist": {

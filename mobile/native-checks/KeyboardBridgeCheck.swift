@@ -69,8 +69,11 @@ struct KeyboardBridgeCheck {
     _ = await peer.phase(.idle)
     let id = UUID().uuidString
     peer.send(.init(id: id, action: .start, mode: .dictate, sentAt: KeyboardSession.nowMs()))
+    let preparing = await peer.phase(.preparing)
+    precondition(preparing.requestId == id, "Start acknowledgement lost")
+    state = KeyboardSession.captureReady(preparing, requestId: id, now: KeyboardSession.nowMs())!
+    server.publish(state)
     let recording = await peer.phase(.recording)
-    precondition(recording.requestId == id, "Start acknowledgement lost")
     server.publish(recording.with(.recording, requestId: id, level: 0.7))
     peer.send(.init(id: id, action: .stop, mode: .dictate, sentAt: KeyboardSession.nowMs()))
     _ = await peer.phase(.transcribing)

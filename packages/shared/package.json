@@ -13,6 +13,7 @@
     "./mcp": "./src/mcp.ts",
     "./languages": "./src/languages.ts",
     "./providers": "./src/providers.ts",
+    "./recording-cue": "./src/recording-cue.ts",
     "./sarvam": "./src/sarvam.ts"
   },
   "scripts": {

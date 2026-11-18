@@ -55,7 +55,7 @@ enum KeyboardSession {
   }
 
   struct State: Codable, Equatable, Sendable {
-    enum Phase: String, Codable, Sendable { case idle, recording, transcribing, done, failed, cancelled }
+    enum Phase: String, Codable, Sendable { case idle, preparing, recording, transcribing, done, failed, cancelled }
     /// Milliseconds since 1970; 0 means no session.
     let sessionEndsAt: Int64
     let requestId: String?
@@ -70,7 +70,7 @@ enum KeyboardSession {
       phase: .idle, text: nil, error: nil, level: nil)
 
     func isLive(now: Int64) -> Bool { sessionEndsAt > now }
-    var isBusy: Bool { phase == .recording || phase == .transcribing }
+    var isBusy: Bool { phase == .preparing || phase == .recording || phase == .transcribing }
     func with(_ phase: Phase, requestId: String?, mode: Mode? = nil, text: String? = nil,
               error: String? = nil, level: Float? = nil) -> State {
       State(sessionEndsAt: sessionEndsAt, requestId: requestId, mode: requestId == nil ? nil : mode ?? self.mode,
@@ -110,7 +110,7 @@ enum KeyboardSession {
         return state.with(.failed, requestId: command.id, mode: command.mode,
           error: "Set up Agent Mode in Shuddhalekhan first.")
       }
-      return state.with(.recording, requestId: command.id, mode: command.mode)
+      return state.with(.preparing, requestId: command.id, mode: command.mode)
     case .stop:
       guard command.id == state.requestId, command.mode == state.mode, state.phase == .recording else { return nil }
       return state.with(.transcribing, requestId: command.id)
@@ -118,6 +118,11 @@ enum KeyboardSession {
       guard command.id == state.requestId, command.mode == state.mode, state.isBusy else { return nil }
       return state.with(.cancelled, requestId: command.id)
     }
+  }
+
+  static func captureReady(_ state: State, requestId: String, now: Int64) -> State? {
+    guard state.phase == .preparing, state.requestId == requestId, state.isLive(now: now) else { return nil }
+    return state.with(.recording, requestId: requestId)
   }
 
   /// Keyboard side: text to insert for the request this keyboard started, at most once per request.

@@ -29,11 +29,16 @@ final class KeyboardSessionHost {
   private let speech: ParakeetEngine
   private var configuration: ParakeetConfiguration?
   private let onChange: @MainActor (KeyboardSession.State) -> Void
+  private static let tapFrames: AVAudioFrameCount = 4_096
   private let audio = AVAudioEngine()
-  private let sink = UtteranceSink()
+  private let cues: RecordingCuePlayer
+  private let sink = KeyboardUtteranceSink()
   private let recordings = KeyboardAudioStore()
   private(set) var state = KeyboardSession.State.ended
   private var starting = false
+  var ownsAudio: Bool { starting || state.sessionEndsAt != 0 }
+  private var preparingUtterance: Task<Void, Never>?
+  private var failureCue: Task<Void, Never>?
   private var endWhenIdle = false
   private var endTimer: Timer?
   private var utteranceTimer: Timer?
@@ -46,8 +51,9 @@ final class KeyboardSessionHost {
   private let server = KeyboardSessionServer()
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
 
-  init(speech: ParakeetEngine, onChange: @escaping @MainActor (KeyboardSession.State) -> Void) {
+  init(speech: ParakeetEngine, cues: RecordingCuePlayer, onChange: @escaping @MainActor (KeyboardSession.State) -> Void) {
     self.speech = speech
+    self.cues = cues
     self.onChange = onChange
     server.onCommand = { [weak self] command in self?.handleCommand(command) }
     server.onFailure = { [weak self] in self?.end(reason: "The keyboard connection stopped. Start a new session.") }
@@ -55,7 +61,7 @@ final class KeyboardSessionHost {
 
   func start(minutes: Int, configuration: ParakeetConfiguration, agentReady: Bool) async throws {
     guard (1...30).contains(minutes) else { throw KeyboardSessionError.invalidDuration }
-    guard !starting, !state.isLive(now: KeyboardSession.nowMs()) else { return }
+    guard !ownsAudio else { return }
     starting = true
     defer { starting = false }
 
@@ -77,7 +83,9 @@ final class KeyboardSessionHost {
 
     guard UIApplication.shared.applicationState == .active else { throw KeyboardSessionError.bridgeUnavailable }
     let session = AVAudioSession.sharedInstance()
-    try session.setCategory(.record, mode: .default)
+    cues.stop()
+    // A2DP adds Bluetooth output while retaining the keyboard's existing input routes.
+    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
     mark("category_set")
     try session.setActive(true)
     mark("audio_active")
@@ -88,7 +96,7 @@ final class KeyboardSessionHost {
       try? session.setActive(false, options: .notifyOthersOnDeactivation)
       throw KeyboardSessionError.noInput
     }
-    input.installTap(onBus: 0, bufferSize: 4_096, format: format, block: Self.tap(into: sink))
+    input.installTap(onBus: 0, bufferSize: Self.tapFrames, format: format, block: Self.tap(into: sink))
     mark("tap_installed")
     do {
       try audio.start()
@@ -157,14 +165,21 @@ final class KeyboardSessionHost {
   }
 
   private func expire() {
-    // Let a started utterance finish; the utterance cap keeps this bounded.
-    if state.isBusy { endWhenIdle = true } else { end() }
+    // Only utterances that have reached the microphone get time to finish.
+    switch state.phase {
+    case .recording, .transcribing:
+      endWhenIdle = true
+      cues.stop()
+    case .preparing:
+      end(reason: "The keyboard session expired before recording started.")
+    default: end()
+    }
   }
 
   private func handleCommand(_ command: KeyboardSession.Command) {
     guard let next = KeyboardSession.transition(state, on: command, now: KeyboardSession.nowMs()) else { return }
     switch next.phase {
-    case .recording: beginUtterance(next)
+    case .preparing: beginUtterance(next)
     case .transcribing: finishUtterance(next)
     case .cancelled:
       discardUtterance()
@@ -175,19 +190,45 @@ final class KeyboardSessionHost {
   }
 
   private func beginUtterance(_ next: KeyboardSession.State) {
-    let url: URL
-    do { url = try recordings.recordingURL() } catch {
-      settle(next.with(.failed, requestId: next.requestId, error: "Temporary audio could not be cleaned up. Free storage or restart the app, then retry."))
-      return
-    }
+    guard let id = next.requestId else { return }
+    failureCue?.cancel()
+    cues.stop()
     do {
-      try sink.begin(url, format: audio.inputNode.outputFormat(forBus: 0))
+      let url = try recordings.recordingURL()
+      utteranceURL = url
+      try sink.prepare(url, format: audio.inputNode.outputFormat(forBus: 0))
     } catch {
-      recordings.remove(url)
-      settle(next.with(.failed, requestId: next.requestId, error: "Could not start recording."))
+      discardUtterance()
+      fail(next, message: "Could not open temporary audio. Check available storage and try again.")
       return
     }
-    utteranceURL = url
+    publish(next)
+    if !cues.enabled {
+      openCapture(id)
+      return
+    }
+    preparingUtterance = Task {
+      guard KeyboardSession.captureReady(state, requestId: id, now: KeyboardSession.nowMs()) != nil else {
+        openCapture(id)
+        return
+      }
+      let canStart = await cues.play(.start, in: .keyboard)
+      guard !Task.isCancelled else { return }
+      guard canStart else {
+        end(reason: "The microphone was interrupted.")
+        return
+      }
+      preparingUtterance = nil
+      openCapture(id)
+    }
+  }
+
+  private func openCapture(_ id: String) {
+    guard let next = KeyboardSession.captureReady(state, requestId: id, now: KeyboardSession.nowMs()) else {
+      if state.phase == .preparing, state.requestId == id { expire() }
+      return
+    }
+    sink.start(at: mach_absolute_time())
     levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 15, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated {
         guard let self, self.state.phase == .recording, let level = self.sink.currentLevel() else { return }
@@ -209,22 +250,38 @@ final class KeyboardSessionHost {
     levelTimer = nil
     utteranceTimer?.invalidate()
     utteranceTimer = nil
-    let wrote = sink.end()
-    guard let url = utteranceURL, let id = next.requestId, let configuration, wrote else {
+    guard let url = utteranceURL, let id = next.requestId, let configuration else {
       discardUtterance()
-      settle(next.with(.failed, requestId: next.requestId, error: "The recording could not be saved."))
+      fail(next, message: "The recording could not be saved.")
       return
     }
-    utteranceURL = nil
+    let stop = mach_absolute_time()
+    sink.markStop(at: stop)
     publish(next)
     let task = Task { [speech, configuration] in
+      defer { if transcription?.id == id { transcription = nil } }
+      // AVAudioEngine may deliver up to 400 ms per tap. Normally the next tap closes the file.
+      let saved = await sink.drain(until: stop, timeout: .milliseconds(650))
+      guard !Task.isCancelled else { return }
+      utteranceURL = nil
+      defer { recordings.remove(url) }
+      guard saved else {
+        await playStopIfLive(id)
+        if !Task.isCancelled { fail(next, message: "The recording could not be saved.") }
+        return
+      }
+      async let stopSound: Void = playStopIfLive(id)
       let result: Result<String, Error>
       do { result = .success(try await speech.transcribe(url, configuration: configuration)) } catch { result = .failure(error) }
-      recordings.remove(url)
-      if transcription?.id == id { transcription = nil }
+      await stopSound
       if !Task.isCancelled { self.complete(id, result) }
     }
     transcription = (id, task)
+  }
+
+  private func playStopIfLive(_ id: String) async {
+    guard state.requestId == id, state.phase == .transcribing, state.isLive(now: KeyboardSession.nowMs()) else { return }
+    _ = await cues.play(.stop, in: .keyboard)
   }
 
   private func complete(_ id: String, _ result: Result<String, Error>) {
@@ -234,9 +291,9 @@ final class KeyboardSessionHost {
     case .success(let raw):
       let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
       if text.isEmpty {
-        settle(state.with(.failed, requestId: id, error: "No speech was recognized."))
+        fail(state, message: "No speech was recognized.")
       } else if text.utf8.count > KeyboardSession.maxTextBytes {
-        settle(state.with(.failed, requestId: id, error: "The transcript is too large."))
+        fail(state, message: "The transcript is too large.")
       } else {
         let done = state.with(.done, requestId: id, text: text)
         if state.mode == .agent {
@@ -254,7 +311,7 @@ final class KeyboardSessionHost {
         } else { settle(done) }
       }
     case .failure:
-      settle(state.with(.failed, requestId: id, error: "Parakeet could not transcribe this recording."))
+      fail(state, message: "Parakeet could not transcribe this recording.")
     }
   }
 
@@ -269,6 +326,16 @@ final class KeyboardSessionHost {
     } ?? pending)
   }
 
+  private func fail(_ request: KeyboardSession.State, message: String) {
+    let failed = request.with(.failed, requestId: request.requestId, error: message)
+    settle(failed)
+    guard state == failed, state.isLive(now: KeyboardSession.nowMs()) else { return }
+    failureCue = Task {
+      guard state == failed, state.isLive(now: KeyboardSession.nowMs()) else { return }
+      _ = await cues.play(.error, in: .keyboard)
+    }
+  }
+
   /// Publishes a terminal request state, then honours a session expiry that arrived mid-utterance.
   private func settle(_ next: KeyboardSession.State) {
     // Keep the final result readable after releasing the microphone at session expiry.
@@ -276,6 +343,11 @@ final class KeyboardSessionHost {
   }
 
   private func discardUtterance() {
+    preparingUtterance?.cancel()
+    preparingUtterance = nil
+    failureCue?.cancel()
+    failureCue = nil
+    cues.stop()
     pendingAgent = nil
     handoffTimeout?.cancel()
     handoffTimeout = nil
@@ -285,7 +357,7 @@ final class KeyboardSessionHost {
     transcription = nil
     utteranceTimer?.invalidate()
     utteranceTimer = nil
-    _ = sink.end()
+    sink.discard()
     if let url = utteranceURL { recordings.remove(url) }
     utteranceURL = nil
   }
@@ -314,63 +386,7 @@ final class KeyboardSessionHost {
     ]
   }
 
-  private nonisolated static func tap(into sink: UtteranceSink) -> AVAudioNodeTapBlock {
-    { buffer, _ in sink.append(buffer) }
-  }
-}
-
-/// Written from the audio tap thread, controlled from the main actor.
-private final class UtteranceSink: @unchecked Sendable {
-  private let lock = NSLock()
-  private var file: AVAudioFile?
-  private var failed = false
-  private var level: Float?
-
-  func begin(_ url: URL, format: AVAudioFormat) throws {
-    let file = try AVAudioFile(
-      forWriting: url, settings: format.settings, commonFormat: format.commonFormat, interleaved: format.isInterleaved)
-    lock.withLock {
-      self.file = file
-      failed = false
-      level = nil
-    }
-  }
-
-  func append(_ buffer: AVAudioPCMBuffer) {
-    lock.withLock {
-      guard let file else { return }
-      if let samples = buffer.floatChannelData, buffer.frameLength > 0 {
-        let count = Int(buffer.frameLength)
-        let stride = buffer.stride
-        let channels = Int(buffer.format.channelCount)
-        var sum: Float = 0
-        for channel in 0..<channels {
-          let pointer = buffer.format.isInterleaved ? samples[0] + channel : samples[channel]
-          for frame in 0..<count {
-            let sample = pointer[frame * stride]
-            sum += sample * sample
-          }
-        }
-        let rms = sqrt(sum / Float(count * channels))
-        let normalized = min(1, max(0, (20 * log10(max(rms, 0.000_001)) + 50) / 50))
-        level = (level ?? normalized) * 0.35 + normalized * 0.65
-      }
-      do { try file.write(from: buffer) } catch {
-        failed = true
-        self.file = nil
-      }
-    }
-  }
-
-  func currentLevel() -> Float? { lock.withLock { level } }
-
-  /// Closes the file (by releasing it) and reports whether every buffer was written.
-  func end() -> Bool {
-    lock.withLock {
-      let ok = file != nil && !failed
-      file = nil
-      level = nil
-      return ok
-    }
+  private nonisolated static func tap(into sink: KeyboardUtteranceSink) -> AVAudioNodeTapBlock {
+    { buffer, time in sink.append(buffer, time: time) }
   }
 }

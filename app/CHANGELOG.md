@@ -34,6 +34,7 @@ tags and commit history, not from this file. Keep new entries under
 - Fixed empty desktop Agent History on Linux by reading the same persistent database as the sidecar. Existing recorded runs become visible without moving or deleting them. Custom audit-directory overrides now reach the sidecar as well as History.
 
 ### Mobile
+- iOS plays short recording cues in the app and in keyboard sessions. Turn them off or preview the Start sound in Settings.
 - iOS Tool Approval keeps a tool's row when you switch it back to Ask Every Time, instead of hiding it until you discover tools again.
 - iOS Agent Mode now runs on the same AI SDK runtime as desktop: streamed responses, 30 model steps, and replies to the answer on screen. A denied tool no longer stops the run; the agent is told and explains or tries another way.
 - iOS Home keeps the record button during a keyboard session; recording ends the session, so you can reply to a keyboard command's answer in the app. The session card no longer renders with a clipped Stop button.
