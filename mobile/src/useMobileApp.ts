@@ -1,3 +1,4 @@
+import type { RecordingCue } from '@shuddhalekhan/shared/recording-cue';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, AppState, Linking, Platform } from 'react-native';
 import { AudioModule, AudioQuality, IOSOutputFormat, RecordingPresets, setAudioModeAsync, useAudioRecorder, type RecordingOptions } from 'expo-audio';
@@ -31,7 +32,7 @@ const whenActive = () => new Promise<boolean>(resolve => {
   });
 });
 
-async function playRecordingCue(cue: 'start' | 'stop' | 'error', signal: AbortSignal) {
+async function playRecordingCue(cue: RecordingCue, signal: AbortSignal) {
   if (signal.aborted) return;
   const cancel = () => { void speech?.cancelForegroundRecordingCue?.().catch(() => {}); };
   signal.addEventListener('abort', cancel, { once: true });

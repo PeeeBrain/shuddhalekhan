@@ -1,3 +1,4 @@
+import type { RecordingCue } from '@shuddhalekhan/shared/recording-cue';
 import { AGENT_MAX_STEPS, type AgentStep } from '@shuddhalekhan/shared/agent-loop';
 import type { ModelMessage } from 'ai';
 import { runAgent, type ToolApproval } from './agent';
@@ -33,7 +34,7 @@ export type Recorder = {
   requestPermission(): Promise<boolean>;
   start(signal: AbortSignal): Promise<void>;
   stop(onClosed: () => void): Promise<Blob>;
-  playCue?(cue: 'stop' | 'error', signal: AbortSignal): Promise<void>;
+  playCue?(cue: Exclude<RecordingCue, 'start'>, signal: AbortSignal): Promise<void>;
   discard(): Promise<void>;
 };
 

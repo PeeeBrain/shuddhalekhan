@@ -1,3 +1,4 @@
+import type { RecordingCue } from '@shuddhalekhan/shared/recording-cue';
 import type { ManagedLocalSelection } from '../shared/managed-local-selection';
 import type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 import type { AgentMemorySnapshot, AgentSkillDocument, AgentSkillImport, AgentSkillSummary } from '../shared/agent-context';
@@ -341,7 +342,7 @@ export interface MainToRendererChannels {
 }
 
 /** Start: capture is live. Stop: capture ended and the mic is released. Error: a failure toast. */
-export type RecordingCue = 'start' | 'stop' | 'error';
+export type { RecordingCue };
 
 export interface RuntimeAudioCommand {
   generation: number;

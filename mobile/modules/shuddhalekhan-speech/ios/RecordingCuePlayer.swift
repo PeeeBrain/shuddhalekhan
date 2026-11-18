@@ -55,7 +55,10 @@ final class RecordingCuePlayer: NSObject, AVAudioPlayerDelegate {
       player.delegate = self
       guard player.play() else { stop(); return true }
       output = player
-      log.notice("Recording cue \(cue.rawValue, privacy: .public)")
+      let route = session.currentRoute
+      let inputs = route.inputs.map(\.portType.rawValue).joined(separator: ",")
+      let outputs = route.outputs.map(\.portType.rawValue).joined(separator: ",")
+      log.notice("Recording cue \(cue.rawValue, privacy: .public) input=\(inputs, privacy: .public) output=\(outputs, privacy: .public)")
       if cue == .start && !standalone {
         let latency = session.outputLatency + session.inputLatency + 2 * session.ioBufferDuration
         inputDrain = .playing(.seconds(min(latency, 0.5) + 0.025))

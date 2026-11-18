@@ -1,3 +1,4 @@
+import type { RecordingCue } from '@shuddhalekhan/shared/recording-cue';
 import { requireOptionalNativeModule } from 'expo';
 import { isParakeetLanguage, languageBase } from './languages';
 import type { KeyboardSessionEvent } from './keyboard-session';
@@ -12,7 +13,7 @@ type NativeSpeech = {
   getRecordingSounds?(): Promise<boolean>;
   setRecordingSounds?(enabled: boolean): Promise<void>;
   beginForegroundRecordingPreparation?(): Promise<boolean>;
-  playForegroundRecordingCue?(cue: 'start' | 'stop' | 'error'): Promise<boolean>;
+  playForegroundRecordingCue?(cue: RecordingCue): Promise<boolean>;
   cancelForegroundRecordingCue?(): Promise<boolean>;
   previewRecordingCue?(): Promise<void>;
   getKeyboardSession(): Promise<KeyboardSessionEvent>;
