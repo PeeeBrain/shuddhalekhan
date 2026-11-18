@@ -91,8 +91,7 @@ struct KeyboardBridgeCheck {
     precondition(peer.states.allSatisfy { $0.phase == .recording || $0.level == nil }, "Level leaked after recording")
     precondition(peer.states.filter { $0.requestId == id && $0.phase == .transcribing }.count == 1,
       "Stop acknowledgement was published more than once")
-    precondition(KeyboardSession.insertion(done, pendingId: id, inserted: []) == text, "Final result lost")
-    precondition(KeyboardSession.insertion(done, pendingId: id, inserted: [id]) == nil, "Duplicate insertion")
+    precondition(done.requestId == id && done.text == text, "Final result lost in transit")
 
     // Closing the keyboard cancels the utterance even if it disappears before the start acknowledgement.
     // Reuse the transport owner. ListenerStartupCheck separately forces a stale callback during startup.

@@ -199,6 +199,65 @@ describe('AuditHistorySettings live refresh backpressure', () => {
   });
 });
 
+describe('Audit history navigation', () => {
+  afterEach(cleanup);
+
+  it('moves selection and keyboard focus through the visible runs', async () => {
+    const nextRun: AuditRunSummary = {
+      ...activeRun,
+      agentRunId: 'run-2',
+      transcript: 'Next run',
+      status: 'completed',
+    };
+    const settingsIpc = auditIpc({
+      getAuditRuns: mock(() => Promise.resolve([activeRun, nextRun, {
+        ...nextRun, agentRunId: 'run-3', transcript: 'Last run',
+      }])),
+      getAuditRunDetail: mock((runId: string) => Promise.resolve([{ ...startedEvent, agentRunId: runId }])),
+    });
+
+    // Keep paint scheduling deterministic in Happy DOM while asserting the resulting focus.
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = spyOn(window, 'requestAnimationFrame').mockImplementation(
+      (callback: FrameRequestCallback) => frames.push(callback),
+    );
+    async function press(option: HTMLElement, key: string) {
+      await act(async () => { fireEvent.keyDown(option, { key }); });
+      act(() => frames.splice(0).forEach(callback => callback(0)));
+    }
+
+    try {
+      await act(async () => { render(<AuditHistorySettings settingsIpc={settingsIpc} />); });
+      screen.getByRole('option', { name: /Active run/, selected: true }).focus();
+
+      for (const [key, transcript] of [
+        ['End', 'Last run'],
+        ['ArrowDown', 'Last run'],
+        ['ArrowUp', 'Next run'],
+        ['Home', 'Active run'],
+        ['ArrowUp', 'Active run'],
+        ['ArrowDown', 'Next run'],
+      ]) {
+        await press(screen.getByRole('option', { selected: true }), key);
+        const selected = screen.getByRole('option', { selected: true });
+        expect(selected).toHaveTextContent(transcript);
+        expect(selected).toHaveFocus();
+        expect(screen.getByRole('heading', { name: transcript })).toBeInTheDocument();
+      }
+
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search runs' }), { target: { value: 'Last' } });
+      const remaining = screen.getByRole('option', { name: /Last run/ });
+      expect(remaining).toHaveAttribute('tabindex', '0');
+      remaining.focus();
+      await press(remaining, 'ArrowDown');
+      expect(remaining).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByRole('heading', { name: 'Last run' })).toBeInTheDocument();
+    } finally {
+      requestFrame.mockRestore();
+    }
+  });
+});
+
 describe('audit history model', () => {
   const run = (agentRunId: string, transcript: string, status: AuditRunSummary['status'], tools: string[] = []): AuditRunSummary => ({
     agentRunId, startedAt: '2026-06-25T10:00:00.000Z', transcript, status, tools,

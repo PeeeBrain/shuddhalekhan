@@ -212,13 +212,6 @@ describe('config store', () => {
     expect(getConfig()).not.toHaveProperty('lastSeenReleaseNotesVersion');
   });
 
-  it('does not expose the retired shared activation mode', async () => {
-    existsSync.mockReturnValue(false);
-    const { getConfig } = await import(`../config?test=${Date.now()}-retired-activation-mode`);
-
-    expect('recordingActivationMode' in getConfig()).toBe(false);
-  });
-
   it('keeps Wayland best-effort insertion off until explicitly persisted', async () => {
     existsSync.mockReturnValue(false);
     const { getConfig, setConfig } = await import(`../config?test=${Date.now()}-wayland-insertion`);

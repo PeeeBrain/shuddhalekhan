@@ -52,13 +52,6 @@ const item = (label: string): MenuItemSpec & { click(): void } => {
   if (!found.click) throw new Error(`Tray item "${label}" has no click handler`);
   return found as MenuItemSpec & { click(): void };
 };
-// Status labels are presence-only: they carry no click handler by design.
-const text = (label: string): MenuItemSpec => {
-  const found = menuAt().find((entry) => entry.label === label);
-  if (!found) throw new Error(`Tray menu is missing item "${label}"`);
-  return found;
-};
-
 installElectronMock();
 let filesystemSpy: { mockRestore(): void };
 mockConfigModule({ getConfig: () => config, setConfig });
@@ -126,6 +119,7 @@ describe('tray', () => {
     updateAudioDevices([
       { deviceId: 'default', label: 'Default Mic', kind: 'audioinput' },
       { deviceId: 'speaker', label: 'Speaker', kind: 'audioinput' },
+      { deviceId: 'output', label: 'Output device', kind: 'audiooutput' },
     ]);
     const latestMenu = menuAt();
     const deviceItems = latestMenu.find((entry) => entry.label === 'Microphone')?.submenu ?? [];
@@ -133,7 +127,6 @@ describe('tray', () => {
 
     expect(deviceItems).toHaveLength(2);
     expect(deviceItems[0]?.checked).toBe(true);
-    expect(speakerItem).toBeDefined();
     speakerItem?.click?.();
 
     expect(onSelectDevice).toHaveBeenCalledWith('speaker');
@@ -158,7 +151,7 @@ describe('tray', () => {
     expect(togglePause).toHaveBeenLastCalledWith(false);
   });
 
-  it('shows update status in the tray menu', async () => {
+  it('confirms the app is up to date and keeps update checks available', async () => {
     const { createTray, updateUpdaterStatus } = await import(`../tray?test=${Date.now()}-5`);
 
     createTray({ ...{ onPasteLastTranscript: vi.fn(), onCopyLastTranscript: vi.fn(), onCheckForUpdates: vi.fn(), onSelectDevice: vi.fn(), isShortcutsPaused: () => false, onTogglePause: vi.fn() }, onOpenSettings: vi.fn() });
@@ -170,7 +163,7 @@ describe('tray', () => {
       checkedAt: new Date().toISOString(),
     });
 
-    expect(text('Shuddhalekhan v4.0.0 · Up to date')).toBeDefined();
+    expect(menuAt()).toContainEqual(expect.objectContaining({ enabled: false, label: expect.stringMatching(/up to date/i) }));
     expect(item('Check for updates').enabled).toBe(true);
   });
 
@@ -187,7 +180,7 @@ describe('tray', () => {
       checkedAt: new Date().toISOString(),
     });
 
-    expect(text('Shuddhalekhan v4.0.0 · v4.1.0 installs on exit')).toMatchObject({ enabled: false });
+    expect(menuAt()).toContainEqual(expect.objectContaining({ enabled: false, label: expect.stringMatching(/4\.1\.0.*install.*exit/i) }));
     expect(menuAt().some((entry) => entry.label?.startsWith('Check'))).toBe(false);
   });
 

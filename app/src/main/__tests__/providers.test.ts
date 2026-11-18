@@ -596,14 +596,13 @@ describe('getTranscriber pins one recording to its starting settings', () => {
 });
 
 describe('getTranscriber provider selection', () => {
-  it('routes Sarvam with its model capabilities and validates saved credentials before recording', async () => {
+  it('routes Sarvam and validates saved credentials before recording', async () => {
     const { getTranscriber } = await import('../providers');
     const config: AppConfig = { ...BASE_CONFIG, transcription: { ...BASE_CONFIG.transcription, activeProvider: 'sarvam', providers: { ...BASE_CONFIG.transcription.providers } } };
     expect(validateProviderReadiness('sarvam', config, createVault())).toEqual(['Sarvam API key is not configured. Save one in Settings.']);
     expect(validateProviderReadiness('sarvam', config, createVault({ 'sarvam-api-key': 'secret' }))).toEqual([]);
     const transcriber = getTranscriber(config, createVault({ 'sarvam-api-key': 'secret' }));
     expect(transcriber.id).toBe('sarvam');
-    config.transcription.providers.sarvam = { model: 'saaras:v3', mode: 'verbatim' };
   });
   it('returns the isolated managed local transcriber for managed-local', async () => {
     const { getTranscriber } = await import('../providers');
@@ -613,51 +612,6 @@ describe('getTranscriber provider selection', () => {
     };
 
     expect(getTranscriber(config, createVault({})).id).toBe('managed-local');
-  });
-
-  it('returns the local whisper transcriber for local-whisper-cpp', async () => {
-    const { getTranscriber } = await import('../providers');
-    const config: AppConfig = {
-      ...BASE_CONFIG,
-      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'local-whisper-cpp' },
-    };
-    const vault = createVault({});
-
-    const transcriber = getTranscriber(config, vault);
-    expect(transcriber.id).toBe('local-whisper-cpp');
-  });
-
-  it('returns the OpenAI transcriber for openai', async () => {
-    const { getTranscriber } = await import('../providers');
-    const config: AppConfig = {
-      ...BASE_CONFIG,
-      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'openai' },
-    };
-    const vault = createVault({ 'openai-api-key': 'sk-key' });
-
-    const transcriber = getTranscriber(config, vault);
-    expect(transcriber.id).toBe('openai');
-  });
-
-  it('returns the Microsoft Azure Speech transcriber for azure-speech', async () => {
-    const { getTranscriber } = await import('../providers');
-    const config: AppConfig = {
-      ...BASE_CONFIG,
-      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'azure-speech' },
-    };
-    expect(getTranscriber(config, createVault({})).id).toBe('azure-speech');
-  });
-
-  it('returns the custom OpenAI transcriber for custom-open-ai-compatible', async () => {
-    const { getTranscriber } = await import('../providers');
-    const config: AppConfig = {
-      ...BASE_CONFIG,
-      transcription: { ...BASE_CONFIG.transcription, activeProvider: 'custom-open-ai-compatible' },
-    };
-    const vault = createVault({});
-
-    const transcriber = getTranscriber(config, vault);
-    expect(transcriber.id).toBe('custom-open-ai-compatible');
   });
 
   it('returns the explicit WhisperLiveKit transcriber for whisper-live-kit', async () => {

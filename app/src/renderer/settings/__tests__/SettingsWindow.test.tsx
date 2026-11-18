@@ -1,4 +1,5 @@
 import { DEFAULT_MANAGED_LOCAL } from '../../../shared/managed-local-selection';
+import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
 import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
   act,
@@ -888,7 +889,7 @@ describe('Settings section reachability', () => {
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent('Local whisper.cpp'));
   });
 
-  it('groups all provider choices with descriptions and readiness', async () => {
+  it('shows provider groups, descriptions, and readiness', async () => {
     renderSettings();
     await waitForLoaded();
 
@@ -896,19 +897,8 @@ describe('Settings section reachability', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Provider' }));
 
     const options = await screen.findAllByRole('option');
-    expect(options).toHaveLength(9);
-    for (const name of [
-      'Local whisper.cpp',
-      'OpenAI',
-      'Microsoft Azure Speech',
-      'Google Cloud Speech-to-Text v2',
-      'NVIDIA Speech NIM',
-       'Custom OpenAI-compatible',
-       'WhisperLiveKit',
-      'Sarvam AI',
-    ]) {
-      expect(options.some((option) => option.textContent?.includes(name))).toBe(true);
-    }
+    expect(options).toHaveLength(TRANSCRIPTION_PROVIDER_IDS.length);
+    expect(options.some((option) => option.textContent?.includes('OpenAI'))).toBe(true);
     expect(screen.getByText('Cloud')).toBeInTheDocument();
     expect(screen.getByText('Custom')).toBeInTheDocument();
     expect(screen.getByText('OpenAI batch audio transcription.')).toBeInTheDocument();

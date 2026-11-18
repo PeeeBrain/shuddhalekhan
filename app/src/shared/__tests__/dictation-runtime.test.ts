@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
+import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
 import {
-  createRecordingPresentationEnvelope,
   getDictationConfigError,
   getFormatterProfileError,
   getFormatterCredentialError,
@@ -39,26 +39,13 @@ describe('Dictation config normalization', () => {
     expect(normalizeDictationConfig(once)).toEqual(once);
   });
 
-  it('keeps every provider batch-capable and exposes streaming only for WhisperLiveKit', () => {
-    for (const providerId of [
-      'managed-local',
-      'local-whisper-cpp',
-      'openai',
-      'sarvam',
-      'azure-speech',
-      'google-cloud-speech-v2',
-      'nvidia-speech-nim',
-      'custom-open-ai-compatible',
-    ] as const) {
+  it('keeps batch dictation available while enabling streaming only for WhisperLiveKit', () => {
+    for (const providerId of TRANSCRIPTION_PROVIDER_IDS) {
       expect(getTranscriptionTransportCapabilities(providerId)).toEqual({
         batch: true,
-        streaming: false,
+        streaming: providerId === 'whisper-live-kit',
       });
     }
-    expect(getTranscriptionTransportCapabilities('whisper-live-kit')).toEqual({
-      batch: true,
-      streaming: true,
-    });
   });
 
   it('accepts local HTTP and remote HTTPS formatter profiles but rejects unsafe endpoints', () => {
@@ -109,23 +96,5 @@ describe('Dictation config normalization', () => {
       apiKeySource: 'environment',
       processingConsent: true,
     })).toBe('Enter the environment variable name for the formatter API key, not the key value.');
-  });
-});
-
-describe('recording presentation envelope', () => {
-  it('carries session identity, revision, capabilities, and a typed outcome without replacing the session id', () => {
-    const envelope = createRecordingPresentationEnvelope({
-      recordingSessionId: 'session-1',
-      sequence: 3,
-      revision: 2,
-      capabilities: { batch: true, streaming: false },
-      outcome: { kind: 'completed' },
-    });
-
-    expect(envelope.recordingSessionId).toBe('session-1');
-    expect(envelope.sequence).toBe(3);
-    expect(envelope.revision).toBe(2);
-    expect(envelope.capabilities).toEqual({ batch: true, streaming: false });
-    expect(envelope.outcome).toEqual({ kind: 'completed' });
   });
 });

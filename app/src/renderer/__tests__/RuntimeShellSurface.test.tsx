@@ -385,10 +385,13 @@ describe('RuntimeShellSurface streaming preview', () => {
       } as const;
 
       showCard({ ...recording, captureStartedAt: null });
-      expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Preparing microphone');
-
       advance(1000);
+      expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Preparing microphone');
+      expect(screen.getByRole('status')).toHaveTextContent('Preparing mic…');
+      expect(screen.getByRole('status')).not.toHaveTextContent(/\d\d:\d\d/);
+
       showCard({ ...recording, captureStartedAt: now, revision: 2 });
+      expect(screen.getByRole('status')).toHaveTextContent('00:00');
       advance(3000);
       expect(screen.getByRole('status')).toHaveTextContent('00:03');
 

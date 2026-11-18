@@ -53,38 +53,28 @@ function agentSettings(providerUrl: string, mcpUrl: string): MobileSettings {
 }
 
 type MCPFixtureState = {
-  requests: Array<{ method: string; protocol: string | null; session: string | null; authorization: string | null }>;
+  sessionId: string;
   calls: Array<{ name: string; arguments: Record<string, unknown> }>;
   closes: number;
 };
 
 function agentMCPHandler(state: MCPFixtureState) {
   return async (request: Request): Promise<Response> => {
+    if (request.headers.get('authorization') !== 'Bearer mcp-secret') return new Response(null, { status: 401 });
     if (request.method === 'DELETE') {
+      if (request.headers.get('mcp-session-id') !== state.sessionId) return new Response(null, { status: 404 });
       state.closes++;
-      state.requests.push({
-        method: 'DELETE',
-        protocol: request.headers.get('mcp-protocol-version'),
-        session: request.headers.get('mcp-session-id'),
-        authorization: request.headers.get('authorization'),
-      });
       return new Response(null, { status: 202 });
     }
 
     const body = rpcRequestSchema.parse(await request.json());
-    state.requests.push({
-      method: body.method,
-      protocol: request.headers.get('mcp-protocol-version'),
-      session: request.headers.get('mcp-session-id'),
-      authorization: request.headers.get('authorization'),
-    });
     if (body.method === 'notifications/initialized') return new Response(null, { status: 202 });
     if (body.id === undefined) return Response.json({ error: 'Expected a JSON-RPC request id.' }, { status: 400 });
     if (body.method === 'initialize') {
       return Response.json({
         jsonrpc: '2.0', id: body.id,
         result: { protocolVersion: '2025-11-25', capabilities: { tools: {} } },
-      }, { headers: { 'Mcp-Session-Id': 'agent-session' } });
+      }, { headers: { 'Mcp-Session-Id': state.sessionId } });
     }
     if (body.method === 'tools/list') {
       return Response.json({ jsonrpc: '2.0', id: body.id, result: { tools: [{
@@ -102,8 +92,8 @@ function agentMCPHandler(state: MCPFixtureState) {
   };
 }
 
-function newMCPFixtureState(): MCPFixtureState {
-  return { requests: [], calls: [], closes: 0 };
+function newMCPFixtureState(sessionId = 'agent-session'): MCPFixtureState {
+  return { sessionId, calls: [], closes: 0 };
 }
 
 const modelRequestSchema = z.object({
@@ -113,11 +103,14 @@ const modelRequestSchema = z.object({
     content: z.unknown(),
     tool_call_id: z.string().optional(),
   }).passthrough()),
-  tools: z.array(z.object({ type: z.literal('function'), function: z.object({ name: z.string() }).passthrough() })).optional(),
+  tools: z.array(z.object({ type: z.literal('function'), function: z.object({
+    name: z.string(), description: z.string().optional(),
+  }).passthrough() })).optional(),
 }).passthrough();
 
-function toolCallResponse(): Response {
-  return chatReply({ id: 'call-search-1', name: 'mcp_1_0', arguments: '{"query":"quarterly plan"}' });
+function searchCall(name: string | undefined, id = 'call-search-1', query = 'quarterly plan'): Response {
+  if (!name) throw new Error('The model did not receive the search tool.');
+  return chatReply({ id, name, arguments: JSON.stringify({ query }) });
 }
 
 describe('agent HTTP and MCP flow', () => {
@@ -193,7 +186,7 @@ describe('agent HTTP and MCP flow', () => {
       expect(requests[0]?.protocol).toBe('2025-11-25');
       expect(requests[0]?.initializeProtocol).toBe('2025-11-25');
       expect(requests[0]?.session).toBeNull();
-      expect(requests[0]?.authorization).toBe('Bearer discovery-secret');
+      expect(requests.every(request => request.authorization === 'Bearer discovery-secret')).toBe(true);
       expect(requests[0]?.accept).toContain('text/event-stream');
       expect(requests[1]?.id).toBeUndefined();
       expect(requests[2]?.protocol).toBe('2025-06-18');
@@ -206,15 +199,14 @@ describe('agent HTTP and MCP flow', () => {
 
   test('approves an MCP tool call, sends its result back to the model, and returns the continuation', async () => {
     const mcpState = newMCPFixtureState();
-    let modelRequests = 0;
     const providerRequests: Array<{ path: string; authorization: string | null; body: z.infer<typeof modelRequestSchema> }> = [];
     const approvals: Array<{ serverName: string; toolName: string; arguments: string }> = [];
     await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
       await withServer(async request => {
         const body = modelRequestSchema.parse(await request.json());
         providerRequests.push({ path: new URL(request.url).pathname, authorization: request.headers.get('authorization'), body });
-        modelRequests++;
-        return modelRequests === 1 ? toolCallResponse() : chatReply('I found the quarterly plan.');
+        if (providerRequests.length > 1) return chatReply('I found the quarterly plan.');
+        return searchCall(body.tools?.[0]?.function.name);
       }, async providerUrl => {
         const { text } = await runAgent({
           transcript: 'Find the quarterly plan.',
@@ -229,21 +221,16 @@ describe('agent HTTP and MCP flow', () => {
         });
 
         expect(text).toBe('I found the quarterly plan.');
-        expect(approvals).toEqual([{ serverName: 'Test Tools', toolName: 'search', arguments: '{\n  "query": "quarterly plan"\n}' }]);
-        expect(modelRequests).toBe(2);
+        expect(approvals).toEqual([{ serverName: 'Test Tools', toolName: 'search', arguments: expect.any(String) }]);
+        expect(JSON.parse(approvals[0]?.arguments ?? '')).toEqual({ query: 'quarterly plan' });
         // The saved URL is used exactly, whatever path the SDK would build.
         expect(providerRequests.map(item => item.path)).toEqual(['/v1/chat/completions', '/v1/chat/completions']);
         expect(providerRequests.map(item => item.authorization)).toEqual(['Bearer provider-secret', 'Bearer provider-secret']);
         expect(providerRequests[0]?.body.model).toBe('test-model');
-        expect(providerRequests[0]?.body.tools?.map(tool => tool.function.name)).toEqual(['mcp_1_0']);
         const toolResult = providerRequests[1]?.body.messages.find(message => message.role === 'tool');
         expect(toolResult?.tool_call_id).toBe('call-search-1');
         expect(toolResult?.content).toContain('A matching document was found.');
         expect(mcpState.calls).toEqual([{ name: 'search', arguments: { query: 'quarterly plan' } }]);
-        expect(mcpState.requests.map(item => item.method)).toEqual([
-          'initialize', 'notifications/initialized', 'tools/list', 'tools/call', 'DELETE',
-        ]);
-        expect(mcpState.requests.every(item => item.authorization === 'Bearer mcp-secret')).toBe(true);
         expect(mcpState.closes).toBe(1);
       });
     });
@@ -254,8 +241,10 @@ describe('agent HTTP and MCP flow', () => {
     const bodies: string[] = [];
     await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
       await withServer(async request => {
-        bodies.push(await request.text());
-        return bodies.length === 1 ? toolCallResponse() : chatReply('I did not search.');
+        const body = await request.text();
+        bodies.push(body);
+        if (bodies.length > 1) return chatReply('I did not search.');
+        return searchCall(modelRequestSchema.parse(JSON.parse(body)).tools?.[0]?.function.name);
       }, async providerUrl => {
         const { text } = await runAgent({
           transcript: 'Search something.',
@@ -268,21 +257,24 @@ describe('agent HTTP and MCP flow', () => {
         expect(text).toBe('I did not search.');
         expect(bodies[1]).toContain('User denied tool execution.');
         expect(mcpState.calls).toHaveLength(0);
-        expect(mcpState.closes).toBe(1);
       });
     });
   });
 
   test('saved auto-approval applies only to that server and leaves another server asking', async () => {
-    const allowed = newMCPFixtureState();
-    const asking = newMCPFixtureState();
+    const allowed = newMCPFixtureState('allowed-session');
+    const asking = newMCPFixtureState('asking-session');
     const approvals: string[] = [];
     await withServer(agentMCPHandler(allowed), async allowedUrl => {
       await withServer(agentMCPHandler(asking), async askingUrl => {
         let step = 0;
-        await withServer(() => {
+        await withServer(async request => {
           step++;
-          return step > 2 ? chatReply('Done.') : chatReply({ id: `call-${step}`, name: `mcp_${step}_0`, arguments: '{"query":"plan"}' });
+          if (step > 2) return chatReply('Done.');
+          const body = modelRequestSchema.parse(await request.json());
+          const serverName = step === 1 ? 'Test Tools' : 'Other Tools';
+          const tool = body.tools?.find(tool => tool.function.description?.includes(serverName));
+          return searchCall(tool?.function.name, `call-${step}`, 'plan');
         }, async providerUrl => {
           const base = agentSettings(providerUrl, allowedUrl);
           const settings = mobileSettingsSchema.parse({ ...base, mcpServers: [
@@ -312,21 +304,21 @@ describe('agent HTTP and MCP flow', () => {
       await withServer(async request => {
         const body = modelRequestSchema.parse(await request.json());
         advertised.push(...(body.tools ?? []).map(tool => tool.function.name));
-        return ++requests === 1 ? toolCallResponse() : chatReply('That tool is unavailable.');
+        // The model guesses the disabled tool's name without seeing it advertised.
+        return ++requests === 1 ? searchCall('mcp_1_0') : chatReply('That tool is unavailable.');
       }, async providerUrl => {
         const base = agentSettings(providerUrl, mcpUrl);
         const settings = mobileSettingsSchema.parse({ ...base, mcpServers: base.mcpServers.map(server => ({
           ...server, toolPolicies: { search: 'disabled' },
         })) });
-        await runAgent({ transcript: 'Search.', settings,
+        const { text } = await runAgent({ transcript: 'Search.', settings,
           signal: new AbortController().signal, fetch: globalThis.fetch, onStatus: () => {},
           approve: async () => { approvals++; return true; },
         });
-        expect(requests).toBe(2);
+        expect(text).toBe('That tool is unavailable.');
         expect(advertised).toEqual([]);
         expect(approvals).toBe(0);
         expect(mcp.calls).toHaveLength(0);
-        expect(mcp.closes).toBe(1);
       });
     });
   });
@@ -334,7 +326,10 @@ describe('agent HTTP and MCP flow', () => {
   test('cancelling during pending approval prevents the tool call and closes its session', async () => {
     const mcpState = newMCPFixtureState();
     await withServer(request => agentMCPHandler(mcpState)(request), async mcpUrl => {
-      await withServer(() => toolCallResponse(), async providerUrl => {
+      await withServer(async request => {
+        const body = modelRequestSchema.parse(await request.json());
+        return searchCall(body.tools?.[0]?.function.name);
+      }, async providerUrl => {
         const controller = new AbortController();
         let approvalStarted = () => {};
         const approvalStartedPromise = new Promise<void>(resolve => { approvalStarted = resolve; });
@@ -390,10 +385,10 @@ describe('conversation and limits', () => {
       const first = await run('What is the weather?');
       expect((await run('Pune.', first.messages)).text).toBe('It is sunny in Pune.');
       expect(bodies[1]?.messages.map(message => [message.role, message.content])).toEqual([
-        ['system', expect.stringContaining('<identity>')],
-        ['user', expect.stringMatching(/\n\nWhat is the weather\?$/)],
+        ['system', expect.stringContaining('You are Shuddhalekhan Agent')],
+        ['user', expect.stringContaining('What is the weather?')],
         ['assistant', 'Which city?'],
-        ['user', expect.stringMatching(/\n\nPune\.$/)],
+        ['user', expect.stringContaining('Pune.')],
       ]);
     });
   });

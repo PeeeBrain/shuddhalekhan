@@ -1,32 +1,24 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import type { ShortcutBinding } from '../../types/ipc';
 
-const koffiHandle = { id: 'callback' };
-const user32Functions = new Map<string, ReturnType<typeof mock>>();
-const kernel32Functions = new Map<string, ReturnType<typeof mock>>();
+type KeyboardEvent = { vkCode: number; time: number };
+type KeyboardCallback = (code: number, message: bigint, event: KeyboardEvent) => bigint;
+let registeredCallback: KeyboardCallback | undefined;
 
 mock.module('koffi', () => ({
   default: {
-    load: mock((library: string) => ({
-      func: mock((signature: string) => {
-        const fn = mock(() => {
-          if (signature.includes('SetWindowsHookExW')) return 1;
-          if (signature.includes('CallNextHookEx')) return 0n;
-          if (signature.includes('UnhookWindowsHookEx')) return true;
-          if (signature.includes('GetModuleHandleW')) return 1;
-          return 0;
-        });
-        if (library === 'user32.dll') user32Functions.set(signature, fn);
-        if (library === 'kernel32.dll') kernel32Functions.set(signature, fn);
-        return fn;
-      }),
+    load: mock(() => ({
+      func: (signature: string) => () => signature.includes('CallNextHookEx') ? 0n : 1,
     })),
     struct: mock((_name: string, shape: unknown) => shape),
     proto: mock(() => ({})),
     pointer: mock((value: unknown) => value),
-    register: mock(() => koffiHandle),
+    register: mock((callback: KeyboardCallback) => {
+      registeredCallback = callback;
+      return { id: 'callback' };
+    }),
     unregister: mock(),
-    decode: mock(),
+    decode: (event: KeyboardEvent) => event,
   },
 }));
 
@@ -40,7 +32,7 @@ mock.module('../native/linux-input', () => ({
   prepareVirtualKeyboard: () => undefined,
 }));
 // Desktop shortcuts are unavailable unless a test hands the hook a fake backend.
-type ShortcutHandler = (intent: 'dictation' | 'agent', isDown: boolean) => void;
+type ShortcutHandler = (intent: 'dictation' | 'agent', isDown: boolean, at?: number) => void;
 const connectLinuxShortcuts = mock(
   (_events: { onShortcut: ShortcutHandler; onLost: () => void }): Promise<unknown> =>
     Promise.reject(new Error('no desktop shortcuts')),
@@ -48,6 +40,39 @@ const connectLinuxShortcuts = mock(
 mock.module('../desktop/linux-shortcuts', () => ({ connectLinuxShortcuts }));
 
 type HookModule = typeof import('../native/keyboard');
+type KeyboardHook = InstanceType<HookModule['KeyboardHook']>;
+const nativeCallbacks = new WeakMap<KeyboardHook, KeyboardCallback>();
+
+const keys = {
+  leftShift: 0xa0,
+  rightShift: 0xa1,
+  leftControl: 0xa2,
+  rightControl: 0xa3,
+  leftAlt: 0xa4,
+  rightAlt: 0xa5,
+  leftWin: 0x5b,
+  rightWin: 0x5c,
+  letterA: 0x41,
+};
+
+function key(hook: KeyboardHook, vkCode: number, isDown: boolean, time = 0): boolean {
+  const callback = nativeCallbacks.get(hook);
+  if (!callback) throw new Error('Expected a registered Windows keyboard callback');
+  return callback(0, isDown ? 0x0100n : 0x0101n, { vkCode, time }) === 1n;
+}
+
+function startWindowsHook(hook: KeyboardHook, options: Parameters<KeyboardHook['start']>[0]): void {
+  const platform = process.platform;
+  registeredCallback = undefined;
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    hook.start(options);
+  } finally {
+    Object.defineProperty(process, 'platform', { value: platform });
+  }
+  if (!registeredCallback) throw new Error('The hook did not register a Windows keyboard callback');
+  nativeCallbacks.set(hook, registeredCallback);
+}
 
 async function importHook(testName: string): Promise<HookModule> {
   return import(`../native/keyboard?test=${Date.now()}-${testName}`);
@@ -57,7 +82,7 @@ interface HookHarness {
   hook: InstanceType<HookModule['KeyboardHook']>;
   started: ReturnType<typeof mock>;
   stopped: ReturnType<typeof mock>;
-  keys: HookModule['keyboardTestKeyCodes'];
+  keys: typeof keys;
   bindings: { dictation: ShortcutBinding | null; agent: ShortcutBinding | null };
   modes: { dictation: 'push-to-talk' | 'toggle'; agent: 'push-to-talk' | 'toggle' };
   agentEnabled: boolean;
@@ -72,6 +97,7 @@ function createHarness(
     agentMode: 'push-to-talk' | 'toggle';
     agentEnabled: boolean;
   }> = {},
+  start = startWindowsHook,
 ): HookHarness {
   const hook = new hookModule.KeyboardHook();
   const started = mock();
@@ -80,7 +106,7 @@ function createHarness(
     hook,
     started,
     stopped,
-    keys: hookModule.keyboardTestKeyCodes,
+    keys,
     bindings: {
       dictation: overrides.dictationBinding === undefined
         ? { keyCode: null, modifiers: ['ctrl', 'win'] }
@@ -95,7 +121,7 @@ function createHarness(
     },
     agentEnabled: overrides.agentEnabled ?? true,
   };
-  hook.start({
+  start(hook, {
     onStart: started,
     onStop: stopped,
     isAgentModeEnabled: () => harness.agentEnabled,
@@ -106,22 +132,17 @@ function createHarness(
 }
 
 describe('KeyboardHook mode detection', () => {
-  beforeEach(() => {
-    user32Functions.clear();
-    kernel32Functions.clear();
-  });
-
   it('waits for the entire physical recording chord to release before final paste', async () => {
     const { hook, keys } = createHarness(await importHook('final-paste-release'));
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     const waiting = hook.waitForKeysReleased(new AbortController().signal);
     let released = false;
     void waiting.then(value => { released = value; });
-    hook.handleKeyForTest(keys.leftControl, false);
+    key(hook, keys.leftControl, false);
     await Promise.resolve();
     expect(released).toBe(false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftWin, false);
     expect(await waiting).toBe(true);
     hook.stop();
   });
@@ -129,11 +150,11 @@ describe('KeyboardHook mode detection', () => {
   it('cancels a pending release wait without reviving it when the keys later release', async () => {
     const { hook, keys } = createHarness(await importHook('cancel-final-paste-release'));
     const controller = new AbortController();
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftWin, true);
     const waiting = hook.waitForKeysReleased(controller.signal);
     controller.abort();
     expect(await waiting).toBe(false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftWin, false);
     expect(await hook.waitForKeysReleased(new AbortController().signal)).toBe(true);
     hook.stop();
   });
@@ -142,9 +163,9 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('dictation');
     const { hook, started, stopped, keys } = createHarness(hookModule);
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
 
     expect(started).toHaveBeenCalledWith('dictation');
     expect(stopped).toHaveBeenCalledTimes(1);
@@ -155,27 +176,20 @@ describe('KeyboardHook mode detection', () => {
     const { hook, stopped, keys, modes } = createHarness(hookModule);
 
     // The Windows tick count wraps at 2^32 ms mid-hold.
-    hook.handleKeyForTest(keys.leftControl, true, 2 ** 32 - 100);
-    hook.handleKeyForTest(keys.leftWin, true, 2 ** 32 - 90);
-    hook.handleKeyForTest(keys.leftWin, false, 150);
-    hook.handleKeyForTest(keys.leftControl, false, 160);
+    key(hook, keys.leftControl, true, 2 ** 32 - 100);
+    key(hook, keys.leftWin, true, 2 ** 32 - 90);
+    key(hook, keys.leftWin, false, 150);
+    key(hook, keys.leftControl, false, 160);
     expect(stopped).toHaveBeenLastCalledWith(240);
 
-    // A release without a source time (keyboard unplugged) is of unknown length.
-    hook.handleKeyForTest(keys.leftControl, true, 1_000);
-    hook.handleKeyForTest(keys.leftWin, true, 1_010);
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, false);
-    expect(stopped).toHaveBeenLastCalledWith(null);
-
     modes.dictation = 'toggle';
-    hook.handleKeyForTest(keys.leftControl, true, 2_000);
-    hook.handleKeyForTest(keys.leftWin, true, 2_010);
-    hook.handleKeyForTest(keys.leftWin, false, 2_020);
-    hook.handleKeyForTest(keys.leftControl, false, 2_030);
-    hook.handleKeyForTest(keys.leftControl, true, 2_040);
-    hook.handleKeyForTest(keys.leftWin, true, 2_050);
-    expect(stopped).toHaveBeenCalledTimes(3);
+    key(hook, keys.leftControl, true, 2_000);
+    key(hook, keys.leftWin, true, 2_010);
+    key(hook, keys.leftWin, false, 2_020);
+    key(hook, keys.leftControl, false, 2_030);
+    key(hook, keys.leftControl, true, 2_040);
+    key(hook, keys.leftWin, true, 2_050);
+    expect(stopped).toHaveBeenCalledTimes(2);
     expect(stopped).toHaveBeenLastCalledWith(null);
   });
 
@@ -183,26 +197,26 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('modifier-release-consumption');
     const { hook, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
 
-    hook.handleKeyForTest(keys.leftWin, true);
-    expect(hook.handleKeyForTest(keys.leftControl, true)).toBe(true);
-    expect(hook.handleKeyForTest(keys.leftControl, false)).toBe(true);
-    expect(hook.handleKeyForTest(keys.leftWin, false)).toBe(true);
+    key(hook, keys.leftWin, true);
+    expect(key(hook, keys.leftControl, true)).toBe(true);
+    expect(key(hook, keys.leftControl, false)).toBe(true);
+    expect(key(hook, keys.leftWin, false)).toBe(true);
   });
 
   it('toggles dictation on fresh presses of the same chord', async () => {
     const hookModule = await importHook('toggle-dictation');
     const { hook, started, stopped, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
 
     expect(started).toHaveBeenCalledWith('dictation');
     expect(stopped).not.toHaveBeenCalled();
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
 
     expect(started).toHaveBeenCalledTimes(1);
     expect(stopped).toHaveBeenCalledTimes(1);
@@ -212,13 +226,13 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('toggle-external-stop');
     const { hook, started, stopped, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
     hook.recordingEndedExternally();
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
 
     expect(started).toHaveBeenCalledTimes(2);
     expect(stopped).not.toHaveBeenCalled();
@@ -228,18 +242,18 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('toggle-repeat');
     const { hook, stopped, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftWin, true);
 
     expect(stopped).not.toHaveBeenCalled();
 
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
 
     expect(stopped).toHaveBeenCalledTimes(1);
   });
@@ -248,17 +262,17 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('toggle-held-win');
     const { hook, started, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
 
-    hook.handleKeyForTest(keys.letterA, true);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, true);
+    key(hook, keys.letterA, true);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, true);
 
     expect(started).toHaveBeenCalledTimes(1);
   });
@@ -267,21 +281,21 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('toggle-binding');
     const { hook, started, stopped, keys } = createHarness(hookModule, { dictationMode: 'toggle' });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
 
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
 
     expect(started).toHaveBeenCalledTimes(1);
     expect(stopped).not.toHaveBeenCalled();
 
-    hook.handleKeyForTest(keys.leftAlt, false);
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftAlt, false);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
 
     expect(stopped).toHaveBeenCalledTimes(1);
   });
@@ -291,21 +305,21 @@ describe('KeyboardHook mode detection', () => {
     const harness = createHarness(hookModule, { dictationMode: 'toggle' });
     const { hook, stopped, keys } = harness;
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     harness.modes.dictation = 'push-to-talk';
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
 
     expect(stopped).not.toHaveBeenCalled();
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
 
     expect(stopped).toHaveBeenCalledTimes(2);
   });
@@ -314,12 +328,12 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('toggle-agent');
     const { hook, started, stopped, keys } = createHarness(hookModule, { agentMode: 'toggle' });
 
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftAlt, false);
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftAlt, false);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
 
     expect(started).toHaveBeenCalledWith('agent');
     expect(started).toHaveBeenCalledTimes(1);
@@ -331,12 +345,12 @@ describe('KeyboardHook mode detection', () => {
     const disabledHarness = createHarness(hookModule, { agentEnabled: false });
     const enabledHarness = createHarness(hookModule, { agentEnabled: true });
 
-    disabledHarness.hook.handleKeyForTest(disabledHarness.keys.leftAlt, true);
-    disabledHarness.hook.handleKeyForTest(disabledHarness.keys.leftWin, true);
+    key(disabledHarness.hook, disabledHarness.keys.leftAlt, true);
+    key(disabledHarness.hook, disabledHarness.keys.leftWin, true);
 
-    enabledHarness.hook.handleKeyForTest(enabledHarness.keys.leftAlt, true);
-    enabledHarness.hook.handleKeyForTest(enabledHarness.keys.leftWin, true);
-    enabledHarness.hook.handleKeyForTest(enabledHarness.keys.leftAlt, false);
+    key(enabledHarness.hook, enabledHarness.keys.leftAlt, true);
+    key(enabledHarness.hook, enabledHarness.keys.leftWin, true);
+    key(enabledHarness.hook, enabledHarness.keys.leftAlt, false);
 
     expect(disabledHarness.started).not.toHaveBeenCalled();
     expect(enabledHarness.started).toHaveBeenCalledWith('agent');
@@ -347,9 +361,9 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('modifiers');
     const { hook, started, keys } = createHarness(hookModule);
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
 
     expect(started).not.toHaveBeenCalled();
   });
@@ -358,39 +372,34 @@ describe('KeyboardHook mode detection', () => {
     const hookModule = await importHook('normalize');
     const { hook, started, stopped, keys } = createHarness(hookModule);
 
-    hook.handleKeyForTest(keys.rightControl, true);
-    hook.handleKeyForTest(keys.rightWin, true);
+    key(hook, keys.rightControl, true);
+    key(hook, keys.rightWin, true);
 
     expect(started).toHaveBeenCalledWith('dictation');
 
-    hook.handleKeyForTest(keys.rightWin, false);
+    key(hook, keys.rightWin, false);
 
     expect(stopped).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('KeyboardHook configurable bindings', () => {
-  beforeEach(() => {
-    user32Functions.clear();
-    kernel32Functions.clear();
-  });
-
   it('triggers on an ordinary key plus modifiers and consumes the ordinary key', async () => {
     const hookModule = await importHook('ordinary-chord');
     const { hook, started, stopped, keys } = createHarness(hookModule, {
       dictationBinding: { keyCode: 0x52, modifiers: ['ctrl', 'shift'] },
     });
 
-    const consumedCtrl = hook.handleKeyForTest(keys.leftControl, true);
-    const consumedShift = hook.handleKeyForTest(keys.leftShift, true);
-    const consumedKey = hook.handleKeyForTest(0x52, true);
+    const consumedCtrl = key(hook, keys.leftControl, true);
+    const consumedShift = key(hook, keys.leftShift, true);
+    const consumedKey = key(hook, 0x52, true);
 
     expect(started).toHaveBeenCalledWith('dictation');
     expect(consumedCtrl).toBe(false);
     expect(consumedShift).toBe(false);
     expect(consumedKey).toBe(true);
 
-    const consumedUp = hook.handleKeyForTest(0x52, false);
+    const consumedUp = key(hook, 0x52, false);
     expect(stopped).toHaveBeenCalledTimes(1);
     expect(consumedUp).toBe(true);
   });
@@ -401,12 +410,12 @@ describe('KeyboardHook configurable bindings', () => {
       dictationBinding: { keyCode: 0x52, modifiers: ['ctrl', 'win'] },
     });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(0x52, true);
-    expect(hook.handleKeyForTest(keys.leftWin, false)).toBe(true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, 0x52, true);
+    expect(key(hook, keys.leftWin, false)).toBe(true);
     expect(stopped).toHaveBeenCalledTimes(1);
-    expect(hook.handleKeyForTest(0x52, false)).toBe(true);
+    expect(key(hook, 0x52, false)).toBe(true);
   });
 
   it('continues consuming an ordinary trigger when a modifier is released first', async () => {
@@ -415,13 +424,13 @@ describe('KeyboardHook configurable bindings', () => {
       dictationBinding: { keyCode: 0x52, modifiers: ['ctrl'] },
     });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(0x52, true);
-    expect(hook.handleKeyForTest(keys.leftControl, false)).toBe(true);
+    key(hook, keys.leftControl, true);
+    key(hook, 0x52, true);
+    expect(key(hook, keys.leftControl, false)).toBe(true);
     expect(stopped).toHaveBeenCalledTimes(1);
 
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
-    expect(hook.handleKeyForTest(0x52, false)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
+    expect(key(hook, 0x52, false)).toBe(true);
   });
 
   it('does not trigger an ordinary chord when the modifier set differs', async () => {
@@ -430,9 +439,9 @@ describe('KeyboardHook configurable bindings', () => {
       dictationBinding: { keyCode: 0x52, modifiers: ['ctrl'] },
     });
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftAlt, true);
-    const consumed = hook.handleKeyForTest(0x52, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftAlt, true);
+    const consumed = key(hook, 0x52, true);
 
     expect(started).not.toHaveBeenCalled();
     expect(consumed).toBe(false);
@@ -444,19 +453,19 @@ describe('KeyboardHook configurable bindings', () => {
       dictationBinding: { keyCode: 0x52, modifiers: [] },
     });
 
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
     expect(started).toHaveBeenCalledWith('dictation');
 
     // Held-key repeats neither retrigger nor leak text.
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
     expect(started).toHaveBeenCalledTimes(1);
 
-    expect(hook.handleKeyForTest(0x52, false)).toBe(true);
+    expect(key(hook, 0x52, false)).toBe(true);
     expect(stopped).toHaveBeenCalledTimes(1);
 
     // After release the key types normally again.
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
     expect(started).toHaveBeenCalledTimes(2);
   });
 
@@ -467,13 +476,13 @@ describe('KeyboardHook configurable bindings', () => {
       dictationMode: 'toggle',
     });
 
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
-    expect(hook.handleKeyForTest(0x52, false)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
+    expect(key(hook, 0x52, false)).toBe(true);
     expect(started).toHaveBeenCalledTimes(1);
     expect(stopped).not.toHaveBeenCalled();
 
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
-    expect(hook.handleKeyForTest(0x52, false)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
+    expect(key(hook, 0x52, false)).toBe(true);
     expect(started).toHaveBeenCalledTimes(1);
     expect(stopped).toHaveBeenCalledTimes(1);
   });
@@ -485,13 +494,13 @@ describe('KeyboardHook configurable bindings', () => {
       agentBinding: { keyCode: 0x26, modifiers: ['win'] },
     });
 
-    hook.handleKeyForTest(0x74, true);
-    hook.handleKeyForTest(0x74, false);
+    key(hook, 0x74, true);
+    key(hook, 0x74, false);
     expect(started).toHaveBeenCalledWith('dictation');
     expect(stopped).toHaveBeenCalledTimes(1);
 
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(0x26, true);
+    key(hook, keys.leftWin, true);
+    key(hook, 0x26, true);
     expect(started).toHaveBeenCalledWith('agent');
   });
 
@@ -501,9 +510,9 @@ describe('KeyboardHook configurable bindings', () => {
       dictationBinding: { keyCode: null, modifiers: ['ctrl', 'shift'] },
     });
 
-    hook.handleKeyForTest(keys.leftControl, true);
+    key(hook, keys.leftControl, true);
     expect(started).not.toHaveBeenCalled();
-    hook.handleKeyForTest(keys.rightShift, true);
+    key(hook, keys.rightShift, true);
 
     expect(started).toHaveBeenCalledWith('dictation');
   });
@@ -512,20 +521,20 @@ describe('KeyboardHook configurable bindings', () => {
     const hookModule = await importHook('unrelated-keys');
     const { hook, started, keys } = createHarness(hookModule);
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     expect(started).toHaveBeenCalledWith('dictation');
 
-    expect(hook.handleKeyForTest(keys.letterA, true)).toBe(false);
-    expect(hook.handleKeyForTest(keys.letterA, false)).toBe(false);
+    expect(key(hook, keys.letterA, true)).toBe(false);
+    expect(key(hook, keys.letterA, false)).toBe(false);
   });
 
   it('reserves no key when an intent is unassigned', async () => {
     const hookModule = await importHook('unassigned');
     const { hook, started, keys } = createHarness(hookModule, { dictationBinding: null });
 
-    expect(hook.handleKeyForTest(keys.leftControl, true)).toBe(false);
-    expect(hook.handleKeyForTest(keys.leftWin, true)).toBe(false);
+    expect(key(hook, keys.leftControl, true)).toBe(false);
+    expect(key(hook, keys.leftWin, true)).toBe(false);
 
     expect(started).not.toHaveBeenCalled();
   });
@@ -535,15 +544,15 @@ describe('KeyboardHook configurable bindings', () => {
     const harness = createHarness(hookModule, { agentEnabled: false });
     const { hook, started, keys } = harness;
 
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftAlt, false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftAlt, false);
+    key(hook, keys.leftWin, false);
     expect(started).not.toHaveBeenCalled();
 
     harness.agentEnabled = true;
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
     expect(started).toHaveBeenCalledWith('agent');
   });
 
@@ -554,12 +563,12 @@ describe('KeyboardHook configurable bindings', () => {
 
     harness.bindings.dictation = { keyCode: 0x52, modifiers: [] };
 
-    hook.handleKeyForTest(0x52, true);
+    key(hook, 0x52, true);
     expect(started).toHaveBeenCalledWith('dictation');
 
-    hook.handleKeyForTest(0x52, false);
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, 0x52, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     expect(started).toHaveBeenCalledTimes(1);
   });
 
@@ -570,11 +579,11 @@ describe('KeyboardHook configurable bindings', () => {
     });
     const { hook, started, stopped } = harness;
 
-    hook.handleKeyForTest(0x52, true);
+    key(hook, 0x52, true);
     expect(started).toHaveBeenCalledWith('dictation');
 
     harness.bindings.dictation = { keyCode: 0x54, modifiers: [] };
-    hook.handleKeyForTest(0x52, false);
+    key(hook, 0x52, false);
 
     expect(stopped).toHaveBeenCalledTimes(1);
   });
@@ -587,34 +596,29 @@ describe('KeyboardHook configurable bindings', () => {
     });
 
     // Dictation toggle: press and release, still recording.
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
     expect(started).toHaveBeenCalledWith('dictation');
     expect(stopped).not.toHaveBeenCalled();
 
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     expect(stopped).toHaveBeenCalledTimes(1);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftWin, false);
 
     // Agent push-to-talk: stops on release.
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
     expect(started).toHaveBeenCalledWith('agent');
-    hook.handleKeyForTest(keys.leftWin, false);
+    key(hook, keys.leftWin, false);
     expect(stopped).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('KeyboardHook pause and capture suspension', () => {
-  beforeEach(() => {
-    user32Functions.clear();
-    kernel32Functions.clear();
-  });
-
   it('prevents new sessions while paused and lets trigger keys pass through', async () => {
     const hookModule = await importHook('pause');
     const { hook, started } = createHarness(hookModule, {
@@ -624,12 +628,12 @@ describe('KeyboardHook pause and capture suspension', () => {
     hook.setPaused(true);
     expect(hook.isPaused()).toBe(true);
 
-    expect(hook.handleKeyForTest(0x52, true)).toBe(false);
-    expect(hook.handleKeyForTest(0x52, false)).toBe(false);
+    expect(key(hook, 0x52, true)).toBe(false);
+    expect(key(hook, 0x52, false)).toBe(false);
     expect(started).not.toHaveBeenCalled();
 
     hook.setPaused(false);
-    expect(hook.handleKeyForTest(0x52, true)).toBe(true);
+    expect(key(hook, 0x52, true)).toBe(true);
     expect(started).toHaveBeenCalledWith('dictation');
   });
 
@@ -639,14 +643,14 @@ describe('KeyboardHook pause and capture suspension', () => {
       dictationBinding: { keyCode: 0x52, modifiers: [] },
     });
 
-    hook.handleKeyForTest(0x52, true);
+    key(hook, 0x52, true);
     expect(started).toHaveBeenCalledWith('dictation');
 
     hook.setPaused(true);
-    expect(hook.handleKeyForTest(0x52, false)).toBe(true);
+    expect(key(hook, 0x52, false)).toBe(true);
     expect(stopped).toHaveBeenCalledTimes(1);
 
-    expect(hook.handleKeyForTest(0x52, true)).toBe(false);
+    expect(key(hook, 0x52, true)).toBe(false);
     expect(started).toHaveBeenCalledTimes(1);
   });
 
@@ -655,15 +659,15 @@ describe('KeyboardHook pause and capture suspension', () => {
     const { hook, started, keys } = createHarness(hookModule);
 
     hook.setCaptureSuspended(true);
-    expect(hook.handleKeyForTest(keys.leftControl, true)).toBe(false);
-    expect(hook.handleKeyForTest(keys.leftWin, true)).toBe(false);
+    expect(key(hook, keys.leftControl, true)).toBe(false);
+    expect(key(hook, keys.leftWin, true)).toBe(false);
     expect(started).not.toHaveBeenCalled();
 
     hook.setCaptureSuspended(false);
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, false);
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftControl, false);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     expect(started).toHaveBeenCalledWith('dictation');
   });
 
@@ -672,12 +676,11 @@ describe('KeyboardHook pause and capture suspension', () => {
     const hook = new hookModule.KeyboardHook();
     const started = mock();
     const stopped = mock();
-    const keys = hookModule.keyboardTestKeyCodes;
 
     // Reject the first start attempt, accept the second
     started.mockReturnValueOnce(false).mockReturnValue(true);
 
-    hook.start({
+    startWindowsHook(hook, {
       onStart: started,
       onStop: stopped,
       isAgentModeEnabled: () => true,
@@ -688,30 +691,30 @@ describe('KeyboardHook pause and capture suspension', () => {
     });
 
     // 1. Dictation toggle chord pressed but rejected
-    hook.handleKeyForTest(keys.leftControl, true);
-    const consumed = hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    const consumed = key(hook, keys.leftWin, true);
     expect(consumed).toBe(true);
     expect(started).toHaveBeenCalledTimes(1);
 
     // Release the chord
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, false);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftControl, false);
 
     // No stop should have been fired because session was never accepted
     expect(stopped).not.toHaveBeenCalled();
 
     // 2. Next press (now accepted) starts cleanly as a toggle
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     expect(started).toHaveBeenCalledTimes(2);
 
     // Release chord keys
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftControl, false);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftControl, false);
 
     // Subsequent press stops the active toggle session
-    hook.handleKeyForTest(keys.leftControl, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftControl, true);
+    key(hook, keys.leftWin, true);
     expect(stopped).toHaveBeenCalledTimes(1);
   });
 
@@ -720,9 +723,8 @@ describe('KeyboardHook pause and capture suspension', () => {
     const hook = new hookModule.KeyboardHook();
     const started = mock(() => false);
     const stopped = mock();
-    const keys = hookModule.keyboardTestKeyCodes;
 
-    hook.start({
+    startWindowsHook(hook, {
       onStart: started,
       onStop: stopped,
       isAgentModeEnabled: () => true,
@@ -732,18 +734,22 @@ describe('KeyboardHook pause and capture suspension', () => {
       getActivationMode: () => 'push-to-talk',
     });
 
-    hook.handleKeyForTest(keys.leftAlt, true);
-    hook.handleKeyForTest(keys.leftWin, true);
+    key(hook, keys.leftAlt, true);
+    key(hook, keys.leftWin, true);
     expect(started).toHaveBeenCalledWith('agent');
 
     // On release of push-to-talk chord, stopped must not be called because start was rejected
-    hook.handleKeyForTest(keys.leftWin, false);
-    hook.handleKeyForTest(keys.leftAlt, false);
+    key(hook, keys.leftWin, false);
+    key(hook, keys.leftAlt, false);
     expect(stopped).not.toHaveBeenCalled();
   });
 });
 
 describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortcuts', () => {
+  function createLinuxHarness(hookModule: HookModule, overrides?: Parameters<typeof createHarness>[1]): HookHarness {
+    return createHarness(hookModule, overrides, (hook, options) => hook.start(options));
+  }
+
   function fakeDesktop(kind: 'portal' | 'x11' = 'portal') {
     const desktop = {
       kind,
@@ -777,14 +783,15 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('drives push-to-talk and toggle from desktop chord press/release, ignoring auto-repeat', async () => {
     const desktop = fakeDesktop();
-    const { hook, started, stopped } = createHarness(await importHook('desktop-modes'), { agentMode: 'toggle' });
+    const { hook, started, stopped } = createLinuxHarness(await importHook('desktop-modes'), { agentMode: 'toggle' });
     await nextStatus(hook);
 
-    desktop.shortcut('dictation', true);
+    desktop.shortcut('dictation', true, 1_000);
     desktop.shortcut('dictation', true);
     expect(started).toHaveBeenCalledTimes(1);
+    // A desktop release can arrive without a timestamp even when the press had one.
     desktop.shortcut('dictation', false);
-    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(stopped.mock.calls).toEqual([[null]]);
 
     desktop.shortcut('agent', true);
     desktop.shortcut('agent', false);
@@ -798,7 +805,7 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('registers the Agent Mode chord only while Agent Mode is enabled and reports assigned triggers', async () => {
     const desktop = fakeDesktop();
-    const harness = createHarness(await importHook('desktop-refresh'), { agentEnabled: false });
+    const harness = createLinuxHarness(await importHook('desktop-refresh'), { agentEnabled: false });
     expect(await nextStatus(harness.hook)).toEqual({ backend: 'portal', triggers: { dictation: 'dictation chord' } });
 
     harness.agentEnabled = true;
@@ -817,7 +824,7 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('releases X11 grabs while paused so the chord reaches other apps', async () => {
     const desktop = fakeDesktop('x11');
-    const { hook } = createHarness(await importHook('desktop-x11-pause'));
+    const { hook } = createLinuxHarness(await importHook('desktop-x11-pause'));
     await nextStatus(hook);
     const paused = nextStatus(hook);
     hook.setPaused(true);
@@ -828,7 +835,7 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('waits for the desktop chord release before the final paste', async () => {
     const desktop = fakeDesktop();
-    const { hook } = createHarness(await importHook('desktop-release-wait'), { dictationMode: 'toggle' });
+    const { hook } = createLinuxHarness(await importHook('desktop-release-wait'), { dictationMode: 'toggle' });
     await nextStatus(hook);
     desktop.shortcut('dictation', true);
     const waiting = hook.waitForKeysReleased(new AbortController().signal);
@@ -839,7 +846,7 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('fails the final paste closed when key state is unknown or never answers', async () => {
     const desktop = fakeDesktop();
-    const { hook } = createHarness(await importHook('desktop-release-unknown'));
+    const { hook } = createLinuxHarness(await importHook('desktop-release-unknown'));
     await nextStatus(hook);
     desktop.keysHeld.mockImplementationOnce(async () => null);
     expect(await hook.waitForKeysReleased(new AbortController().signal)).toBe(false);
@@ -857,19 +864,19 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('ends a held push-to-talk recording when the desktop connection drops', async () => {
     const desktop = fakeDesktop();
-    const { hook, stopped } = createHarness(await importHook('desktop-lost'));
+    const { hook, stopped } = createLinuxHarness(await importHook('desktop-lost'));
     await nextStatus(hook);
     desktop.shortcut('dictation', true);
     const status = nextStatus(hook);
     desktop.lose();
-    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(stopped.mock.calls).toEqual([[null]]);
     expect(await status).toMatchObject({ backend: 'unavailable' });
     hook.stop();
   });
 
   it('reconnects to the desktop on the next shortcut change after the service drops', async () => {
     const lost = fakeDesktop();
-    const { hook } = createHarness(await importHook('desktop-reconnect'));
+    const { hook } = createLinuxHarness(await importHook('desktop-reconnect'));
     await nextStatus(hook);
     const unavailable = nextStatus(hook);
     lost.lose();
@@ -884,7 +891,7 @@ describe.skipIf(process.platform !== 'linux')('KeyboardHook Linux desktop shortc
 
   it('falls back to evdev when the desktop has no shortcut API', async () => {
     startEvdevKeyboardReader.mockClear();
-    const { hook } = createHarness(await importHook('desktop-fallback'));
+    const { hook } = createLinuxHarness(await importHook('desktop-fallback'));
     expect(await nextStatus(hook)).toEqual({ backend: 'evdev' });
     expect(startEvdevKeyboardReader).toHaveBeenCalledTimes(1);
     // KDE best-effort paste waits on this; evdev has no portal backend but does see key release.

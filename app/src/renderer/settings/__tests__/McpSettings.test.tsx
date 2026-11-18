@@ -66,10 +66,44 @@ function makeServer(
 }
 
 function renderSettings(servers: McpServerConfig[], agentEnabled = true) {
-  const onChange = mock(() => undefined);
+  const onChange = mock((_servers: McpServerConfig[]) => undefined);
   render(<McpSettings servers={servers} statuses={{}} agentEnabled={agentEnabled} onChange={onChange} onTest={async () => undefined} />);
   return onChange;
 }
+
+it('adds an unnamed HTTP server with a separate id and redirects denied', async () => {
+  const existing = makeServer(httpTransport, [], 'saved-server');
+  const onChange = renderSettings([existing]);
+  const url = 'https://other.example.test/mcp';
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add server' }));
+  fireEvent.click(screen.getByRole('combobox', { name: 'Transport' }));
+  fireEvent.click(await screen.findByRole('option', { name: 'HTTP' }));
+  expect(screen.getByRole('switch', { name: 'Follow HTTP redirects' })).not.toBeChecked();
+  fireEvent.change(screen.getByLabelText('URL'), { target: { value: url } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Server' }));
+
+  expect(onChange).toHaveBeenCalledWith([existing, expect.objectContaining({
+    id: expect.any(String),
+    displayName: 'MCP Server',
+    transport: { type: 'http', url, redirect: 'error' },
+  })]);
+  expect(onChange.mock.calls[0]?.[0][1]?.id).not.toBe(existing.id);
+});
+
+it.each([
+  ['   ', 'MCP Server'],
+  ['  Lookup  ', 'Lookup'],
+])('normalizes the edited MCP name %j and keeps the saved server identity', (name: string, displayName: string) => {
+  const server = makeServer(httpTransport, [], 'saved-server');
+  const onChange = renderSettings([server]);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: name } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+  expect(onChange).toHaveBeenCalledWith([{ ...server, displayName }]);
+});
 
 describe('McpSettings pre-registered OAuth client', () => {
   it('saves optional OAuth client fields from the HTTP server editor', () => {
@@ -112,14 +146,18 @@ describe('McpSettings pre-registered OAuth client', () => {
   });
 
   it('hides OAuth fields for stdio servers', () => {
-    renderSettings([makeServer({ type: 'stdio', command: 'bun', args: [], envVarNames: [] })]);
+    renderSettings([makeServer({ type: 'stdio', command: 'bun', args: ['run', 'server.ts'], envVarNames: [] })]);
 
+    expect(screen.getByText('bun run server.ts')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByLabelText('Command')).toHaveValue('bun');
     expect(screen.queryByLabelText('OAuth client ID')).toBeNull();
   });
 });
 
 it('requires Agent Mode before reconnecting a server', () => {
-  renderSettings([makeServer(httpTransport)], false);
+  renderSettings([makeServer({ ...httpTransport, url: '' })], false);
+  expect(screen.getByText('HTTP endpoint not set')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeDisabled();
 });
 

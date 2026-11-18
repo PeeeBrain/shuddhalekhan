@@ -5,6 +5,7 @@ import { join } from 'path';
 import { auth } from '@ai-sdk/mcp';
 import { get } from 'node:http';
 import { SidecarOAuthProvider } from '../oauth-provider';
+import { AisdkMcpClientFactory, SidecarOAuthRedirectFactory } from '../mcp-registry-adapters';
 import type { McpServerConfig } from '../../types/ipc';
 
 function requestCallback(url: string): Promise<number> {
@@ -80,6 +81,60 @@ describe('SidecarOAuthProvider', () => {
     }));
 
     expect(provider.clientInformation()).toEqual({ client_id: 'static-client' });
+  });
+
+  it('authenticates MCP discovery with the saved OAuth token', async () => {
+    const server = httpServer();
+    const fetchMcp: typeof fetch = async (_input, init) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer saved-token');
+      const { id, method } = JSON.parse(String(init?.body));
+      if (method === 'initialize') {
+        return Response.json({ jsonrpc: '2.0', id, result: {
+          protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1.0.0' },
+        } });
+      }
+      if (method === 'tools/list') {
+        return Response.json({ jsonrpc: '2.0', id, result: { tools: [{ name: 'lookup', inputSchema: { type: 'object' } }] } });
+      }
+      return new Response(null, { status: 202 });
+    };
+    const oauth = new SidecarOAuthRedirectFactory(fetchMcp);
+    const redirect = oauth.create(server);
+    const factory = new AisdkMcpClientFactory(oauth, undefined, fetchMcp);
+    try {
+      const client = await factory.connect(server, { access_token: 'saved-token' });
+      try {
+        expect(Object.keys(await client.tools())).toEqual(['lookup']);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await redirect.close();
+    }
+  });
+
+  it.each(['error', 'follow'] as const)('applies the redirect policy %s to OAuth metadata requests', async (policy: 'error' | 'follow') => {
+    const endpoint = 'https://mcp.example.test/mcp';
+    const metadataUrl = 'https://mcp.example.test/.well-known/oauth-protected-resource/mcp';
+    const requests: Array<{ url: string; redirect?: RequestRedirect }> = [];
+    const fetchMcp: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ url, redirect: init?.redirect });
+      if (url === endpoint && init?.method === 'POST') {
+        return new Response(null, { status: 401, headers: { 'WWW-Authenticate': `Bearer resource_metadata="${metadataUrl}"` } });
+      }
+      return new Response(null, { status: 403 });
+    };
+    const server = httpServer({ url: endpoint, redirect: policy });
+    const oauth = new SidecarOAuthRedirectFactory(fetchMcp);
+    const redirect = oauth.create(server);
+    try {
+      const factory = new AisdkMcpClientFactory(oauth, undefined, fetchMcp);
+      await expect(factory.connect(server)).rejects.toThrow();
+      expect(requests).toContainEqual({ url: metadataUrl, redirect: policy });
+    } finally {
+      await redirect.close();
+    }
   });
 
   it('completes a pre-registered client callback without storing the client secret', async () => {
@@ -194,11 +249,17 @@ describe('SidecarOAuthProvider', () => {
 
   it('keeps authorization pending after a code-less callback so a later valid callback can complete', async () => {
     const exchanged: Array<{ code: string | undefined; state: string | undefined }> = [];
+    const fetchToken: typeof fetch = async (_input, init) => {
+      expect(init?.redirect).toBe('error');
+      return Response.json({ access_token: 'callback-token' });
+    };
     const authenticate: typeof auth = async (_provider, options) => {
+      if (!options.fetchFn) throw new Error('OAuth callback must use the configured fetch');
+      await options.fetchFn('https://auth.example.test/token', { method: 'POST' });
       exchanged.push({ code: options.authorizationCode, state: options.callbackState });
       return 'AUTHORIZED';
     };
-    const provider = new SidecarOAuthProvider(httpServer(), fetch, authenticate);
+    const provider = new SidecarOAuthProvider(httpServer(), fetchToken, authenticate);
     await provider.start();
     const callbackUrl = provider.redirectUrl;
     const pending = provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'));

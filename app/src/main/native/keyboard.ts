@@ -564,22 +564,6 @@ export class KeyboardHook {
     if (held.size !== required.length) return false;
     return required.every((modifier) => held.has(modifier));
   }
-
-  handleKeyForTest(vkCode: number, isDown: boolean, at?: number): boolean {
-    return this.handleKey(vkCode, isDown, at);
-  }
 }
 
 export const keyboardHook = new KeyboardHook();
-
-export const keyboardTestKeyCodes = {
-  leftShift: 0xa0,
-  rightShift: 0xa1,
-  leftControl: 0xa2,
-  rightControl: 0xa3,
-  leftAlt: 0xa4,
-  rightAlt: 0xa5,
-  leftWin: VK_LWIN,
-  rightWin: VK_RWIN,
-  letterA: 0x41,
-};
