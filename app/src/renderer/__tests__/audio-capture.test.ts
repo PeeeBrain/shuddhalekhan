@@ -833,6 +833,21 @@ describe('warm audio stream', () => {
       mod.setWarmMicrophone(false);
     });
 
+    it('takes no pre-roll from a warm mic that was still opening at the press', async () => {
+      const audio = installAudio();
+      const mod = await importFresh();
+      const open = audio.holdMic();
+      mod.setWarmMicrophone(true);
+      const starting = mod.startRecording(recorder({ preRoll: true }).options);
+      // A cue starts while the mic opens, and the ring then fills with it.
+      mod.holdPreRollForCue();
+      audio.hearWhileIdle(idle());
+      open();
+      expect(await starting).toBe(0);
+      expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: PRE_ROLL });
+      mod.setWarmMicrophone(false);
+    });
+
     it('keeps a recording cue out of the pre-roll until it has sounded, however late', async () => {
       const now = vi.spyOn(performance, 'now').mockReturnValue(0);
       try {

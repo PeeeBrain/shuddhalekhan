@@ -505,11 +505,11 @@ async function setupMic(mic: Mic): Promise<void> {
 }
 
 /**
- * Waits for the mic, then starts its worklet, which hands over `preRoll`
- * ring frames first. A setup that outlives the deadline finds the capture
- * released; closing the mic still stops the tracks if it opens late.
+ * Waits for the mic, then starts its worklet, which hands over ring frames
+ * first. A setup that outlives the deadline finds the capture released;
+ * closing the mic still stops the tracks if it opens late.
  */
-async function admit(capture: Capture, preRoll: number): Promise<void> {
+async function admit(capture: Capture, warmAtPress: boolean): Promise<void> {
   const { mic } = capture;
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([mic.ready, new Promise<never>((_, reject) => {
@@ -518,6 +518,12 @@ async function admit(capture: Capture, preRoll: number): Promise<void> {
   const { node } = mic;
   if (capture.released || !node) return;
   if (capture === active) startLevelTelemetry();
+  // Judged at the handoff, so a cue that started while the mic opened stays out.
+  // A mic that was not running at the press heard nothing before it: its whole ring is recording.
+  const cueFree = capture.options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
+  const preRoll = warmAtPress
+    ? Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000)
+    : preRollFrames(mic.context);
   await waitForCapture(capture, STOP_ACK_TIMEOUT_MS, 'Microphone did not start in time.',
     () => node.port.postMessage({ type: 'start', preRollFrames: preRoll }));
 }
@@ -553,10 +559,8 @@ export async function startRecording(options: RecordingOptions): Promise<number>
   mic.owner = capture;
   active = capture;
   live.add(capture);
-  // A cold mic's ring holds only audio from after the press: all of it is recording, none is pre-roll.
-  const cueFree = options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
-  const preRoll = adopted ? Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000) : preRollFrames(mic.context);
-  capture.ready = admit(capture, preRoll);
+  const warmAtPress = adopted?.running === true;
+  capture.ready = admit(capture, warmAtPress);
 
   try {
     await capture.ready;
@@ -566,7 +570,7 @@ export async function startRecording(options: RecordingOptions): Promise<number>
     release(capture);
     throw error;
   }
-  return adopted && !capture.released ? capture.sampleCount : 0;
+  return warmAtPress && !capture.released ? capture.sampleCount : 0;
 }
 
 /**
