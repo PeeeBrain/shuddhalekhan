@@ -640,7 +640,8 @@ export interface AppConfig {
     memoryEnabled?: boolean;
     /** Appended to the agent system prompt; part of the cached prefix, so it never carries per-run data. */
     customInstructions?: string;
-    computerUse: ComputerUseConfig;
+    /** Missing means off with default tool policies. */
+    computerUse?: ComputerUseConfig;
   };
 }
 

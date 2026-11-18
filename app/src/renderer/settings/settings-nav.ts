@@ -1,5 +1,6 @@
 import { createElement, type ComponentType } from 'react';
-import { BookOpen, Bot, Brain, FileText, History, House, Info, Keyboard, Plug, Puzzle } from 'lucide-react';
+import { BookOpen, Bot, Brain, FileText, History, House, Info, Keyboard, MousePointerClick, Plug, Puzzle } from 'lucide-react';
+import { ComputerUseSettings } from './ComputerUseSettings';
 import { HomeSettings } from './HomeSettings';
 import { TranscriptionSettings } from './TranscriptionSettings';
 import { ShortcutsSettings } from './ShortcutsSettings';
@@ -44,6 +45,7 @@ export const SETTINGS_NAV_GROUPS = [
     sections: [
       { id: 'agent', label: 'Agent', icon: Bot, component: AgentSettings },
       { id: 'mcp', label: 'MCP Servers', icon: Plug, component: McpPage },
+      { id: 'computer-use', label: 'Computer Use', icon: MousePointerClick, component: ComputerUseSettings },
       { id: 'plugins', label: 'Plugins', icon: Puzzle, component: PluginsSettings },
       { id: 'skills', label: 'Skills', icon: BookOpen, component: SkillsSettings },
       { id: 'memory', label: 'Memory', icon: Brain, component: MemorySettings },

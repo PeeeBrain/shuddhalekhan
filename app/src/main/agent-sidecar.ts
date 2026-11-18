@@ -4,7 +4,7 @@ import { dirname, join } from 'path';
 import type { AgentProviderConfig, AgentProviderTestResult, AppConfig } from '../types/ipc';
 import { failedProviderTest } from '../shared/agent-provider';
 import { providerTestCancelled, providerTestTimedOut } from '../shared/agent-provider-test';
-import { PROVIDER_TEST_RESPONSE_TIMEOUT_MS, SIDECAR_SHUTDOWN_TIMEOUT_MS } from '../shared/agent-timeouts';
+import { MCP_REGISTRY_CLOSE_TIMEOUT_MS, PROVIDER_TEST_RESPONSE_TIMEOUT_MS, SIDECAR_SHUTDOWN_TIMEOUT_MS } from '../shared/agent-timeouts';
 import type { ElectronToSidecarMessage, SidecarEvent } from '../agent/protocol';
 import { JsonlProcessManager, type JsonlProcessLaunch } from './jsonl-process-manager';
 import { getPersistentStoreDirectory } from './store-path';
@@ -42,11 +42,13 @@ export type SidecarManagerDeps = {
   scheduleTimeout?: (fn: () => void, ms: number) => () => void;
   onLifecycleError?: (error: SidecarLifecycleError) => void;
   onGenerationExit?: () => void;
+  computerUseExecutable?: () => string | undefined;
 };
 
 
 export class AgentSidecarManager {
   private providerTest: { requestId: string; resolve: (result: AgentProviderTestResult) => void; cancelTimeout: () => void } | null = null;
+  private computerUseClose?: { requestId: string; finish: (closed: boolean) => void };
   private generation: Generation | null = null;
   private process: GenerationProcess | null = null;
   private readonly jobPort: JobObjectPort;
@@ -54,6 +56,7 @@ export class AgentSidecarManager {
   private readonly scheduleTimeout: (fn: () => void, ms: number) => () => void;
   private readonly onLifecycleError?: (error: SidecarLifecycleError) => void;
   private readonly onGenerationExit?: () => void;
+  private readonly computerUseExecutable?: () => string | undefined;
 
   constructor(
     private readonly onEvent: SidecarEventHandler,
@@ -69,15 +72,37 @@ export class AgentSidecarManager {
       });
     this.onLifecycleError = deps.onLifecycleError;
     this.onGenerationExit = deps.onGenerationExit;
+    this.computerUseExecutable = deps.computerUseExecutable;
   }
 
   start(config: AppConfig, agentApiKey?: string): void {
     this.ensureGeneration();
+    const computerUseExecutable = config.agent.enabled && config.agent.computerUse?.enabled
+      ? this.computerUseExecutable?.() : undefined;
     this.sendOrQueue({
       type: 'config:update',
       config,
       ...(agentApiKey ? { agentApiKey } : {}),
+      ...(computerUseExecutable ? { computerUseExecutable } : {}),
     });
+  }
+
+  async closeComputerUse(config: AppConfig, agentApiKey?: string): Promise<void> {
+    const state = this.generation?.state;
+    if (!state || state.kind === 'stopped') return;
+    if (state.kind === 'stopping') return state.promise;
+    const requestId = randomUUID();
+    const closed = await new Promise<boolean>(resolve => {
+      const cancel = this.scheduleTimeout(() => finish(false), MCP_REGISTRY_CLOSE_TIMEOUT_MS);
+      const finish = (closed: boolean) => {
+        this.computerUseClose = undefined;
+        cancel();
+        resolve(closed);
+      };
+      this.computerUseClose = { requestId, finish };
+      this.sendOrQueue({ type: 'config:update', config, agentApiKey, computerUseCloseRequestId: requestId });
+    });
+    if (!closed) throw new Error('Computer Use could not be stopped. Retry uninstalling.');
   }
 
   startRun(agentRunId: string, transcript: string, config: AppConfig, agentApiKey?: string, context?: AgentRunContext, continueFrom?: string): void {
@@ -253,6 +278,10 @@ export class AgentSidecarManager {
   private handleEvent(generation: Generation, event: SidecarEvent): void {
     if (this.generation !== generation) return;
 
+    if (event.type === 'computer-use:closed') {
+      if (event.requestId === this.computerUseClose?.requestId) this.computerUseClose.finish(event.closed);
+      return;
+    }
     if (event.type === 'provider:test-result') {
       if (event.requestId === this.providerTest?.requestId) this.finishProviderTest(event.result);
       return;
@@ -285,6 +314,7 @@ export class AgentSidecarManager {
     generation.state = { kind: 'stopped' };
     if (this.generation === generation) {
       this.finishProviderTest(failedProviderTest({ kind: 'provider', message: 'The Agent sidecar stopped during the model test.', action: 'Retry the model test.' }));
+      this.computerUseClose?.finish(true);
       this.generation = null;
       this.process?.stop();
       this.process = null;

@@ -2,7 +2,6 @@ import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared
 import { useState } from 'react';
 import { ChevronDown, Plus } from 'lucide-react';
 import type {
-  AgentToolApprovalPolicy,
   McpHttpOAuthConfig,
   McpServerConfig,
   McpServerRuntimeStatus,
@@ -13,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { SectionHeader, SettingsCard } from './ui/SectionHeader';
-import { Tag, type TagTone } from './ui/rows';
+import { Tag, ToolPolicySelect, type TagTone } from './ui/rows';
 import {
   Select,
   SelectContent,
@@ -470,27 +469,13 @@ function ToolPolicyEditor({
                 </p>
               </div>
               <div className="pt-0.5">
-                <Select
+                <ToolPolicySelect
                   value={policy}
-                  onValueChange={(nextPolicy) => {
-                    onChange({
-                      ...server,
-                      toolPolicies: {
-                        ...server.toolPolicies,
-                        [policyKey]: nextPolicy as AgentToolApprovalPolicy,
-                      },
-                    });
+                  label={tool.name}
+                  onChange={(nextPolicy) => {
+                    onChange({ ...server, toolPolicies: { ...server.toolPolicies, [policyKey]: nextPolicy } });
                   }}
-                >
-                  <SelectTrigger aria-label={`Approval policy for ${tool.name}`} className="h-8 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="alwaysAsk">Always ask</SelectItem>
-                    <SelectItem value="alwaysAllow">Always allow</SelectItem>
-                    <SelectItem value="disabled">Disabled</SelectItem>
-                  </SelectContent>
-                </Select>
+                />
               </div>
             </div>
           );

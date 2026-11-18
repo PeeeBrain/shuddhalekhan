@@ -314,14 +314,18 @@ export function selectArchiveMembers(listing: string[], include: string[]): stri
  * Windows' bsdtar detects tar.bz2, tar.gz, and zip (Python wheels) on its own. GNU tar cannot read zip,
  * so Linux extracts wheels with unzip, whose `-Z` listing uses the same `ls -l` style as `tar -tv`.
  */
-export async function extractTar(archivePath: string, stagingPath: string, include: string[] = []): Promise<void> {
+export async function extractTar(archivePath: string, stagingPath: string, include: string[] = [], exactRegularFiles = false): Promise<void> {
   const zip = process.platform !== 'win32' && await isZip(archivePath);
-  const run = (args: string[]) => runArchiver(zip ? 'unzip' : 'tar', args);
+  if (exactRegularFiles && zip) throw new Error('The archive must be a gzip-compressed tar file.');
+  const run = (args: string[]) => runArchiver(zip ? 'unzip' : 'tar', exactRegularFiles ? ['-z', ...args] : args);
   const listing = (await run(zip ? ['-Z1', archivePath] : ['-tf', archivePath])).split(/\r?\n/).filter(Boolean);
   const members = selectArchiveMembers(listing, include);
   validateArchiveEntries(listing);
+  if (exactRegularFiles && (listing.length !== include.length || !include.every(name => listing.includes(name)))) {
+    throw new Error('The archive has unexpected files.');
+  }
   const verbose = (await run([zip ? '-Z' : '-tvf', archivePath, ...members])).split(/\r?\n/).filter(Boolean);
-  if (verbose.some((line) => line[0] !== '-' && line[0] !== 'd')) {
+  if ((exactRegularFiles && verbose.length !== members.length) || verbose.some(line => line[0] !== '-' && (exactRegularFiles || line[0] !== 'd'))) {
     throw new Error('The archive contains unsupported links or device entries.');
   }
   await run(zip ? ['-qo', archivePath, ...members, '-d', stagingPath] : ['-xf', archivePath, '-C', stagingPath, ...members]);

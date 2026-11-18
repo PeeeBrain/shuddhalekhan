@@ -193,6 +193,7 @@ mock.module('../tray', () => ({
 }));
 mock.module('../config', () => ({
   getConfig,
+  disableComputerUse: vi.fn(),
   getChatGptHostId: () => 'urn:uuid:installation',
   setChatGptHostId: vi.fn(),
   setConfig,

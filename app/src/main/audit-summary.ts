@@ -1,3 +1,4 @@
+import { COMPUTER_USE_SOURCE_ID } from '../shared/computer-use';
 import { parseModelToolName } from '@shuddhalekhan/shared/mcp';
 import type { AuditRunSummary } from '../types/ipc';
 import { z } from 'zod';
@@ -91,6 +92,9 @@ export function summarizeAuditEvents(events: AuditSummaryEventRow[], now = Date.
           if (payload.serverId && payload.toolName) {
             toolsSet.add(`${payload.serverId}.${payload.toolName}`);
           }
+          break;
+        case 'computer_use_tool_execute':
+          if (payload.toolName) toolsSet.add(`${COMPUTER_USE_SOURCE_ID}.${payload.toolName}`);
           break;
         case 'tool_requests':
           if (Array.isArray(payload.toolCalls)) {

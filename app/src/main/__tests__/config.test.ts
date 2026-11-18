@@ -128,6 +128,26 @@ describe('config store', () => {
     expect(storeData.get('agent')).toEqual(saved);
   });
 
+  it('normalizes older Computer Use settings, protects the internal MCP id, and preserves policies', async () => {
+    const { getConfig, setConfig, disableComputerUse } = await import(`../config?test=${Date.now()}-computer-use`);
+    const legacy = { enabled: false, provider: { baseUrl: '', model: '', apiKeyEnvVar: '' }, mcpServers: [] };
+    storeData.set('agent', legacy);
+    expect(getConfig().agent.computerUse).toEqual({ enabled: false, toolPolicies: {} });
+    storeData.set('agent', {
+      ...legacy,
+      mcpServers: [{ id: 'native-computer' }],
+      computerUse: { enabled: true, toolPolicies: { desktop_click: 'alwaysAllow', desktop_type: 'allow', desktop_exec: 'alwaysAllow' } },
+    });
+    const { computerUse, ...oldPatch } = getConfig().agent;
+    expect(computerUse).toEqual({ enabled: true, toolPolicies: { desktop_click: 'alwaysAllow' } });
+    expect(oldPatch.mcpServers).toEqual([]);
+    expect(() => Reflect.apply(setConfig, null, ['agent', { ...oldPatch, mcpServers: [{ id: 'native-computer' }] }])).toThrow('reserved');
+    setConfig('agent', { ...oldPatch, customInstructions: 'Be brief.' });
+    expect(getConfig().agent.computerUse).toEqual(computerUse);
+    disableComputerUse();
+    expect(getConfig().agent.computerUse).toEqual({ enabled: false, toolPolicies: { desktop_click: 'alwaysAllow' } });
+  });
+
   it('drops a deleted server from its plugin so removing the plugin spares a later same-id server', async () => {
     storeData.set('agent', { enabled: false, provider: { baseUrl: '', model: '', apiKeyEnvVar: '' }, mcpServers: [],
       plugins: [{ name: 'acme', skills: ['acme-triage'], mcpServerIds: ['acme'] }] });

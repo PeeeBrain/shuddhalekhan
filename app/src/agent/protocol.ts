@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { AgentProviderConfig, AgentProviderTestResult, AgentStep, AppConfig } from '../types/ipc';
 import { z } from 'zod';
 import { agentProviderSchema } from '../shared/agent-provider-validation';
@@ -80,6 +81,7 @@ export type AgentCancelledEvent = {
 };
 
 export type SidecarEvent =
+  | { type: 'computer-use:closed'; requestId: string; closed: boolean }
   | { type: 'memory:propose'; agentRunId: string; requestId: string; revision: string; updates: AgentMemoryUpdate[] }
   | { type: 'memory:status'; agentRunId: string; status: string }
   | { type: 'provider:test-result'; requestId: string; result: AgentProviderTestResult }
@@ -99,6 +101,8 @@ export type ConfigUpdateMessage = {
   type: 'config:update';
   config: AppConfig;
   agentApiKey?: string;
+  computerUseExecutable?: string;
+  computerUseCloseRequestId?: string;
 };
 
 export type AgentStartMessage = {
@@ -151,6 +155,7 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
     return null;
   }
 
+  if (!parsed || typeof parsed !== 'object') return null;
   switch (parsed.type) {
     case 'provider:test': {
       const result = z.object({
@@ -175,7 +180,15 @@ export function parseElectronMessage(line: string): ElectronToSidecarMessage | n
       }).optional(), continueFrom: z.string().min(1).optional() }).safeParse(parsed);
       return result.success ? result.data : null;
     }
-    case 'config:update':
+    case 'config:update': {
+      const fields = z.object({
+        computerUseExecutable: z.string().max(4096).refine(path => isAbsolute(path) && !path.includes('\0')).optional(),
+        computerUseCloseRequestId: z.string().uuid().optional(),
+      }).safeParse(parsed);
+      if (!fields.success || (fields.data.computerUseExecutable && fields.data.computerUseCloseRequestId)
+        || !parsed.config?.agent) return null;
+      return { ...parsed, ...fields.data, type: 'config:update', config: parsed.config };
+    }
     case 'agent:cancel':
     case 'approval:decision':
     case 'mcp:test-server':

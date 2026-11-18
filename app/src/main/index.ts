@@ -1,3 +1,5 @@
+import { createComputerUseInstaller } from './computer-use';
+import { COMPUTER_USE_SOURCE_ID, COMPUTER_USE_TOOLS, computerUseToolPolicy } from '../shared/computer-use';
 import { handle } from './typed-ipc';
 import { randomUUID } from 'crypto';
 import { join } from 'path';
@@ -7,6 +9,7 @@ import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler }
 import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
 import {
   getConfig,
+  disableComputerUse,
   getChatGptHostId,
   setChatGptHostId,
   getLastSeenReleaseNotesVersion,
@@ -168,7 +171,11 @@ const sidecarEventRouter = createSidecarEventRouter({
     if (activeAgentRun?.id === agentRunId) activeAgentRun = null;
   },
 });
+const computerUse = createComputerUseInstaller(getPersistentStoreDirectory(), status => {
+  getSettingsWindow()?.webContents.send('computer-use:status-changed', status);
+});
 const agentSidecar = new AgentSidecarManager(sidecarEventRouter.handle, {
+  computerUseExecutable: computerUse.executable,
   onLifecycleError: () => {
     notifyAgentRuntimeStopped('Agent runtime could not start securely. Check the logs and try again.');
   },
@@ -691,6 +698,27 @@ handle('transcription:check-readiness', () => checkTranscriptionReadiness(
   readiness => getSettingsWindow()?.webContents.send('transcription:readiness-changed', readiness),
 ));
 
+handle('computer-use:get-status', computerUse.status);
+handle('computer-use:install', async () => {
+  const status = await computerUse.install();
+  const config = getConfig();
+  if (status.state === 'installed' && config.agent.enabled && config.agent.computerUse?.enabled) {
+    agentSidecar.start(config, getAgentSidecarApiKey(config, credentialVault));
+  }
+  return status;
+});
+handle('computer-use:cancel-install', computerUse.cancelInstall);
+handle('computer-use:uninstall', () => computerUse.uninstall(async () => {
+  disableComputerUse();
+  publishAgentConfig();
+  const config = getConfig();
+  await agentSidecar.closeComputerUse(config, getAgentSidecarApiKey(config, credentialVault));
+  if (getConfig().agent.computerUse?.enabled) {
+    disableComputerUse();
+    publishAgentConfig();
+  }
+}));
+
 handle('managed-local:get-model', managedLocalSnapshot);
 handle('managed-local:install-model', (_event, target: unknown) => installManagedLocalModel(target));
 handle('managed-local:delete-model', (_event, target: unknown) => {
@@ -750,13 +778,29 @@ handle(
     const approval = decision === 'always-allow' ? runtimeShell.getPendingApproval(approvalId) : null;
     if (approval) {
       const config = getConfig();
-      const policyKey: McpToolPolicyKey = makeMcpToolPolicyKey(approval.serverId, approval.toolName);
-      setConfig('agent', {
-        ...config.agent,
-        mcpServers: config.agent.mcpServers.map((server) => server.id === approval.serverId
-          ? { ...server, toolPolicies: { ...server.toolPolicies, [policyKey]: 'alwaysAllow' } }
-          : server),
-      });
+      if (approval.serverId === COMPUTER_USE_SOURCE_ID) {
+        const tool = COMPUTER_USE_TOOLS.find(tool => tool.name === approval.toolName);
+        const settings = config.agent.computerUse;
+        if (!tool || !settings?.enabled || computerUseToolPolicy(settings, tool.name) === 'disabled') {
+          agentSidecar.sendApprovalDecision(agentRunId, approvalId, 'denied', 'Computer Use is disabled.');
+          return;
+        }
+        setConfig('agent', {
+          ...config.agent,
+          computerUse: {
+            ...settings,
+            toolPolicies: { ...settings.toolPolicies, [tool.name]: 'alwaysAllow' },
+          },
+        });
+      } else {
+        const policyKey: McpToolPolicyKey = makeMcpToolPolicyKey(approval.serverId, approval.toolName);
+        setConfig('agent', {
+          ...config.agent,
+          mcpServers: config.agent.mcpServers.map((server) => server.id === approval.serverId
+            ? { ...server, toolPolicies: { ...server.toolPolicies, [policyKey]: 'alwaysAllow' } }
+            : server),
+        });
+      }
       // Later calls in this same run should see the new policy too.
       const next = getConfig();
       publishAgentConfig();
@@ -938,7 +982,7 @@ if (!gotSingleInstanceLock) {
     agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
-    void Promise.all([agentSidecar.stop(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable()]).finally(() => {
+    void Promise.all([agentSidecar.stop(), computerUse.cancelInstall(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable()]).finally(() => {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;

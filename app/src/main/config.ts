@@ -1,5 +1,6 @@
+import { COMPUTER_USE_SOURCE_ID, COMPUTER_USE_TOOLS, DEFAULT_COMPUTER_USE_CONFIG, type ComputerUseConfig } from '../shared/computer-use';
 import { AGENT_CUSTOM_INSTRUCTIONS_LIMIT } from '@shuddhalekhan/shared/agent-prompt';
-import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
+import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey, toolApprovalPolicySchema } from '@shuddhalekhan/shared/mcp';
 import { TRANSCRIPTION_PROVIDER_IDS } from '@shuddhalekhan/shared/providers';
 import { DEFAULT_SARVAM_CONFIG, sarvamConfigSchema } from '@shuddhalekhan/shared/sarvam';
 import Store from 'electron-store';
@@ -107,6 +108,7 @@ const store = new Store<StoreConfig>({
         reasoning: 'default',
       },
       mcpServers: [],
+      computerUse: DEFAULT_COMPUTER_USE_CONFIG,
       disabledSkills: [],
       memoryEnabled: false,
     },
@@ -246,6 +248,29 @@ function persistNormalizedDictation(): void {
 
 persistNormalizedDictation();
 
+const computerUseConfigSchema = z.object({
+  enabled: z.boolean(),
+  toolPolicies: z.record(z.string(), z.unknown()),
+});
+
+function normalizeComputerUse(value: unknown): ComputerUseConfig {
+  const parsed = computerUseConfigSchema.safeParse(value);
+  if (!parsed.success) return DEFAULT_COMPUTER_USE_CONFIG;
+  const stored = parsed.data.toolPolicies;
+  const toolPolicies: ComputerUseConfig['toolPolicies'] = {};
+  for (const { name } of COMPUTER_USE_TOOLS) {
+    if (stored[name] === undefined) continue;
+    const policy = toolApprovalPolicySchema.safeParse(stored[name]);
+    if (policy.success) toolPolicies[name] = policy.data;
+  }
+  return { enabled: parsed.data.enabled, toolPolicies };
+}
+
+export function disableComputerUse(): void {
+  const agent = store.get('agent');
+  store.set('agent', { ...agent, computerUse: { ...normalizeComputerUse(agent?.computerUse), enabled: false } });
+}
+
 export function getConfig(): AppConfig {
   const agent = store.get('agent');
   const parsedProvider = agentProviderSchema.safeParse(agent?.provider ?? {});
@@ -288,9 +313,12 @@ export function getConfig(): AppConfig {
       enabled: agent?.enabled ?? false,
       provider: { ...provider, ...normalizeAgentProvider(provider) },
       mcpServers,
+      computerUse: normalizeComputerUse(agent?.computerUse),
       disabledSkills: z.array(z.string()).safeParse(agent?.disabledSkills).data ?? [],
       plugins: z.array(z.object({ name: z.string(), skills: z.array(z.string()), mcpServerIds: z.array(z.string()) }))
-        .safeParse(agent?.plugins).data ?? [],
+        .safeParse(agent?.plugins).data?.map(plugin => ({ ...plugin,
+          mcpServerIds: plugin.mcpServerIds.filter(id => id !== COMPUTER_USE_SOURCE_ID),
+        })) ?? [],
       pluginMarketplaces: z.array(z.string()).safeParse(agent?.pluginMarketplaces).data ?? [],
       memoryEnabled: agent?.memoryEnabled === true,
       customInstructions: typeof agent?.customInstructions === 'string' ? agent.customInstructions : '',
@@ -336,9 +364,14 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
     }).safeParse(value);
     if (!parsed.success) throw new Error('Provider settings contain an invalid value.');
     const previousAgent = store.get('agent');
+    const agent = value as AppConfig['agent'];
+    if (agent.mcpServers?.some(server => server.id === COMPUTER_USE_SOURCE_ID)) {
+      throw new Error('The native-computer connection name is reserved for Computer Use.');
+    }
+    const computerUse = normalizeComputerUse(agent.computerUse === undefined ? previousAgent?.computerUse : agent.computerUse);
     // Disabling must work even when an existing provider profile is invalid.
     if (previousAgent?.enabled && !parsed.data.enabled) {
-      store.set('agent', { ...previousAgent, enabled: false });
+      store.set('agent', { ...previousAgent, enabled: false, computerUse });
       return;
     }
     const provider = parsed.data.provider;
@@ -347,11 +380,10 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
       && !(issue.field === 'model' && !provider.model.trim())
       && !(issue.field === 'apiKeyEnvVar' && !provider.apiKeyEnvVar.trim()));
     if (issue) throw new Error(issue.message);
-    const agent = value as AppConfig['agent'];
     // A deleted server leaves its plugin, so removing the plugin never takes a later server with the same id.
     const plugins = agent.plugins?.map(plugin => ({ ...plugin,
       mcpServerIds: plugin.mcpServerIds.filter(id => agent.mcpServers.some(server => server.id === id)) }));
-    store.set('agent', { ...agent, plugins,
+    store.set('agent', { ...agent, plugins, computerUse,
       provider: { ...provider, apiKeyEnvVar: normalizeAgentProvider(provider).apiKeyEnvVar } });
     return;
   }

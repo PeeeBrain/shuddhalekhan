@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron';
 import type { SidecarEvent } from '../agent/protocol';
 import type { McpServerRuntimeStatus, McpStatusSnapshot } from '../types/ipc';
 import type { AgentPresenter } from './agent-presentation';
+import { COMPUTER_USE_SOURCE_ID } from '../shared/computer-use';
 
 interface SidecarEventRouterDeps {
   getSettingsWindow: () => BrowserWindow | null;
@@ -66,12 +67,13 @@ export function createSidecarEventRouter(deps: SidecarEventRouterDeps): SidecarE
       // The waiting indicator belongs to the presentation layer; presenters
       // decide whether an explicit status precedes the approval card.
       const mcpServers = deps.getConfig().agent.mcpServers;
-      const server = mcpServers.find((s) => s.id === event.serverId);
+      const serverDisplayName = event.serverId === COMPUTER_USE_SOURCE_ID ? 'Computer Use'
+        : mcpServers.find((s) => s.id === event.serverId)?.displayName;
       deps.presenter.approval({
         agentRunId: event.agentRunId,
         approvalId: event.approvalId,
         serverId: event.serverId,
-        ...(server?.displayName ? { serverDisplayName: server.displayName } : {}),
+        ...(serverDisplayName ? { serverDisplayName } : {}),
         toolName: event.toolName,
         modelToolName: event.modelToolName,
         arguments: event.arguments,

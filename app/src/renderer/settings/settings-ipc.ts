@@ -31,6 +31,7 @@ import type {
   AgentSkillSummary,
 } from '../../shared/agent-context';
 import type { DesktopStatus } from '../../shared/desktop-status';
+import type { ComputerUseStatus } from '../../shared/computer-use';
 
 type Unsubscribe = () => void;
 
@@ -53,6 +54,11 @@ export interface SettingsIpc {
   installManagedLocalModel: (target?: ManagedLocalTarget) => Promise<ManagedLocalModelSnapshot>;
   deleteManagedLocalModel: (target?: ManagedLocalDeleteTarget) => Promise<ManagedLocalModelSnapshot>;
   onManagedLocalModelStateChanged: (callback: (state: ManagedLocalModelState) => void) => Unsubscribe | undefined;
+  getComputerUseStatus: () => Promise<ComputerUseStatus>;
+  installComputerUse: () => Promise<ComputerUseStatus>;
+  cancelComputerUseInstall: () => Promise<void>;
+  uninstallComputerUse: () => Promise<ComputerUseStatus>;
+  onComputerUseStatusChanged: (callback: (status: ComputerUseStatus) => void) => Unsubscribe | undefined;
   onOnboardingCompleted: (callback: () => void) => Unsubscribe | undefined;
   getShortcutsPaused: () => Promise<boolean>;
   setShortcutsPaused: (paused: boolean) => Promise<boolean>;
@@ -142,6 +148,11 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     installManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:install-model', target),
     deleteManagedLocalModel: (target) => requireElectronApi(electronAPI).invoke('managed-local:delete-model', target),
     onManagedLocalModelStateChanged: (callback) => requireElectronApi(electronAPI).subscribe('managed-local:model-state-changed', callback),
+    getComputerUseStatus: () => requireElectronApi(electronAPI).invoke('computer-use:get-status'),
+    installComputerUse: () => requireElectronApi(electronAPI).invoke('computer-use:install'),
+    cancelComputerUseInstall: () => requireElectronApi(electronAPI).invoke('computer-use:cancel-install'),
+    uninstallComputerUse: () => requireElectronApi(electronAPI).invoke('computer-use:uninstall'),
+    onComputerUseStatusChanged: (callback) => requireElectronApi(electronAPI).subscribe('computer-use:status-changed', callback),
     onOnboardingCompleted: (callback) => requireElectronApi(electronAPI).subscribe('onboarding:completed', callback),
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),

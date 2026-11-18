@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import type { AgentToolApprovalPolicy } from '@shuddhalekhan/shared/mcp';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -336,6 +337,27 @@ export function ReadOnlyRow({ label, value, description }: ReadOnlyRowProps) {
         <span className="text-sm text-muted-foreground break-words sm:text-right">{value}</span>
       </div>
     </RowShell>
+  );
+}
+
+/** The Ask / Allow / Disabled choice shared by MCP and Computer Use tools. */
+export function ToolPolicySelect({ value, label, onChange }: {
+  value: AgentToolApprovalPolicy;
+  /** Names the tool for screen readers. */
+  label: string;
+  onChange: (policy: AgentToolApprovalPolicy) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => onChange(next as AgentToolApprovalPolicy)}>
+      <SelectTrigger aria-label={`Approval policy for ${label}`} className="h-8 w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="alwaysAsk">Always ask</SelectItem>
+        <SelectItem value="alwaysAllow">Always allow</SelectItem>
+        <SelectItem value="disabled">Disabled</SelectItem>
+      </SelectContent>
+    </Select>
   );
 }
 
