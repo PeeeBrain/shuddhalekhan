@@ -174,6 +174,8 @@ export function createComputerUseRun(options: {
         },
         options: { signal: toolSignal },
       });
+      // A reply that lands while Computer Use is turning off must not reach the model.
+      if (closing || toolSignal.aborted) return fail('COMPUTER_USE_DISABLED', 'Computer Use is unavailable for this run.');
       const decoded = resultSchema.safeParse(result);
       if (!decoded.success) {
         return fail('INVALID_RESULT', 'Computer Use returned an unexpected result.');

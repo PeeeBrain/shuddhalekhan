@@ -56,14 +56,19 @@ describe('ComputerUseSettings', () => {
     }, 'computer-use-enabled');
   });
 
-  it('lets the opt-in be turned off while Agent Mode is off', async () => {
-    const { commit } = await renderPage({ state: 'installed' },
-      { enabled: false, computerUse: { enabled: true, toolPolicies: {} } });
-    await click(screen.getByRole('switch', { name: 'Let the agent use your desktop' }));
-    expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({
-      computerUse: { enabled: false, toolPolicies: {} },
-    }), 'computer-use-enabled');
-  });
+  for (const [why, status, agentEnabled] of [
+    ['Agent Mode is off', { state: 'installed' }, false],
+    ['the helper is missing', { state: 'absent' }, true],
+  ] as const) {
+    it(`lets a saved opt-in be turned off while ${why}`, async () => {
+      const { commit } = await renderPage(status,
+        { enabled: agentEnabled, computerUse: { enabled: true, toolPolicies: {} } });
+      await click(screen.getByRole('switch', { name: 'Let the agent use your desktop' }));
+      expect(commit).toHaveBeenCalledWith('agent', expect.objectContaining({
+        computerUse: { enabled: false, toolPolicies: {} },
+      }), 'computer-use-enabled');
+    });
+  }
 
   it('shows why an unsupported platform cannot use it, with nothing to turn on', async () => {
     await renderPage({ state: 'unsupported', reason: 'Computer Use is not available on Windows yet.' });

@@ -83,6 +83,30 @@ it.skipIf(!linux)('uses latest snapshot refs, applies live policies, and reaps t
   }
 });
 
+it.skipIf(!linux)('drops a desktop reply that lands after Computer Use starts closing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'native-mcp-fixture-'));
+  const path = join(dir, 'server-late');
+  writeFileSync(path, `#!${process.execPath}\nimport ${JSON.stringify(fixture)};\n`, { mode: 0o700 });
+  const run = withAdapter(path);
+  try {
+    await run.call('desktop_list_apps');
+    await run.call('desktop_snapshot', { app: 'Fixture', window_id: '1' });
+    const watching = watch(path + '.calls');
+    const enteredWait = new Promise<void>(resolve => watching.on('change', () => {
+      if (readFileSync(path + '.calls', 'utf8').includes('desktop_wait\n')) resolve();
+    }));
+    const pending = run.call('desktop_wait', { element: '@snap1:e1' });
+    await enteredWait;
+    watching.close();
+    const closed = run.close();
+    expect(await pending).toMatch(/^COMPUTER_USE_DISABLED:/);
+    await closed;
+  } finally {
+    await run.close().catch(() => undefined);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(!linux)('fails the close but still removes window state when the helper dies mid-call', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'native-mcp-fixture-'));
   const path = join(dir, 'server-crash');
@@ -96,6 +120,7 @@ it.skipIf(!linux)('fails the close but still removes window state when the helpe
     await expect(run.close()).rejects.toThrow('did not stop');
     expect(existsSync(home)).toBe(false);
   } finally {
+    await run.close().catch(() => undefined);
     rmSync(dir, { recursive: true, force: true });
   }
 });

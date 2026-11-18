@@ -31,6 +31,7 @@ input.on('line', line => {
       send({ content: [{ type: 'text', text: 'agent-desktop panicked' }] });
     } else if (params.name === 'desktop_wait') {
       if (executable.endsWith('-crash')) process.exit(1);
+      if (executable.endsWith('-late')) return void input.once('close', () => output({ window: 'late text' }));
       waiting = setInterval(() => undefined, 60_000);
     } else {
       output({ home, pid: process.pid, secretInherited: 'NATIVE_FIXTURE_KEY' in process.env });
