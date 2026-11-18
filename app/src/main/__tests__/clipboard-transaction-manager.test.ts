@@ -7,6 +7,7 @@ import {
   type ClipboardMonitor,
   type PasteStrategyResolver,
   type ClipboardSnapshot,
+  type TransientWrite,
 } from '../clipboard-transaction-manager';
 import type { DictationTargetSnapshot } from '../../types/ipc';
 
@@ -38,6 +39,7 @@ describe('ClipboardTransactionManager', () => {
       captureSnapshot: mock(() => createClipboardSnapshot()),
       restoreSnapshot: mock(() => undefined),
       writeText: mock(() => undefined),
+      writeTransientText: mock((): TransientWrite => 'staged'),
     };
 
     mockForegroundInspector = {
@@ -78,7 +80,8 @@ describe('ClipboardTransactionManager', () => {
 
     expect(result).toEqual({ kind: 'input-dispatched', acceptedEvents: 4 });
     expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockClipboardIO.writeText).toHaveBeenCalledWith('hello');
+    expect(mockClipboardIO.writeTransientText).toHaveBeenCalledWith('hello', 1);
+    expect(mockClipboardIO.writeText).not.toHaveBeenCalled();
     expect(mockClipboardMonitor.getSequenceNumber).toHaveBeenCalledTimes(5);
     expect(mockDelay).toHaveBeenNthCalledWith(1, 50);
     expect(mockDelay).toHaveBeenNthCalledWith(2, 100);
@@ -131,7 +134,7 @@ describe('ClipboardTransactionManager', () => {
 
     expect(result.kind).toBe('target-changed');
     expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
-    expect(mockClipboardIO.writeText).not.toHaveBeenCalled();
+    expect(mockClipboardIO.writeTransientText).not.toHaveBeenCalled();
   });
 
   it('blocks injection into another window within the same process', async () => {
@@ -183,6 +186,40 @@ describe('ClipboardTransactionManager', () => {
     await manager.stage('recovery text');
 
     expect(mockClipboardIO.writeText).toHaveBeenCalledWith('recovery text');
+    expect(mockClipboardIO.writeTransientText).not.toHaveBeenCalled();
+    expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('restores the original clipboard when staging fails after clearing it', async () => {
+    mockClipboardIO.writeTransientText = mock((): TransientWrite => 'cleared');
+
+    const result = await createManager().inject('private transcript');
+
+    expect(result).toEqual({ kind: 'error', message: 'Clipboard transaction failed: the transcript could not be staged' });
+    expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
+    expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledWith(createClipboardSnapshot());
+  });
+
+  it('leaves a newer copy alone when staging fails without touching the clipboard', async () => {
+    let sequence = 1;
+    mockClipboardMonitor.getSequenceNumber = mock(() => sequence);
+    // Another app copies while it holds the clipboard, so the native write gives up untouched.
+    mockClipboardIO.writeTransientText = mock((): TransientWrite => {
+      sequence += 1;
+      throw new Error('OpenClipboard failed (Win32 error 5)');
+    });
+
+    const result = await createManager().inject('private transcript');
+
+    expect(result).toEqual({ kind: 'error', message: 'Clipboard transaction failed: OpenClipboard failed (Win32 error 5)' });
+    expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('does not stage over a copy made after the snapshot', async () => {
+    mockClipboardIO.writeTransientText = mock((): TransientWrite => 'changed');
+
+    expect((await createManager().inject('private transcript')).kind).toBe('clipboard-conflict');
+    expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
     expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
   });
 
@@ -191,6 +228,10 @@ describe('ClipboardTransactionManager', () => {
 
     mockClipboardIO.writeText = mock((text: string) => {
       executionOrder.push(`write:${text}`);
+    });
+    mockClipboardIO.writeTransientText = mock((text: string): TransientWrite => {
+      executionOrder.push(`transient:${text}`);
+      return 'staged';
     });
 
     mockInputSimulator.simulatePaste = mock(() => {
@@ -211,15 +252,15 @@ describe('ClipboardTransactionManager', () => {
 
     await Promise.all([p1, p2, p3]);
 
-    // First injection should write, paste, and restore.
-    // Then second staging should write.
-    // Then third injection should write, paste, and restore.
+    // First injection should stage transiently, paste, and restore.
+    // Then the deliberate copy should write an ordinary entry.
+    // Then third injection should stage transiently, paste, and restore.
     expect(executionOrder).toEqual([
-      'write:first',
+      'transient:first',
       'paste',
       'restore',
       'write:second',
-      'write:third',
+      'transient:third',
       'paste',
       'restore',
     ]);
@@ -257,7 +298,7 @@ describe('ClipboardTransactionManager', () => {
     mockClipboardIO.captureSnapshot = mock(() => createClipboardSnapshot({ skippedFormats: ['application/private'] }));
 
     expect(await createManager().inject('hello')).toMatchObject({ kind: 'input-blocked', acceptedEvents: 0 });
-    expect(mockClipboardIO.writeText).not.toHaveBeenCalled();
+    expect(mockClipboardIO.writeTransientText).not.toHaveBeenCalled();
     expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
   });
 

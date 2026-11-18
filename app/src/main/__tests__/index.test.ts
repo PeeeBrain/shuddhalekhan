@@ -171,6 +171,12 @@ mock.module('../desktop/remote-desktop-keyboard', () => ({ createRemoteDesktopKe
 mock.module('../native/clipboard', () => ({
   simulatePaste,
   getClipboardSequenceNumber,
+  // These flows only assert the transcript was staged; the transient-versus-copy split is owned by
+  // the transaction manager and native clipboard tests.
+  writeTransientClipboardText: (text: string) => {
+    electronMock.clipboard.writeText(text);
+    return 'staged';
+  },
 }));
 mock.module('../native/target', () => ({ captureForegroundTarget }));
 mock.module('../desktop/dev-identity', () => ({ prepareDevelopmentIdentity: () => () => {} }));

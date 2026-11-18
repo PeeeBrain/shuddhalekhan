@@ -5,12 +5,23 @@ import { openX11ClipboardMonitor } from './x11-clipboard';
 import { simulateX11Paste } from './x11-paste';
 import { classifyDesktopSession } from '../dictation-delivery-policy';
 import type { PasteDispatchResult } from '../paste-strategy';
+import type { TransientWrite } from '../clipboard-transaction-manager';
 
 const INPUT_KEYBOARD = 1;
 
 const INPUT_SIZE = 40; // sizeof(INPUT) on 64-bit Windows
 
+const CF_UNICODETEXT = 13;
+const GMEM_MOVEABLE = 0x0002;
+const HWND_MESSAGE = -3;
+const OPEN_CLIPBOARD_ATTEMPTS = 5;
+// Registered formats Windows reads to keep an entry out of Win+V history and cloud sync.
+// https://learn.microsoft.com/windows/win32/dataxchg/clipboard-formats#cloud-clipboard-and-clipboard-history-formats
+const EXCLUSION_FORMATS = ['CanIncludeInClipboardHistory', 'CanUploadToCloudClipboard'];
+const DWORD_ZERO = Buffer.alloc(4);
+
 let win32Api: ReturnType<typeof loadWin32Api> | null = null;
+let clipboardOwner: unknown = null;
 let x11Monitor: ReturnType<typeof openX11ClipboardMonitor> | null = null;
 let x11Sequence = 0;
 let x11Observed = 0;
@@ -23,7 +34,87 @@ function loadWin32Api() {
     SendInput: user32.func('uint32_t __stdcall SendInput(uint32_t cInputs, uint8_t * pInputs, int32_t cbSize)'),
     GetLastError: kernel32.func('uint32_t __stdcall GetLastError()'),
     GetClipboardSequenceNumber: user32.func('uint32_t __stdcall GetClipboardSequenceNumber()'),
+    CreateWindowExW: user32.func('void * __stdcall CreateWindowExW(uint32_t dwExStyle, str16 lpClassName, str16 lpWindowName, uint32_t dwStyle, int x, int y, int nWidth, int nHeight, intptr_t hWndParent, void *hMenu, void *hInstance, void *lpParam)'),
+    OpenClipboard: user32.func('int32_t __stdcall OpenClipboard(void *hWndNewOwner)'),
+    EmptyClipboard: user32.func('int32_t __stdcall EmptyClipboard()'),
+    SetClipboardData: user32.func('void * __stdcall SetClipboardData(uint32_t uFormat, void *hMem)'),
+    CloseClipboard: user32.func('int32_t __stdcall CloseClipboard()'),
+    RegisterClipboardFormatW: user32.func('uint32_t __stdcall RegisterClipboardFormatW(str16 lpszFormat)'),
+    GlobalAlloc: kernel32.func('void * __stdcall GlobalAlloc(uint32_t uFlags, uintptr_t dwBytes)'),
+    GlobalLock: kernel32.func('void * __stdcall GlobalLock(void *hMem)'),
+    GlobalUnlock: kernel32.func('int32_t __stdcall GlobalUnlock(void *hMem)'),
+    GlobalFree: kernel32.func('void * __stdcall GlobalFree(void *hMem)'),
+    RtlMoveMemory: kernel32.func('void __stdcall RtlMoveMemory(void *Destination, const uint8_t *Source, uintptr_t Length)'),
+    Sleep: kernel32.func('void __stdcall Sleep(uint32_t dwMilliseconds)'),
   };
+}
+
+type Win32Api = ReturnType<typeof loadWin32Api>;
+
+function win32Failure(api: Win32Api, call: string): Error {
+  return new Error(`${call} failed (Win32 error ${Number(api.GetLastError())})`);
+}
+
+/** Copies bytes into a movable global block and hands it to the open clipboard. */
+function setClipboardBytes(api: Win32Api, format: number, bytes: Buffer): void {
+  const memory = api.GlobalAlloc(GMEM_MOVEABLE, bytes.length);
+  if (!memory) throw win32Failure(api, 'GlobalAlloc');
+  const target = api.GlobalLock(memory);
+  if (!target) {
+    const error = win32Failure(api, 'GlobalLock');
+    api.GlobalFree(memory);
+    throw error;
+  }
+  api.RtlMoveMemory(target, bytes, bytes.length);
+  api.GlobalUnlock(memory);
+  // On success the system owns the block; on failure it is still ours to free.
+  if (!api.SetClipboardData(format, memory)) {
+    const error = win32Failure(api, 'SetClipboardData');
+    api.GlobalFree(memory);
+    throw error;
+  }
+}
+
+/**
+ * Stages paste text that Windows keeps out of clipboard history (Win+V) and cloud sync, only while
+ * the clipboard still has `expectedSequence`. Deliberate copies go through Electron's ordinary write.
+ * Throws only before touching the clipboard. Errors and logs never include the text.
+ */
+export function writeTransientClipboardText(text: string, expectedSequence: number): TransientWrite {
+  const api = win32();
+  const formats = EXCLUSION_FORMATS.map((name) => {
+    const format = Number(api.RegisterClipboardFormatW(name));
+    if (!format) throw win32Failure(api, 'RegisterClipboardFormatW');
+    return format;
+  });
+  // SetClipboardData needs a real owner: EmptyClipboard after OpenClipboard(NULL) leaves none.
+  // A message-only window on the main thread is pumped by Electron's message loop.
+  clipboardOwner ??= api.CreateWindowExW(0, 'STATIC', null, 0, 0, 0, 0, 0, HWND_MESSAGE, null, null, null);
+  if (!clipboardOwner) throw win32Failure(api, 'CreateWindowExW');
+
+  // Same bounded retry Chromium uses when another app briefly holds the clipboard.
+  for (let attempt = 1; !api.OpenClipboard(clipboardOwner); attempt++) {
+    if (attempt === OPEN_CLIPBOARD_ATTEMPTS) throw win32Failure(api, 'OpenClipboard');
+    api.Sleep(5);
+  }
+  try {
+    // Checked under the lock, so a copy made after the snapshot is never overwritten.
+    if (Number(api.GetClipboardSequenceNumber()) !== expectedSequence) return 'changed';
+    if (!api.EmptyClipboard()) throw win32Failure(api, 'EmptyClipboard');
+    try {
+      // Exclusions go first so a failed write can never publish unmarked text to history.
+      for (const format of formats) setClipboardBytes(api, format, DWORD_ZERO);
+      setClipboardBytes(api, CF_UNICODETEXT, Buffer.from(`${text}\0`, 'utf16le'));
+    }
+    catch (error) {
+      console.warn('Transient clipboard write failed after emptying the clipboard:', error);
+      return 'cleared';
+    }
+    return 'staged';
+  }
+  finally {
+    api.CloseClipboard();
+  }
 }
 
 function win32() {

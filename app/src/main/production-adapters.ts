@@ -1,9 +1,11 @@
 import { clipboard, nativeImage } from 'electron';
 import { resolvePasteStrategy } from './paste-strategy';
 import { getConfig } from './config';
+import { writeTransientClipboardText } from './native/clipboard';
 import type {
   ClipboardIO,
   ClipboardSnapshot,
+  TransientWrite,
 } from './clipboard-transaction-manager';
 
 const PLAIN_TEXT_FORMAT = 'text/plain';
@@ -140,6 +142,14 @@ export class ElectronClipboardAdapter implements ClipboardIO {
 
   public writeText(text: string): void {
     clipboard.writeText(text);
+  }
+
+  public writeTransientText(text: string, expectedSequence: number): TransientWrite {
+    // Electron cannot add Windows' history and cloud exclusion formats or check the sequence under
+    // the clipboard lock; other desktops have neither, so the manager's earlier check stands.
+    if (process.platform === 'win32') return writeTransientClipboardText(text, expectedSequence);
+    clipboard.writeText(text);
+    return 'staged';
   }
 }
 
