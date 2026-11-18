@@ -27,8 +27,13 @@ let agentApiKey: string | undefined;
 let computerUseExecutable: string | undefined;
 const computerUseRuns = new Set<ReturnType<typeof createComputerUseRun>>();
 
-async function closeComputerUseRuns(): Promise<void> {
-  await Promise.all([...computerUseRuns].map(run => run.close()));
+async function closeComputerUseRuns(runs = [...computerUseRuns]): Promise<void> {
+  await Promise.all(runs.map(run => run.close().then(() => computerUseRuns.delete(run)))).catch((error: unknown) => {
+    // A helper killed mid-call may leave its command running; only this process group can reap it.
+    // Main sees the exit, shows it, and the next command starts a fresh sidecar.
+    logSidecar('Computer Use did not stop; exiting', error);
+    exitWithGroup();
+  });
 }
 type AgentExecution = {
   agentRunId: string;
@@ -166,10 +171,9 @@ function handleLine(line: string): void {
           writeJsonLine({ type: 'agent:status', agentRunId: execution.agentRunId, status });
         }
         const requestId = message.computerUseCloseRequestId;
-        void closeComputerUseRuns().then(
-          () => { if (requestId) writeJsonLine({ type: 'computer-use:closed', requestId, closed: true }); },
-          () => { if (requestId) writeJsonLine({ type: 'computer-use:closed', requestId, closed: false }); },
-        );
+        void closeComputerUseRuns().then(() => {
+          if (requestId) writeJsonLine({ type: 'computer-use:closed', requestId });
+        });
       }
       agentApiKey = message.agentApiKey;
       logSidecar('received config update');
@@ -249,14 +253,8 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     }
     // A replacement command must not open its native client while the
     // previous command's cancellation is still stopping a desktop action.
-    const priorNativeClosed = !nativeExecutable || computerUseRuns.size === 0
-      || await closeComputerUseRuns().then(() => true, () => false);
+    if (nativeExecutable && computerUseRuns.size > 0) await closeComputerUseRuns();
     if (!ownsExecution(run) || runController.signal.aborted) return;
-    if (!priorNativeClosed) {
-      const status = 'Computer Use is unavailable until Agent Mode restarts.';
-      run.audit.record('status', { status });
-      writeJsonLine({ type: 'agent:status', agentRunId, status });
-    }
 
     const reportTool = (serverId: string, name: string) => {
       if (!ownsExecution(run)) return;
@@ -267,7 +265,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     const toolSnapshot = mcpRegistry.createRunSnapshot(
       run.audit.record, tool => reportTool(tool.serverId, tool.toolName)
     );
-    const native = priorNativeClosed && nativeExecutable && nativeExecutable === computerUseExecutable ? createComputerUseRun({
+    const native = nativeExecutable && nativeExecutable === computerUseExecutable ? createComputerUseRun({
       executable: nativeExecutable,
       signal: runController.signal,
       getConfig: () => computerUseExecutable === nativeExecutable ? config?.agent.computerUse : undefined,
@@ -334,7 +332,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     } finally {
       await Promise.all([
         toolSnapshot.close(),
-        native?.close().then(() => computerUseRuns.delete(native)),
+        native && closeComputerUseRuns([native]),
       ]);
     }
   } catch (err) {

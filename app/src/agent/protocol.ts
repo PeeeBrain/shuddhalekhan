@@ -81,7 +81,7 @@ export type AgentCancelledEvent = {
 };
 
 export type SidecarEvent =
-  | { type: 'computer-use:closed'; requestId: string; closed: boolean }
+  | { type: 'computer-use:closed'; requestId: string }
   | { type: 'memory:propose'; agentRunId: string; requestId: string; revision: string; updates: AgentMemoryUpdate[] }
   | { type: 'memory:status'; agentRunId: string; status: string }
   | { type: 'provider:test-result'; requestId: string; result: AgentProviderTestResult }

@@ -219,11 +219,11 @@ describe('AgentSidecarManager', () => {
       const update = sentMessages().at(-1);
       expect(update).toMatchObject({ type: 'config:update', config: disabled });
       expect(update).not.toHaveProperty('computerUseExecutable');
-      stdoutLines.emit('line', JSON.stringify({ type: 'computer-use:closed', requestId: 'stale', closed: true }));
+      stdoutLines.emit('line', JSON.stringify({ type: 'computer-use:closed', requestId: 'stale' }));
       await Promise.resolve();
       expect(closed).toBe(false);
       stdoutLines.emit('line', JSON.stringify({
-        type: 'computer-use:closed', requestId: update?.computerUseCloseRequestId, closed: true,
+        type: 'computer-use:closed', requestId: update?.computerUseCloseRequestId,
       }));
       await completion;
       expect(closed).toBe(true);

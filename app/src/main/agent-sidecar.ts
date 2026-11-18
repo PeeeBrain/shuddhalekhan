@@ -279,7 +279,7 @@ export class AgentSidecarManager {
     if (this.generation !== generation) return;
 
     if (event.type === 'computer-use:closed') {
-      if (event.requestId === this.computerUseClose?.requestId) this.computerUseClose.finish(event.closed);
+      if (event.requestId === this.computerUseClose?.requestId) this.computerUseClose.finish(true);
       return;
     }
     if (event.type === 'provider:test-result') {
