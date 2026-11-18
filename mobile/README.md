@@ -33,7 +33,7 @@ iOS does not let keyboards use the microphone. So the app records during a **key
 1. Install the IPA with its keyboard extension retained.
 2. On the phone, open **Settings → General → Keyboard → Keyboards → Add New Keyboard → Shuddhalekhan**. Tap that keyboard and enable **Allow Full Access**. The keyboard uses it only to exchange start, stop, and the finished text with the app. The keyboard connects only to the app on this iPhone and cannot use the microphone.
 3. Download Parakeet for your language. On Home, tap **Start keyboard session**. The session lasts 10 minutes. Home shows a countdown and a **Stop** button, and iOS shows its recording indicator. Recording on Home ends the session first, since the session holds the microphone.
-4. In Notes or another app, switch to the Shuddhalekhan keyboard with the globe key. Tap **Dictate**, speak, then stop. The app transcribes with Parakeet on the phone and inserts the text at the cursor. Or tap **Ask the agent** to speak a one-off command. Agent transcripts never type into the host app. Cancel discards either kind of recording; the level bars reflect the microphone while recording.
+4. In Notes or another app, switch to the Shuddhalekhan keyboard with the globe key. Tap **Dictate**, speak, then stop. The app transcribes with Parakeet on the phone and inserts the text at the cursor. Or tap **Ask the agent** to speak a one-off command. Agent transcripts never type into the host app. Cancel discards either kind of recording; the dot field reflects the microphone while recording.
 
 What happens to audio and text during a session:
 

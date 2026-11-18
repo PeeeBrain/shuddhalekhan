@@ -43,7 +43,7 @@ Mobile settings are independent of desktop config, but provider ids and Sarvam s
 ## Core Concepts
 
 ### Recording Pill
-The small floating pill surface displayed at the bottom-center of the screen by the runtime shell while recording is active. Rendered as a rounded pill shape with animated audio level bars. Exists in two visual modes:
+The small floating pill surface displayed at the bottom-center of the screen by the runtime shell while recording is active. Rendered as a rounded pill shape with a voice-reactive dot field that settles to a still line at silence; the same pill shows a sweeping beam while transcribing. Exists in two visual modes:
 
 - **Transcription Mode** — Blue-hued pill (border glow, shadow) indicating standard speech-to-text recording.
 - **Agent Mode** — Red-hued pill indicating the recording will be routed to the AI agent for tool execution. Discontinued during the v3 Electron port and revived in v4 as the visual state for `Alt + Win` agent commands.

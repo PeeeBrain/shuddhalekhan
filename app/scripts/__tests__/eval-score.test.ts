@@ -1,5 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { accept, normalize, scoreClip, type Result } from '../eval/score';
+
+// Each `accept` runs a 2000-resample bootstrap per metric: about 1 s locally, but
+// 4.3–5 s on the Windows CI runner, right at Bun's 5 s default.
+setDefaultTimeout(30_000);
 
 const REF = 'Please send the report to Ravi.';
 const run = { coldStartMs: 1000, peakRssMb: 500, cpuMsPerClip: 100 };

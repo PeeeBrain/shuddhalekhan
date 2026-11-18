@@ -283,7 +283,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
     delivery.config.mode === 'corrected'
     && delivery.config.formatter?.processingConsent
   ) {
-    runtimeShell.showProcessing(sessionId);
+    runtimeShell.showProcessing(sessionId, 'dictation');
     const outcome = await applyDictationFormatter({
       profile: delivery.config.formatter,
       rawText: result.text,

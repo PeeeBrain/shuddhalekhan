@@ -1,4 +1,4 @@
-import { publishAudioLevel } from './audio-level';
+import { bandsFromSpectrum, publishAudioLevel, setBandReader } from './audio-level';
 import { hasChosenMicrophone } from '../shared/microphone-selection';
 // Web Audio API audio capture for Electron renderer process
 // Runs in a hidden BrowserWindow. Samples come from an AudioWorklet
@@ -13,6 +13,8 @@ import type { AudioDevice } from '../types/ipc';
 
 const AUDIO_LEVEL_TELEMETRY_INTERVAL_MS = 50;
 const STREAM_SAMPLE_RATE = 16_000;
+/** About 31 Hz per bin at 16 kHz: fine enough for the pill's lowest voice band. */
+const ANALYSER_FFT_SIZE = 512;
 const STREAM_CHUNK_BYTES = 640;
 const WORKLET_URL = new URL('./audio-capture-worklet.js?no-inline', import.meta.url).href;
 const WORKLET_PROCESSOR = 'shuddhalekhan-capture';
@@ -133,6 +135,8 @@ interface Capture {
   context: AudioContext | null;
   source: MediaStreamAudioSourceNode | null;
   node: AudioWorkletNode | null;
+  /** Read by the recording pill for its frequency bands; never touches the recorded audio. */
+  analyser: AnalyserNode | null;
   convert: ((input: Float32Array) => Uint8Array<ArrayBuffer>) | null;
   readonly realtime: ReturnType<typeof createRealtimeChunker> | null;
   readonly options: RecordingOptions;
@@ -239,16 +243,30 @@ export async function prepareStream(): Promise<void> {
   isStreamPrepared = true;
 }
 
+let spectrum: Float32Array<ArrayBuffer> | null = null;
+
+/** The active capture's bands, read by the pill once per drawn frame. */
+function readActiveBands(out: Float32Array): boolean {
+  const analyser = active?.analyser;
+  if (!analyser) return false;
+  if (spectrum?.length !== analyser.frequencyBinCount) spectrum = new Float32Array(analyser.frequencyBinCount);
+  analyser.getFloatFrequencyData(spectrum);
+  bandsFromSpectrum(spectrum, analyser.context.sampleRate / analyser.fftSize, out);
+  return true;
+}
+
 function stopLevelTelemetry(): void {
   if (levelTelemetryTimer) {
     clearInterval(levelTelemetryTimer);
     levelTelemetryTimer = null;
   }
   latestAudioLevel = 0;
+  setBandReader(null);
 }
 
 function startLevelTelemetry(): void {
   stopLevelTelemetry();
+  setBandReader(readActiveBands);
   publishAudioLevel(latestAudioLevel);
   levelTelemetryTimer = setInterval(() => {
     publishAudioLevel(latestAudioLevel);
@@ -371,6 +389,12 @@ async function setupCapture(capture: Capture): Promise<void> {
   node.onprocessorerror = () => fail(capture, new Error('The microphone audio processor failed.'));
   node.port.onmessage = (event: MessageEvent<WorkletMessage>) => handleWorkletMessage(capture, event.data);
   capture.source.connect(node);
+  const analyser = context.createAnalyser();
+  analyser.fftSize = ANALYSER_FFT_SIZE;
+  // The pill smooths by elapsed time, so the analyser must not smooth per read.
+  analyser.smoothingTimeConstant = 0;
+  capture.source.connect(analyser);
+  capture.analyser = analyser;
   if (context.state === 'suspended') await context.resume();
   if (capture.released) return;
   if (capture === active) startLevelTelemetry();
@@ -390,6 +414,7 @@ export async function startRecording(options: RecordingOptions): Promise<void> {
     context: null,
     source: null,
     node: null,
+    analyser: null,
     convert: null,
     realtime: options.streaming ? createRealtimeChunker(options.streaming) : null,
     options,

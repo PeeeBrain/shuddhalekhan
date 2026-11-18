@@ -7,12 +7,13 @@ import type {
   AgentStep,
   AgentThread,
   DictationRecoveryAction,
+  RecordingIntent,
   RuntimePresentationSnapshot,
 } from '../types/ipc';
 import { Button } from './components/ui/button';
 import { Textarea } from './components/ui/textarea';
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from './components/ai-elements/chain-of-thought';
-import { RecordingPopup } from './RecordingPopup';
+import { ProcessingPill, RecordingPopup, ThinkingField } from './RecordingPopup';
 import { renderMarkdown } from './markdown';
 
 const ACTION_LABELS: Record<DictationRecoveryAction, string> = {
@@ -48,7 +49,7 @@ export function RuntimeShellSurface() {
     case 'recording':
       return <RecordingView snapshot={snapshot} />;
     case 'processing':
-      return <ProcessingView />;
+      return <ProcessingView intent={snapshot.intent} />;
     case 'failure':
       return <FailureView snapshot={snapshot} retrying={retrying} setRetrying={setRetrying} />;
     case 'agent-status':
@@ -65,7 +66,7 @@ export function RuntimeShellSurface() {
           measureKey={snapshot.revision}
         >
           <Thread thread={snapshot.thread} />
-          {isThinkingMessage(snapshot.message) ? <ThinkingDots /> : snapshot.message}
+          {isThinkingMessage(snapshot.message) ? <ThinkingField /> : snapshot.message}
         </AgentCard>
       );
     case 'agent-streaming':
@@ -253,7 +254,7 @@ function RecordingView({ snapshot }: { snapshot: Extract<RuntimePresentationSnap
   );
 }
 
-function ProcessingView() {
+function ProcessingView({ intent }: { intent: RecordingIntent }) {
   return (
     <main
       role="status"
@@ -261,16 +262,7 @@ function ProcessingView() {
       aria-live="polite"
       className="flex h-screen w-screen items-center justify-center bg-transparent"
     >
-      <div className="flex h-10 w-40 items-center justify-center gap-2.5 rounded-[14px] border border-border bg-card text-primary">
-        <span aria-hidden="true" className="processing-bars">
-          <span className="processing-bar" />
-          <span className="processing-bar" />
-          <span className="processing-bar" />
-          <span className="processing-bar" />
-          <span className="processing-bar" />
-        </span>
-        <p className="text-xs font-medium text-muted-foreground">Transcribing…</p>
-      </div>
+      <ProcessingPill intent={intent} />
     </main>
   );
 }
@@ -595,23 +587,6 @@ function humanize(name: string): string {
 
 function isThinkingMessage(message: string): boolean {
   return /^thinking/i.test(message);
-}
-
-function ThinkingDots() {
-  return (
-    <span>
-      <span className="sr-only">Thinking</span>
-      <span aria-hidden="true" className="inline-flex items-center gap-1">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="motion-safe:animate-thinking-dot inline-block h-[5px] w-[5px] rounded-full bg-current opacity-20"
-            style={{ animationDelay: `${i * 0.2}s` }}
-          />
-        ))}
-      </span>
-    </span>
-  );
 }
 
 function formatArguments(value: unknown): string {

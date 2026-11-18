@@ -115,7 +115,7 @@ describe('Batch Dictation runtime shell', () => {
     expect(send).toHaveBeenLastCalledWith('runtime:snapshot', expect.objectContaining({ durationWarningSeconds: 10 }));
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
     shell.showStreamingPreview('session-1', 'Hello ', 'Hello wor');
-    shell.showProcessing('session-1');
+    shell.showProcessing('session-1', 'dictation');
     shell.showFailure('session-1', 'Paste failed', ['retry-paste', 'copy-full-transcript']);
     expect(window.setFocusable).toHaveBeenLastCalledWith(false);
     expect(window.setIgnoreMouseEvents).toHaveBeenLastCalledWith(false, { forward: false });
@@ -781,10 +781,11 @@ describe('Agent Mode runtime shell presentation', () => {
       expiresAt: new Date(Date.now() + 30000).toISOString(),
     });
 
-    shell.showProcessing('session-1');
+    shell.showProcessing('session-1', 'agent');
     expect(snapshotsOf(send).at(-1)).toMatchObject({
       kind: 'processing',
       recordingSessionId: 'session-1',
+      intent: 'agent',
     });
     shell.finish();
     expect(snapshotsOf(send).at(-1)).toMatchObject({

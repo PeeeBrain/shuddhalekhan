@@ -149,7 +149,7 @@ It rejects generic AI-SaaS (purple gradients, glassmorphism, sparkle icons, chat
 A restrained palette: warm lampblack neutrals plus two signal pigments, each with exactly one job.
 
 ### Primary
-- **Slate Blue** (#719ed6): Dictation's color, and the app's interactive accent: primary buttons, checked switches, focus rings, the active nav icon, the Dictation recording pill's bars and glyph tint. Text on it uses On-Signal ink.
+- **Slate Blue** (#719ed6): Dictation's color, and the app's interactive accent: primary buttons, checked switches, focus rings, the active nav icon, the Dictation recording pill's dots and glyph tint. Text on it uses On-Signal ink.
 
 ### Secondary
 - **Vermilion** (#e08652): Agent Mode only. The Agent recording pill, agent toasts and approval cards (as a 5–7% tint mixed into Soot Card, with a 35–45% Vermilion hairline border), and agent status text. Never used for Dictation, generic emphasis, or errors.
@@ -242,13 +242,16 @@ Restrained and native; they look like Windows buttons with warmer ink.
 
 ### Recording Pill (signature)
 The only always-on-top surface that appears during the user's work. It sits 160 × 40px at bottom-center, with a Soot Card body and a Hairline border.
-- **Dictation:** 14px radius; a 28px glyph well at 10px radius with a 16% Slate Blue tint; Slate Blue 2px live level bars; an 11px tabular timer in Faded Ink.
-- **Agent Mode:** 6px radius (squarer); a glyph well at 3px radius with an 18% Vermilion tint; a 45% Vermilion border; a 7% Vermilion tint mixed into the body. A different glyph. Shape and glyph carry the distinction as much as color.
-- **Motion:** enters at scale 0.9 to 1 with fade over 150ms ease-out; exits over 100ms ease-in. Under reduced motion it appears and disappears without animation.
-- **Time limit:** bars are replaced by an Ochre countdown line.
+- **Dictation:** 14px radius; a 28px glyph well at 10px radius with a 16% Slate Blue tint; a Slate Blue dot field; an 11px tabular timer in Faded Ink.
+- **Agent Mode:** 6px radius (squarer); a glyph well at 3px radius with an 18% Vermilion tint; a 45% Vermilion border; a 7% Vermilion tint mixed into the body. A different glyph, and square dots. Shape and glyph carry the distinction as much as color.
+- **Dot field:** a 15 × 7 grid of 2px dots on a 4px pitch, snapped to whole device pixels, unlit dots at 16%. Voice braids two strands through it, driven by the live mic's spectrum (8 bands from 90 Hz to 7 kHz): one strand swells with the lows, the other with the highs, a brighter voice twists them tighter, and loudness turns them faster. Silence folds them onto a resting centre line and the loop parks. It is Canvas2D painted from refs, capped at 60 Hz, and stopped while hidden. The iOS keyboard draws the same braid (25 × 7, 3pt dots), but it only receives a level, so both strands follow loudness, stepped by each level reading.
+- **Transcribing:** the same pill, keeping its mode's glyph and shape, with a 7-column beam sweeping once per 1.2s beside "Transcribing…".
+- **Motion:** enters at scale 0.9 to 1 with fade over 150ms ease-out; exits over 100ms ease-in. Under reduced motion it appears and disappears without animation, and the field holds a still frame.
+- **Time limit:** the dot field gives way to an Ochre "10s left".
+- **Preview:** `#/pill-preview` on the dev renderer shows every state on a synthetic voice, with no microphone or hotkey.
 
 ### Agent Toasts and Approvals
-They inherit the Agent pill's identity: a 6px radius, a Vermilion-tinted Soot Card, and a 35% Vermilion border (`agent-island`). The approval countdown bar is a `scaleX` animation stepped once per second, so a pending approval repaints at 1 Hz, not 60. Thinking dots pulse opacity only.
+They inherit the Agent pill's identity: a 6px radius, a Vermilion-tinted Soot Card, and a 35% Vermilion border (`agent-island`). The approval countdown bar is a `scaleX` animation stepped once per second, so a pending approval repaints at 1 Hz, not 60. While the agent thinks, a 13 × 3 Vermilion dot matrix flips bits behind a scanning column, stepped every 90ms like an LED panel rather than repainted every frame.
 
 ### Save Toast
 Bottom-right of Settings, max 360px, Soot Card with Hairline border, 8px radius, `shadow-lg`. Enters with a 6px rise over 180ms ease-out.
