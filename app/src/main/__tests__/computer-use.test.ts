@@ -5,15 +5,17 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createComputerUseInstaller, installComputerUseRelease } from '../computer-use';
+import { COMPUTER_USE_VERSION } from '../../shared/computer-use';
 
-const cases: { failure: string; wrongDigest?: boolean; extraMember?: boolean }[] = [
+const cases: { failure?: string; wrongDigest?: boolean; extraMember?: boolean }[] = [
   { failure: 'integrity check', wrongDigest: true },
   { failure: 'unexpected files', extraMember: true },
   { failure: 'version check' },
+  {},
 ];
 
 for (const { failure, wrongDigest, extraMember } of cases) {
-  it.skipIf(process.platform !== 'linux')(`rejects a release that fails the ${failure} without promoting it`, async () => {
+  it.skipIf(process.platform !== 'linux')(failure ? `rejects a release that fails the ${failure} without promoting it` : 'promotes a verified release with both executables', async () => {
     const temp = mkdtempSync(join(tmpdir(), 'computer-use-install-test-'));
     const fetch = spyOn(globalThis, 'fetch');
     try {
@@ -21,18 +23,26 @@ for (const { failure, wrongDigest, extraMember } of cases) {
       mkdirSync(source);
       const names = ['agent-desktop', 'agent-desktop-linux-clipboard-owner'];
       if (extraMember) names.push('unexpected');
-      for (const name of names) writeFileSync(join(source, name), '#!/bin/sh\nprintf \'{"ok":true,"data":{"version":"0"}}\'\n');
+      const version = failure ? '0' : COMPUTER_USE_VERSION;
+      for (const name of names) writeFileSync(join(source, name), `#!/bin/sh\nprintf '{"ok":true,"data":{"version":"${version}"}}'\n`);
       const archive = join(temp, 'fixture.tar.gz');
       execFileSync('tar', ['-czf', archive, '-C', source, ...names]);
       const bytes = readFileSync(archive);
       const destination = join(temp, 'installed');
       fetch.mockImplementation(async () => new Response(new Uint8Array(bytes)));
-      await expect(installComputerUseRelease(destination, {
+      const install = installComputerUseRelease(destination, {
         url: 'https://github.com/release.tar.gz',
         bytes: bytes.length,
         sha256: wrongDigest ? '0'.repeat(64) : createHash('sha256').update(bytes).digest('hex'),
-      }, new AbortController().signal, () => undefined)).rejects.toThrow(failure);
-      expect(readdirSync(temp).sort()).toEqual(['fixture.tar.gz', 'source']);
+      }, new AbortController().signal, () => undefined);
+      if (failure) {
+        await expect(install).rejects.toThrow(failure);
+        expect(readdirSync(temp).sort()).toEqual(['fixture.tar.gz', 'source']);
+      } else {
+        await install;
+        expect(readdirSync(temp).sort()).toEqual(['fixture.tar.gz', 'installed', 'source']);
+        expect(readdirSync(destination).sort()).toEqual(names);
+      }
     } finally {
       fetch.mockRestore();
       rmSync(temp, { recursive: true, force: true });

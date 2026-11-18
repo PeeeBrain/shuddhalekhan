@@ -136,6 +136,7 @@ let sessionOptions: any = null;
 
 installElectronMock();
 const actualRuntimeShell = { ...await import('../runtime-shell') };
+const actualComputerUse = { ...await import('../computer-use') };
 const keyboardSetPaused = vi.fn();
 const keyboardIsPaused = vi.fn(() => false);
 const keyboardSetCaptureSuspended = vi.fn();
@@ -325,6 +326,7 @@ describe('main process IPC orchestration', () => {
   afterAll(() => {
     mock.restore();
     mock.module('../runtime-shell', () => actualRuntimeShell);
+    mock.module('../computer-use', () => actualComputerUse);
     setPlatform(nativePlatform);
     if (originalSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
     else process.env.XDG_SESSION_TYPE = originalSessionType;
