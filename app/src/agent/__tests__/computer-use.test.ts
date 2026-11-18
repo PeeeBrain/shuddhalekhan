@@ -83,6 +83,23 @@ it.skipIf(!linux)('uses latest snapshot refs, applies live policies, and reaps t
   }
 });
 
+it.skipIf(!linux)('fails the close but still removes window state when the helper dies mid-call', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'native-mcp-fixture-'));
+  const path = join(dir, 'server-crash');
+  writeFileSync(path, `#!${process.execPath}\nimport ${JSON.stringify(fixture)};\n`, { mode: 0o700 });
+  const run = withAdapter(path);
+  try {
+    const { home } = z.object({ data: z.object({ home: z.string() }) }).parse(JSON.parse(await run.call('desktop_list_apps'))).data;
+    await run.call('desktop_snapshot', { app: 'Fixture', window_id: '1' });
+    expect(await run.call('desktop_wait', { element: '@snap1:e1' })).toMatch(/^COMPUTER_USE_FAILED:/);
+    // Its command may still be running, so the sidecar must fall back to its process group.
+    await expect(run.close()).rejects.toThrow('did not stop');
+    expect(existsSync(home)).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(!linux)('fails closed when the MCP catalog is missing even a curated tool the model did not call', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'native-mcp-fixture-'));
   const path = join(dir, 'server-drift');

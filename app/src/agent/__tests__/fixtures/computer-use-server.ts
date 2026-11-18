@@ -30,6 +30,7 @@ input.on('line', line => {
     } else if (params.name === 'desktop_list_windows') {
       send({ content: [{ type: 'text', text: 'agent-desktop panicked' }] });
     } else if (params.name === 'desktop_wait') {
+      if (executable.endsWith('-crash')) process.exit(1);
       waiting = setInterval(() => undefined, 60_000);
     } else {
       output({ home, pid: process.pid, secretInherited: 'NATIVE_FIXTURE_KEY' in process.env });

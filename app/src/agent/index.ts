@@ -165,7 +165,8 @@ function handleLine(line: string): void {
         if (pendingApproval?.serverId === COMPUTER_USE_SOURCE_ID) {
           rejectPendingApproval(pendingApproval.execution, 'Computer Use is unavailable for this run.');
         }
-        if (execution?.phase === 'running' && computerUseRuns.size > 0) {
+        // A status would close another server's approval toast while the run still waits on it.
+        if (execution?.phase === 'running' && execution.native?.closed === false && !pendingApproval) {
           const status = 'Computer Use stopped for this command because its settings changed.';
           execution.audit.record('status', { status });
           writeJsonLine({ type: 'agent:status', agentRunId: execution.agentRunId, status });

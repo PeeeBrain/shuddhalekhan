@@ -103,8 +103,11 @@ export function createComputerUseRun(options: {
   function close() {
     closing ??= (async () => {
       signal.removeEventListener('abort', onAbort);
-      await transport?.close();
-      if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
+      try {
+        await transport?.close();
+      } finally {
+        if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
+      }
     })();
     return closing;
   }

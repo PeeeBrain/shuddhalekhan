@@ -117,6 +117,8 @@ export class ManagedStdioMcpTransport {
     if (!child?.pid || hasExited(child)) {
       this.child = null;
       this.fireOnCloseOnce();
+      // A server that died mid-call could not reap the command it was running.
+      if (this.pendingToolCalls?.size) throw new Error('The Computer Use process did not stop.');
       return;
     }
 
