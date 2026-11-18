@@ -131,7 +131,6 @@ export class RecordingSession {
   private onErrorCallback: (error: Error) => void;
   private onBeginCallback?: (intent: RecordingIntent) => void;
   private getSelectedDeviceId: () => string | null;
-  private pendingDeviceUpdate: { deviceId: string | null } | null = null;
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
@@ -194,10 +193,6 @@ export class RecordingSession {
 
     const presentation = this.createPresentationEnvelope(run);
     this.runtimeShell.prepare();
-    if (this.pendingDeviceUpdate) {
-      this.runtimeShell.setSelectedDevice(this.pendingDeviceUpdate.deviceId);
-      this.pendingDeviceUpdate = null;
-    }
     this.runtimeShell.beginCapture(presentation);
     this.runtimeShell.show(
       intent,
@@ -448,10 +443,9 @@ export class RecordingSession {
     this.runtimeShell.destroy();
   }
 
+  /** Applies at once: the renderer finishes an in-flight capture on its mic and releases the old one. */
   updateDevice(deviceId: string | null): void {
-    // A device edit applies to the next recording, never its in-flight capture.
-    if (this.activeRun) this.pendingDeviceUpdate = { deviceId };
-    else this.runtimeShell.setSelectedDevice(deviceId);
+    this.runtimeShell.setSelectedDevice(deviceId);
   }
 
   private canStartLiveStreaming(transcriber: Transcriber): boolean {

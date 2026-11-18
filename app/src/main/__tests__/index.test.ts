@@ -140,6 +140,7 @@ const keyboardIsPaused = vi.fn(() => false);
 const keyboardSetCaptureSuspended = vi.fn();
 const setSettingsWindowClosedHandler = vi.fn();
 const updateShortcutPauseState = vi.fn();
+const keyboardSetLinuxShortcutStatusListener = vi.fn();
 
 mock.module('../native/keyboard', () => ({
   keyboardHook: {
@@ -151,7 +152,7 @@ mock.module('../native/keyboard', () => ({
     waitForKeysReleased: keyboardWaitForRelease,
     waitForShortcutDeactivation: vi.fn(async () => true),
     refreshShortcuts: vi.fn(),
-    setLinuxShortcutStatusListener: vi.fn(),
+    setLinuxShortcutStatusListener: keyboardSetLinuxShortcutStatusListener,
   },
 }));
 const kdeFocus = { windowId: 'kwin-1', epoch: 3, appId: 'org.kde.kate' };
@@ -1286,6 +1287,19 @@ describe('main process IPC orchestration', () => {
     expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
 
     expect(recordingSessionCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the warm microphone only while the Linux desktop has assigned a Dictation trigger', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, warmMicrophone: true });
+    await import(`../index?test=${Date.now()}-linux-trigger`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const onStatus = keyboardSetLinuxShortcutStatusListener.mock.calls.at(-1)?.[0];
+
+    // The saved chord stays in config, but X11 refused to register it.
+    onStatus({ backend: 'x11', triggers: { dictation: null, agent: 'Ctrl+Alt+A' } });
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
+    onStatus({ backend: 'portal', triggers: { dictation: 'Ctrl+Alt+D' } });
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(true);
   });
 
   it('starts the agent sidecar on app ready when persisted Agent Mode is enabled', async () => {

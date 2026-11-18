@@ -465,7 +465,10 @@ let screenLocked = false;
 /** Keeps the mic warm only while opted in, the Dictation shortcut can start a recording, and the machine is awake and unlocked. */
 function publishWarmMicrophone(): void {
   const { warmMicrophone, shortcuts } = getConfig();
-  const canDictate = shortcuts.dictation.binding !== null && desktopShortcuts.backend !== 'unavailable';
+  // Portal and X11 report the trigger the desktop actually assigned, which can refuse the saved chord.
+  const canDictate = desktopShortcuts.backend === 'portal' || desktopShortcuts.backend === 'x11'
+    ? Boolean(desktopShortcuts.triggers.dictation)
+    : desktopShortcuts.backend !== 'unavailable' && shortcuts.dictation.binding !== null;
   runtimeShell.setWarmMicrophone(warmMicrophone && canDictate && !keyboardHook.isPaused() && !suspended && !screenLocked);
 }
 

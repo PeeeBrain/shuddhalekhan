@@ -712,7 +712,11 @@ export async function stopRecording(tailEndsAt = 0): Promise<CaptureBoundary | n
  * recording. Their mics close, so a dropped utterance never becomes pre-roll.
  */
 export function cancelRecording(): void {
-  for (const capture of live) release(capture);
+  for (const capture of live) {
+    // Main cancels a mic that never opened in time: treat it as failed, so it is not reopened at once.
+    if (!capture.mic.node) capture.failure ??= new Error('Cancelled before the microphone opened.');
+    release(capture);
+  }
 }
 
 /** Device changes re-prepare permission and reopen the warm mic; a running recording keeps its mic. */
