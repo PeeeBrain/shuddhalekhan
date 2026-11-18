@@ -74,6 +74,23 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
+/** Calls `redraw` when the window moves to a display with another scale, so a parked or still field stays crisp. */
+function useScaleChange(redraw: () => void): void {
+  useEffect(() => {
+    let query: MediaQueryList;
+    const handleChange = () => {
+      redraw();
+      watch();
+    };
+    const watch = () => {
+      query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      query.addEventListener('change', handleChange, { once: true });
+    };
+    watch();
+    return () => query.removeEventListener('change', handleChange);
+  }, [redraw]);
+}
+
 /**
  * A dot field that loops for as long as it is mounted, for work of unknown
  * length. `field` maps elapsed ms to intensities and must be stable. It draws
@@ -92,6 +109,10 @@ function LoopingField({ columns, field, frameMs, stillMs }: {
     canvasRef.current = canvas;
     if (canvas) drawField(canvas, field(0), columns);
   }, [columns, field]);
+  // A running loop picks up the new scale on its next frame; only the reduced-motion still needs a redraw.
+  useScaleChange(useCallback(() => {
+    if (reducedMotion && canvasRef.current) drawField(canvasRef.current, field(stillMs), columns);
+  }, [reducedMotion, field, stillMs, columns]));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -198,20 +219,9 @@ export function RecordingPopup({ intent: mode, captureStartedAt, remainingSecond
     return unsubscribe;
   }, []);
 
-  // Redraw when the pill moves to a display with another scale, even while parked.
-  useEffect(() => {
-    let query: MediaQueryList;
-    const redraw = () => {
-      if (canvasRef.current) drawVoice(canvasRef.current, levelRef.current, phaseRef.current);
-      watch();
-    };
-    const watch = () => {
-      query = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
-      query.addEventListener('change', redraw, { once: true });
-    };
-    watch();
-    return () => query.removeEventListener('change', redraw);
-  }, []);
+  useScaleChange(useCallback(() => {
+    if (canvasRef.current) drawVoice(canvasRef.current, levelRef.current, phaseRef.current);
+  }, []));
 
   // Optional so the dev pill preview also runs in a plain browser without the preload.
   useEffect(() => window.electronAPI?.subscribe('recording:pill-show', () => {
