@@ -796,7 +796,7 @@ describe('warm audio stream', () => {
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
       const heard = idle();
       audio.hearWhileIdle(heard);
-      const rec = recorder();
+      const rec = recorder({ preRoll: true });
       expect(await mod.startRecording(rec.options)).toBe(PRE_ROLL);
       const speech = new Float32Array(320).fill(0.2);
       audio.emit(speech);
@@ -805,8 +805,10 @@ describe('warm audio stream', () => {
       expect(rec.samples()).toEqual(pcm16(heard.slice(-PRE_ROLL), speech));
       // Parked again, not reopened.
       expect(audio.stopTrack).not.toHaveBeenCalled();
-      await mod.startRecording(recorder().options);
-      await mod.stopRecording();
+      // Agent Mode takes the warm mic but none of its pre-roll.
+      audio.hearWhileIdle(idle());
+      expect(await mod.startRecording(recorder().options)).toBe(0);
+      expect(await mod.stopRecording()).toEqual({ chunkCount: 0, sampleCount: 0 });
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
 
       mod.setWarmMicrophone(false);
@@ -818,7 +820,7 @@ describe('warm audio stream', () => {
     it('keeps a soft final word after release even when the pre-roll was loud', async () => {
       const { audio, mod } = await parked();
       audio.hearWhileIdle(new Float32Array(16_000).fill(0.9)); // media playing before the press
-      await mod.startRecording(recorder().options);
+      await mod.startRecording(recorder({ preRoll: true }).options);
       audio.emit(new Float32Array(320).fill(0.2));
       let done = false;
       const ending = mod.stopRecording(Date.now() + 600).then((boundary) => { done = true; return boundary; });
@@ -838,7 +840,7 @@ describe('warm audio stream', () => {
         const silent = mod.holdPreRollForCue();
         // Still sounding a second later: its output woke late.
         now.mockReturnValue(1_000);
-        expect(await mod.startRecording(recorder().options)).toBe(0);
+        expect(await mod.startRecording(recorder({ preRoll: true }).options)).toBe(0);
         audio.emit(new Float32Array([0.2]));
         expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 1 });
 
@@ -846,7 +848,7 @@ describe('warm audio stream', () => {
         silent();
         now.mockReturnValue(1_400);
         audio.hearWhileIdle(idle());
-        expect(await mod.startRecording(recorder().options)).toBe(800);
+        expect(await mod.startRecording(recorder({ preRoll: true }).options)).toBe(800);
       } finally {
         now.mockRestore();
       }

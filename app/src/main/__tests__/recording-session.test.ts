@@ -611,7 +611,7 @@ describe('RecordingSession', () => {
       const ending = phase === 'stopping' ? recording.end() : null;
       await recording.cancel();
       expect(send).toHaveBeenCalledWith('runtime:audio-cancel', {
-        generation: 1, recordingSessionId: 'cancelled-capture', sequence: 1, streaming: false,
+        generation: 1, recordingSessionId: 'cancelled-capture', sequence: 1, streaming: false, preRoll: true,
       });
       expect(shell.acceptsAudioEvent(1, 'cancelled-capture', 1)).toBe(false);
       expect(recording.isBusy()).toBe(false);
@@ -735,7 +735,7 @@ describe('RecordingSession', () => {
     expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.objectContaining({
       recordingSessionId: 'runtime-session',
       capabilities: { batch: true, streaming: false },
-    }));
+    }), true);
     expect(runtimeShell.show).toHaveBeenCalledWith(
       'dictation',
       'runtime-session',

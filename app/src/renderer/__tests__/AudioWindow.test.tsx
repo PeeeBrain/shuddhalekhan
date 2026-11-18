@@ -40,7 +40,7 @@ function emit(channel: string, ...args: unknown[]) {
 }
 
 function command(sequence: number): RuntimeAudioCommand {
-  return { generation: 1, recordingSessionId: `session-${sequence}`, sequence, streaming: false };
+  return { generation: 1, recordingSessionId: `session-${sequence}`, sequence, streaming: false, preRoll: true };
 }
 
 function sentOn(channel: string) {

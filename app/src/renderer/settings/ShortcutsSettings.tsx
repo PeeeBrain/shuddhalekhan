@@ -114,7 +114,7 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
           />
           <ToggleRow
             title="Keep microphone ready"
-            description="Starts recording instantly and keeps the half second before you press the shortcut, so your first word is not cut off. The microphone stays on between recordings: your system shows it in use, and Bluetooth headsets may stay in lower-quality call audio. That half second is held only in memory and is sent only when you record."
+            description="Starts recording instantly and keeps the half second before you press the Dictation shortcut, so your first word is not cut off. That half second is held only in memory and is sent only when you dictate. The microphone stays on between recordings: your system shows it in use, and Bluetooth headsets may stay in lower-quality call audio."
             checked={config.warmMicrophone}
             errorId="warm-microphone-error"
             error={persistence.fieldErrors['warm-microphone']}

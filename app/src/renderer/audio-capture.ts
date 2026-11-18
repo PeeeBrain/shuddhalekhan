@@ -63,6 +63,8 @@ export interface RecordingOptions {
   onSpoolChunk: (chunkSequence: number, pcm: Uint8Array<ArrayBuffer>) => Promise<void>;
   streaming?: StreamingRecordingOptions;
   onFailure?: (error: Error) => void;
+  /** Head the recording with the warm mic's pre-roll (Dictation only). */
+  preRoll?: boolean;
 }
 
 /** What stop declares was spooled; main rejects the recording unless it matches. */
@@ -545,7 +547,7 @@ export async function startRecording(options: RecordingOptions): Promise<number>
   active = capture;
   live.add(capture);
   // A cold mic's ring holds only audio from after the press: all of it is recording, none is pre-roll.
-  const cueFree = Math.max(0, performance.now() - cueHeldUntil);
+  const cueFree = options.preRoll ? Math.max(0, performance.now() - cueHeldUntil) : 0;
   const preRoll = adopted ? Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000) : preRollFrames(mic.context);
   capture.ready = admit(capture, preRoll);
 

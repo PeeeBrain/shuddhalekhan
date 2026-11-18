@@ -193,7 +193,7 @@ export class RecordingSession {
 
     const presentation = this.createPresentationEnvelope(run);
     this.runtimeShell.prepare();
-    this.runtimeShell.beginCapture(presentation);
+    this.runtimeShell.beginCapture(presentation, intent === 'dictation');
     this.runtimeShell.show(
       intent,
       run.id,

@@ -89,7 +89,7 @@ export interface RecordingHandlers {
 export class RuntimeShell {
   private ready = false;
   private warmMicrophone = false;
-  private pendingBegin: RecordingPresentationEnvelope | null = null;
+  private pendingBegin: { envelope: RecordingPresentationEnvelope; preRoll: boolean } | null = null;
   private activeCommand: RuntimeAudioCommand | null = null;
   /** The active command's canonical audio; lives exactly as long as that command. */
   private spool: AudioSpool | null = null;
@@ -174,19 +174,19 @@ export class RuntimeShell {
     // A recreated renderer starts cold: tell it again.
     this.send('audio:set-warm-microphone', this.warmMicrophone);
     if (this.pendingBegin) {
-      const envelope = this.pendingBegin;
+      const { envelope, preRoll } = this.pendingBegin;
       this.pendingBegin = null;
-      this.startAudio(envelope);
+      this.startAudio(envelope, preRoll);
     }
   }
 
-  beginCapture(envelope?: RecordingPresentationEnvelope): void {
+  beginCapture(envelope?: RecordingPresentationEnvelope, preRoll = false): void {
     if (!envelope) return;
     if (!this.ready) {
-      this.pendingBegin = envelope;
+      this.pendingBegin = { envelope, preRoll };
       return;
     }
-    this.startAudio(envelope);
+    this.startAudio(envelope, preRoll);
   }
 
   endCapture(tailEndsAt = 0): boolean {
@@ -820,13 +820,14 @@ export class RuntimeShell {
     if (this.activeCommand === command) this.clearCommand();
   }
 
-  private startAudio(envelope: RecordingPresentationEnvelope): void {
+  private startAudio(envelope: RecordingPresentationEnvelope, preRoll: boolean): void {
     this.clearCommand();
     this.activeCommand = {
       generation: this.generation,
       recordingSessionId: envelope.recordingSessionId,
       sequence: envelope.sequence,
       streaming: envelope.streamingActive === true,
+      preRoll,
     };
     this.send('runtime:audio-start', this.activeCommand);
   }
