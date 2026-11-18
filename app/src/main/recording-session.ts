@@ -330,8 +330,17 @@ export class RecordingSession {
     }
 
     const transcriber = run.transcriber;
+    // A stalled cap timer can let capture run long; the provider's limit holds on the samples themselves.
+    const maxSamples = (transcriber.capabilities.maxDurationSeconds ?? 0) * 16_000;
+    let wav = audioData;
+    if (maxSamples && pcm.length > maxSamples) {
+      wav = audioData.subarray(0, 44 + maxSamples * 2);
+      const header = new DataView(audioData.buffer);
+      header.setUint32(4, 36 + maxSamples * 2, true);
+      header.setUint32(40, maxSamples * 2, true);
+    }
     try {
-      const recognized = await this.recognizeWithinDeadline(run, transcriber, audioData);
+      const recognized = await this.recognizeWithinDeadline(run, transcriber, wav);
       if (recognized === null || this.activeRun !== run) return null;
       const text = recognized;
       if (!text.trim()) {

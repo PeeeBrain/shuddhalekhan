@@ -1435,6 +1435,32 @@ describe('RecordingSession', () => {
     expect(transcribe).toHaveBeenCalledTimes(recognized ? 1 : 0);
   });
 
+  it('never sends a provider more samples than its duration cap, however late capture stopped', async () => {
+    const sent: number[] = [];
+    session = createSession({
+      transcriber: {
+        ...createTranscriber(async ({ audio }) => {
+          const view = new DataView(audio.buffer, audio.byteOffset, audio.byteLength);
+          sent.push(audio.byteLength - 44, view.getUint32(40, true), view.getUint32(4, true) - 36);
+          return 'text';
+        }),
+        capabilities: { maxDurationSeconds: 1 },
+      },
+    });
+    const markReady = captureReadyEmitter();
+    // 1.5 s of speech-level tone: a stalled cap timer let capture run 0.5 s past a 1 s limit.
+    const pcm = new Int16Array(24_000).map((_, i) => Math.round(8_000 * Math.sin(i * 0.25)));
+    const wav = new Uint8Array(44 + pcm.byteLength);
+    wav.set(new Uint8Array(pcm.buffer), 44);
+
+    session.begin('dictation', 'cap');
+    markReady(7_200);
+    const ending = session.end();
+    await session.complete(wav);
+    await ending;
+    expect(sent).toEqual([32_000, 32_000, 32_000]);
+  });
+
   it('ends a Dictation stopped before the microphone delivered audio quietly, cancelling its stream', async () => {
     const cancelStream = vi.fn();
     const runtimeShell = {
