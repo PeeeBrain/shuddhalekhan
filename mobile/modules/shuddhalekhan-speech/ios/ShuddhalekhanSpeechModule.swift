@@ -110,12 +110,12 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
   private let engine = ParakeetEngine()
   @MainActor private lazy var cues = RecordingCuePlayer()
   @MainActor private var keyboardSession: KeyboardSessionHost?
-  @MainActor private var preparationObservers: [NSObjectProtocol] = []
-  @MainActor private var preparationInterrupted = false
+  @MainActor private var foregroundRecordingObservers: [NSObjectProtocol] = []
+  @MainActor private var foregroundRecordingInterrupted = false
 
   public func definition() -> ModuleDefinition {
     Name("ShuddhalekhanSpeech")
-    Events("onModelProgress", "onKeyboardSession")
+    Events("onModelProgress", "onKeyboardSession", "onForegroundRecordingInterrupted")
 
     AsyncFunction("signGoogleJwt") { (privateKey: String, input: String) throws -> String in
       try GoogleJwt.sign(privateKey: privateKey, input: input)
@@ -129,8 +129,12 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
       await MainActor.run { self.cues.enabled = enabled }
     }
 
-    AsyncFunction("beginForegroundRecordingPreparation") { () async -> Bool in
-      await self.beginForegroundPreparation()
+    AsyncFunction("beginForegroundRecording") { () async -> Bool in
+      await self.beginForegroundRecording()
+    }
+
+    AsyncFunction("getForegroundRecordingInterrupted") { () async -> Bool in
+      await self.foregroundRecordingInterrupted
     }
 
     AsyncFunction("playForegroundRecordingCue") { (name: String) async -> Bool in
@@ -144,9 +148,9 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
 
     AsyncFunction("cancelForegroundRecordingCue") { () async -> Bool in
       await MainActor.run {
-        self.endForegroundPreparation()
+        self.endForegroundRecording()
         if self.keyboardSession?.ownsAudio != true { self.cues.stop() }
-        return self.preparationInterrupted
+        return self.foregroundRecordingInterrupted
       }
     }
 
@@ -215,39 +219,43 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
     }
   }
 
-  @MainActor private func beginForegroundPreparation() -> Bool {
+  @MainActor private func beginForegroundRecording() -> Bool {
     guard keyboardSession?.ownsAudio != true, UIApplication.shared.applicationState != .background else { return false }
     cues.stop()
-    endForegroundPreparation()
-    preparationInterrupted = false
+    endForegroundRecording()
+    foregroundRecordingInterrupted = false
     let center = NotificationCenter.default
-    preparationObservers = [
-      AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification,
-      UIApplication.didEnterBackgroundNotification,
+    let background = UIApplication.didEnterBackgroundNotification
+    foregroundRecordingObservers = [
+      AVAudioSession.interruptionNotification, AVAudioSession.mediaServicesWereResetNotification, background,
     ].map { name in
       center.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
         if notification.name == AVAudioSession.interruptionNotification,
            notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt == AVAudioSession.InterruptionType.ended.rawValue { return }
-        MainActor.assumeIsolated { self?.preparationInterrupted = true }
+        let notify = name != background
+        MainActor.assumeIsolated {
+          guard let self, !self.foregroundRecordingInterrupted else { return }
+          self.foregroundRecordingInterrupted = true
+          if notify { self.sendEvent("onForegroundRecordingInterrupted", [:]) }
+        }
       }
     }
     return true
   }
 
-  @MainActor private func endForegroundPreparation() {
-    for observer in preparationObservers { NotificationCenter.default.removeObserver(observer) }
-    preparationObservers.removeAll()
+  @MainActor private func endForegroundRecording() {
+    for observer in foregroundRecordingObservers { NotificationCenter.default.removeObserver(observer) }
+    foregroundRecordingObservers.removeAll()
   }
 
   @MainActor private func playForegroundCue(_ cue: RecordingCue, in context: RecordingCuePlayer.Context) async -> Bool {
     let preparing = context == .foreground && cue == .start
-    defer { if preparing { endForegroundPreparation() } }
     guard keyboardSession?.ownsAudio != true, UIApplication.shared.applicationState != .background,
-          !preparing || !preparationInterrupted else { return false }
+          !preparing || !foregroundRecordingInterrupted else { return false }
     // The permission dialog can leave the app briefly inactive without interrupting its microphone.
     guard UIApplication.shared.applicationState == .active else { return true }
     let played = await cues.play(cue, in: context)
-    return played && (!preparing || !preparationInterrupted)
+    return played && (!preparing || !foregroundRecordingInterrupted)
   }
 
   @MainActor private func sessionHost() -> KeyboardSessionHost {

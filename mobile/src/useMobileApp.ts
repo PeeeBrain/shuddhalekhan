@@ -62,7 +62,7 @@ export function useMobileApp() {
         signal.throwIfAborted();
         try {
           // Release preview and watch for interruptions before opening the recorder.
-          const preparing = await speech?.beginForegroundRecordingPreparation?.();
+          const preparing = await speech?.beginForegroundRecording?.();
           signal.throwIfAborted();
           if (preparing === false) throw new RecordingInterruptedError();
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: false });
@@ -83,6 +83,7 @@ export function useMobileApp() {
           }
           if (AppState.currentState === 'background') throw new RecordingInterruptedError();
           recorder.record();
+          if (await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
           if (!recorder.isRecording) throw new Error();
         } catch (error) {
           if (signal.aborted || error instanceof RecordingInterruptedError) throw error;
@@ -95,15 +96,21 @@ export function useMobileApp() {
       },
       async stop(onClosed) {
         try {
+          const wasRecording = recorder.isRecording;
           await recorder.stop();
           prepared = false;
+          if (!wasRecording || await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
           onClosed();
           if (!recorder.uri) throw new Error();
           recordingFile = new File(recorder.uri);
           if (!recordingFile.exists || recordingFile.size <= 44) throw new Error();
           if (recordingFile.size > recordingLimits['on-device'].maxBytes) throw new Error('Recording is too large. Keep it under five minutes.');
           return recordingFile;
-        } catch { throw new Error('Could not read the recording. Record again and speak for at least a second.'); }
+        } catch (error) {
+          if (error instanceof RecordingInterruptedError) throw error;
+          // oxlint-disable-next-line preserve-caught-error
+          throw new Error('Could not read the recording. Record again and speak for at least a second.');
+        }
       },
       async discard() {
         await speech?.cancelForegroundRecordingCue?.().catch(() => {});
@@ -155,6 +162,9 @@ export function useMobileApp() {
     controllerRef.current = controller;
     void controller.initialize();
     void chatGptAuth.initialize();
+    const recordingInterrupted = speech?.getForegroundRecordingInterrupted
+      ? speech.addListener('onForegroundRecordingInterrupted', () => controller.recordingInterrupted())
+      : undefined;
     const stopped = onAgentRunStopped(controller.agentRunStopped);
     const approvalAction = onAgentApprovalAction(() => { void controller.consumeApprovalAction(); });
     const open = (url: string) => {
@@ -175,7 +185,7 @@ export function useMobileApp() {
       }
       if (next === 'active') void controller.enterForeground();
     });
-    return () => { subscription.remove(); links.remove(); stopped?.remove(); approvalAction?.remove(); controllerRef.current = null; controller.cancel(); };
+    return () => { subscription.remove(); links.remove(); recordingInterrupted?.remove(); stopped?.remove(); approvalAction?.remove(); controllerRef.current = null; controller.cancel(); };
   }, [controller]);
 
   useEffect(() => {

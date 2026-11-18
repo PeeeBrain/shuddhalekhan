@@ -49,18 +49,47 @@ describe('mobile command lifecycle', () => {
     expect(controller.getSnapshot().error).toContain('Microphone access is denied');
   });
 
-  test('an interruption before capture readiness discards audio without an Error sound', async () => {
+  test('an interruption while capture resumes discards audio without an Error sound', async () => {
     const native = recorder();
+    const resuming = Promise.withResolvers<void>();
+    const resumed = Promise.withResolvers<void>();
     let cues = 0;
     const controller = createController({ ...native.port,
-      start: async () => { throw new RecordingInterruptedError(); },
+      start: () => { resuming.resolve(); return resumed.promise; },
       playCue: async () => { cues++; },
     });
     await controller.initialize();
-    await controller.startRecording('dictation');
+    const start = controller.startRecording('dictation');
+    await resuming.promise;
+    controller.recordingInterrupted();
+    resumed.resolve();
+    await start;
     expect(native.calls.discards).toBe(1);
     expect(cues).toBe(0);
     expect(controller.getSnapshot()).toMatchObject({ phase: 'idle', error: 'Recording was interrupted. No audio was sent. Record again.' });
+  });
+
+  test('an interruption detected at file closure discards partial audio without a cue or transcription', async () => {
+    const native = recorder();
+    let cues = 0;
+    let decodes = 0;
+    const controller = new MobileController({
+      recorder: { ...native.port,
+        stop: async () => { throw new RecordingInterruptedError(); },
+        playCue: async () => { cues++; },
+      },
+      fetch,
+      loadSettings: async () => ({ ...defaultSettings, transcriptionSource: 'on-device' }),
+      saveSettings: async value => value,
+      transcribeOnDevice: async () => { decodes++; return 'Partial audio.'; },
+    });
+    await controller.initialize();
+    await controller.startRecording('dictation');
+    await controller.stopRecording();
+    expect(native.calls.discards).toBe(1);
+    expect(cues).toBe(0);
+    expect(decodes).toBe(0);
+    expect(controller.getSnapshot().error).toContain('Recording was interrupted');
   });
 
   test('an encoder failure signals Error after discarding the recording', async () => {

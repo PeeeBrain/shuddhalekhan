@@ -262,7 +262,8 @@ final class KeyboardSessionHost {
       utteranceURL = nil
       defer { recordings.remove(url) }
       guard saved else {
-        fail(next, message: "The recording could not be saved.")
+        await playStopIfLive(id)
+        if !Task.isCancelled { fail(next, message: "The recording could not be saved.") }
         return
       }
       async let stopSound: Void = playStopIfLive(id)

@@ -12,7 +12,8 @@ type NativeSpeech = {
   signGoogleJwt(privateKey: string, input: string): Promise<string>;
   getRecordingSounds?(): Promise<boolean>;
   setRecordingSounds?(enabled: boolean): Promise<void>;
-  beginForegroundRecordingPreparation?(): Promise<boolean>;
+  beginForegroundRecording?(): Promise<boolean>;
+  getForegroundRecordingInterrupted?(): Promise<boolean>;
   playForegroundRecordingCue?(cue: RecordingCue): Promise<boolean>;
   cancelForegroundRecordingCue?(): Promise<boolean>;
   previewRecordingCue?(): Promise<void>;
@@ -20,6 +21,7 @@ type NativeSpeech = {
   startKeyboardSession(minutes: number, language: string, agentReady: boolean): Promise<KeyboardSessionEvent>;
   resolveKeyboardAgentRequest(id: string, error: string | null): Promise<void>;
   stopKeyboardSession(): Promise<void>;
+  addListener(event: 'onForegroundRecordingInterrupted', listener: () => void): { remove(): void };
   addListener(event: 'onModelProgress', listener: (progress: Progress) => void): { remove(): void };
   addListener(event: 'onKeyboardSession', listener: (session: KeyboardSessionEvent) => void): { remove(): void };
 };

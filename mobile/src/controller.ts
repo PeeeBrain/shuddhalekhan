@@ -42,7 +42,7 @@ export type Recorder = {
 export class MobileController {
   private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false, turns: [], steps: [] };
   private listeners = new Set<() => void>();
-  private operation: { kind: 'working' | 'finishing'; controller: AbortController } | null = null;
+  private operation: { kind: 'working' | 'finishing'; controller: AbortController; recordingInterrupted?: boolean } | null = null;
   private approvalDecision: ((approved: boolean) => void) | null = null;
   private initialization: Promise<void> | null = null;
   private activityStarted = false;
@@ -124,10 +124,12 @@ export class MobileController {
       active.signal.throwIfAborted();
       const granted = await this.ports.recorder.requestPermission();
       active.signal.throwIfAborted();
+      if (this.operation?.recordingInterrupted) throw new RecordingInterruptedError();
       if (!granted) throw new Error('Microphone access is denied. Enable it for Shuddhalekhan in iOS Settings.');
       this.update({ status: 'Preparing the microphone…' });
       await this.ports.recorder.start(active.signal);
       active.signal.throwIfAborted();
+      if (this.operation?.recordingInterrupted) throw new RecordingInterruptedError();
       this.update({ phase: 'recording', recordingStartedAt: Date.now(), status: intent === 'dictation' ? 'Recording dictation…' : 'Recording agent command…' });
     } catch (error) { await this.finish(active, error, !(error instanceof RecordingInterruptedError)); }
   };
@@ -164,7 +166,7 @@ export class MobileController {
       await this.finish(active);
     } catch (error) {
       if (stopCue) await stopCue;
-      await this.finish(active, error, !this.state.transcript);
+      await this.finish(active, error, !this.state.transcript && !(error instanceof RecordingInterruptedError));
     }
   };
 
@@ -361,6 +363,9 @@ export class MobileController {
   };
 
   recordingInterrupted = (encoderFailed = false) => {
+    if (this.operation && this.state.phase === 'requestingPermission' && !encoderFailed) {
+      this.operation.recordingInterrupted = true;
+    }
     if (this.operation && this.state.phase === 'recording') {
       const error = encoderFailed ? new Error('Recording failed. No audio was sent. Record again.') : new RecordingInterruptedError();
       void this.finish(this.operation.controller, error, encoderFailed);
