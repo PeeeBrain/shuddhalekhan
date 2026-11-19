@@ -8,6 +8,7 @@ import { defaultSettings, settingsError, type MobileSettings } from './settings'
 import { transcribe, validateTranscript } from './transcription';
 import type { ChatGptAuth } from './chatgpt';
 import type { KeyboardSessionEvent } from './keyboard-session';
+import { recordingLimitSeconds } from './providers';
 import type { DictationPreferences } from './dictation-preference-schema';
 
 export type RecordingIntent = 'dictation' | 'agent';
@@ -43,7 +44,7 @@ export type Recorder = {
 export class MobileController {
   private state: State = { settings: defaultSettings, phase: 'loading', intent: 'dictation', transcript: '', response: '', status: 'Loading settings…', error: null, approval: null, recordingStartedAt: null, runId: null, activityNotice: null, activityOpenCount: 0, approvalNotified: false, approvalReviewId: null, canReply: false, turns: [], steps: [] };
   private listeners = new Set<() => void>();
-  private operation: { kind: 'working' | 'finishing'; controller: AbortController; captureFailure?: Error; captureClosed?: boolean; dictation?: { preferences: DictationPreferences; language: string } } | null = null;
+  private operation: { kind: 'working' | 'finishing'; controller: AbortController; captureFailure?: Error; captureClosed?: boolean; localOnly?: boolean; dictation?: { preferences: DictationPreferences; language: string } } | null = null;
   private approvalDecision: ((approved: boolean) => void) | null = null;
   private initialization: Promise<void> | null = null;
   private activityStarted = false;
@@ -102,11 +103,16 @@ export class MobileController {
     if (settingsLoaded) this.update({ phase: 'idle', status });
   }
 
-  startRecording = async (intent: RecordingIntent) => {
+  startControlDictation = () => this.startRecording('dictation', { localOnly: true });
+
+  recordingLimitSeconds = () => recordingLimitSeconds(this.operation?.localOnly
+    ? { ...this.state.settings, transcriptionSource: 'on-device' } : this.state.settings);
+
+  startRecording = async (intent: RecordingIntent, { localOnly = false } = {}) => {
     if (this.state.phase !== 'idle' || this.operation || this.backgrounded || this.keyboardSessionActive) return;
     if (intent === 'agent' && !this.state.settings.agentEnabled) { this.update({ error: 'Enable Agent Mode in Settings first.' }); return; }
     const active = new AbortController();
-    const operation: NonNullable<MobileController['operation']> = { kind: 'working', controller: active };
+    const operation: NonNullable<MobileController['operation']> = { kind: 'working', controller: active, localOnly };
     this.operation = operation;
     const previousRunId = this.savedRunId;
     this.activityStarted = false;
@@ -158,7 +164,7 @@ export class MobileController {
       active.signal.throwIfAborted();
       if (operation.captureFailure) throw operation.captureFailure;
       let transcript: string;
-      if (this.state.settings.transcriptionSource === 'on-device') {
+      if (operation.localOnly || this.state.settings.transcriptionSource === 'on-device') {
         if (!this.ports.transcribeOnDevice) throw new Error('On-device Parakeet is unavailable in this build.');
         transcript = validateTranscript((await this.ports.transcribeOnDevice(active.signal, this.state.settings.language)).trim(), true);
       } else {

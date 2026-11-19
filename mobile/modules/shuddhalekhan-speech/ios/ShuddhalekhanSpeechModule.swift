@@ -117,7 +117,17 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
 
   public func definition() -> ModuleDefinition {
     Name("ShuddhalekhanSpeech")
-    Events("onModelProgress", "onKeyboardSession", "onForegroundRecordingInterrupted")
+    Events("onModelProgress", "onKeyboardSession", "onForegroundRecordingInterrupted", "onControlDictation")
+
+    OnStartObserving("onControlDictation") {
+      Task { @MainActor [weak self] in
+        ControlDictationLaunch.onRequest = { [weak self] in self?.sendEvent("onControlDictation", [:]) }
+      }
+    }
+
+    AsyncFunction("consumeControlDictation") { () async -> Bool in
+      await ControlDictationLaunch.consume()
+    }
 
     OnStartObserving("onKeyboardSession") {
       Task { @MainActor [weak self] in

@@ -57,6 +57,11 @@ struct DictationCheck {
     precondition(!DictationCleanupGuard.accepts("email Ada", replacing: "do not email Ada"))
     precondition(!DictationCleanupGuard.accepts("send this to someone else", replacing: "send this to Ada"))
 
+    precondition(!ControlDictationLaunch.consume())
+    ControlDictationLaunch.request()
+    precondition(ControlDictationLaunch.consume())
+    precondition(!ControlDictationLaunch.consume(), "A single Control Center tap must not replay.")
+
     let microphone = MicrophoneOwnership()
     let keyboard = try microphone.claim(.keyboard)
     precondition((try? microphone.claim(.foreground)) == nil)

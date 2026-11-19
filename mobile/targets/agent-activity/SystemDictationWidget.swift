@@ -46,25 +46,13 @@ struct SystemDictationWidget: Widget {
 
 @available(iOS 18.0, *)
 struct SystemDictationControl: ControlWidget {
-  private struct Current: ControlValueProvider {
-    var previewValue: SystemDictationAttributes.Phase { .recording }
-    func currentValue() async throws -> SystemDictationAttributes.Phase {
-      Activity<SystemDictationAttributes>.activities.first { $0.activityState == .active }?.content.state.phase ?? .ready
-    }
-  }
-
   var body: some ControlWidgetConfiguration {
-    StaticControlConfiguration(kind: "com.shuddhalekhan.mobile.dictate", provider: Current()) { phase in
-      ControlWidgetButton(action: DictateWithShuddhalekhan()) {
-        switch phase {
-        case .recording: Label("Finish dictation", systemImage: "stop.fill")
-        case .preparing, .transcribing: Label(phase.title, systemImage: "waveform")
-        case .failed: Label("Retry dictation", systemImage: "mic.slash")
-        default: Label("Dictate", systemImage: "mic")
-        }
+    StaticControlConfiguration(kind: "com.shuddhalekhan.mobile.dictate") {
+      ControlWidgetButton(action: OpenDictationFromControl()) {
+        Label("Open Dictation", systemImage: "waveform")
       }
     }
     .displayName("Shuddhalekhan Dictation")
-    .description("Start or finish on-device dictation.")
+    .description("Open Shuddhalekhan and start on-device dictation.")
   }
 }

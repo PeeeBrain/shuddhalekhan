@@ -31,6 +31,27 @@ function when(controller: MobileController, predicate: () => boolean): Promise<v
 }
 
 describe('mobile command lifecycle', () => {
+  test('Control Center dictation stays local even when ordinary Dictation uses a remote endpoint', async () => {
+    const native = recorder();
+    let uploads = 0;
+    const controller = new MobileController({
+      recorder: native.port,
+      fetch: Object.assign(async () => { uploads++; return Response.json({ text: 'Remote text' }); }, { preconnect: fetch.preconnect }),
+      loadSettings: async () => ({ ...defaultSettings, transcriptionSource: 'endpoint', transcriptionProvider: 'sarvam' }),
+      saveSettings: async value => value,
+      transcribeOnDevice: async () => 'Local text',
+    });
+    await controller.initialize();
+    await controller.startControlDictation();
+
+    expect(controller.getSnapshot().phase).toBe('recording');
+    expect(controller.recordingLimitSeconds()).toBeGreaterThan(28);
+    await controller.stopRecording();
+    expect(controller.getSnapshot().transcript).toBe('Local text');
+    expect(controller.getSnapshot().settings.transcriptionSource).toBe('endpoint');
+    expect(uploads).toBe(0);
+  });
+
   test('dictation formats once with the preferences chosen when recording starts', async () => {
     const native = recorder();
     let preference: 'notes' | 'verbatim' = 'notes';

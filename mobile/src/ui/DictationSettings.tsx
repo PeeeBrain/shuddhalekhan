@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Alert } from 'react-native';
 import {
-  Button, Label, LabeledContent, Link, NavigationLink, Picker, Section, Text, TextField, Toggle, VStack, useNativeState,
+  Button, HStack, Image, Label, LabeledContent, Link, NavigationLink, Picker, Section, Spacer, Text, TextField, Toggle, VStack, useNativeState,
 } from '@expo/ui/swift-ui';
 import {
-  accessibilityAddTraits, autocorrectionDisabled, disabled, font, foregroundStyle, pickerStyle, submitLabel, tag, textInputAutocapitalization,
+  accessibilityAddTraits, accessibilityElement, accessibilityHidden, autocorrectionDisabled, disabled, font, foregroundStyle, layoutPriority,
+  multilineTextAlignment, pickerStyle, submitLabel, tag, textInputAutocapitalization,
 } from '@expo/ui/swift-ui/modifiers';
 import type { DictationPreferences, DictationStyle, SessionMinutes } from '../dictation-preferences';
 import { isParakeetLanguage, languageLabel } from '../languages';
@@ -162,24 +163,36 @@ export function VocabularyEditor({ preferences, update }: { preferences: Dictati
 
 // --- Keyboard page: live checklist, session length, guided test ---
 
-type Check = { title: string; icon: SFSymbol; status: string; state: 'ok' | 'unknown' | 'problem' };
+type Check = { title: string; status: string; state: 'ok' | 'unknown' | 'problem' };
 const checkStyle = {
   ok: { icon: 'checkmark.circle.fill', tint: color.green },
   unknown: { icon: 'questionmark.circle', tint: color.ochre },
   problem: { icon: 'exclamationmark.circle.fill', tint: color.red },
 } satisfies Record<Check['state'], { icon: SFSymbol; tint: string }>;
 
+// A rich Label inside LabeledContent stretched each row hundreds of points tall on device (build 23).
+// A plain HStack sizes to its text, wraps at large Dynamic Type, and reads as one VoiceOver element.
 function CheckRow({ check }: { check: Check }) {
   const look = checkStyle[check.state];
   return (
-    <LabeledContent label={<Label title={check.title} systemImage={check.icon} />}>
-      <Label title={check.status} systemImage={look.icon} modifiers={[foregroundStyle(look.tint)]} />
-    </LabeledContent>
+    <HStack spacing={12} modifiers={[accessibilityElement('combine')]}>
+      <Image systemName={look.icon} color={look.tint} modifiers={[accessibilityHidden()]} />
+      <Text modifiers={[layoutPriority(1)]}>{check.title}</Text>
+      <Spacer minLength={8} />
+      <Text modifiers={[foregroundStyle(look.tint), multilineTextAlignment('trailing')]}>{check.status}</Text>
+    </HStack>
   );
 }
 
+const stepIcons = ['1.circle.fill', '2.circle.fill', '3.circle.fill', '4.circle.fill', '5.circle.fill', '6.circle.fill', '7.circle.fill'] satisfies SFSymbol[];
+
+/** Numbered native rows; each step is one tap or one thing to look for. */
+function Steps({ steps }: { steps: string[] }) {
+  return steps.map((step, i) => <Label key={step} title={step} systemImage={stepIcons[i]} />);
+}
+
 function modelCheck(app: App): Check {
-  const base = { title: 'Speech model', icon: 'cpu' } as const;
+  const base = { title: 'Speech model' } as const;
   if (!isParakeetLanguage(app.settings.language)) return { ...base, status: `No ${languageLabel(app.settings.language)}`, state: 'problem' };
   const model = app.localModel;
   if (app.preparingModel && model.kind !== 'ready') return { ...base, status: 'Preparing…', state: 'unknown' };
@@ -206,16 +219,16 @@ export function KeyboardSetup({ app, dictation, onInstallModel }: { app: App; di
   const chatgpt = app.chatgpt.status === 'signed-in' && app.chatgpt.planUsage;
   const agentReady = app.settings.agentProvider === 'chatgpt' ? chatgpt : agentCredentialsReady(app.settings);
   const checks: Check[] = [
-    { title: 'Keyboard added', icon: 'keyboard', ...(readiness ? verified(readiness.keyboard) : { status: 'Checking…', state: 'unknown' }) },
-    { title: 'Full Access', icon: 'lock.open', ...(readiness ? verified(readiness.fullAccess) : { status: 'Checking…', state: 'unknown' }) },
+    { title: 'Keyboard added', ...(readiness ? verified(readiness.keyboard) : { status: 'Checking…', state: 'unknown' }) },
+    { title: 'Full Access', ...(readiness ? verified(readiness.fullAccess) : { status: 'Checking…', state: 'unknown' }) },
     {
-      title: 'Microphone', icon: 'mic',
+      title: 'Microphone',
       ...(microphone === 'granted' ? { status: 'Allowed', state: 'ok' } : microphone === 'denied' ? { status: 'Denied', state: 'problem' }
         : microphone === 'undetermined' ? { status: 'Not asked yet', state: 'problem' } : { status: 'Checking…', state: 'unknown' }),
     },
     model,
     // Agent Mode is optional; only shown when the user turned it on.
-    ...(app.settings.agentEnabled ? [{ title: 'Agent', icon: 'sparkles', ...(agentReady ? { status: 'Ready', state: 'ok' } : { status: 'Needs setup', state: 'problem' }) } satisfies Check] : []),
+    ...(app.settings.agentEnabled ? [{ title: 'Agent', ...(agentReady ? { status: 'Ready', state: 'ok' } : { status: 'Needs setup', state: 'problem' }) } satisfies Check] : []),
   ];
   const canInstall = model.state === 'problem' && (app.localModel.kind === 'missing' || app.localModel.kind === 'error') && isParakeetLanguage(app.settings.language);
   const canStart = model.state === 'ok' && app.phase === 'idle' && !session.starting;
@@ -224,13 +237,13 @@ export function KeyboardSetup({ app, dictation, onInstallModel }: { app: App; di
   const trouble = session.endedReason ? `Last session ended: ${session.endedReason.replace(/\.?$/, '.')} Start a new one to keep dictating.`
     : model.state !== 'ok' ? 'The keyboard transcribes on this iPhone, so download the speech model first.'
       : microphone === 'denied' ? 'Allow the microphone in iOS Settings, then come back.'
-        : 'If the keyboard says no session is running, it won\'t bring you back here: open Shuddhalekhan yourself and start one. If tapping Dictate does nothing, check that Allow Full Access is on.';
+        : 'Keyboard says no session is running? Come back here and start one.';
 
   return (
     <>
       <Section
         title="Setup"
-        footer={<Text>iOS doesn't tell apps whether a keyboard is added or has Full Access. They show Verified for a few seconds after the keyboard checks in with a running session. Full Access only lets the keyboard pass start, stop, and finished text to this app.</Text>}
+        footer={<Text>Open iOS Settings, tap Keyboards, and turn on Shuddhalekhan and Allow Full Access. They show Verified once the keyboard checks in during a session.</Text>}
       >
         {checks.map(check => <CheckRow key={check.title} check={check} />)}
         {microphone === 'undetermined' ? <Button label="Allow Microphone" systemImage="mic" onPress={() => { void requestMicrophone(); }} /> : null}
@@ -238,12 +251,9 @@ export function KeyboardSetup({ app, dictation, onInstallModel }: { app: App; di
         {app.settings.agentEnabled && !agentReady ? <NavigationLink value="agent"><Text>Set Up Agent Mode</Text></NavigationLink> : null}
         <Link label="Open iOS Settings" destination="app-settings:" />
       </Section>
-      <Section footer={<Text>In iOS Settings, tap Keyboards, then turn on Shuddhalekhan and Allow Full Access. Or add it from General › Keyboard › Keyboards › Add New Keyboard.</Text>}>
-        <Text>Dictate into any app with the Shuddhalekhan keyboard. Password fields and some apps always use the system keyboard.</Text>
-      </Section>
 
       {preferences ? (
-        <Section footer={<Text>Applies to the next keyboard session. iOS keyboards can't use the microphone, so this app records for them while a session is on.</Text>}>
+        <Section footer={<Text>Keyboards can't use the microphone, so this app records for them while a session is on.</Text>}>
           <Picker
             label="Session Length"
             selection={preferences.sessionMinutes}
@@ -259,10 +269,12 @@ export function KeyboardSetup({ app, dictation, onInstallModel }: { app: App; di
       ) : null}
 
       <Section title="Test dictation" footer={<Text>{trouble}</Text>}>
-        <Label title="Start a keyboard session below." systemImage="1.circle.fill" />
-        <Label title="Open Notes and tap where you want text." systemImage="2.circle.fill" />
-        <Label title="Hold the globe key and choose Shuddhalekhan." systemImage="3.circle.fill" />
-        <Label title="Tap Dictate, speak, then tap Stop. The text appears once at the cursor." systemImage="4.circle.fill" />
+        <Steps steps={[
+          'Start a keyboard session below.',
+          'Open Notes and tap where you want text.',
+          'Hold the globe key and choose Shuddhalekhan.',
+          'Tap Dictate, speak, then tap Stop. The text appears once at the cursor.',
+        ]} />
         {session.active ? (
           <>
             <LabeledContent label="Session on"><Text>{session.remainingSeconds === 0 && session.busy ? 'Finishing…' : `${m}:${s} left`}</Text></LabeledContent>
@@ -286,23 +298,54 @@ export function KeyboardSetup({ app, dictation, onInstallModel }: { app: App; di
 export function ShortcutsHelp() {
   return (
     <>
-      <Section title="Shortcuts and Siri" footer={<Text>Agent Mode isn't available from Shortcuts yet. For Ask Agent, start a keyboard session from Home.</Text>}>
-        <Label title="Dictate (Dictate with Shuddhalekhan): records, transcribes on this iPhone, and copies the text for you to paste." systemImage="waveform" />
-        <Label title="Start Keyboard Session: opens Shuddhalekhan to start a Dictation-only keyboard session for your chosen length." systemImage="keyboard" />
-        <Label title="Stop Keyboard Session: ends the running keyboard session." systemImage="keyboard.chevron.compact.down" />
+      <Section title="Control Center (most reliable)" footer={<Text>iOS 18 or later. The tile opens Shuddhalekhan and dictates on Home, where you can Stop, Cancel, and Copy the result. It works even when iOS won't let the microphone start in the background.</Text>}>
+        <Steps steps={[
+          'Swipe down from the top-right corner of the screen.',
+          'Tap + at the top left.',
+          'Tap Add a Control at the bottom.',
+          'Type Shuddhalekhan in the search field and tap Shuddhalekhan Dictation.',
+          'Tap an empty area to finish editing.',
+        ]} />
+      </Section>
+
+      <Section title="Built-in Dictate shortcut" footer={<Text>iOS may refuse to start the microphone while another app is in front. If nothing records, use the Control Center tile or dictate from Home. Agent Mode isn't available from Shortcuts.</Text>}>
         <Link label="Open Shortcuts" destination="shortcuts://" />
+        <Steps steps={[
+          'In Shortcuts, tap the Shortcuts tab at the bottom.',
+          'Under App Shortcuts, tap Shuddhalekhan.',
+          'Tap Dictate with Shuddhalekhan and speak.',
+          'Tap it again to finish, or tap Stop in the Live Activity on the Lock Screen or Dynamic Island.',
+          'The text is copied. Tap where you want it and choose Paste. Nothing to paste? Open Shuddhalekhan and copy it from Home.',
+        ]} />
       </Section>
-      <Section title="Action Button and Back Tap" footer={<Text>iOS doesn't let apps change these for you.</Text>}>
-        <Label title="Action Button (iPhone 15 Pro and later): Settings › Action Button › Shortcut, then pick a Shuddhalekhan action." systemImage="button.horizontal.top.press" />
-        <Label title="Back Tap: Settings › Accessibility › Touch › Back Tap, then pick a Shuddhalekhan action." systemImage="hand.tap" />
+
+      <Section title="Name your own shortcut" footer={<Text>Action Button and Back Tap only list shortcuts you made, so do this first.</Text>}>
+        <Steps steps={[
+          'In Shortcuts, tap + at the top right.',
+          'Tap Add Action (or the Search Actions field) and type Shuddhalekhan.',
+          'Tap Dictate with Shuddhalekhan.',
+          'Tap the name at the top, tap Rename, and type Dictate.',
+          'Tap Done.',
+        ]} />
       </Section>
-      <Section title="Control Center" footer={<Text>iOS 18 or later.</Text>}>
-        <Label title="Open Control Center, tap +, then Add a Control and search for Shuddhalekhan." systemImage="switch.2" />
+
+      <Section title="Action Button" footer={<Text>iPhone 15 Pro and later.</Text>}>
+        <Steps steps={[
+          'Open iOS Settings and tap Action Button.',
+          'Swipe sideways to Shortcut.',
+          'Tap Choose a Shortcut and tap Dictate.',
+          'Press the Action Button to start, and press it again to finish.',
+        ]} />
       </Section>
-      <Section title="If iOS can't record in the background">
-        <Text>Dictate shows a message asking you to open Shuddhalekhan and dictate there. This happens when the microphone isn't allowed, the speech model isn't ready, or iOS stops background recording.</Text>
-        <Text>If the text can't be copied in the background, open Shuddhalekhan and copy the finished transcript from Home.</Text>
-        <Text>Copied isn't pasted: tap where you want the text and paste it. Other apps can read the clipboard when iOS allows them.</Text>
+
+      <Section title="Back Tap">
+        <Steps steps={[
+          'Open iOS Settings and tap Accessibility.',
+          'Tap Touch, then scroll down and tap Back Tap.',
+          'Tap Double Tap.',
+          'Scroll to Shortcuts and tap Dictate.',
+          'Double-tap the back of your iPhone to start, and again to finish.',
+        ]} />
       </Section>
     </>
   );

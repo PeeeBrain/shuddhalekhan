@@ -1,8 +1,8 @@
 import ActivityKit
 import AVFoundation
 import Foundation
+import OSLog
 import UIKit
-import WidgetKit
 
 private enum SystemDictationError: LocalizedError {
   case microphoneDenied, modelUnavailable, activityUnavailable, captureUnavailable, empty
@@ -241,7 +241,6 @@ final class SystemDictation {
   private func publish(_ activityID: String, phase: SystemDictationAttributes.Phase) async {
     let deadline = Date().addingTimeInterval(phase == .recording ? 125 : 30)
     await Self.activity(id: activityID)?.update(ActivityContent(state: .init(phase: phase), staleDate: deadline))
-    if #available(iOS 18.0, *) { ControlCenter.shared.reloadControls(ofKind: "com.shuddhalekhan.mobile.dictate") }
   }
 
   private func settle(id: String, phase: SystemDictationAttributes.Phase) async {
@@ -270,13 +269,18 @@ final class SystemDictation {
   private func endActivity(_ activityID: String, phase: SystemDictationAttributes.Phase) async {
     await Self.activity(id: activityID)?.end(ActivityContent(state: .init(phase: phase), staleDate: nil),
       dismissalPolicy: .after(Date().addingTimeInterval(12)))
-    if #available(iOS 18.0, *) { ControlCenter.shared.reloadControls(ofKind: "com.shuddhalekhan.mobile.dictate") }
   }
 }
 
 // Called by the app target's intents, with no dependency on the Expo module or mounted React views.
 @MainActor
 public enum SystemDictationActions {
+  public static func openControl() {
+    Logger(subsystem: "com.shuddhalekhan.mobile", category: "ControlDictation")
+      .notice("Control Center requested foreground Dictation.")
+    ControlDictationLaunch.request()
+  }
+
   public static func dictate() async -> String { await SystemDictation.shared.toggle() }
   public static func finish(requestID: String?) async -> String { await SystemDictation.shared.finish(id: requestID) }
   public static func cancel(requestID: String?) async -> String { await SystemDictation.shared.cancel(id: requestID) }

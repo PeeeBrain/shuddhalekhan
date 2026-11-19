@@ -10,8 +10,8 @@ import { localModelKey, transcribeOnDevice, useOnDeviceModel } from './on-device
 import { signGoogleJwt } from './native-google-auth';
 import { useKeyboardSession } from './useKeyboardSession';
 import { getDictationPreferences } from './dictation-preferences';
-import { speech } from './native-speech';
-import { agentCredentialsReady, recordingLimitSeconds, recordingLimits } from './providers';
+import { checkedLocalLanguage, speech } from './native-speech';
+import { agentCredentialsReady, recordingLimits } from './providers';
 import { agentActivity, onAgentApprovalAction, onAgentRunStopped } from './native-agent-activity';
 
 const recordingOptions: RecordingOptions = {
@@ -178,6 +178,7 @@ export function useMobileApp() {
     state.phase !== 'loading' && state.settings.transcriptionSource === 'on-device' ? state.settings.language : null,
   );
   const [now, setNow] = useState(Date.now);
+  const [controlDictationOpenCount, setControlDictationOpenCount] = useState(0);
   const uncopiedSystemDictation = useRef<string | null>(null);
   useEffect(() => {
     if (state.phase !== 'idle') return;
@@ -214,6 +215,31 @@ export function useMobileApp() {
     controllerRef.current = controller;
     void controller.initialize();
     void chatGptAuth.initialize();
+    let mounted = true;
+    const handleControl = async () => {
+      if (!speech?.consumeControlDictation || AppState.currentState !== 'active') return;
+      await controller.initialize();
+      if (!mounted || AppState.currentState !== 'active' || !await speech.consumeControlDictation()) return;
+      setControlDictationOpenCount(count => count + 1);
+      const state = controller.getSnapshot();
+      if (state.phase !== 'idle') return;
+      if ((await speech.getKeyboardSession()).endsAt !== 0) {
+        Alert.alert('Keyboard session is running', 'Stop the keyboard session before starting Dictation from Control Center.');
+        return;
+      }
+      if (await speech.getModelState(checkedLocalLanguage(state.settings.language)) !== 'ready') {
+        Alert.alert('Speech model needed', 'Download the speech model in Settings → Transcription → On this iPhone, then tap the control again.');
+        return;
+      }
+      if (mounted && AppState.currentState === 'active') await controller.startControlDictation();
+    };
+    const control = () => {
+      void handleControl().catch((error: unknown) => {
+        if (mounted) Alert.alert('Could not start Dictation', error instanceof Error ? error.message : 'Open Shuddhalekhan and try again.');
+      });
+    };
+    const controlListener = speech?.consumeControlDictation ? speech.addListener('onControlDictation', control) : undefined;
+    control();
     const recordingInterrupted = speech?.getForegroundRecordingInterrupted
       ? speech.addListener('onForegroundRecordingInterrupted', () => controller.recordingInterrupted())
       : undefined;
@@ -235,9 +261,12 @@ export function useMobileApp() {
         void speech?.cancelForegroundRecordingCue?.().catch(() => {});
         void controller.enterBackground();
       }
-      if (next === 'active') void controller.enterForeground();
+      if (next === 'active') {
+        void controller.enterForeground();
+        control();
+      }
     });
-    return () => { subscription.remove(); links.remove(); recordingInterrupted?.remove(); stopped?.remove(); approvalAction?.remove(); controllerRef.current = null; controller.cancel(); };
+    return () => { mounted = false; controlListener?.remove(); subscription.remove(); links.remove(); recordingInterrupted?.remove(); stopped?.remove(); approvalAction?.remove(); controllerRef.current = null; controller.cancel(); };
   }, [controller]);
 
   useEffect(() => {
@@ -247,13 +276,13 @@ export function useMobileApp() {
       const currentTime = Date.now();
       const elapsed = Math.floor((currentTime - started) / 1000);
       setNow(currentTime);
-      if (elapsed >= recordingLimitSeconds(controller.getSnapshot().settings)) void controller.stopRecording();
+      if (elapsed >= controller.recordingLimitSeconds()) void controller.stopRecording();
     }, 1000);
     return () => clearInterval(timer);
   }, [controller, state.phase, state.recordingStartedAt]);
 
   return {
-    ...state, elapsedSeconds: state.phase === 'recording' && state.recordingStartedAt !== null ? Math.max(0, Math.floor((now - state.recordingStartedAt) / 1000)) : 0,
+    ...state, controlDictationOpenCount, elapsedSeconds: state.phase === 'recording' && state.recordingStartedAt !== null ? Math.max(0, Math.floor((now - state.recordingStartedAt) / 1000)) : 0,
     chatgpt, signInChatGpt: chatGptAuth.signIn, signOutChatGpt: chatGptAuth.signOut, listChatGptModels: chatGptAuth.listModels,
     localModel: localModels[localModelKey(state.settings.language)], localModels, installLocalModel, preparingModel,
     keyboardSession, stopKeyboardSession, startKeyboardSession: startSession,

@@ -32,6 +32,8 @@ function Main() {
   const [settings, setSettings] = useState<{ page?: SettingsPage } | null>(null);
   const [reviewingApproval, setReviewingApproval] = useState<string | null>(null);
   useEffect(() => { if (app.activityOpenCount) setSettings(null); }, [app.activityOpenCount]);
+  // The Control Center tile dictates on Home, so leave Settings when it opens the app.
+  useEffect(() => { if (app.controlDictationOpenCount) setSettings(null); }, [app.controlDictationOpenCount]);
 
   return (
     <>

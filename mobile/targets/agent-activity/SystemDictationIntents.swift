@@ -18,6 +18,30 @@ struct DictateWithShuddhalekhan: AudioRecordingIntent, LiveActivityIntent {
   }
 }
 
+@available(iOS 18.0, *)
+struct OpenDictationFromControl: OpenIntent {
+  static let title: LocalizedStringResource = "Open Shuddhalekhan Dictation"
+
+  @Parameter(title: "Screen") var target: DictationScreen
+
+  init() { target = .dictation }
+
+  func perform() async throws -> some IntentResult {
+    #if canImport(ShuddhalekhanSpeech)
+    await SystemDictationActions.openControl()
+    #endif
+    return .result()
+  }
+}
+
+@available(iOS 18.0, *)
+enum DictationScreen: String, AppEnum {
+  case dictation
+
+  static let typeDisplayRepresentation: TypeDisplayRepresentation = "Shuddhalekhan screen"
+  static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [.dictation: "Dictation"]
+}
+
 struct FinishSystemDictation: LiveActivityIntent {
   static let title: LocalizedStringResource = "Finish Shuddhalekhan Dictation"
 

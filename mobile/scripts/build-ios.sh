@@ -90,6 +90,7 @@ swiftc -swift-version 6 \
   "$speech_ios/DictationCleanupGuard.swift" \
   "$speech_ios/KeyboardInsertion.swift" \
   "$speech_ios/MicrophoneOwnership.swift" \
+  "$speech_ios/ControlDictationLaunch.swift" \
   "$mobile_dir/native-checks/DictationCheck.swift" \
   -o "$build_dir/check-dictation"
 "$build_dir/check-dictation"

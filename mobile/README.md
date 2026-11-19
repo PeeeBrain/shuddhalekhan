@@ -46,9 +46,9 @@ The keyboard adds spacing where it can read the cursor context. After insertion,
 
 ## System shortcuts and controls
 
-On iOS 18+, **Dictate**, **Start Keyboard Session**, and **Stop Keyboard Session** are available in Shortcuts. Add the Dictate shortcut to the Action Button or Back Tap through iOS Settings, or add Shuddhalekhan Dictation in Control Center. System Dictation requires a local Parakeet model, microphone permission, and Live Activities. If iOS refuses capture from the current screen, open Shuddhalekhan and use Dictate there. Starting a keyboard session from Shortcuts opens the app for setup and starts a Dictation-only session. Start from Home to use Ask Agent.
+On iOS 18+, **Dictate**, **Start Keyboard Session**, and **Stop Keyboard Session** are available in Shortcuts. Add the Dictate shortcut to the Action Button or Back Tap through iOS Settings. Dictation started directly from Shortcuts requires a local Parakeet model, microphone permission, and Live Activities. If iOS refuses capture from the current screen, open Shuddhalekhan and use Dictate there. Starting a keyboard session from Shortcuts opens the app for setup and starts a Dictation-only session. Start from Home to use Ask Agent.
 
-Run Dictate again or tap **Stop** in the recording Live Activity to finish. **Cancel** discards it. If the app is active, a successful result copies to the local clipboard. Otherwise open Home and use the result's Copy action. Test phone lock, background starts, control registration, and the clipboard flow on the sideloaded build before relying on them.
+Run Dictate again or tap **Stop** in the recording Live Activity to finish. **Cancel** discards it. If the app is active, a successful result copies to the local clipboard. Otherwise open Home and use the result's Copy action. The **Shuddhalekhan Dictation** control in Control Center opens the app and starts local Dictation on Home. Tap **Stop** there and use **Copy** on the result. If a keyboard session is running, end it before tapping the control. Test phone lock, background starts, control registration, and the clipboard flow on the sideloaded build before relying on them.
 
 ## Dictate in another app with the keyboard
 
