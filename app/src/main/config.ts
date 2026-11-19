@@ -7,7 +7,7 @@ import Store from 'electron-store';
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, unlinkSync } from 'fs';
-import type { AppConfig, DictationConfig, IntentShortcutConfig, McpDiscoveredTool, RecordingActivationMode, ShortcutsConfig, TranscriptionConfig, TranscriptionProviderId } from '../types/ipc';
+import { DICTATION_HISTORY_DAYS, type AppConfig, type DictationConfig, type IntentShortcutConfig, type McpDiscoveredTool, type RecordingActivationMode, type ShortcutsConfig, type TranscriptionConfig, type TranscriptionProviderId } from '../types/ipc';
 import { normalizeMcpServers } from '../agent/mcp-server-config';
 import { assessBinding, DEFAULT_SHORTCUTS, normalizeBinding } from '../shared/shortcut-bindings';
 import { getDictationConfigError, normalizeDictationConfig, resolveInstallDefaults } from '../shared/dictation-runtime';
@@ -86,6 +86,7 @@ const store = new Store<StoreConfig>({
     waylandBestEffortInsertion: false,
     recordingSounds: true,
     warmMicrophone: false,
+    dictationHistoryDays: 30,
     setupChecklistDismissed: false,
     onboarding: { status: existingInstallationExisted ? 'complete' : 'pending' },
     shortcuts: {
@@ -308,6 +309,7 @@ export function getConfig(): AppConfig {
     waylandBestEffortInsertion: store.get('waylandBestEffortInsertion') === true,
     recordingSounds: store.get('recordingSounds') !== false,
     warmMicrophone: store.get('warmMicrophone') === true,
+    dictationHistoryDays: DICTATION_HISTORY_DAYS.find(days => days === store.get('dictationHistoryDays')) ?? 30,
     setupChecklistDismissed: store.get('setupChecklistDismissed') ?? false,
     onboarding: store.get('onboarding')?.status === 'pending'
       ? { status: 'pending' }
@@ -391,6 +393,9 @@ export function setConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]
     store.set('agent', { ...agent, plugins, computerUse,
       provider: { ...provider, apiKeyEnvVar: normalizeAgentProvider(provider).apiKeyEnvVar } });
     return;
+  }
+  if (key === 'dictationHistoryDays' && !DICTATION_HISTORY_DAYS.includes(value as AppConfig['dictationHistoryDays'])) {
+    throw new Error('Choose a supported History retention.');
   }
   if (key === 'managedLocalThreads' && value !== null && !isManagedLocalThreadCount(value)) {
     throw new Error('Choose a whole-number thread count within the available CPU range.');

@@ -102,7 +102,7 @@ const visibleText = (text: string) => `(() => {
   const want = ${JSON.stringify(text)};
   // An open dialog is modal: confirm buttons often share a name with the control that opened them.
   const scope = [...document.querySelectorAll('[role=alertdialog],[role=dialog]')].filter((d) => d.checkVisibility()).pop() ?? document;
-  const els = [...scope.querySelectorAll('button,a,[role=button],[role=tab],[role=link],[role=menuitem],[role=switch],[role=checkbox],[role=radio],label,option')];
+  const els = [...scope.querySelectorAll('button,a,[role=button],[role=tab],[role=link],[role=menuitem],[role=switch],[role=checkbox],[role=radio],[role=option],label,option')];
   return els.find((e) => (e.getAttribute('aria-label') ?? '').trim() === want && e.checkVisibility())
     ?? els.find((e) => e.textContent?.trim() === want && e.checkVisibility()) ?? null;
 })()`;

@@ -8,6 +8,8 @@ import type {
   VersionReleaseNotes,
   AuditRunSummary,
   AuditEventDetail,
+  DictationHistoryEntry,
+  DictationHistoryPage,
   CredentialKind,
   CredentialStatus,
   TranscriptionReadiness,
@@ -77,6 +79,12 @@ export interface SettingsIpc {
   getAuditRuns: () => Promise<AuditRunSummary[]>;
   getAuditRunDetail: (agentRunId: string) => Promise<AuditEventDetail[]>;
   onAuditRunUpdated: (callback: (agentRunId: string) => void) => Unsubscribe | undefined;
+  listDictationHistory: (query: string, beforeId: number | null) => Promise<DictationHistoryPage>;
+  getDictationHistoryEntry: (id: number) => Promise<DictationHistoryEntry | null>;
+  copyDictationHistoryEntry: (id: number) => Promise<void>;
+  deleteDictationHistoryEntry: (id: number) => Promise<void>;
+  clearDictationHistory: () => Promise<void>;
+  onDictationHistoryChanged: (callback: () => void) => Unsubscribe | undefined;
   onCredentialChanged: (callback: (credential: CredentialKind) => void) => Unsubscribe | undefined;
   getCredentialStatus: (credential: CredentialKind) => Promise<CredentialStatus>;
   saveCredential: (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
@@ -160,6 +168,12 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     getAuditRuns: () => requireElectronApi(electronAPI).invoke('audit:get-runs'),
     getAuditRunDetail: (agentRunId) => requireElectronApi(electronAPI).invoke('audit:get-run-detail', agentRunId),
     onAuditRunUpdated: (callback) => requireElectronApi(electronAPI).subscribe('audit:run-updated', callback),
+    listDictationHistory: (query, beforeId) => requireElectronApi(electronAPI).invoke('dictation-history:list', query, beforeId),
+    getDictationHistoryEntry: (id) => requireElectronApi(electronAPI).invoke('dictation-history:get', id),
+    copyDictationHistoryEntry: (id) => requireElectronApi(electronAPI).invoke('dictation-history:copy', id),
+    deleteDictationHistoryEntry: (id) => requireElectronApi(electronAPI).invoke('dictation-history:delete', id),
+    clearDictationHistory: () => requireElectronApi(electronAPI).invoke('dictation-history:clear'),
+    onDictationHistoryChanged: (callback) => requireElectronApi(electronAPI).subscribe('dictation-history:changed', callback),
     onCredentialChanged: (callback) => requireElectronApi(electronAPI).subscribe('credential:changed', callback),
     getCredentialStatus: (credential) => requireElectronApi(electronAPI).invoke('credential:get-status', credential),
     saveCredential: (credential, value) => requireElectronApi(electronAPI).invoke('credential:save', credential, value),

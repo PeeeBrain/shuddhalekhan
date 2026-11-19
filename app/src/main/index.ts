@@ -49,7 +49,8 @@ import {
   setLastTranscript,
 } from './last-transcript';
 import { getAuditRuns, getAuditRunDetail, closeDb } from './audit-db';
-import type { AgentApprovalChoice, AppConfig, AudioDevice, InjectResult, McpStatusSnapshot, McpToolPolicyKey, UpdateStatus } from '../types/ipc';
+import { deliveryOf, openDictationHistory, transcriptionModel, type DictationHistory } from './dictation-history';
+import type { AgentApprovalChoice, AppConfig, AudioDevice, DictationDelivery, InjectResult, McpStatusSnapshot, McpToolPolicyKey, UpdateStatus } from '../types/ipc';
 import type { RecordingResult } from './recording-session';
 import { createRuntimeReadinessBarrier } from './runtime-readiness';
 import { RuntimeShell } from './runtime-shell';
@@ -263,7 +264,7 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
   if (result.outcome.kind === 'failed') {
     if (result.intent === 'dictation') {
       setLastTranscript(result.text, result.targetSnapshot);
-      markLastTranscriptInjected('failed');
+      settleLastTranscript('failed');
       runtimeShell.showFailure(result.recordingSessionId,
         'Transcription could not complete. Last Transcript contains the text recognized so far.',
         ['copy-full-transcript']);
@@ -310,21 +311,50 @@ async function routeRecordingResult(result: RecordingResult | null): Promise<voi
 
   if (result.signal.aborted) return;
 
-  setLastTranscript(text, result.targetSnapshot);
+  setLastTranscript(text, result.targetSnapshot, result.text);
 
   const outcome = await deliverTranscript(text, result.targetSnapshot, result.signal, 'recording');
   if (!outcome) return;
   const { result: injectResult, actions } = outcome;
   if (result.signal.aborted) return;
   if (injectResult.kind === 'input-dispatched') {
-    markLastTranscriptInjected('dispatched');
+    settleLastTranscript('dispatched');
     completeOnboarding();
     if (formatterDegraded) showFormatterDegradedNotice();
     return;
   }
 
-  markLastTranscriptInjected(result.targetSnapshot?.kind === 'kde-wayland' && injectResult.kind === 'error' ? 'uncertain' : 'failed');
+  settleLastTranscript(deliveryOf(injectResult));
   runtimeShell.showFailure(result.recordingSessionId, getRecoveryMessage(injectResult), actions);
+}
+
+let dictationHistory: DictationHistory | null = null;
+
+/** Opened on first use; throws when SQLite is unavailable, which callers keep away from delivery. */
+function getDictationHistory(): DictationHistory {
+  dictationHistory ??= openDictationHistory(getPersistentStoreDirectory(), () => getConfig().dictationHistoryDays);
+  return dictationHistory;
+}
+
+/** Marks the last transcript's delivery and keeps its History entry in step. */
+function settleLastTranscript(status: DictationDelivery): void {
+  markLastTranscriptInjected(status);
+  const transcript = getLastTranscript();
+  if (!transcript) return;
+  try {
+    if (transcript.historyId === undefined) {
+      const config = getConfig();
+      transcript.historyId = getDictationHistory().record({
+        createdAt: transcript.createdAt, text: transcript.text, rawText: transcript.rawText,
+        provider: config.transcription.activeProvider, model: transcriptionModel(config), delivery: status,
+      });
+    } else if (transcript.historyId !== null) {
+      getDictationHistory().setDelivery(transcript.historyId, status);
+    }
+    getSettingsWindow()?.webContents.send('dictation-history:changed');
+  } catch (error) {
+    console.error('Could not save Dictation history:', error);
+  }
 }
 
 function completeOnboarding(): void {
@@ -448,14 +478,14 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     if (!outcome || retry.signal.aborted || getLastTranscript() !== transcript) return;
     const { result, actions } = outcome;
     if (result.kind === 'input-dispatched') {
-      markLastTranscriptInjected('dispatched');
+      settleLastTranscript('dispatched');
       return;
     }
-    markLastTranscriptInjected('failed');
+    settleLastTranscript(deliveryOf(result));
     runtimeShell.showFailure(null, getRecoveryMessage(result), actions);
   } catch {
     if (!retry.signal.aborted && getLastTranscript() === transcript) {
-      markLastTranscriptInjected('failed');
+      settleLastTranscript('failed');
       runtimeShell.showFailure(null, 'Paste could not complete. Check the destination before copying the transcript.', ['copy-full-transcript']);
     }
   } finally {
@@ -742,6 +772,16 @@ handle('config:patch-transcription', async (_event, patch: unknown) => {
 
 handle('config:set', (_event, key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => applyConfig(key, value));
 
+handle('dictation-history:list', (_event, query, beforeId) =>
+  getDictationHistory().list(typeof query === 'string' ? query : '', Number.isInteger(beforeId) ? beforeId : null));
+handle('dictation-history:get', (_event, id) => getDictationHistory().get(id));
+handle('dictation-history:copy', async (_event, id) => {
+  const entry = getDictationHistory().get(id);
+  if (entry) await copyLastTranscriptToClipboard(entry.text);
+});
+handle('dictation-history:delete', (_event, id) => getDictationHistory().delete(id));
+handle('dictation-history:clear', () => getDictationHistory().clear());
+
 /** Saves one config key and brings hotkeys, transcribers, and the agent sidecar in line with it. */
 async function applyConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K]): Promise<void> {
   const previousConfig = getConfig();
@@ -753,6 +793,11 @@ async function applyConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
   cachedAgentEnabled = config.agent.enabled;
+  if (key === 'dictationHistoryDays') {
+    // Shorter retention and Off delete what they no longer keep right away.
+    getDictationHistory().prune();
+    getSettingsWindow()?.webContents.send('dictation-history:changed');
+  }
   if (key === 'selectedDeviceId') {
     recordingSession.updateDevice(config.selectedDeviceId);
     updateTrayMenu();
@@ -904,6 +949,10 @@ if (!gotSingleInstanceLock) {
       onStateChanged: (state) => {
         getSettingsWindow()?.webContents.send('managed-local:model-state-changed', state);
       },
+    });
+    // Opening prunes, so History past retention is deleted at launch, not only at the next Dictation.
+    setImmediate(() => {
+      try { getDictationHistory(); } catch (error) { console.error('Dictation history is unavailable:', error); }
     });
 
     try {
