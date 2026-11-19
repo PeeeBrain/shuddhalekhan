@@ -36,10 +36,11 @@ class CaptureProcessor extends AudioWorkletProcessor {
       if (this.overflowed) return;
       if (type === 'start' && !this.capturing) {
         this.capturing = true;
-        const ring = this.takeRing(event.data.preRollFrames);
-        // Frames heard after the press are the recording's own audio, so they go out as capture, not pre-roll.
-        const { pressFrame } = event.data;
-        const late = Number.isFinite(pressFrame) ? Math.min(ring.length, Math.max(0, globalThis.currentFrame - pressFrame)) : 0;
+        // Frames heard after the press are the recording's own audio, so they go out as capture, not pre-roll,
+        // even when a cue leaves no room for pre-roll.
+        const { preRollFrames, pressFrame } = event.data;
+        const late = Number.isFinite(pressFrame) ? Math.min(this.ringFilled, Math.max(0, globalThis.currentFrame - pressFrame)) : 0;
+        const ring = this.takeRing(Math.max(preRollFrames, late));
         const early = ring.length - late;
         const samples = ring.slice(0, early);
         this.credits = MAX_OUTSTANDING_BATCHES - (early > 0 ? 1 : 0);

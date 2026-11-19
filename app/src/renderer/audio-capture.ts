@@ -639,7 +639,9 @@ function retireMics(): void {
  * same groupId, and a track keeps the label it opened with ("Default - …").
  */
 async function deviceListChanged(): Promise<void> {
-  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  // A failed check knows nothing about the device, so it keeps the mic and its pre-roll.
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => null);
+  if (!devices) return;
   const inputs = devices.filter((device) => device.kind === 'audioinput');
   const chosen = getDeviceId();
   const target = inputs.find((device) => device.deviceId === chosen)

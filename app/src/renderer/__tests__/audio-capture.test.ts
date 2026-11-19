@@ -844,12 +844,13 @@ describe('warm audio stream', () => {
       await mod.startRecording(recorder({ pressedAt: Date.now() }).options);
       audio.emit(new Float32Array(320).fill(0.2));
       let done = false;
-      const ending = mod.stopRecording(Date.now() + 600).then((boundary) => { done = true; return boundary; });
+      const ending = mod.stopRecording(Date.now() + 60_000).then((boundary) => { done = true; return boundary; });
+      await settle(); // the release-tail listener is now hearing
       audio.emit(new Float32Array(250 * 16).fill(0.03)); // 250 ms of a softer syllable
       await settle();
       expect(done).toBe(false);
-      audio.emit(new Float32Array(160 * 16).fill(0.001));
-      expect(await ending).toEqual({ chunkCount: 4, sampleCount: PRE_ROLL + 320 + 410 * 16 });
+      audio.emit(new Float32Array(250 * 16).fill(0.001));
+      expect(await ending).toEqual({ chunkCount: 4, sampleCount: PRE_ROLL + 320 + 500 * 16 });
       mod.setWarmMicrophone(false);
     });
 
@@ -1012,6 +1013,15 @@ describe('warm audio stream', () => {
       await settle();
       expect(audio.stopTrack).not.toHaveBeenCalled();
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+      mod.setWarmMicrophone(false);
+    });
+
+    it('keeps the parked mic when the device list cannot be read', async () => {
+      const { audio, mod } = await parked();
+      (navigator.mediaDevices.enumerateDevices as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('busy'));
+      audio.changeDevices('mic-a');
+      await settle();
+      expect(audio.stopTrack).not.toHaveBeenCalled();
       mod.setWarmMicrophone(false);
     });
 

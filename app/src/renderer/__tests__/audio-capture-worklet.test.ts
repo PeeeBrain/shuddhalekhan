@@ -71,6 +71,17 @@ describe('capture audio-thread boundary', () => {
     expect(sent.at(-1)).toEqual({ type: 'audio', samples: ramp(284, 320) });
   });
 
+  it('keeps frames heard after the press when a cue allows no pre-roll', async () => {
+    const { processor, sent, command, scope } = await loadProcessor(400);
+    for (let block = 0; block < 3; block++) processor.process([[ramp(block * 128, 128)]]);
+    scope.currentFrame = 384;
+
+    command({ type: 'start', preRollFrames: 0, pressFrame: 284 });
+    expect(sent).toEqual([{ type: 'started', samples: new Float32Array(0), late: 100 }]);
+    processor.process([[ramp(384, 220)]]);
+    expect(sent.at(-1)).toEqual({ type: 'audio', samples: ramp(284, 320) });
+  });
+
   it('stops with overflow once uncredited batches hit the bound, and keeps going while credits return', async () => {
     const { processor, sent, command } = await loadProcessor();
     command({ type: 'start', preRollFrames: 0 });
