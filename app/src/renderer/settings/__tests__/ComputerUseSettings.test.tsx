@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { ComputerUseSettings } from '../ComputerUseSettings';
 import type { SettingsIpc } from '../settings-ipc';
@@ -179,5 +179,47 @@ describe('ComputerUseSettings', () => {
     expect(commit).toHaveBeenCalledWith('agent', {
       enabled: true, mcpServers: [], computerUse: { enabled: false, toolPolicies: { desktop_snapshot: 'alwaysAllow' } },
     }, 'computer-use-policies');
+  });
+
+  it('requires confirmation before bulk-allowing tools, preserves clipboard access, and turns off immediately', async () => {
+    const clipboardPolicies = { desktop_clipboard_get: 'alwaysAsk', desktop_clipboard_set: 'alwaysAllow', desktop_clipboard_clear: 'disabled' } as const;
+    const { commit, savedComputerUse } = await renderPage({ state: 'installed' }, {
+      computerUse: { enabled: false, tourCompleted: true, toolPolicies: { ...clipboardPolicies, desktop_click: 'disabled' } },
+    });
+    expect(screen.queryByRole('switch', { name: 'YOLO mode' })).toBeNull();
+    await click(button('Enable YOLO mode'));
+    expect(screen.getByRole('alertdialog', { name: 'Enable YOLO mode?' })).toBeInTheDocument();
+    expect(commit).not.toHaveBeenCalled();
+    expect(button('Keep approvals')).toHaveFocus();
+    await click(button('Keep approvals'));
+    await waitFor(() => expect(document.activeElement === button('Enable YOLO mode')).toBe(true));
+    expect(commit).not.toHaveBeenCalled();
+
+    await click(button('Enable YOLO mode'));
+    await act(async () => { fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' }); });
+    await waitFor(() => expect(document.activeElement === button('Enable YOLO mode')).toBe(true));
+    expect(commit).not.toHaveBeenCalled();
+
+    await click(button('Enable YOLO mode'));
+    await click(button('Enable YOLO mode'));
+    await waitFor(() => expect(document.activeElement === button('Turn off YOLO mode')).toBe(true));
+    for (const select of screen.getAllByRole('combobox').filter(select => !select.getAttribute('aria-label')?.includes('clipboard'))) {
+      expect(select).toHaveTextContent('Always allow');
+    }
+    expect(savedComputerUse()).toMatchObject({ enabled: false, tourCompleted: true, toolPolicies: clipboardPolicies });
+
+    await click(screen.getByRole('combobox', { name: 'Approval policy for Read a window' }));
+    await click(screen.getByRole('option', { name: 'Always ask' }));
+    expect(button('Enable YOLO mode')).toBeInTheDocument();
+
+    await click(button('Enable YOLO mode'));
+    await click(button('Enable YOLO mode'));
+    await click(button('Turn off YOLO mode'));
+    expect(button('Enable YOLO mode')).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    for (const select of screen.getAllByRole('combobox').filter(select => !select.getAttribute('aria-label')?.includes('clipboard'))) {
+      expect(select).toHaveTextContent('Always ask');
+    }
+    expect(savedComputerUse()).toMatchObject({ enabled: false, tourCompleted: true, toolPolicies: clipboardPolicies });
   });
 });

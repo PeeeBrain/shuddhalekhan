@@ -150,6 +150,27 @@
   }
 }
 
+/* Mode actions give press feedback on mouse and touch without selecting their labels. */
+.yolo-action {
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition-property: background-color, box-shadow, transform;
+}
+
+.yolo-action:active {
+  transform: translateY(1px);
+}
+
+@media (pointer: coarse) {
+  .yolo-action { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .yolo-dialog-enter { animation: tour-step-enter 160ms ease-out; }
+}
+
 /* Computer Use guide: a pointer-transparent cutout dims Settings around the current target. */
 .tour-spotlight {
   box-shadow: 0 0 0 200vmax rgb(0 0 0 / 0.45);

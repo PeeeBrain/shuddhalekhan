@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
-import { BookOpenIcon, DownloadIcon, ScanEyeIcon, ShieldCheckIcon, ToggleRightIcon, XIcon } from 'lucide-react';
-import { Popover, Portal } from 'radix-ui';
+import { BookOpenIcon, DownloadIcon, ScanEyeIcon, ShieldCheckIcon, ToggleRightIcon, TriangleAlertIcon, XIcon } from 'lucide-react';
+import { AlertDialog, Popover, Portal } from 'radix-ui';
 import {
   COMPUTER_USE_HEADED_ON_WINDOWS,
   COMPUTER_USE_TOOLS,
@@ -20,6 +20,7 @@ import type { SettingsSectionProps } from './settings-section-props';
 const FIELD_ID_ENABLED = 'computer-use-enabled';
 const FIELD_ID_POLICIES = 'computer-use-policies';
 const FIELD_ID_TOUR = 'computer-use-tour';
+const YOLO_TOOLS = COMPUTER_USE_TOOLS.filter(tool => tool.group !== 'clipboard');
 
 /** The guide walks the real controls in page order; each step's bubble floats beside the control it explains. */
 const TOUR_STEPS = ['about', 'install', 'enable', 'tools'] as const;
@@ -49,10 +50,13 @@ export function ComputerUseSettings({ config, persistence, settingsIpc, onNaviga
   const [status, setStatus] = useState<ComputerUseStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmYolo, setConfirmYolo] = useState(false);
+  const yoloAction = useRef<HTMLButtonElement>(null);
   const [tourStep, setTourStep] = useState<TourStep | null>(null);
   // The real control the current step points at; the bubble and spotlight follow it.
   const [tourTarget, setTourTarget] = useState<HTMLElement | null>(null);
   const enabledErrorId = useId();
+  const yoloErrorId = useId();
   // Set when the guide closes, so focus lands on Show guide.
   const focusNext = useRef(false);
   const tourOffered = useRef(false);
@@ -91,6 +95,12 @@ export function ComputerUseSettings({ config, persistence, settingsIpc, onNaviga
   const installed = status?.state === 'installed';
   const save = (next: ComputerUseConfig, fieldId: string) => {
     void persistence.commit('agent', { ...config.agent, computerUse: next }, fieldId);
+  };
+  const yoloEnabled = YOLO_TOOLS.every(tool => computerUseToolPolicy(computerUse, tool.name) === 'alwaysAllow');
+  const setYolo = (enabled: boolean) => {
+    const toolPolicies = { ...computerUse.toolPolicies };
+    for (const { name } of YOLO_TOOLS) toolPolicies[name] = enabled ? 'alwaysAllow' : 'alwaysAsk';
+    save({ ...computerUse, toolPolicies }, FIELD_ID_POLICIES);
   };
 
   // Offered once to someone who has never set it up: no helper yet and no saved opt-in.
@@ -238,9 +248,61 @@ export function ComputerUseSettings({ config, persistence, settingsIpc, onNaviga
             title="Tools"
             description="Choose what the agent can do and when it should ask you first."
           />
-          {persistence.fieldErrors[FIELD_ID_POLICIES] ? (
-            <p role="alert" className="text-xs text-destructive">{persistence.fieldErrors[FIELD_ID_POLICIES]}</p>
-          ) : null}
+          <AlertDialog.Root open={confirmYolo} onOpenChange={setConfirmYolo}>
+            <SettingsCard>
+              <div className="flex flex-col items-start gap-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+                <div className="min-w-0 space-y-1">
+                  <h4 className="flex items-center gap-3 text-sm font-medium">
+                    YOLO mode
+                    <Tag tone={yoloEnabled ? 'warning' : 'neutral'}>{yoloEnabled ? 'On' : 'Off'}</Tag>
+                  </h4>
+                  <p className="max-w-md text-xs leading-5 text-muted-foreground">
+                    {yoloEnabled ? 'Desktop tools can act without asking you first.' : 'Let desktop tools act without asking you first.'}
+                    {' '}Clipboard permissions stay unchanged.
+                  </p>
+                </div>
+                {yoloEnabled ? (
+                  <Button ref={yoloAction} variant="secondary" className="yolo-action shrink-0 border border-border" disabled={busy} onClick={() => setYolo(false)}>Turn off YOLO mode</Button>
+                ) : (
+                  <AlertDialog.Trigger asChild>
+                    <Button ref={yoloAction} variant="secondary" className="yolo-action shrink-0 border border-border" disabled={busy}>Enable YOLO mode</Button>
+                  </AlertDialog.Trigger>
+                )}
+              </div>
+              <p className="flex items-start gap-2 border-t border-border/50 py-3 text-xs leading-5 text-muted-foreground">
+                <TriangleAlertIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                <span>Can run programs, change or delete data, and send information without approval.</span>
+              </p>
+              {persistence.fieldErrors[FIELD_ID_POLICIES] ? (
+                <p id={yoloErrorId} role="alert" className="pb-3 text-xs text-destructive">{persistence.fieldErrors[FIELD_ID_POLICIES]}</p>
+              ) : null}
+            </SettingsCard>
+            <AlertDialog.Portal>
+              <AlertDialog.Overlay className="fixed inset-0 z-[70] bg-black/60" />
+              <AlertDialog.Content
+                className="yolo-dialog-enter fixed top-1/2 left-1/2 z-[80] max-h-[calc(100dvh-3rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover p-6 text-popover-foreground shadow-2xl outline-none"
+                onCloseAutoFocus={(event) => {
+                  event.preventDefault();
+                  yoloAction.current?.focus();
+                }}
+              >
+                <TriangleAlertIcon aria-hidden="true" className="mb-4 size-6 text-destructive" />
+                <AlertDialog.Title className="text-lg font-semibold tracking-tight">Enable YOLO mode?</AlertDialog.Title>
+                <AlertDialog.Description className="mt-2 text-sm leading-6 text-muted-foreground">
+                  The agent will be able to run programs, change or delete data, and send information without asking you first. Mistakes or malicious instructions can cause unwanted actions on your computer.
+                </AlertDialog.Description>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">Clipboard permissions stay unchanged. You can turn YOLO mode off here at any time to restore approval prompts.</p>
+                <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                  <AlertDialog.Cancel asChild>
+                    <Button variant="secondary" className="yolo-action">Keep approvals</Button>
+                  </AlertDialog.Cancel>
+                  <AlertDialog.Action asChild>
+                    <Button variant="destructive" className="yolo-action" disabled={busy} onClick={() => setYolo(true)}>Enable YOLO mode</Button>
+                  </AlertDialog.Action>
+                </div>
+              </AlertDialog.Content>
+            </AlertDialog.Portal>
+          </AlertDialog.Root>
           <SettingsCard>
             {GROUPS.map((group) => (
               <section key={group.id} aria-labelledby={`computer-use-group-${group.id}`} className="border-b border-border/50 py-3.5 last:border-b-0">
