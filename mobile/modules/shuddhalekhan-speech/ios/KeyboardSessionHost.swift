@@ -24,19 +24,28 @@ enum KeyboardSessionError: LocalizedError {
 /// everything else is dropped in the tap. Transcription runs here with Parakeet, never in the keyboard.
 @MainActor
 final class KeyboardSessionHost {
+  static let sharedCues = RecordingCuePlayer()
+  static let shared = KeyboardSessionHost(speech: .shared, cues: sharedCues)
   private static let maxUtteranceSeconds: TimeInterval = 120
 
   private let speech: ParakeetEngine
   private var configuration: ParakeetConfiguration?
-  private let onChange: @MainActor (KeyboardSession.State) -> Void
+  var onChange: @MainActor (KeyboardSession.State) -> Void = { _ in }
   private static let tapFrames: AVAudioFrameCount = 4_096
   private let audio = AVAudioEngine()
   private let cues: RecordingCuePlayer
   private let sink = KeyboardUtteranceSink()
   private let recordings = KeyboardAudioStore()
   private(set) var state = KeyboardSession.State.ended
-  private var starting = false
-  var ownsAudio: Bool { starting || state.sessionEndsAt != 0 }
+  var keyboardVerifiedForMs: Int { server.keyboardVerifiedForMs }
+  private var utterancePreferences: DictationPreferences?
+  private var lease: MicrophoneOwnership.Lease?
+  private var startingCancelled = false
+  var ownsAudio: Bool { lease != nil }
+
+  func refreshStyle() {
+    if state.sessionEndsAt != 0 && state.style != DictationSettings.preferences.style { publish(state) }
+  }
   private var preparingUtterance: Task<Void, Never>?
   private var failureCue: Task<Void, Never>?
   private var endWhenIdle = false
@@ -51,10 +60,9 @@ final class KeyboardSessionHost {
   private let server = KeyboardSessionServer()
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
 
-  init(speech: ParakeetEngine, cues: RecordingCuePlayer, onChange: @escaping @MainActor (KeyboardSession.State) -> Void) {
+  private init(speech: ParakeetEngine, cues: RecordingCuePlayer) {
     self.speech = speech
     self.cues = cues
-    self.onChange = onChange
     server.onCommand = { [weak self] command in self?.handleCommand(command) }
     server.onFailure = { [weak self] in self?.end(reason: "The keyboard connection stopped. Start a new session.") }
   }
@@ -62,8 +70,15 @@ final class KeyboardSessionHost {
   func start(minutes: Int, configuration: ParakeetConfiguration, agentReady: Bool) async throws {
     guard (1...30).contains(minutes) else { throw KeyboardSessionError.invalidDuration }
     guard !ownsAudio else { return }
-    starting = true
-    defer { starting = false }
+    let lease = try MicrophoneOwnership.shared.claim(.keyboard)
+    self.lease = lease
+    startingCancelled = false
+    defer {
+      if state.sessionEndsAt == 0 {
+        MicrophoneOwnership.shared.release(lease)
+        self.lease = nil
+      }
+    }
 
     let operation = UUID().uuidString
     let started = ProcessInfo.processInfo.systemUptime
@@ -75,9 +90,11 @@ final class KeyboardSessionHost {
     mark("requested")
 
     guard await AVAudioApplication.requestRecordPermission() else { throw KeyboardSessionError.microphoneDenied }
+    guard !startingCancelled, !Task.isCancelled else { throw CancellationError() }
     mark("permission")
     // Load Parakeet now so the first utterance is not a cold load while the app is in the background.
     try await speech.prepare(configuration: configuration)
+    guard !startingCancelled, !Task.isCancelled else { throw CancellationError() }
     self.configuration = configuration
     mark("model_ready")
 
@@ -111,7 +128,8 @@ final class KeyboardSessionHost {
     do {
       let bridge = try await server.start(expiresAt: KeyboardSession.nowMs(endsAt))
       mark("listener_ready")
-      guard UIApplication.shared.applicationState == .active,
+      guard !startingCancelled, !Task.isCancelled,
+            UIApplication.shared.applicationState == .active,
             let board = UIPasteboard(name: UIPasteboard.Name(KeyboardSession.discoveryPasteboard), create: true),
             let payload = KeyboardSession.encode(bridge) else { throw KeyboardSessionError.bridgeUnavailable }
       // Publish discovery while the app is foregrounded; iOS denies background pasteboard access.
@@ -140,7 +158,13 @@ final class KeyboardSessionHost {
 
   /// Ends the session now. An utterance in flight is discarded and the keyboard sees the session end.
   func end(reason: String? = nil, completed: KeyboardSession.State? = nil) {
-    guard state.sessionEndsAt != 0 else { return }
+    guard state.sessionEndsAt != 0 else {
+      if ownsAudio {
+        startingCancelled = true
+        server.stop()
+      }
+      return
+    }
     if UIApplication.shared.applicationState == .active,
       let board = UIPasteboard(name: UIPasteboard.Name(KeyboardSession.discoveryPasteboard), create: false) {
       board.items = []
@@ -160,6 +184,8 @@ final class KeyboardSessionHost {
       sessionEndsAt: 0, requestId: completed?.requestId, mode: completed?.mode, agentReady: false,
       phase: completed?.phase ?? .idle, text: completed?.text, error: reason ?? completed?.error, level: nil))
     server.stop(final: state)
+    if let lease { MicrophoneOwnership.shared.release(lease) }
+    lease = nil
     NotificationCenter.default.post(name: Notification.Name("ShuddhalekhanKeyboardSessionActive"), object: nil,
       userInfo: ["active": false])
   }
@@ -177,6 +203,14 @@ final class KeyboardSessionHost {
   }
 
   private func handleCommand(_ command: KeyboardSession.Command) {
+    if command.action == .setStyle {
+      guard let style = command.style, state.isLive(now: KeyboardSession.nowMs()), !state.isBusy else { return }
+      var preferences = DictationSettings.preferences
+      preferences.style = style
+      do { try DictationSettings.save(preferences) } catch { return }
+      publish(state)
+      return
+    }
     guard let next = KeyboardSession.transition(state, on: command, now: KeyboardSession.nowMs()) else { return }
     switch next.phase {
     case .preparing: beginUtterance(next)
@@ -191,6 +225,7 @@ final class KeyboardSessionHost {
 
   private func beginUtterance(_ next: KeyboardSession.State) {
     guard let id = next.requestId else { return }
+    utterancePreferences = next.mode == .dictate ? DictationSettings.preferences : nil
     failureCue?.cancel()
     cues.stop()
     do {
@@ -258,6 +293,7 @@ final class KeyboardSessionHost {
     let stop = mach_absolute_time()
     sink.markStop(at: stop)
     publish(next)
+    let preferences = utterancePreferences
     let task = Task { [speech, configuration] in
       defer { if transcription?.id == id { transcription = nil } }
       // AVAudioEngine may deliver up to 400 ms per tap. Normally the next tap closes the file.
@@ -272,7 +308,15 @@ final class KeyboardSessionHost {
       }
       async let stopSound: Void = playStopIfLive(id)
       let result: Result<String, Error>
-      do { result = .success(try await speech.transcribe(url, configuration: configuration)) } catch { result = .failure(error) }
+      do {
+        let text = try await speech.transcribe(url, configuration: configuration).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !Task.isCancelled else { return }
+        if let preferences, text.utf8.count <= KeyboardSession.maxTextBytes {
+          result = .success(await DictationCleanup.format(text, preferences: preferences, language: configuration.language))
+        } else {
+          result = .success(text)
+        }
+      } catch { result = .failure(error) }
       await stopSound
       if !Task.isCancelled { self.complete(id, result) }
     }
@@ -343,6 +387,7 @@ final class KeyboardSessionHost {
   }
 
   private func discardUtterance() {
+    utterancePreferences = nil
     preparingUtterance?.cancel()
     preparingUtterance = nil
     failureCue?.cancel()
@@ -362,7 +407,9 @@ final class KeyboardSessionHost {
     utteranceURL = nil
   }
 
-  private func publish(_ next: KeyboardSession.State) {
+  private func publish(_ update: KeyboardSession.State) {
+    var next = update
+    next.style = DictationSettings.preferences.style
     state = next
     log.notice("KeyboardBridge phase \(next.phase.rawValue, privacy: .public)")
     server.publish(next)

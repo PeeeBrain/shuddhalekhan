@@ -16,6 +16,15 @@ final class KeyboardSessionServer {
   private var token = ""
   private var expiresAt: Int64 = 0
   private var state = KeyboardSession.State.ended
+  private var lastAuthenticatedAt: ContinuousClock.Instant?
+  var keyboardVerifiedForMs: Int {
+    if !authenticated.isEmpty { return 10_000 }
+    guard let lastAuthenticatedAt else { return 0 }
+    let remaining = Duration.seconds(10) - lastAuthenticatedAt.duration(to: .now)
+    guard remaining > .zero else { return 0 }
+    let (seconds, attoseconds) = remaining.components
+    return Int(seconds * 1_000 + attoseconds / 1_000_000_000_000_000)
+  }
   var onCommand: (KeyboardSession.Command) -> Void = { _ in }
   var onFailure: () -> Void = {}
 
@@ -91,6 +100,7 @@ final class KeyboardSessionServer {
     clients.removeAll()
     let allowed = authenticated
     authenticated.removeAll()
+    lastAuthenticatedAt = nil
     owners.removeAll()
     for (id, client) in closing {
       if let final, allowed.contains(id) { client.send(final, closeAfter: true) } else { client.close() }
@@ -109,10 +119,11 @@ final class KeyboardSessionServer {
         client.close()
         return
       }
+      self.lastAuthenticatedAt = .now
       if self.authenticated.insert(id).inserted { self.log.notice("KeyboardBridge keyboard authenticated") }
       if let command = request.command {
         // A peer can stop only its own utterance, including on disconnect.
-        if command.action != .start && (self.owners[id]?.id != command.id || self.owners[id]?.mode != command.mode) {
+        if command.action != .start && command.action != .setStyle && (self.owners[id]?.id != command.id || self.owners[id]?.mode != command.mode) {
           return client.send(self.state)
         }
         if command.action == .start && !self.state.isBusy { self.owners[id] = command }
@@ -127,7 +138,7 @@ final class KeyboardSessionServer {
     client.onClose = { [weak self] in
       guard let self else { return }
       self.clients[id] = nil
-      self.authenticated.remove(id)
+      if self.authenticated.remove(id) != nil { self.lastAuthenticatedAt = .now }
       if let request = self.owners.removeValue(forKey: id) {
         self.onCommand(.init(id: request.id, action: .cancel, mode: request.mode, sentAt: KeyboardSession.nowMs()))
       }

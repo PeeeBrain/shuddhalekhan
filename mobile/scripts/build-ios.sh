@@ -27,6 +27,7 @@ fi
 
 mobile_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 ios_dir="$mobile_dir/ios"
+speech_ios="$mobile_dir/modules/shuddhalekhan-speech/ios"
 artifact_dir="$mobile_dir/build/ipa"
 ipa_path="$artifact_dir/Shuddhalekhan-unsigned.ipa"
 expected_bundle_id="com.shuddhalekhan.mobile"
@@ -77,10 +78,21 @@ swiftc -swift-version 6 \
   -o "$build_dir/check-agent-run"
 "$build_dir/check-agent-run"
 swiftc \
+  "$speech_ios/DictationStyle.swift" \
   "$mobile_dir/targets/transcript-keyboard/KeyboardSessionProtocol.swift" \
   "$mobile_dir/native-checks/KeyboardSessionCheck.swift" \
   -o "$build_dir/check-keyboard-session"
 "$build_dir/check-keyboard-session"
+swiftc -swift-version 6 \
+  "$speech_ios/DictationStyle.swift" \
+  "$speech_ios/DictationPreferences.swift" \
+  "$speech_ios/DictationFormatter.swift" \
+  "$speech_ios/DictationCleanupGuard.swift" \
+  "$speech_ios/KeyboardInsertion.swift" \
+  "$speech_ios/MicrophoneOwnership.swift" \
+  "$mobile_dir/native-checks/DictationCheck.swift" \
+  -o "$build_dir/check-dictation"
+"$build_dir/check-dictation"
 swiftc -swift-version 6 \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/RecordingCue.swift" \
   "$mobile_dir/native-checks/RecordingCueCheck.swift" \
@@ -98,6 +110,7 @@ swiftc -swift-version 6 \
   -o "$build_dir/check-speech-work"
 "$build_dir/check-speech-work"
 swiftc -swift-version 6 \
+  "$speech_ios/DictationStyle.swift" \
   "$mobile_dir/targets/transcript-keyboard/KeyboardSessionProtocol.swift" \
   "$mobile_dir/targets/transcript-keyboard/KeyboardSessionChannel.swift" \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/KeyboardSessionServer.swift" \
@@ -110,6 +123,7 @@ swiftc -swift-version 6 -emit-library -emit-module -module-name Network \
   -emit-module-path "$build_dir/Network.swiftmodule" -o "$build_dir/libNetwork.dylib"
 swiftc -swift-version 6 -I "$build_dir" -L "$build_dir" -lNetwork \
   -Xlinker -rpath -Xlinker "$build_dir" \
+  "$speech_ios/DictationStyle.swift" \
   "$mobile_dir/targets/transcript-keyboard/KeyboardSessionProtocol.swift" \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/KeyboardSessionServer.swift" \
   "$mobile_dir/native-checks/listener/ListenerStartupCheck.swift" \

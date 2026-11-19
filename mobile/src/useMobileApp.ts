@@ -9,6 +9,7 @@ import { chatGptAuth, loadSettings, saveSettings } from './native-settings';
 import { localModelKey, transcribeOnDevice, useOnDeviceModel } from './on-device';
 import { signGoogleJwt } from './native-google-auth';
 import { useKeyboardSession } from './useKeyboardSession';
+import { getDictationPreferences } from './dictation-preferences';
 import { speech } from './native-speech';
 import { agentCredentialsReady, recordingLimitSeconds, recordingLimits } from './providers';
 import { agentActivity, onAgentApprovalAction, onAgentRunStopped } from './native-agent-activity';
@@ -50,6 +51,7 @@ export function useMobileApp() {
   });
   const [controller] = useState(() => {
     let prepared = false;
+    let ownsAudio = false;
     let recordingFile: File | null = null;
     const closeRecorder = async (signal: AbortSignal) => {
       // Expo resolves stop() before AVAudioRecorder's delegate reports whether the file closed successfully.
@@ -91,8 +93,9 @@ export function useMobileApp() {
         try {
           // Release preview and watch for interruptions before opening the recorder.
           const preparing = await speech?.beginForegroundRecording?.();
+          if (preparing === false) throw new Error('Finish the current recording or stop the keyboard session first.');
+          ownsAudio = true;
           signal.throwIfAborted();
-          if (preparing === false) throw new RecordingInterruptedError();
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: false });
           signal.throwIfAborted();
           await prepareRecorder();
@@ -149,12 +152,19 @@ export function useMobileApp() {
             if (recordingFile?.exists) recordingFile.delete();
             recordingFile = null;
           } finally {
-            await setAudioModeAsync({ allowsRecording: false, shouldPlayInBackground: false });
+            if (ownsAudio) {
+              ownsAudio = false;
+              try { await setAudioModeAsync({ allowsRecording: false, shouldPlayInBackground: false }); }
+              finally { await speech?.releaseForegroundRecording?.(); }
+            }
           }
         }
       },
     };
     return new MobileController({ recorder: nativeRecorder, fetch, loadSettings, saveSettings, signGoogleJwt, activity: agentActivity, chatgpt: chatGptAuth,
+      getDictationPreferences,
+      formatDictation: (text, preferences, language) =>
+        speech?.formatDictation?.(text, JSON.stringify(preferences), language) ?? Promise.resolve(text),
       transcribeOnDevice: async (signal, language) => {
         if (!recordingFile?.exists) throw new Error('The recording file is unavailable. Record again.');
         return transcribeOnDevice(recordingFile.uri, signal, language);
@@ -168,6 +178,20 @@ export function useMobileApp() {
     state.phase !== 'loading' && state.settings.transcriptionSource === 'on-device' ? state.settings.language : null,
   );
   const [now, setNow] = useState(Date.now);
+  const uncopiedSystemDictation = useRef<string | null>(null);
+  useEffect(() => {
+    if (state.phase !== 'idle') return;
+    let mounted = true;
+    const present = async () => {
+      if (AppState.currentState !== 'active') return;
+      uncopiedSystemDictation.current ??= await speech?.consumeSystemDictation?.().catch(() => null) ?? null;
+      const text = uncopiedSystemDictation.current;
+      if (mounted && text && controller.showSystemDictation(text)) uncopiedSystemDictation.current = null;
+    };
+    void present();
+    const subscription = AppState.addEventListener('change', next => { if (next === 'active') void present(); });
+    return () => { mounted = false; subscription.remove(); };
+  }, [controller, state.phase]);
 
   const startSession = async () => {
     if (controller.getSnapshot().phase !== 'idle') throw new Error('Finish the current command first.');
@@ -197,8 +221,8 @@ export function useMobileApp() {
     const approvalAction = onAgentApprovalAction(() => { void controller.consumeApprovalAction(); });
     const open = (url: string) => {
       void Promise.all([controller.initialize(), whenActive()]).then(([, active]) => {
+        if (url === 'shuddhalekhan://system-dictation') return;
         if (!keyboardSessionLink.test(url)) return controller.openActivity(url);
-        // The keyboard opens this when tapped without a session; it resumes its own intent once the session is live.
         if (!active) return;
         startSessionRef.current().catch((e: unknown) => Alert.alert('Keyboard session', e instanceof Error ? e.message : 'Could not start the session.'));
       });

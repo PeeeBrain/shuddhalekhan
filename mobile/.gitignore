@@ -45,3 +45,6 @@ yarn-error.*
 /targets/transcript-keyboard/KeyboardSessionProtocol.swift
 /targets/transcript-keyboard/KeyboardSessionChannel.swift
 /targets/agent-activity/AgentActivityAttributes.swift
+/targets/transcript-keyboard/DictationStyle.swift
+/targets/transcript-keyboard/KeyboardInsertion.swift
+/targets/agent-activity/SystemDictationAttributes.swift

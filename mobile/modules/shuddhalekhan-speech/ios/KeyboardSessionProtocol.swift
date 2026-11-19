@@ -6,13 +6,6 @@ import Foundation
 enum KeyboardSession {
   enum Mode: String, Codable, Sendable { case dictate, agent }
 
-  // The keyboard keeps this locally while the app starts a session, then consumes it before recording.
-  struct StartIntent: Codable, Sendable {
-    let mode: Mode
-    let createdAt: Int64
-
-    func isFresh(now: Int64) -> Bool { createdAt <= now && createdAt >= now - 60_000 }
-  }
   static let discoveryPasteboard = "com.shuddhalekhan.mobile.session.connection.v2"
   static let payloadType = "com.shuddhalekhan.mobile.session.v2"
   static let maxTextBytes = 200_000
@@ -47,11 +40,12 @@ enum KeyboardSession {
   }
 
   struct Command: Codable, Equatable, Sendable {
-    enum Action: String, Codable, Sendable { case start, stop, cancel }
+    enum Action: String, Codable, Sendable { case start, stop, cancel, setStyle }
     let id: String
     let action: Action
     let mode: Mode
     let sentAt: Int64
+    var style: DictationStyle? = nil
   }
 
   struct State: Codable, Equatable, Sendable {
@@ -65,6 +59,7 @@ enum KeyboardSession {
     let text: String?
     let error: String?
     let level: Float?
+    var style: DictationStyle? = nil
 
     static let ended = State(sessionEndsAt: 0, requestId: nil, mode: nil, agentReady: false,
       phase: .idle, text: nil, error: nil, level: nil)
@@ -74,7 +69,7 @@ enum KeyboardSession {
     func with(_ phase: Phase, requestId: String?, mode: Mode? = nil, text: String? = nil,
               error: String? = nil, level: Float? = nil) -> State {
       State(sessionEndsAt: sessionEndsAt, requestId: requestId, mode: requestId == nil ? nil : mode ?? self.mode,
-        agentReady: agentReady, phase: phase, text: text, error: error, level: phase == .recording ? level : nil)
+        agentReady: agentReady, phase: phase, text: text, error: error, level: phase == .recording ? level : nil, style: style)
     }
   }
 
@@ -84,6 +79,9 @@ enum KeyboardSession {
     guard data.count <= 1_000,
           let command = try? JSONDecoder().decode(Command.self, from: data),
           validId(command.id),
+          command.action == .setStyle
+            ? (command.mode == .dictate && command.style != nil && command.style != .legacy)
+            : command.style == nil,
           command.sentAt >= now - maxCommandAgeMs,
           command.sentAt <= now + maxClockSkewMs else { return nil }
     return command
@@ -104,6 +102,7 @@ enum KeyboardSession {
   /// App side: the state a command leads to, or nil when it must be ignored (session over, wrong or stale request).
   static func transition(_ state: State, on command: Command, now: Int64) -> State? {
     switch command.action {
+    case .setStyle: return nil
     case .start:
       guard state.isLive(now: now), !state.isBusy, command.id != state.requestId else { return nil }
       if command.mode == .agent && !state.agentReady {

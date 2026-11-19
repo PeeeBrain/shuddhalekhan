@@ -20,6 +20,7 @@ private enum SpeechError: LocalizedError {
 }
 
 actor ParakeetEngine {
+  static let shared = ParakeetEngine()
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "SpeechPerf")
   private var manager: AsrManager?
   private var managerModel: ParakeetModel?
@@ -107,15 +108,67 @@ actor ParakeetEngine {
 }
 
 public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
-  private let engine = ParakeetEngine()
-  @MainActor private lazy var cues = RecordingCuePlayer()
-  @MainActor private var keyboardSession: KeyboardSessionHost?
+  private let engine = ParakeetEngine.shared
+  @MainActor private var cues: RecordingCuePlayer { KeyboardSessionHost.sharedCues }
+  @MainActor private var keyboardSession: KeyboardSessionHost { .shared }
+  @MainActor private var foregroundLease: MicrophoneOwnership.Lease?
   @MainActor private var foregroundRecordingObservers: [NSObjectProtocol] = []
   @MainActor private var foregroundRecordingInterrupted = false
 
   public func definition() -> ModuleDefinition {
     Name("ShuddhalekhanSpeech")
     Events("onModelProgress", "onKeyboardSession", "onForegroundRecordingInterrupted")
+
+    OnStartObserving("onKeyboardSession") {
+      Task { @MainActor [weak self] in
+        self?.keyboardSession.onChange = { [weak self] state in
+          self?.sendEvent("onKeyboardSession", Self.payload(state))
+        }
+      }
+    }
+
+    AsyncFunction("initializeDictationPreferences") { (existingInstall: Bool) async throws in
+      let hasInstalledModel = existingInstall || [AsrModelVersion.v2, .v3].contains { version in
+        let directory = AsrModels.defaultCacheDirectory(for: version)
+        return AsrModels.modelsExist(at: directory, version: version, encoderPrecision: .int8)
+      }
+      _ = try await DictationSettings.initialize(existingInstall: hasInstalledModel)
+      await SystemDictation.recoverActivities()
+    }
+
+    AsyncFunction("getDictationPreferences") { () async -> [String: Any] in
+      Self.preferencesPayload(await DictationSettings.preferences)
+    }
+
+    AsyncFunction("updateDictationPreferences") { (json: String) async throws -> [String: Any] in
+      Self.preferencesPayload(try await Self.updatePreferences(json))
+    }
+
+    AsyncFunction("getDictationReadiness") { () async -> [String: String] in
+      await self.dictationReadiness()
+    }
+
+    AsyncFunction("requestDictationMicrophone") { () async -> Bool in
+      await AVAudioApplication.requestRecordPermission()
+    }
+
+    AsyncFunction("setDictationModelLanguage") { (language: String) async in
+      await MainActor.run { DictationSettings.language = language }
+    }
+
+    AsyncFunction("formatDictation") { (text: String, snapshot: String, language: String) async throws -> String in
+      guard snapshot.utf8.count <= 32_768 else { throw DictationPreferenceError.invalid }
+      let preferences = try JSONDecoder().decode(DictationPreferences.self, from: Data(snapshot.utf8)).validated()
+      return await DictationCleanup.format(text, preferences: preferences, language: language)
+    }
+
+    AsyncFunction("consumeSystemDictation") { () async -> String? in
+      await SystemDictation.shared.takeUncopiedResult()
+    }
+
+    AsyncFunction("releaseForegroundRecording") { () async in
+      await self.releaseForegroundRecording()
+    }
 
     AsyncFunction("signGoogleJwt") { (privateKey: String, input: String) throws -> String in
       try GoogleJwt.sign(privateKey: privateKey, input: input)
@@ -149,26 +202,26 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
     AsyncFunction("cancelForegroundRecordingCue") { () async -> Bool in
       await MainActor.run {
         self.endForegroundRecording()
-        if self.keyboardSession?.ownsAudio != true { self.cues.stop() }
+        if MicrophoneOwnership.shared.owner == .foreground { self.cues.stop() }
         return self.foregroundRecordingInterrupted
       }
     }
 
     AsyncFunction("getKeyboardSession") { () async -> [String: Any] in
-      Self.payload(await self.sessionHost().state)
+      Self.payload(await self.keyboardSession.state)
     }
 
     AsyncFunction("startKeyboardSession") { (minutes: Int, language: String, agentReady: Bool) async throws -> [String: Any] in
-      try await self.sessionHost().start(minutes: minutes, configuration: ParakeetConfiguration(language: language), agentReady: agentReady)
-      return Self.payload(await self.sessionHost().state)
+      try await self.keyboardSession.start(minutes: minutes, configuration: ParakeetConfiguration(language: language), agentReady: agentReady)
+      return Self.payload(await self.keyboardSession.state)
     }
 
     AsyncFunction("resolveKeyboardAgentRequest") { (id: String, error: String?) async in
-      await self.sessionHost().resolveAgent(id, error: error)
+      await self.keyboardSession.resolveAgent(id, error: error)
     }
 
     AsyncFunction("stopKeyboardSession") { () async in
-      await self.sessionHost().end()
+      await self.keyboardSession.end()
     }
 
     AsyncFunction("getModelState") { (language: String) throws -> String in
@@ -220,7 +273,9 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
   }
 
   @MainActor private func beginForegroundRecording() -> Bool {
-    guard keyboardSession?.ownsAudio != true, UIApplication.shared.applicationState != .background else { return false }
+    guard UIApplication.shared.applicationState != .background,
+          let lease = try? MicrophoneOwnership.shared.claim(.foreground) else { return false }
+    foregroundLease = lease
     cues.stop()
     endForegroundRecording()
     foregroundRecordingInterrupted = false
@@ -249,7 +304,8 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
 
   @MainActor private func playForegroundCue(_ cue: RecordingCue, in context: RecordingCuePlayer.Context) async -> Bool {
     let preparing = context == .foreground && cue == .start
-    guard keyboardSession?.ownsAudio != true, UIApplication.shared.applicationState != .background,
+    let owner = MicrophoneOwnership.shared.owner
+    guard owner == nil || owner == .foreground, UIApplication.shared.applicationState != .background,
           !preparing || !foregroundRecordingInterrupted else { return false }
     // The permission dialog can leave the app briefly inactive without interrupting its microphone.
     guard UIApplication.shared.applicationState == .active else { return true }
@@ -257,13 +313,54 @@ public final class ShuddhalekhanSpeechModule: Module, @unchecked Sendable {
     return played && (!preparing || !foregroundRecordingInterrupted)
   }
 
-  @MainActor private func sessionHost() -> KeyboardSessionHost {
-    if let keyboardSession { return keyboardSession }
-    let host = KeyboardSessionHost(speech: engine, cues: cues) { [weak self] state in
-      self?.sendEvent("onKeyboardSession", Self.payload(state))
+  @MainActor private func releaseForegroundRecording() {
+    endForegroundRecording()
+    if let foregroundLease { MicrophoneOwnership.shared.release(foregroundLease) }
+    foregroundLease = nil
+  }
+
+  @MainActor private func dictationReadiness() -> [String: String] {
+    let verifiedForMs = keyboardSession.keyboardVerifiedForMs
+    let verified = verifiedForMs > 0 ? "verified" : "unverified"
+    let microphone: String
+    switch AVAudioApplication.shared.recordPermission {
+    case .granted: microphone = "granted"
+    case .denied: microphone = "denied"
+    case .undetermined: microphone = "undetermined"
+    @unknown default: microphone = "undetermined"
     }
-    keyboardSession = host
-    return host
+    let reason = DictationCleanup.unavailableReason(language: DictationSettings.language ?? "")
+    var readiness = ["keyboard": verified, "fullAccess": verified, "microphone": microphone,
+      "keyboardVerifiedForMs": String(verifiedForMs), "cleanup": reason == nil ? "available" : "unavailable"]
+    readiness["cleanupReason"] = reason
+    return readiness
+  }
+
+  @MainActor private static func updatePreferences(_ json: String) throws -> DictationPreferences {
+    struct Patch: Decodable {
+      let style: DictationStyle?
+      let vocabularyEnabled: Bool?
+      let vocabulary: [String]?
+      let sessionMinutes: Int?
+      let cleanupEnabled: Bool?
+    }
+    guard json.utf8.count <= 32_768 else { throw DictationPreferenceError.invalid }
+    let patch = try JSONDecoder().decode(Patch.self, from: Data(json.utf8))
+    var preferences = DictationSettings.preferences
+    if let style = patch.style { preferences.style = style }
+    if let enabled = patch.vocabularyEnabled { preferences.vocabularyEnabled = enabled }
+    if let vocabulary = patch.vocabulary { preferences.vocabulary = vocabulary }
+    if let minutes = patch.sessionMinutes { preferences.sessionMinutes = minutes }
+    if let enabled = patch.cleanupEnabled { preferences.cleanupEnabled = enabled }
+    try DictationSettings.save(preferences)
+    KeyboardSessionHost.shared.refreshStyle()
+    return DictationSettings.preferences
+  }
+
+  private static func preferencesPayload(_ preferences: DictationPreferences) -> [String: Any] {
+    ["style": preferences.style.rawValue, "vocabularyEnabled": preferences.vocabularyEnabled,
+     "vocabulary": preferences.vocabulary, "sessionMinutes": preferences.sessionMinutes,
+     "cleanupEnabled": preferences.cleanupEnabled]
   }
 
   private static func payload(_ state: KeyboardSession.State) -> [String: Any] {

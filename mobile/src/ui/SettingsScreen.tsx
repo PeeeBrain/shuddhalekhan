@@ -17,14 +17,16 @@ import { localModelKey, type LocalModelState } from '../on-device';
 import { agentProviders, selectAgentApiMode, selectAgentProvider, selectTranscriptionProvider, transcriptionProviders } from '../providers';
 import { settingsError, type MCPServerSettings, type MobileSettings } from '../settings';
 import type { useMobileApp } from '../useMobileApp';
+import { DictationOutput, KeyboardSetup, ShortcutsHelp, StylePicker, VocabularyEditor } from './DictationSettings';
 import { color } from './kit';
 import { MCPToolPolicies } from './MCPToolPolicies';
+import { useDictation } from './useDictation';
 
 type App = ReturnType<typeof useMobileApp>;
 type Set = <K extends keyof MobileSettings>(key: K, value: MobileSettings[K]) => void;
 type Update = (update: (d: MobileSettings) => MobileSettings) => void;
 type Option = { value: string; label: string };
-export type SettingsPage = 'transcription' | 'keyboard' | 'agent';
+export type SettingsPage = 'transcription' | 'keyboard' | 'agent' | 'shortcuts';
 
 const LAN = "On this iPhone, localhost is the phone itself. Use your computer's LAN IP.";
 const USAGE_URL = 'https://chatgpt.com/settings/usage';
@@ -34,6 +36,7 @@ export function SettingsScreen({ app, initialPage, onClose }: { app: App; initia
   const [draft, setDraft] = useState(app.settings);
   const [saving, setSaving] = useState(false);
   const [path, setPath] = useState<string[]>(initialPage ? [initialPage] : []);
+  const dictation = useDictation();
   const set: Set = (key, value) => setDraft(d => ({ ...d, [key]: value }));
   const setServer = (id: string, patch: Partial<MCPServerSettings>) =>
     setDraft(d => ({ ...d, mcpServers: d.mcpServers.map(s => (s.id === id ? { ...s, ...patch } : s)) }));
@@ -98,6 +101,7 @@ export function SettingsScreen({ app, initialPage, onClose }: { app: App; initia
             <Section>
               <Nav value="transcription" title="Transcription" icon="waveform" detail={transcriptionSummary} />
               <Nav value="keyboard" title="Keyboard" icon="keyboard" />
+              <Nav value="shortcuts" title="Shortcuts & Controls" icon="bolt" />
             </Section>
             <RecordingSounds unavailable={app.keyboardSession.active || app.keyboardSession.starting || app.phase !== 'idle'} />
             <Section footer={<Text>One spoken command, one run. No chat history.</Text>}>
@@ -144,20 +148,31 @@ export function SettingsScreen({ app, initialPage, onClose }: { app: App; initia
             {draft.transcriptionSource === 'on-device'
               ? <OnDevice draft={draft} set={set} app={app} />
               : <RemoteTranscription draft={draft} set={set} setDraft={setDraft} />}
+            <DictationOutput dictation={dictation} />
+          </Page>
+        </NavigationDestination>
+
+        <NavigationDestination value="style">
+          <Page title="Style">
+            {dictation.preferences ? <StylePicker preferences={dictation.preferences} update={dictation.update} /> : null}
+          </Page>
+        </NavigationDestination>
+
+        <NavigationDestination value="vocabulary">
+          <Page title="Vocabulary">
+            {dictation.preferences ? <VocabularyEditor preferences={dictation.preferences} update={dictation.update} /> : null}
           </Page>
         </NavigationDestination>
 
         <NavigationDestination value="keyboard">
           <Page title="Keyboard">
-            <Section footer={<Text>Password fields and some apps always use the system keyboard.</Text>}>
-              <Text>Dictate into any app with the Shuddhalekhan keyboard.</Text>
-              <Step n={1} text="In iOS Settings, open General › Keyboard › Keyboards › Add New Keyboard, then choose Shuddhalekhan." />
-              <Step n={2} text="Tap Shuddhalekhan and turn on Allow Full Access. It only passes start, stop, and finished text between the keyboard and this app." />
-              <Step n={3} text="Start a keyboard session on the home screen. In any app, switch keyboards with the globe key, tap Dictate, speak, then tap Stop." />
-            </Section>
-            <Section footer={<Text>iOS keyboards can't use the microphone, so this app records during the session. The keyboard always transcribes on this iPhone with Parakeet.</Text>}>
-              <Link label="Open iOS Settings" destination="app-settings:" />
-            </Section>
+            <KeyboardSetup app={app} dictation={dictation} onInstallModel={() => confirmModelInstall(app, app.settings.language)} />
+          </Page>
+        </NavigationDestination>
+
+        <NavigationDestination value="shortcuts">
+          <Page title="Shortcuts & Controls">
+            <ShortcutsHelp />
           </Page>
         </NavigationDestination>
 
@@ -235,10 +250,6 @@ function Nav({ value, title, icon, detail }: { value: string; title: string; ico
       </LabeledContent>
     </NavigationLink>
   );
-}
-
-function Step({ n, text }: { n: number; text: string }) {
-  return <Label title={text} systemImage={`${n}.circle.fill` as Parameters<typeof Label>[0]['systemImage']} />;
 }
 
 function Choice({ label, value, options, onChange, long }: { label: string; value: string; options: Option[]; onChange: (v: string) => void; long?: boolean }) {
@@ -364,7 +375,7 @@ function RemoteTranscription({ draft, set, setDraft }: { draft: MobileSettings; 
         ) : null}
       </Section>
       {usesDictionary ? (
-        <Section title="Dictionary" footer={<Text>Names and terms to spell correctly.</Text>}>
+        <Section title="Dictionary" footer={<Text>Sent to your provider as a hint for names and terms. Vocabulary, below, fixes spellings on this iPhone.</Text>}>
           <Field label="Dictionary" placeholder="Shuddhalekhan, Parakeet, …" value={draft.dictionary} onChange={v => set('dictionary', v)} multiline prose />
         </Section>
       ) : null}
@@ -460,21 +471,27 @@ function ChatGptProvider({ draft, set, setDraft, app }: { draft: MobileSettings;
   );
 }
 
+const modelName = (language: string) => localModelKey(language) === 'english' ? 'Parakeet v2 (English)' : 'Parakeet v3 (multilingual)';
+
+// Downloads stay opt-in: every install path asks first.
+function confirmModelInstall(app: App, language: string) {
+  Alert.alert(
+    'Download about 0.5 GB?',
+    `Shuddhalekhan downloads ${modelName(language)} and installs it in the app. Use Wi-Fi; cellular data charges may apply. iOS then prepares the model, which can take a few minutes the first time.`,
+    [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Download', onPress: () => { void app.installLocalModel(normalizeLanguage(language)); } },
+    ],
+  );
+}
+
 // Status and install action for the Parakeet model the selected language uses. Install runs outside the Settings draft.
 function OnDevice({ draft, set, app }: { draft: MobileSettings; set: Set; app: App }) {
   const english = localModelKey(draft.language) === 'english';
   const model: LocalModelState = app.localModels[english ? 'english' : 'multilingual'];
-  const name = english ? 'Parakeet v2 (English)' : 'Parakeet v3 (multilingual)';
+  const name = modelName(draft.language);
   const preparing = app.preparingModel;
-  const confirmInstall = () =>
-    Alert.alert(
-      'Download about 0.5 GB?',
-      `Shuddhalekhan downloads ${name} and installs it in the app. Use Wi-Fi; cellular data charges may apply. iOS then prepares the model, which can take a few minutes the first time.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Download', onPress: () => { void app.installLocalModel(normalizeLanguage(draft.language)); } },
-      ],
-    );
+  const confirmInstall = () => confirmModelInstall(app, draft.language);
   const languages = 'Parakeet supports 25 European languages, not Hindi or Marathi; use an endpoint for those.';
   const footer = model.kind === 'unavailable' ? 'Install the updated app to use on-device Parakeet. It requires iOS 17 or later.'
     : model.kind === 'downloading' ? 'Keep Shuddhalekhan open until the download finishes.'

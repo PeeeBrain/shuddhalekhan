@@ -31,6 +31,33 @@ function when(controller: MobileController, predicate: () => boolean): Promise<v
 }
 
 describe('mobile command lifecycle', () => {
+  test('dictation formats once with the preferences chosen when recording starts', async () => {
+    const native = recorder();
+    let preference: 'notes' | 'verbatim' = 'notes';
+    const applied: string[] = [];
+    const controller = new MobileController({
+      recorder: native.port,
+      fetch,
+      loadSettings: async () => ({ ...defaultSettings, transcriptionSource: 'on-device', language: 'en' }),
+      saveSettings: async value => value,
+      transcribeOnDevice: async () => 'first new line second',
+      getDictationPreferences: async () => ({
+        style: preference, vocabularyEnabled: false, vocabulary: [], sessionMinutes: 10, cleanupEnabled: false,
+      }),
+      formatDictation: async (text, snapshot, language) => {
+        applied.push(`${snapshot.style}:${language}`);
+        return text.replace(' new line ', '\n');
+      },
+    });
+    await controller.initialize();
+    await controller.startRecording('dictation');
+    preference = 'verbatim';
+    await controller.stopRecording();
+
+    expect(controller.getSnapshot().transcript).toBe('first\nsecond');
+    expect(applied).toEqual(['notes:en']);
+  });
+
   test('a capture failure sounds after cleanup, while a cancelled start stays quiet', async () => {
     const permission = Promise.withResolvers<boolean>();
     const native = recorder(permission.promise);

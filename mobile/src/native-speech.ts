@@ -5,6 +5,14 @@ import type { KeyboardSessionEvent } from './keyboard-session';
 
 type Progress = { phase: 'downloading' | 'installing'; fraction: number };
 type NativeSpeech = {
+  initializeDictationPreferences?(existingInstall: boolean): Promise<void>;
+  getDictationPreferences?(): Promise<unknown>;
+  updateDictationPreferences?(patch: string): Promise<unknown>;
+  getDictationReadiness?(): Promise<unknown>;
+  requestDictationMicrophone?(): Promise<boolean>;
+  setDictationModelLanguage?(language: string): Promise<void>;
+  formatDictation?(text: string, snapshot: string, language: string): Promise<string>;
+  consumeSystemDictation?(): Promise<string | null>;
   getModelState(language: string): Promise<'missing' | 'ready'>;
   prepareModel(language: string): Promise<void>;
   installModel(language: string): Promise<void>;
@@ -12,6 +20,7 @@ type NativeSpeech = {
   signGoogleJwt(privateKey: string, input: string): Promise<string>;
   getRecordingSounds?(): Promise<boolean>;
   setRecordingSounds?(enabled: boolean): Promise<void>;
+  releaseForegroundRecording?(): Promise<void>;
   beginForegroundRecording?(): Promise<boolean>;
   getForegroundRecordingInterrupted?(): Promise<boolean>;
   playForegroundRecordingCue?(cue: RecordingCue): Promise<boolean>;

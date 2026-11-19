@@ -12,7 +12,6 @@ import OSLog
 final class KeyboardViewController: UIInputViewController {
   private static let ackTimeout: TimeInterval = 3
   private static let sentHold: TimeInterval = 1.6
-  private static let startIntentKey = "keyboardSessionStartIntent"
 
   private enum Screen: Equatable { case home, live(KeyboardSession.Mode) }
 
@@ -24,6 +23,11 @@ final class KeyboardViewController: UIInputViewController {
   private let dictateRow = ActionRow(mode: .dictate)
   private let agentRow = ActionRow(mode: .agent)
   private let globeKey = PressControl()
+  private let styleButton = UIButton(type: .system)
+  private let undoButton = UIButton(type: .system)
+  private var menuStyle: DictationStyle?
+  private var undo: KeyboardInsertion.Undo?
+  private var pendingDocument: UUID?
 
   // Live: the tapped row grows into an inset card; live holds the shutter controls above it.
   private let surface = UIView()
@@ -61,7 +65,6 @@ final class KeyboardViewController: UIInputViewController {
   private var channel: KeyboardSessionChannel?
   private var bridge: KeyboardSession.Bridge?
   private var receivedState = false
-  private var openingSession = false
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
 
   override func viewDidLoad() {
@@ -113,6 +116,7 @@ final class KeyboardViewController: UIInputViewController {
     // Closing the authenticated connection cancels its utterance on the app side.
     if let pendingId { send(.cancel, id: pendingId) }
     pendingId = nil
+    clearUndo()
     sent = nil
     stopDeleting()
     clock?.invalidate()
@@ -157,7 +161,19 @@ final class KeyboardViewController: UIInputViewController {
     wireDelete(backspace)
     let spacer = UIView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    let keys = UIStackView(arrangedSubviews: [globeKey, spacer, backspace])
+    for button in [styleButton, undoButton] {
+      button.tintColor = Palette.faded
+      button.titleLabel?.font = scaledFont(13, .medium, .footnote)
+      button.titleLabel?.adjustsFontForContentSizeCategory = true
+      button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    }
+    styleButton.showsMenuAsPrimaryAction = true
+    undoButton.setTitle("Undo", for: .normal)
+    undoButton.accessibilityLabel = "Undo Dictation"
+    undoButton.addTarget(self, action: #selector(undoDictation), for: .touchUpInside)
+    undoButton.isHidden = true
+    let keys = UIStackView(arrangedSubviews: [globeKey, spacer, styleButton, undoButton, backspace])
+    keys.spacing = 12
     keys.alignment = .bottom
     keys.setContentHuggingPriority(.defaultLow, for: .vertical)
     home.addArrangedSubview(keys)
@@ -340,7 +356,6 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   private func refresh() {
-    resumePendingStart()
     guard hasFullAccess else {
       disconnect()
       session = nil
@@ -353,7 +368,7 @@ final class KeyboardViewController: UIInputViewController {
       let bridge = KeyboardSession.decodeBridge(data, now: KeyboardSession.nowMs()),
       let port = NWEndpoint.Port(rawValue: bridge.port) else {
       session = nil
-      render(message: "Tap Dictate or Ask the agent to open Shuddhalekhan and start a session.")
+      render(message: "Open Shuddhalekhan and tap Start keyboard session.")
       return
     }
     self.bridge = bridge
@@ -380,8 +395,7 @@ final class KeyboardViewController: UIInputViewController {
       self.pendingId = nil
       self.session = nil
       if !self.receivedState {
-        self.render(message: "Tap Dictate or Ask the agent to open Shuddhalekhan and start a session.")
-        if let intent = self.pendingStartIntent() { self.openSession(for: intent.mode) }
+        self.render(message: "Open Shuddhalekhan and tap Start keyboard session.")
       } else if !endedNormally {
         self.log.error("KeyboardBridge connection lost")
         self.render(message: "Keyboard connection lost. Open Shuddhalekhan and start a new session.")
@@ -409,13 +423,15 @@ final class KeyboardViewController: UIInputViewController {
     guard let pendingId, state.requestId == pendingId else {
       if session == nil { pendingId = nil }
       render(message: session == nil ? state.error.map { "Session ended. \($0)" } : nil)
-      resumePendingStart()
-      return
+        return
     }
     if let text = KeyboardSession.insertion(state, pendingId: pendingId, inserted: insertedIds) {
       insertedIds.insert(pendingId)
       self.pendingId = nil
-      textDocumentProxy.insertText(text)
+      guard pendingDocument == textDocumentProxy.documentIdentifier else {
+        return render(message: "The text field changed. Dictate again to insert here.")
+      }
+      insertDictation(text)
       log.notice("SpeechPerf keyboard stage=inserted id=\(pendingId, privacy: .public)")
       render(message: "Inserted.")
       return
@@ -456,18 +472,16 @@ final class KeyboardViewController: UIInputViewController {
     guard hasFullAccess else { return refresh() }
     guard pendingId == nil, sent == nil else { return }
     guard let session, session.isLive(now: KeyboardSession.nowMs()) else {
-      if channel != nil, !receivedState {
-        _ = persistStartIntent(for: mode)
-        return
-      }
-      disconnect()
-      return openSession(for: mode)
+      return render(message: channel != nil && !receivedState
+        ? "Connecting to Shuddhalekhan…" : "Open Shuddhalekhan and tap Start keyboard session.")
     }
     if mode == .agent, !session.agentReady {
       return render(message: "Set up Agent Mode in Shuddhalekhan to ask the agent from here.")
     }
     let id = UUID().uuidString
     pendingId = id
+    pendingDocument = textDocumentProxy.documentIdentifier
+    clearUndo()
     pendingMode = mode
     recordingSince = nil
     guard send(.start, id: id) else { pendingId = nil; return }
@@ -482,58 +496,71 @@ final class KeyboardViewController: UIInputViewController {
     }
   }
 
-  private func persistStartIntent(for mode: KeyboardSession.Mode) -> Data? {
-    let intent = KeyboardSession.StartIntent(mode: mode, createdAt: KeyboardSession.nowMs())
-    guard let data = KeyboardSession.encode(intent) else { return nil }
-    UserDefaults.standard.set(data, forKey: Self.startIntentKey)
-    return data
+  private func insertDictation(_ transcript: String) {
+    clearUndo()
+    let proxy = textDocumentProxy
+    let document = proxy.documentIdentifier
+    let before = proxy.documentContextBeforeInput
+    let after = proxy.documentContextAfterInput
+    let replacingSelection = !(proxy.selectedText?.isEmpty ?? true)
+    let insertion = KeyboardInsertion.text(transcript,
+      before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
+    proxy.insertText(insertion)
+    guard !replacingSelection, let before, let after,
+          proxy.documentIdentifier == document,
+          let resultingBefore = proxy.documentContextBeforeInput,
+          KeyboardInsertion.confirmsInsertion(insertion, before: before, resultingBefore: resultingBefore),
+          proxy.documentContextAfterInput == after else { return }
+    undo = KeyboardInsertion.Undo(document: document, before: resultingBefore, after: after,
+      inserted: insertion, expires: Date().addingTimeInterval(12))
+    undoButton.isHidden = false
   }
 
-  private func openSession(for mode: KeyboardSession.Mode) {
-    guard !openingSession, let url = URL(string: "shuddhalekhan://keyboard-session"),
-      let data = persistStartIntent(for: mode) else { return }
-    var responder: UIResponder? = self
-    while let current = responder {
-      if let application = current as? UIApplication {
-        openingSession = true
-        application.open(url, options: [:]) { [weak self] opened in
-          MainActor.assumeIsolated {
-            self?.openingSession = false
-            if !opened { self?.sessionOpenFailed(intent: data) }
-          }
-        }
-        return
+  private func clearUndo() {
+    guard undo != nil else { return }
+    undo = nil
+    undoButton.isHidden = true
+  }
+
+  private func canUndo(_ undo: KeyboardInsertion.Undo) -> Bool {
+    let proxy = textDocumentProxy
+    return undo.matches(document: proxy.documentIdentifier, before: proxy.documentContextBeforeInput,
+      after: proxy.documentContextAfterInput, selected: proxy.selectedText, now: Date())
+  }
+
+  override func textDidChange(_ textInput: UITextInput?) {
+    super.textDidChange(textInput)
+    if let undo, !canUndo(undo) { clearUndo() }
+  }
+
+  override func selectionDidChange(_ textInput: UITextInput?) {
+    super.selectionDidChange(textInput)
+    if let undo, !canUndo(undo) { clearUndo() }
+  }
+
+  @objc private func undoDictation() {
+    guard let undo, canUndo(undo) else { return clearUndo() }
+    clearUndo()
+    for _ in undo.inserted { textDocumentProxy.deleteBackward() }
+    render(message: "Dictation undone.")
+  }
+
+  private func renderStyle() {
+    let style = session?.style
+    styleButton.isHidden = style == nil || pendingId != nil || session?.isBusy == true
+    guard let style, menuStyle != style else { return }
+    menuStyle = style
+    styleButton.setTitle(style.title, for: .normal)
+    styleButton.accessibilityLabel = "Dictation style, \(style.title)"
+    styleButton.menu = UIMenu(title: "Dictation style", children: DictationStyle.allCases.filter { $0 != .legacy }.map { item in
+      UIAction(title: item.title, state: item == style ? .on : .off) { [weak self] _ in
+        guard let self, let channel = self.channel, let bridge = self.bridge,
+              self.pendingId == nil, self.session?.isBusy == false else { return }
+        channel.send(KeyboardSession.Request(token: bridge.token,
+          command: .init(id: UUID().uuidString, action: .setStyle, mode: .dictate,
+            sentAt: KeyboardSession.nowMs(), style: item)))
       }
-      responder = current.next
-    }
-    sessionOpenFailed(intent: data)
-  }
-
-  private func sessionOpenFailed(intent: Data) {
-    if UserDefaults.standard.data(forKey: Self.startIntentKey) == intent {
-      UserDefaults.standard.removeObject(forKey: Self.startIntentKey)
-    }
-    render(message: "Open Shuddhalekhan and tap Start keyboard session.")
-  }
-
-  private func pendingStartIntent() -> KeyboardSession.StartIntent? {
-    let defaults = UserDefaults.standard
-    guard let data = defaults.data(forKey: Self.startIntentKey) else { return nil }
-    guard let intent = try? JSONDecoder().decode(KeyboardSession.StartIntent.self, from: data),
-      intent.isFresh(now: KeyboardSession.nowMs()) else {
-      defaults.removeObject(forKey: Self.startIntentKey)
-      return nil
-    }
-    return intent
-  }
-
-  private func resumePendingStart() {
-    guard let intent = pendingStartIntent() else { return }
-    guard hasFullAccess, let session, session.isLive(now: KeyboardSession.nowMs()),
-      !session.isBusy, pendingId == nil, sent == nil else { return }
-    // Consume before start: reconnects and appearance callbacks cannot replay this intent twice.
-    UserDefaults.standard.removeObject(forKey: Self.startIntentKey)
-    start(intent.mode)
+    })
   }
 
   @objc private func shutterTapped() {
@@ -578,12 +605,13 @@ final class KeyboardViewController: UIInputViewController {
     let target: Screen = pendingId != nil || sent != nil ? .live(pendingMode) : .home
     if target != screen { show(target) }
 
+    renderStyle()
     let agentReady = session?.agentReady ?? false
     dictateRow.isAvailable = hasFullAccess
     agentRow.isAvailable = hasFullAccess && (session == nil || agentReady)
     agentRow.subtitle = session == nil || agentReady
       ? "One-off command · follow the Live Activity" : "Set up Agent Mode in the app first"
-    announce(message ?? (session == nil ? "Tap an action to open Shuddhalekhan and start a session." : "Keyboard session"), in: statusLabel)
+    announce(message ?? (session == nil ? "Open Shuddhalekhan and tap Start keyboard session." : "Keyboard session"), in: statusLabel)
 
     if case .live(let mode) = screen { renderLive(mode) }
     tick()
@@ -636,6 +664,7 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   private func tick() {
+    if let undo, Date() >= undo.expires { clearUndo() }
     if let session {
       let remaining = max(0, Int((session.sessionEndsAt - KeyboardSession.nowMs()) / 1_000))
       setClock(clockLabel, remaining, label: "\(remaining / 60) minutes \(remaining % 60) seconds left in the keyboard session")
@@ -830,10 +859,14 @@ final class KeyboardViewController: UIInputViewController {
   private func wireDelete(_ key: PressControl) {
     key.addTarget(self, action: #selector(deleteDown), for: .touchDown)
     key.addTarget(self, action: #selector(stopDeleting), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
-    key.accessibilityAction = { [weak self] in self?.textDocumentProxy.deleteBackward() }
+    key.accessibilityAction = { [weak self] in
+      self?.clearUndo()
+      self?.textDocumentProxy.deleteBackward()
+    }
   }
 
   @objc private func deleteDown() {
+    clearUndo()
     textDocumentProxy.deleteBackward()
     deleteRepeat?.invalidate()
     deleteRepeat = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self] _ in
