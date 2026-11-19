@@ -1,7 +1,7 @@
 import Foundation
 
 enum DictationCleanupGuard {
-  private static let tokens = try! NSRegularExpression(pattern: #"[\p{L}\p{M}\p{N}]+(?:['’.,-][\p{L}\p{M}\p{N}]+)*|[\p{Sc}%‰=<>±+−-]"#)
+  private static let tokens = try! NSRegularExpression(pattern: #"[\p{L}\p{M}\p{N}]+(?:['’.,-][\p{L}\p{M}\p{N}]+)*|[\p{Sc}%‰=<>±+−/⁄∕*×÷-]"#)
 
   static func accepts(_ candidate: String, replacing original: String) -> Bool {
     guard !candidate.isEmpty, candidate.utf8.count <= original.utf8.count + 24 else { return false }

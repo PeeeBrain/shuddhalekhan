@@ -32,7 +32,7 @@ const styleLabel = (style: DictationStyle) => dictationStyles.find(s => s.value 
 const sessionPresets = [5, 10, 15, 30] satisfies SessionMinutes[];
 
 // UI-side checks for friendly messages; updateDictationPreferences stays the authority.
-// ponytail: limits mirror dictation-preferences.ts; import them from there if it exports them.
+// Native validation counts grapheme clusters and bytes before accepting an edit.
 const VOCABULARY_MAX = 100;
 const TERM_MAX = 64;
 const cleanTerm = (term: string) => term.trim().replace(/\s+/g, ' ');
@@ -42,7 +42,6 @@ const termKey = (term: string) => cleanTerm(term).normalize('NFKC').toLocaleLowe
 function vocabularyProblem(term: string, others: string[]): string | null {
   const clean = cleanTerm(term);
   if (!/[\p{L}\p{N}]/u.test(clean)) return 'Enter a word or phrase.';
-  if (clean.length > TERM_MAX) return `Keep each term to ${TERM_MAX} characters or fewer.`;
   if (others.some(other => termKey(other) === termKey(clean))) return `“${clean}” is already in your vocabulary.`;
   return null;
 }

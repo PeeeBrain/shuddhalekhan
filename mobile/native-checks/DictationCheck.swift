@@ -7,6 +7,7 @@ struct DictationCheck {
       ("um hello there. how are you", .polished, "en", "Hello there. How are you."),
       ("“hello world”", .polished, "en", "“Hello world.”"),
       ("hello there.", .casual, "en", "hello there"),
+      ("Contact Acme Inc.", .casual, "en", "Contact Acme Inc."),
       ("meeting new paragraph bullet call Ada new line bring notes", .notes, "en", "meeting\n\n• call Ada\nbring notes"),
       ("um, keep my words", .verbatim, "en", "um, keep my words"),
       ("旧 字。", .polished, "zh", "旧 字。"),
@@ -54,6 +55,9 @@ struct DictationCheck {
     precondition(DictationCleanupGuard.accepts("Pay Ada 12 dollars.", replacing: "um pay Ada 12 dollars") == false)
     precondition(DictationCleanupGuard.accepts("pay Ada 12 dollars.", replacing: "um pay Ada 12 dollars"))
     precondition(!DictationCleanupGuard.accepts("pay Ada 120 dollars", replacing: "pay Ada 12 dollars"))
+    precondition(!DictationCleanupGuard.accepts("take 1 2 tablet", replacing: "take 1/2 tablet"))
+    precondition(!DictationCleanupGuard.accepts("take 1 2 tablet", replacing: "take 1⁄2 tablet"))
+    precondition(DictationCleanupGuard.accepts("take 1/2 tablet.", replacing: "take 1/2 tablet"))
     precondition(!DictationCleanupGuard.accepts("email Ada", replacing: "do not email Ada"))
     precondition(!DictationCleanupGuard.accepts("send this to someone else", replacing: "send this to Ada"))
 

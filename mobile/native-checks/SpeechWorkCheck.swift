@@ -74,7 +74,7 @@ struct SpeechWorkCheck {
     }
 
     // Failed removal blocks accumulation of private audio and retries before the next utterance.
-    let recordings = KeyboardAudioStore()
+    let recordings = TemporaryAudioStore()
     let url = try recordings.recordingURL()
     try Data("test audio".utf8).write(to: url)
     let directory = url.deletingLastPathComponent()
@@ -96,14 +96,14 @@ struct SpeechWorkCheck {
     // A new app process can discover and delete audio left by an interrupted cleanup.
     let stale = try recordings.recordingURL()
     try Data("stale test audio".utf8).write(to: stale)
-    _ = KeyboardAudioStore()
+    _ = TemporaryAudioStore()
     precondition(!FileManager.default.fileExists(atPath: stale.path), "Previous-process audio was forgotten")
 
     // A directory can accept new files while its contents cannot be listed. Never admit audio in that state.
     let unscanned = try recordings.recordingURL()
     try Data("unscanned test audio".utf8).write(to: unscanned)
     try FileManager.default.setAttributes([.posixPermissions: 0o300], ofItemAtPath: directory.path)
-    let recovering = KeyboardAudioStore()
+    let recovering = TemporaryAudioStore()
     do {
       _ = try recovering.recordingURL()
       preconditionFailure("Failed startup scan admitted new audio")

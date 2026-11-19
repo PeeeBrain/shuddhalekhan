@@ -34,6 +34,8 @@ final class SystemDictation {
   }
 
   private var job: Job?
+  private let recordings = TemporaryAudioStore(
+    directoryName: "system-dictation-recordings", fileExtension: "wav", category: "SystemDictation")
   private var recorder: AVAudioRecorder?
   private var sessionActive = false
   private var expiry: Task<Void, Never>?
@@ -76,6 +78,9 @@ final class SystemDictation {
   }
 
   private func start() async -> String {
+    guard pendingCopy == nil else {
+      return "Open Shuddhalekhan to copy your previous dictation before starting another."
+    }
     guard AVAudioApplication.shared.recordPermission == .granted else {
       return SystemDictationError.microphoneDenied.localizedDescription
     }
@@ -91,7 +96,13 @@ final class SystemDictation {
     }
 
     let id = UUID().uuidString
-    let file = FileManager.default.temporaryDirectory.appendingPathComponent("system-dictation-\(id).wav")
+    let file: URL
+    do {
+      file = try recordings.recordingURL()
+    } catch {
+      MicrophoneOwnership.shared.release(lease)
+      return error.localizedDescription
+    }
     let activityID: String
     do {
       activityID = try Activity.request(attributes: SystemDictationAttributes(requestID: id),
@@ -101,7 +112,6 @@ final class SystemDictation {
       return SystemDictationError.activityUnavailable.localizedDescription
     }
 
-    pendingCopy = nil
     job = Job(id: id, lease: lease, file: file, configuration: configuration,
       preferences: DictationSettings.preferences, activityID: activityID)
     observe(id: id, activityID: activityID)
@@ -159,7 +169,7 @@ final class SystemDictation {
     self.job?.phase = .transcribing
     // The task owns the file until inference returns, including when a cancelled decoder unwinds later.
     let inference = Task {
-      defer { try? FileManager.default.removeItem(at: job.file) }
+      defer { recordings.remove(job.file) }
       let raw = try await ParakeetEngine.shared.transcribe(job.file, configuration: job.configuration)
         .trimmingCharacters(in: .whitespacesAndNewlines)
       try Task.checkCancellation()
@@ -256,7 +266,7 @@ final class SystemDictation {
     activityObserver = nil
     for observer in interruptionObservers { NotificationCenter.default.removeObserver(observer) }
     interruptionObservers.removeAll()
-    if let inference { inference.cancel() } else { try? FileManager.default.removeItem(at: job.file) }
+    if let inference { inference.cancel() } else { recordings.remove(job.file) }
     inference = nil
     MicrophoneOwnership.shared.release(job.lease)
     if finishingTask != .invalid {

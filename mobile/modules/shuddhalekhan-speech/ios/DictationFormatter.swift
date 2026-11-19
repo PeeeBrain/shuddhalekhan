@@ -92,6 +92,10 @@ enum DictationFormatter {
   private static let sentenceStart = try! NSRegularExpression(pattern: #"(?:^|[.!?][ \t]+|\n+)[ \t„“"'‘(]*([a-z])"#)
   private static let closers: Set<Character> = ["”", "’", "\"", "'", ")", "]", "}", "»"]
 
+  private static let abbreviations: Set<String> = [
+    "approx", "corp", "dept", "est", "etc", "fig", "inc", "ltd", "mrs", "prof",
+  ]
+
   static func style(_ text: String, as style: DictationStyle, language: String) -> String {
     guard style != .legacy else { return text }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,6 +106,8 @@ enum DictationFormatter {
       // Keep the recognizer's casing and internal punctuation, including abbreviations.
       guard english, trimmed.last == ".", trimmed.dropLast().suffix(3).allSatisfy(\.isLetter),
             trimmed.count > 3 else { return trimmed }
+      let lastWord = trimmed.dropLast().reversed().prefix(while: \.isLetter)
+      guard !abbreviations.contains(String(lastWord.reversed()).lowercased()) else { return trimmed }
       return String(trimmed.dropLast())
     case .notes:
       guard english else { return trimmed }

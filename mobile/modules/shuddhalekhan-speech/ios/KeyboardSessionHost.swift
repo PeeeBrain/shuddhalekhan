@@ -35,7 +35,7 @@ final class KeyboardSessionHost {
   private let audio = AVAudioEngine()
   private let cues: RecordingCuePlayer
   private let sink = KeyboardUtteranceSink()
-  private let recordings = KeyboardAudioStore()
+  private let recordings = TemporaryAudioStore()
   private(set) var state = KeyboardSession.State.ended
   var keyboardVerifiedForMs: Int { server.keyboardVerifiedForMs }
   private var utterancePreferences: DictationPreferences?

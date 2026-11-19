@@ -14,6 +14,10 @@ import { checkedLocalLanguage, speech } from './native-speech';
 import { agentCredentialsReady, recordingLimits } from './providers';
 import { agentActivity, onAgentApprovalAction, onAgentRunStopped } from './native-agent-activity';
 
+class RecordingBusyError extends Error {
+  constructor() { super('Finish the current recording or stop the keyboard session first.'); }
+}
+
 const recordingOptions: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
   fileName: 'shuddhalekhan-recording',
@@ -93,7 +97,7 @@ export function useMobileApp() {
         try {
           // Release preview and watch for interruptions before opening the recorder.
           const preparing = await speech?.beginForegroundRecording?.();
-          if (preparing === false) throw new Error('Finish the current recording or stop the keyboard session first.');
+          if (preparing === false) throw new RecordingBusyError();
           ownsAudio = true;
           signal.throwIfAborted();
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: false });
@@ -118,7 +122,7 @@ export function useMobileApp() {
           if (await speech?.getForegroundRecordingInterrupted?.()) throw new RecordingInterruptedError();
           if (!recorder.isRecording) throw new Error();
         } catch (error) {
-          if (signal.aborted || error instanceof RecordingInterruptedError) throw error;
+          if (signal.aborted || error instanceof RecordingInterruptedError || error instanceof RecordingBusyError) throw error;
           const interrupted = await speech?.cancelForegroundRecordingCue?.().catch(() => false);
           if (interrupted || AppState.currentState === 'background') throw new RecordingInterruptedError();
           // Native error causes can include local recording paths; keep the UI error bounded.
@@ -180,12 +184,18 @@ export function useMobileApp() {
   const [now, setNow] = useState(Date.now);
   const [controlDictationOpenCount, setControlDictationOpenCount] = useState(0);
   const uncopiedSystemDictation = useRef<string | null>(null);
+  const systemDictationRead = useRef<Promise<void> | null>(null);
   useEffect(() => {
     if (state.phase !== 'idle') return;
     let mounted = true;
     const present = async () => {
       if (AppState.currentState !== 'active') return;
-      uncopiedSystemDictation.current ??= await speech?.consumeSystemDictation?.().catch(() => null) ?? null;
+      if (uncopiedSystemDictation.current === null && speech?.consumeSystemDictation) {
+        systemDictationRead.current ??= speech.consumeSystemDictation().then(text => {
+          if (text !== null) uncopiedSystemDictation.current = text;
+        }).catch(() => {}).finally(() => { systemDictationRead.current = null; });
+        await systemDictationRead.current;
+      }
       const text = uncopiedSystemDictation.current;
       if (mounted && text && controller.showSystemDictation(text)) uncopiedSystemDictation.current = null;
     };
