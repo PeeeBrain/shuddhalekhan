@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useState } from 'react';
 import { ComputerUseSettings } from '../ComputerUseSettings';
 import type { SettingsIpc } from '../settings-ipc';
 import type { SettingsSectionProps } from '../settings-section-props';
@@ -8,11 +9,12 @@ import type { AppConfig } from '../../../types/ipc';
 
 afterEach(cleanup);
 
+/** Renders with persistence that applies commits optimistically, like the real hook, so remembered tour state drives the page. */
 async function renderPage(initial: ComputerUseStatus, agent: Partial<AppConfig['agent']> = {}) {
   let push: (next: ComputerUseStatus) => void = () => undefined;
   const settingsIpc = {
     getComputerUseStatus: mock(() => Promise.resolve(initial)),
-    installComputerUse: mock(() => Promise.resolve<ComputerUseStatus>({ state: 'installed' })),
+    installComputerUse: mock(() => Promise.resolve()),
     cancelComputerUseInstall: mock(() => Promise.resolve()),
     uninstallComputerUse: mock(() => Promise.resolve<ComputerUseStatus>({ state: 'absent' })),
     onComputerUseStatusChanged: mock((callback: (next: ComputerUseStatus) => void) => {
@@ -20,40 +22,127 @@ async function renderPage(initial: ComputerUseStatus, agent: Partial<AppConfig['
       return () => undefined;
     }),
   };
-  const commit = mock(() => Promise.resolve());
   const config = { agent: { enabled: true, mcpServers: [], ...agent } } as unknown as AppConfig;
-  await act(async () => {
-    render(
+  const onNavigate = mock(() => undefined);
+  const commit = mock((_key: 'agent', _value: AppConfig['agent'], _fieldId: string) => Promise.resolve());
+  function Page() {
+    const [current, setCurrent] = useState(config);
+    const persistence = {
+      commit: (key: 'agent', value: AppConfig['agent'], fieldId: string) => {
+        setCurrent((saved) => ({ ...saved, agent: value }));
+        return commit(key, value, fieldId);
+      },
+      fieldErrors: {},
+      clearFieldError: () => undefined,
+      toast: null,
+    };
+    return (
       <ComputerUseSettings
         {...({
-          config,
-          persistence: { commit, fieldErrors: {}, clearFieldError: () => undefined, toast: null },
+          config: current,
+          persistence,
           settingsIpc: settingsIpc as unknown as SettingsIpc,
+          onNavigate,
         } as unknown as SettingsSectionProps)}
-      />,
+      />
     );
-  });
-  return { settingsIpc, commit, push: (next: ComputerUseStatus) => act(async () => push(next)) };
+  }
+  await act(async () => { render(<Page />); });
+  return {
+    settingsIpc,
+    commit,
+    onNavigate,
+    savedComputerUse: () => (commit.mock.calls.at(-1)?.[1] ?? config.agent).computerUse,
+    push: (next: ComputerUseStatus) => act(async () => push(next)),
+  };
 }
 
 const click = (element: HTMLElement) => act(async () => { fireEvent.click(element); });
+const button = (name: string) => screen.getByRole('button', { name });
+const guideStep = () => screen.queryByText(/^Step \d of 4$/)?.closest('[role="group"]')?.textContent ?? null;
+const bubble = (name: string) => screen.getByRole('group', { name });
 
 describe('ComputerUseSettings', () => {
-  it('keeps the agent off the desktop until the helper is installed, then saves the opt-in', async () => {
-    const { settingsIpc, commit, push } = await renderPage({ state: 'absent' });
-    const toggle = screen.getByRole('switch', { name: 'Let the agent use your desktop' });
-    expect(toggle).toBeDisabled();
+  it('starts the guide on first run and walks install to opt-in without enabling anything itself', async () => {
+    const { settingsIpc, savedComputerUse, push } = await renderPage({ state: 'absent' });
+    expect(savedComputerUse()).toEqual({ enabled: false, toolPolicies: {}, tourCompleted: false });
+    expect(bubble('What Computer Use does')).toHaveFocus();
+    expect(screen.getByRole('switch', { name: 'Let the agent use your desktop' })).toBeDisabled();
 
-    await click(screen.getByRole('button', { name: 'Install' }));
+    await click(button('Next'));
+    expect(bubble('Install the desktop helper')).toHaveFocus();
+    expect(button('Next')).toBeDisabled();
+
+    await click(button('Install'));
     await push({ state: 'installing', receivedBytes: 1, totalBytes: 4 });
     expect(screen.getByRole('status')).toHaveTextContent('Downloading… 25%');
-    expect(settingsIpc.installComputerUse).toHaveBeenCalledTimes(1);
+    await click(button('Cancel'));
+    expect(settingsIpc.cancelComputerUseInstall).toHaveBeenCalledTimes(1);
+    await push({ state: 'failed', reason: 'Download cancelled.' });
+    expect(guideStep()).toContain('did not finish');
+    expect(button('Next')).toBeDisabled();
+
+    await click(button('Retry'));
+    expect(settingsIpc.installComputerUse).toHaveBeenCalledTimes(2);
     await push({ state: 'installed' });
+    await click(button('Next'));
+    expect(guideStep()).toContain('Step 3 of 4');
+    expect(savedComputerUse()?.enabled).toBe(false);
 
     await click(screen.getByRole('switch', { name: 'Let the agent use your desktop' }));
-    expect(commit).toHaveBeenCalledWith('agent', {
-      enabled: true, mcpServers: [], computerUse: { enabled: true, toolPolicies: {} },
-    }, 'computer-use-enabled');
+    expect(savedComputerUse()).toEqual({ enabled: true, toolPolicies: {}, tourCompleted: false });
+  });
+
+  it('resumes an unfinished guide at the download after Settings reopens', async () => {
+    await renderPage({ state: 'installing', receivedBytes: 0, totalBytes: 4 },
+      { computerUse: { enabled: false, toolPolicies: {}, tourCompleted: false } });
+    expect(bubble('Install the desktop helper')).toBeInTheDocument();
+  });
+
+  for (const [who, status, computerUse] of [
+    ['an existing install', { state: 'installed' }, undefined],
+    ['an existing opt-in whose helper was removed', { state: 'absent' }, { enabled: true, toolPolicies: {} }],
+    ['someone who finished or skipped it', { state: 'absent' }, { enabled: false, toolPolicies: {}, tourCompleted: true }],
+  ] as const) {
+    it(`does not start the guide for ${who}`, async () => {
+      const { commit } = await renderPage(status, { computerUse });
+      expect(guideStep()).toBeNull();
+      expect(commit).not.toHaveBeenCalled();
+    });
+  }
+
+  it('remembers a guide dismissed with Escape, returns focus to Show guide, and replays it on request', async () => {
+    const { savedComputerUse } = await renderPage({ state: 'absent' });
+    await act(async () => { fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' }); });
+    expect(savedComputerUse()?.tourCompleted).toBe(true);
+    expect(guideStep()).toBeNull();
+    expect(button('Show guide')).toHaveFocus();
+
+    await click(button('Show guide'));
+    expect(savedComputerUse()?.tourCompleted).toBe(false);
+    expect(bubble('What Computer Use does')).toHaveFocus();
+    await click(button('Skip guide'));
+    expect(savedComputerUse()?.tourCompleted).toBe(true);
+  });
+
+  it('sends someone with Agent Mode off to Agent settings instead of turning it on', async () => {
+    const { commit, onNavigate } = await renderPage({ state: 'installed' },
+      { enabled: false, computerUse: { enabled: false, toolPolicies: {}, tourCompleted: false } });
+    await click(button('Open Agent settings'));
+    expect(onNavigate).toHaveBeenCalledWith('agent');
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('keeps tool policies editable while the guide points at them, then finishes', async () => {
+    const { savedComputerUse } = await renderPage({ state: 'installed' },
+      { computerUse: { enabled: false, toolPolicies: {}, tourCompleted: false } });
+    await click(button('Next'));
+    expect(bubble('Choose what each tool may do')).toHaveFocus();
+
+    await click(screen.getByRole('combobox', { name: 'Approval policy for Read a window' }));
+    await click(screen.getByRole('option', { name: 'Always allow' }));
+    await click(button('Done'));
+    expect(savedComputerUse()).toEqual({ enabled: false, toolPolicies: { desktop_snapshot: 'alwaysAllow' }, tourCompleted: true });
   });
 
   for (const [why, status, agentEnabled] of [
@@ -70,12 +159,13 @@ describe('ComputerUseSettings', () => {
     });
   }
 
-  it('shows why an unsupported platform cannot use it, with nothing to turn on', async () => {
-    await renderPage({ state: 'unsupported', reason: 'Computer Use is not available on Windows yet.' });
+  it('shows why an unsupported platform cannot use it, with nothing to turn on or tour', async () => {
+    const { commit } = await renderPage({ state: 'unsupported', reason: 'Computer Use is not available on Windows yet.' });
     expect(screen.getByRole('status')).toHaveTextContent('Computer Use is not available on Windows yet.');
     expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Install' })).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
     expect(screen.queryByRole('combobox')).toBeNull();
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it('starts clipboard tools disabled and saves a changed policy by tool name', async () => {

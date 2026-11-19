@@ -136,16 +136,18 @@ describe('config store', () => {
     storeData.set('agent', {
       ...legacy,
       mcpServers: [{ id: 'native-computer' }],
-      computerUse: { enabled: true, toolPolicies: { desktop_click: 'alwaysAllow', desktop_type: 'allow', desktop_exec: 'alwaysAllow' } },
+      computerUse: { enabled: true, tourCompleted: false, toolPolicies: { desktop_click: 'alwaysAllow', desktop_type: 'allow', desktop_exec: 'alwaysAllow' } },
     });
     const { computerUse, ...oldPatch } = getConfig().agent;
-    expect(computerUse).toEqual({ enabled: true, toolPolicies: { desktop_click: 'alwaysAllow' } });
+    expect(computerUse).toEqual({ enabled: true, tourCompleted: false, toolPolicies: { desktop_click: 'alwaysAllow' } });
     expect(oldPatch.mcpServers).toEqual([]);
     expect(() => Reflect.apply(setConfig, null, ['agent', { ...oldPatch, mcpServers: [{ id: 'native-computer' }] }])).toThrow('reserved');
     setConfig('agent', { ...oldPatch, customInstructions: 'Be brief.' });
     expect(getConfig().agent.computerUse).toEqual(computerUse);
     disableComputerUse();
-    expect(getConfig().agent.computerUse).toEqual({ enabled: false, toolPolicies: { desktop_click: 'alwaysAllow' } });
+    expect(getConfig().agent.computerUse).toEqual({ enabled: false, tourCompleted: false, toolPolicies: { desktop_click: 'alwaysAllow' } });
+    setConfig('agent', { ...getConfig().agent, computerUse: { enabled: false, toolPolicies: {}, tourCompleted: true } });
+    expect(getConfig().agent.computerUse?.tourCompleted).toBe(true);
   });
 
   it('drops a deleted server from its plugin so removing the plugin spares a later same-id server', async () => {

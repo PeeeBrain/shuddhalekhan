@@ -47,6 +47,8 @@ export const COMPUTER_USE_HEADED_ON_WINDOWS: ReadonlySet<ComputerUseToolName> = 
 /** Persisted under `agent.computerUse`. Off for every existing profile. */
 export interface ComputerUseConfig {
   enabled: boolean;
+  /** Missing for existing installs; false resumes setup, true suppresses the automatic tour. */
+  tourCompleted?: boolean;
   /** Keyed by bare tool name; a missing entry means the tool's `defaultPolicy`. */
   toolPolicies: Partial<Record<ComputerUseToolName, AgentToolApprovalPolicy>>;
 }

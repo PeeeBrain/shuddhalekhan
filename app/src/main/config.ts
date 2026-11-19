@@ -251,6 +251,7 @@ persistNormalizedDictation();
 const computerUseConfigSchema = z.object({
   enabled: z.boolean(),
   toolPolicies: z.record(z.string(), z.unknown()),
+  tourCompleted: z.boolean().optional(),
 });
 
 function normalizeComputerUse(value: unknown): ComputerUseConfig {
@@ -263,7 +264,11 @@ function normalizeComputerUse(value: unknown): ComputerUseConfig {
     const policy = toolApprovalPolicySchema.safeParse(stored[name]);
     if (policy.success) toolPolicies[name] = policy.data;
   }
-  return { enabled: parsed.data.enabled, toolPolicies };
+  return {
+    enabled: parsed.data.enabled,
+    toolPolicies,
+    ...(parsed.data.tourCompleted === undefined ? {} : { tourCompleted: parsed.data.tourCompleted }),
+  };
 }
 
 export function disableComputerUse(): void {
