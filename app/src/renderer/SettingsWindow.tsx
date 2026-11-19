@@ -129,9 +129,11 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
 
   if (!config) {
     return (
-      <main className="settings-root flex h-full items-center justify-center bg-background text-foreground">
-        <p className="text-muted-foreground">Loading settings…</p>
-      </main>
+      <TitleBarFrame>
+        <main className="settings-root flex h-full items-center justify-center bg-background text-foreground">
+          <p className="text-muted-foreground">Loading settings…</p>
+        </main>
+      </TitleBarFrame>
     );
   }
 
@@ -140,7 +142,11 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     && config.transcription.activeProvider === 'managed-local'
     && !showAdvancedDuringOnboarding
   ) {
-    return <Onboarding config={config} settingsIpc={settingsIpc} onOpenAdvanced={() => setShowAdvancedDuringOnboarding(true)} />;
+    return (
+      <TitleBarFrame>
+        <Onboarding config={config} settingsIpc={settingsIpc} onOpenAdvanced={() => setShowAdvancedDuringOnboarding(true)} />
+      </TitleBarFrame>
+    );
   }
 
   const selectSection = (id: SettingsSectionId) => {
@@ -184,41 +190,44 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     <main className="settings-root relative flex h-full overflow-hidden bg-background text-foreground">
       <aside
         inert={paletteOpen}
-        className="flex w-52 shrink-0 flex-col overflow-y-auto border-r border-border/60 bg-canvas px-2.5 py-5"
+        className="flex w-52 shrink-0 flex-col border-r border-border/60 bg-canvas"
         aria-label="Settings sections"
       >
-        <div className="mb-4 px-2.5">
+        {/* The header doubles as this column's drag strip, so the sidebar color reaches the window top. */}
+        <div className="flex h-20 shrink-0 flex-col justify-center px-5 [-webkit-app-region:drag]">
           <p className="text-sm font-semibold tracking-tight">Shuddhalekhan</p>
           <p className="text-xs text-muted-foreground">
             Settings{appInfo?.version ? ` · v${appInfo.version}` : ''}
           </p>
         </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2.5 pb-5">
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="settings-nav-item mb-5 border border-border/60"
+          >
+            <Search className="size-4 shrink-0" aria-hidden="true" />
+            <span className="flex-1 text-left">Search</span>
+            <kbd className="text-[10px] font-normal text-muted-foreground">Ctrl K</kbd>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setPaletteOpen(true)}
-          className="settings-nav-item mb-5 border border-border/60"
-        >
-          <Search className="size-4 shrink-0" aria-hidden="true" />
-          <span className="flex-1 text-left">Search</span>
-          <kbd className="text-[10px] font-normal text-muted-foreground">Ctrl K</kbd>
-        </button>
-
-        <nav className="flex flex-1 flex-col gap-5" aria-label="Settings navigation">
-          {SETTINGS_NAV_GROUPS.map((group) => (
-            <NavGroup
-              key={group.id}
-              group={group}
-              activeSection={activeSection}
-              tabRefs={tabRefs}
-              onSelect={selectSection}
-              onKeyDown={handleTabKeyDown}
-            />
-          ))}
-        </nav>
+          <nav className="flex flex-1 flex-col gap-5" aria-label="Settings navigation">
+            {SETTINGS_NAV_GROUPS.map((group) => (
+              <NavGroup
+                key={group.id}
+                group={group}
+                activeSection={activeSection}
+                tabRefs={tabRefs}
+                onSelect={selectSection}
+                onKeyDown={handleTabKeyDown}
+              />
+            ))}
+          </nav>
+        </div>
       </aside>
 
       <section inert={paletteOpen} className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <div className="title-bar-drag" aria-hidden="true" />
         <div
           key={activeSection}
           role="tabpanel"
@@ -270,6 +279,16 @@ interface NavGroupProps {
   tabRefs: React.MutableRefObject<Array<HTMLButtonElement | null>>;
   onSelect: (id: SettingsSectionId) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
+}
+
+/** Full-width drag strip above a single-column screen (loading, onboarding). */
+function TitleBarFrame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <div className="title-bar-drag" aria-hidden="true" />
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
+  );
 }
 
 function NavGroup({

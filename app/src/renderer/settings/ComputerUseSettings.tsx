@@ -11,6 +11,7 @@ import {
   type ComputerUseToolGroup,
 } from '../../shared/computer-use';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { Tag, ToggleRow, ToolPolicySelect } from './ui/rows';
@@ -467,6 +468,8 @@ function TourSpotlight({ step, target }: { step: TourStep; target: HTMLElement }
   );
 }
 
+const formatMegabytes = (bytes: number) => `${(bytes / 1_000_000).toFixed(1)} MB`;
+
 function EngineRow({ ref, status, busy, onInstall, onCancel, onRemove }: {
   ref?: Ref<HTMLDivElement>;
   status: ComputerUseStatus | null;
@@ -486,11 +489,14 @@ function EngineRow({ ref, status, busy, onInstall, onCancel, onRemove }: {
           Install once to let Agent Mode work with your desktop apps. {HELPER_NOTE}
         </p>
         {status?.state === 'installing' ? (
-          <p className="text-xs" role="status">
-            {status.receivedBytes < status.totalBytes
-              ? `Downloading… ${Math.round(status.receivedBytes / Math.max(1, status.totalBytes) * 100)}%`
-              : 'Verifying…'}
-          </p>
+          <div className="w-64 max-w-full space-y-1.5 pt-1">
+            <Progress value={status.receivedBytes / Math.max(1, status.totalBytes) * 100} label="Desktop helper download" />
+            <p className="text-xs" role="status">
+              {status.receivedBytes < status.totalBytes
+                ? `Downloading… ${Math.round(status.receivedBytes / Math.max(1, status.totalBytes) * 100)}% (${formatMegabytes(status.receivedBytes)} of ${formatMegabytes(status.totalBytes)})`
+                : 'Verifying…'}
+            </p>
+          </div>
         ) : null}
         {status?.state === 'failed' ? <p className="text-xs text-destructive break-words" role="alert">{status.reason}</p> : null}
         {status?.state === 'unsupported' ? <p className="text-xs text-muted-foreground" role="status">{status.reason}</p> : null}

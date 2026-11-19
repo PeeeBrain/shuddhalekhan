@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
 import { ReadOnlyRow } from './ui/rows';
 import type { SettingsSectionProps } from './settings-section-props';
@@ -37,6 +38,15 @@ export function AboutSettings({
           <ReadOnlyRow label="Version" value={appInfo?.version ?? 'Unknown'} />
           <ReadOnlyRow label="Update status" value={statusText} />
           <div className="py-3.5">
+            {/* autoDownload is on, so `available` means the download has started; it sits at 0 until progress arrives. */}
+            {updateStatus?.state === 'available' || updateStatus?.state === 'downloading' ? (
+              <div className="mb-3.5 flex items-center gap-3">
+                <Progress value={updateStatus.state === 'downloading' ? updateStatus.percent ?? 0 : 0} label="Update download" />
+                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                  {updateStatus.state === 'downloading' && updateStatus.percent !== null ? `${updateStatus.percent}%` : ''}
+                </span>
+              </div>
+            ) : null}
             <Button
               variant="secondary"
               size="sm"

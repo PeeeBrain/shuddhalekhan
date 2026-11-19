@@ -15,6 +15,7 @@ import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -949,10 +950,13 @@ function ArtifactRow({ title, artifact, optional = false, installLabel, deleteLa
           </p>
         ) : null}
         {state.kind === 'downloading' ? (
-          <p className="text-xs" role="status">
-            Downloading… {state.totalBytes > 0 ? Math.round(state.downloadedBytes / state.totalBytes * 100) : 0}%
-            {' '}({formatMegabytes(state.downloadedBytes)} of {formatMegabytes(state.totalBytes)})
-          </p>
+          <div className="w-64 max-w-full space-y-1.5 pt-1">
+            <Progress value={state.totalBytes > 0 ? state.downloadedBytes / state.totalBytes * 100 : 0} label={`${title} download`} />
+            <p className="text-xs" role="status">
+              Downloading… {state.totalBytes > 0 ? Math.round(state.downloadedBytes / state.totalBytes * 100) : 0}%
+              {' '}({formatMegabytes(state.downloadedBytes)} of {formatMegabytes(state.totalBytes)})
+            </p>
+          </div>
         ) : null}
         {state.kind === 'installing' ? <p className="text-xs" role="status">Verifying and installing…</p> : null}
         {state.kind === 'error' ? <p className="text-xs text-destructive" role="alert">{state.message}</p> : null}

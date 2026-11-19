@@ -242,11 +242,8 @@ function App() {
 
   if (hash === 'settings') {
     return (
-      <div className="flex h-screen flex-col">
-        <div className="title-bar-drag" aria-hidden="true" />
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <SettingsWindow />
-        </div>
+      <div className="h-screen">
+        <SettingsWindow />
       </div>
     );
   }
