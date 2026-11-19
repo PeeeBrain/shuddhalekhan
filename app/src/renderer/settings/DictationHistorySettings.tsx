@@ -59,7 +59,10 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
         (next) => {
           if (!active) return;
           // Deleting or pruning can empty an older page; step back instead of claiming History is empty.
-          if (next.entries.length === 0 && beforeId !== null) return setCursors((current) => current.slice(0, -1));
+          if (next.entries.length === 0 && beforeId !== null) {
+            setLoading(true);
+            return setCursors((current) => current.slice(0, -1));
+          }
           setPage(next);
           setListError(null);
           setLoading(false);
@@ -179,7 +182,7 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
                     copied={copiedId === row.id}
                     onToggle={() => toggle(row)}
                     onCopy={() => settingsIpc.copyDictationHistoryEntry(row.id).then(
-                      () => setCopiedId(row.id),
+                      () => { setCopiedId(row.id); setError(null); },
                       (cause) => setError(ipcErrorMessage(cause, 'Could not copy this Dictation.')),
                     )}
                     onDelete={() => {

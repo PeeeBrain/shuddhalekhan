@@ -35,9 +35,13 @@ function pagedList(rows: () => DictationHistoryRow[]) {
 
 describe('DictationHistorySettings', () => {
   it('steps back to the newer page when the older page empties', async () => {
-    let rows = [row(2, 'newer dictation'), row(1, 'older dictation')];
+    let rows = [row(3, 'newest dictation'), row(2, 'middle dictation'), row(1, 'oldest dictation')];
+    let holdStepBack: (() => void) | undefined;
+    const list = pagedList(() => rows);
     await renderHistory({
-      listDictationHistory: pagedList(() => rows),
+      listDictationHistory: (query: string, beforeId: number | null) => rows.length === 2 && beforeId === 3
+        ? new Promise((resolve) => { holdStepBack = () => resolve(list(query, beforeId)); })
+        : list(query, beforeId),
       deleteDictationHistoryEntry: (id: number) => {
         rows = rows.filter((entry) => entry.id !== id);
         return Promise.resolve();
@@ -45,11 +49,17 @@ describe('DictationHistorySettings', () => {
     });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Older' }));
-    expect(await screen.findByText('older dictation')).toBeInTheDocument();
+    await screen.findByText('middle dictation');
+    fireEvent.click(screen.getByRole('button', { name: 'Older' }));
+    await screen.findByText('oldest dictation');
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete Dictation' }));
+    await waitFor(() => expect(holdStepBack).toBeDefined());
+    // Newer now would pop past the page being stepped back to.
+    expect(screen.getByRole('button', { name: 'Newer' })).toBeDisabled();
 
-    expect(await screen.findByText('newer dictation')).toBeInTheDocument();
+    await act(async () => holdStepBack?.());
+    expect(screen.getByText('middle dictation')).toBeInTheDocument();
     expect(screen.queryByText(/No Dictations yet/)).toBeNull();
   });
 
