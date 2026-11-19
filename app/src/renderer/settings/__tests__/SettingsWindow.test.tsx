@@ -328,6 +328,7 @@ describe('Settings navigation', () => {
     gpuState = { kind: 'downloading', modelId: 'parakeet-cuda', downloadedBytes: 450_000_000, totalBytes: 900_000_000 };
     act(() => notify());
     expect(await screen.findByText(/Downloading… 50%/)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByRole('button', { name: 'Delete CPU files' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('radio', { name: /Granite/ }));

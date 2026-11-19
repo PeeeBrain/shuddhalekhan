@@ -2,6 +2,7 @@ import { DEFAULT_MANAGED_LOCAL } from '../../shared/managed-local-selection';
 import { useEffect, useRef, useState } from 'react';
 import { Check, Download, Mic, Keyboard, ArrowRight, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import type { AppConfig, ManagedLocalModelState } from '../../types/ipc';
 import { formatBinding } from '../../shared/shortcut-bindings';
 import type { SettingsIpc } from './settings-ipc';
@@ -203,7 +204,14 @@ function Step({ icon: Icon, number, title, done, disabled = false, children }: {
 function ModelState({ state }: { state: ManagedLocalModelState }) {
   if (state.kind === 'downloading') {
     const percent = state.totalBytes > 0 ? Math.round(state.downloadedBytes / state.totalBytes * 100) : 0;
-    return <p className="mt-3 text-sm" role="status">Downloading… {percent}%</p>;
+    return (
+      <div className="mt-3 space-y-2">
+        <Progress value={percent} label="Speech model download" />
+        <p className="text-sm" role="status">
+          Downloading… {percent}% ({formatBytes(state.downloadedBytes)} of {formatBytes(state.totalBytes)})
+        </p>
+      </div>
+    );
   }
   if (state.kind === 'installing') return <p className="mt-3 text-sm" role="status">Verifying and installing…</p>;
   if (state.kind === 'ready') return <p className="mt-3 text-sm text-success">Installed and ready offline.</p>;

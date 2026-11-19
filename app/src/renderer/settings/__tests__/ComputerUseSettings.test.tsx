@@ -76,6 +76,7 @@ describe('ComputerUseSettings', () => {
     await click(button('Install'));
     await push({ state: 'installing', receivedBytes: 1, totalBytes: 4 });
     expect(screen.getByRole('status')).toHaveTextContent('Downloading… 25%');
+    expect(screen.getByRole('progressbar', { name: 'Desktop helper download' })).toHaveAttribute('aria-valuenow', '25');
     await click(button('Cancel'));
     expect(settingsIpc.cancelComputerUseInstall).toHaveBeenCalledTimes(1);
     await push({ state: 'failed', reason: 'Download cancelled.' });
