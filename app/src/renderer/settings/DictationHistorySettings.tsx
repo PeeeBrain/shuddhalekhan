@@ -36,6 +36,14 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
   const [cursors, setCursors] = useState<Array<number | null>>([null]);
   const [page, setPage] = useState<DictationHistoryPage | null>(null);
   const [reload, setReload] = useState(0);
+  // Paging waits for the requested page: a cursor taken from the page still on screen would repeat or skip rows.
+  const [loading, setLoading] = useState(true);
+  const goTo = (next: (current: Array<number | null>) => Array<number | null>) => {
+    setLoading(true);
+    setCursors(next);
+  };
+  // Kept apart so a list refresh never hides a failed copy, delete, or clear.
+  const [listError, setListError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openEntry, setOpenEntry] = useState<DictationHistoryEntry | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -53,9 +61,10 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
           // Deleting or pruning can empty an older page; step back instead of claiming History is empty.
           if (next.entries.length === 0 && beforeId !== null) return setCursors((current) => current.slice(0, -1));
           setPage(next);
-          setError(null);
+          setListError(null);
+          setLoading(false);
         },
-        (cause) => { if (active) setError(ipcErrorMessage(cause, 'Could not read History.')); },
+        (cause) => { if (active) setListError(ipcErrorMessage(cause, 'Could not read History.')); },
       );
     }, query ? 150 : 0);
     return () => { active = false; clearTimeout(timer); };
@@ -108,9 +117,9 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
         />
       </SettingsCard>
 
-      {error ? (
+      {error ?? listError ? (
         <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive break-words">
-          {error}
+          {error ?? listError}
         </p>
       ) : null}
 
@@ -143,7 +152,7 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value);
-                setCursors([null]);
+                goTo(() => [null]);
               }}
               placeholder="Search Dictations"
               aria-label="Search Dictations"
@@ -153,7 +162,7 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
 
           {!page ? (
             <SettingsCard className="py-8 text-center text-sm text-muted-foreground">
-              {error ? 'History is unavailable.' : 'Loading History…'}
+              {listError ? 'History is unavailable.' : 'Loading History…'}
             </SettingsCard>
           ) : rows.length === 0 ? (
             <SettingsCard className="py-8 text-center text-sm text-muted-foreground">
@@ -185,12 +194,12 @@ export function DictationHistorySettings({ config, persistence, settingsIpc }: S
 
           {cursors.length > 1 || page?.hasMore ? (
             <div className="flex justify-end gap-2">
-              <Button type="button" size="sm" variant="ghost" disabled={cursors.length === 1}
-                onClick={() => setCursors((current) => current.slice(0, -1))}>
+              <Button type="button" size="sm" variant="ghost" disabled={loading || cursors.length === 1}
+                onClick={() => goTo((current) => current.slice(0, -1))}>
                 Newer
               </Button>
-              <Button type="button" size="sm" variant="ghost" disabled={!page?.hasMore}
-                onClick={() => setCursors((current) => [...current, rows[rows.length - 1].id])}>
+              <Button type="button" size="sm" variant="ghost" disabled={loading || !page?.hasMore}
+                onClick={() => goTo((current) => [...current, rows[rows.length - 1].id])}>
                 Older
               </Button>
             </div>
