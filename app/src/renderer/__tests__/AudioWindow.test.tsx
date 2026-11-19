@@ -17,7 +17,7 @@ mock.module('../audio-capture', () => ({
   enumerateDevices: () => Promise.resolve([]),
   startRecording: (options: RecordingOptions) => {
     recording = options;
-    return Promise.resolve();
+    return Promise.resolve({ preRollSamples: 0, lateSamples: 0 });
   },
   stopRecording: () => new Promise<CaptureBoundary | null>((resolve, reject) => {
     finishStop = { resolve, reject };
@@ -40,7 +40,7 @@ function emit(channel: string, ...args: unknown[]) {
 }
 
 function command(sequence: number): RuntimeAudioCommand {
-  return { generation: 1, recordingSessionId: `session-${sequence}`, sequence, streaming: false };
+  return { generation: 1, recordingSessionId: `session-${sequence}`, sequence, streaming: false, pressedAt: 1 };
 }
 
 function sentOn(channel: string) {

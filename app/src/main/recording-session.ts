@@ -1,12 +1,13 @@
 import { randomUUID } from 'crypto';
 import { ipcMain, type IpcMainEvent } from 'electron';
-import type {
-  DictationConfig,
-  DictationTargetSnapshot,
-  RecordingActivationMode,
-  RecordingIntent,
-  RecordingPresentationEnvelope,
-  ShortcutBinding,
+import {
+  PRE_ROLL_MS,
+  type DictationConfig,
+  type DictationTargetSnapshot,
+  type RecordingActivationMode,
+  type RecordingIntent,
+  type RecordingPresentationEnvelope,
+  type ShortcutBinding,
 } from '../types/ipc';
 import {
   createRecordingPresentationEnvelope,
@@ -21,7 +22,7 @@ import {
 import { createStreamingTranscriptLedger, type StreamingTranscriptLedger } from './streaming-transcript';
 import { RECOGNITION_TIMEOUT_MS } from './managed-local-runtime';
 import { markTiming } from './eval-timing';
-import { isNearSilent, MIN_HOLD_MS } from './dictation-admission';
+import { detachedPreRoll, isNearSilent, MIN_HOLD_MS } from './dictation-admission';
 
 /** Longest Dictation release tail (Hex's cap); the capture renderer usually keeps ~200 ms. */
 const MAX_RELEASE_TAIL_MS = 600;
@@ -31,6 +32,7 @@ const DURATION_CAP_MARGIN_MS = 100;
 // The silence gate skips this much after a cued start so a cue heard through
 // speakers is not mistaken for speech; recognition still gets every sample.
 const START_CUE_HEAD_SAMPLES = 16_000 * 0.3;
+const MAX_PRE_ROLL_SAMPLES = 16_000 * PRE_ROLL_MS / 1000;
 
 /** Main-process-only settings and resolved formatter credential, pinned at Begin. */
 export interface DictationDeliveryContext {
@@ -87,10 +89,12 @@ interface RecordingRunContext {
   sequence: number;
   revision: number;
   state: 'starting' | 'recording' | 'stopping' | 'transcribing' | 'delivering';
-  /** Date.now() when capture became ready; bounds the release tail under a provider cap. */
+  /** Date.now() at the capture's first sample, pre-roll included; bounds the release tail under a provider cap. */
   recordingSince: number | null;
-  /** The Start cue played at capture-ready, so the capture's head may hold it. */
-  startCued: boolean;
+  /** Warm pre-roll heading the spool, in 16 kHz samples. */
+  preRollSamples: number;
+  /** Head samples the silence gate skips: warm pre-roll, or through the Start cue if it played at capture-ready. */
+  gateSkipSamples: number;
   abort: AbortController;
   dictation: DictationDeliveryContext | null;
   pendingEnd: {
@@ -129,7 +133,6 @@ export class RecordingSession {
   private onErrorCallback: (error: Error) => void;
   private onBeginCallback?: (intent: RecordingIntent) => void;
   private getSelectedDeviceId: () => string | null;
-  private pendingDeviceUpdate: { deviceId: string | null } | null = null;
 
   constructor(options: RecordingSessionOptions) {
     this.isAgentModeEnabled = options.isAgentModeEnabled;
@@ -156,6 +159,7 @@ export class RecordingSession {
   }
 
   begin(intent: RecordingIntent = 'dictation', recordingSessionId: string = randomUUID()): boolean {
+    const pressedAt = Date.now();
     if (this.activeRun !== null) {
       return false;
     }
@@ -176,14 +180,15 @@ export class RecordingSession {
       revision: 0,
       state: 'starting',
       recordingSince: null,
-      startCued: false,
+      preRollSamples: 0,
+      gateSkipSamples: 0,
       abort: new AbortController(),
       dictation: intent === 'dictation' ? structuredClone(this.getDictationContext()) : null,
       pendingEnd: null,
       streaming: null,
     };
     this.activeRun = run;
-    this.startStreamingIfEligible(run);
+    const streaming = this.startStreamingIfEligible(run);
 
     this.onBeginCallback?.(intent);
 
@@ -192,11 +197,9 @@ export class RecordingSession {
 
     const presentation = this.createPresentationEnvelope(run);
     this.runtimeShell.prepare();
-    if (this.pendingDeviceUpdate) {
-      this.runtimeShell.setSelectedDevice(this.pendingDeviceUpdate.deviceId);
-      this.pendingDeviceUpdate = null;
-    }
-    this.runtimeShell.beginCapture(presentation);
+    // Pre-roll waits for the silence gate, so only a Dictation recognized after it ends takes it:
+    // live streaming would recognize, and preview, pre-press audio before the gate could refuse it.
+    this.runtimeShell.beginCapture(presentation, intent === 'dictation' && !streaming ? pressedAt : null);
     this.runtimeShell.show(
       intent,
       run.id,
@@ -296,7 +299,7 @@ export class RecordingSession {
     }
     run.state = 'transcribing';
     this.clearDurationTimers();
-    // Capture has ended and the renderer has released the mic, so the cue cannot be recorded.
+    // Capture has ended, so the cue cannot be recorded; a warm mic keeps it out of the next pre-roll.
     if (run.recordingSince !== null) this.runtimeShell.playCue('stop');
     const pendingEnd = run.pendingEnd;
 
@@ -316,9 +319,17 @@ export class RecordingSession {
       return null;
     }
 
-    const pcm = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, 44, (audioData.byteLength - 44) >> 1);
-    const gated = run.startCued ? pcm.subarray(START_CUE_HEAD_SAMPLES) : pcm;
-    if (run.intent === 'dictation' && (gated.length === 0 || isNearSilent(gated))) {
+    const spooled = empty ? new Int16Array(0) : new Int16Array(audioData.buffer, audioData.byteOffset + 44, (audioData.byteLength - 44) >> 1);
+    // Pre-roll that a pause separates from the speech after it is not this utterance's start. A
+    // stalled cap timer can let capture run long; the provider's limit holds on the samples themselves.
+    const lead = detachedPreRoll(spooled, run.preRollSamples);
+    const maxSamples = (run.transcriber.capabilities.maxDurationSeconds ?? 0) * 16_000;
+    // The gate judges only what the provider will hear, but sees the whole pre-roll: a dropped
+    // head that held sound still shows the device works, so a flat remainder is discarded.
+    const judged = spooled.subarray(0, maxSamples ? lead + maxSamples : spooled.length);
+    const pcm = judged.subarray(lead);
+    // Pre-roll alone never admits a Dictation: media or room noise before the press is not speech.
+    if (run.intent === 'dictation' && (judged.length <= run.gateSkipSamples || isNearSilent(judged, run.gateSkipSamples))) {
       // Models hallucinate on silence; an empty Dictation ends quietly, like a cancel.
       // Empty means stopped before the microphone delivered audio: a dead device still delivers zeros.
       console.info('Discarded near-silent Dictation without recognizing it', { samples: pcm.length });
@@ -330,9 +341,18 @@ export class RecordingSession {
       return null;
     }
 
+    let wav = audioData;
+    if (pcm.length !== spooled.length) {
+      // The header moves to just before the first kept sample; `finally` zeroes the dropped head with the rest.
+      audioData.copyWithin(lead * 2, 0, 44);
+      wav = audioData.subarray(lead * 2, lead * 2 + 44 + pcm.byteLength);
+      const header = new DataView(wav.buffer, wav.byteOffset);
+      header.setUint32(4, 36 + pcm.byteLength, true);
+      header.setUint32(40, pcm.byteLength, true);
+    }
     const transcriber = run.transcriber;
     try {
-      const recognized = await this.recognizeWithinDeadline(run, transcriber, audioData);
+      const recognized = await this.recognizeWithinDeadline(run, transcriber, wav);
       if (recognized === null || this.activeRun !== run) return null;
       const text = recognized;
       if (!text.trim()) {
@@ -445,10 +465,9 @@ export class RecordingSession {
     this.runtimeShell.destroy();
   }
 
+  /** Applies at once: the renderer finishes an in-flight capture on its mic and releases the old one. */
   updateDevice(deviceId: string | null): void {
-    // A device edit applies to the next recording, never its in-flight capture.
-    if (this.activeRun) this.pendingDeviceUpdate = { deviceId };
-    else this.runtimeShell.setSelectedDevice(deviceId);
+    this.runtimeShell.setSelectedDevice(deviceId);
   }
 
   private canStartLiveStreaming(transcriber: Transcriber): boolean {
@@ -608,7 +627,8 @@ export class RecordingSession {
     });
   }
 
-  private scheduleDurationLimit(maxDurationSeconds: number | null): void {
+  /** `recordedMs` of audio (the pre-roll) already counts against the provider's cap. */
+  private scheduleDurationLimit(maxDurationSeconds: number | null, recordedMs: number): void {
     this.clearDurationTimers();
     if (!maxDurationSeconds) return;
     const warningSeconds = Math.min(10, maxDurationSeconds);
@@ -617,13 +637,13 @@ export class RecordingSession {
       const remaining = maxDurationSeconds - elapsed;
       this.durationTimers.push(this.setTimeoutFn(() => {
         if (this.activeRun?.state === 'recording') this.runtimeShell.updateDurationWarning(remaining);
-      }, elapsed * 1000));
+      }, Math.max(0, elapsed * 1000 - recordedMs)));
     }
     this.durationTimers.push(this.setTimeoutFn(() => {
       if (this.activeRun?.state !== 'recording') return;
       this.keyboardHook.recordingEndedExternally();
       void this.end().catch(() => undefined);
-    }, maxDurationSeconds * 1000));
+    }, Math.max(0, maxDurationSeconds * 1000 - recordedMs)));
   }
 
   private clearDurationTimers(): void {
@@ -643,18 +663,31 @@ export class RecordingSession {
     generation: number,
     recordingSessionId: string,
     sequence: number,
+    preRollSamples: unknown,
+    lateSamples: unknown,
   ): void => {
     const run = this.activeRun;
-    if (!run || run.id !== recordingSessionId || run.sequence !== sequence
-      || run.state !== 'starting') return;
+    if (!run || run.id !== recordingSessionId || run.sequence !== sequence) return;
     if (!event.sender || event.sender !== this.runtimeShell.getWebContents()) return;
     if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
+    // Both come from the warm ring, so together they never exceed it.
+    const ringSamples = (value: unknown, max: number) => Number.isSafeInteger(value) && Number(value) > 0
+      ? Math.min(Number(value), max)
+      : 0;
+    const preRoll = ringSamples(preRollSamples, MAX_PRE_ROLL_SAMPLES);
+    const late = ringSamples(lateSamples, MAX_PRE_ROLL_SAMPLES - preRoll);
+    // A Stop that beat this ack still spools the pre-roll: the gate must skip it.
+    if (run.state === 'stopping' && run.recordingSince === null) run.gateSkipSamples = run.preRollSamples = preRoll;
+    if (run.state !== 'starting') return;
     run.state = 'recording';
-    markTiming('capture-ready');
-    run.recordingSince = Date.now();
+    run.preRollSamples = preRoll;
+    markTiming('capture-ready', { preRollSamples: preRoll, lateSamples: late });
+    const heldMs = (preRoll + late) * 1000 / 16_000;
+    run.recordingSince = Date.now() - heldMs;
     this.runtimeShell.markCaptureReady(run.id);
-    run.startCued = this.runtimeShell.playCue('start');
-    this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds);
+    // The cue sounds after the audio already held, so the gate skips up to its end.
+    run.gateSkipSamples = this.runtimeShell.playCue('start') ? preRoll + late + START_CUE_HEAD_SAMPLES : preRoll;
+    this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds, heldMs);
   };
 
   private handleRuntimeAudioChunk = async (

@@ -16,6 +16,9 @@ export type AudioDevice = {
 
 export type RecordingIntent = 'dictation' | 'agent';
 
+/** Audio a warm microphone keeps from before the shortcut press (Hex's calibration). Only an admitted recording sends it. */
+export const PRE_ROLL_MS = 450;
+
 export type RecordingActivationMode = 'push-to-talk' | 'toggle';
 
 export type ShortcutModifier = 'ctrl' | 'alt' | 'shift' | 'win';
@@ -189,7 +192,17 @@ export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
   'surface-paint-proxy': (surface: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
-  'runtime:audio-ready': (generation: number, recordingSessionId: string, commandSequence: number) => void;
+  /**
+   * `preRollSamples` of 16 kHz audio from before the press head the recording's spool,
+   * then `lateSamples` heard between the press and capture-ready.
+   */
+  'runtime:audio-ready': (
+    generation: number,
+    recordingSessionId: string,
+    commandSequence: number,
+    preRollSamples: number,
+    lateSamples: number,
+  ) => void;
   'runtime:audio-chunk': (
     generation: number,
     recordingSessionId: string,
@@ -295,6 +308,8 @@ export interface RendererToMainInvokeChannels {
   'shortcuts:set-paused': (paused: boolean) => Promise<boolean>;
   'shortcuts:begin-capture': () => void;
   'shortcuts:end-capture': () => void;
+  /** Plays in the runtime window, where a warm mic keeps it out of the pre-roll. */
+  'cue:preview': (cue: RecordingCue) => void;
   'credential:get-status': (credential: CredentialKind) => Promise<CredentialStatus>;
   'credential:save': (credential: CredentialKind, value: string) => Promise<CredentialStatus>;
   'credential:remove': (credential: CredentialKind) => Promise<CredentialStatus>;
@@ -308,6 +323,7 @@ export interface MainToRendererChannels {
   'chatgpt:changed': (status: ChatGptAccountStatus) => void;
   'memory:changed': (snapshot: AgentMemorySnapshot) => void;
   'audio:recreate-stream': (deviceId: string | null) => void;
+  'audio:set-warm-microphone': (enabled: boolean) => void;
   'recording:pill-show': () => void;
   'recording:pill-hide': () => void;
   'mcp:status-snapshot': (snapshot: McpStatusSnapshot) => void;
@@ -349,6 +365,11 @@ export interface RuntimeAudioCommand {
   recordingSessionId: string;
   sequence: number;
   streaming: boolean;
+  /**
+   * Main's Date.now() at the accepted hotkey: the recording heads with the warm mic's pre-roll heard
+   * before it. Null takes none: Agent Mode has no silence gate to keep pre-press audio from becoming a command.
+   */
+  pressedAt: number | null;
 }
 
 export type DictationRecoveryAction = 'retry-paste' | 'copy-full-transcript' | 'copy-partial-transcript';
@@ -594,6 +615,8 @@ export interface AppConfig {
   waylandBestEffortInsertion?: boolean;
   /** Start, Stop and Error cues for Dictation and Agent Mode recordings. On unless turned off, including upgrades. */
   recordingSounds: boolean;
+  /** Keeps the microphone open between recordings with a PRE_ROLL_MS ring. Off unless opted in, including upgrades. */
+  warmMicrophone: boolean;
   setupChecklistDismissed: boolean;
   onboarding: { status: 'pending' | 'complete' };
   shortcuts: ShortcutsConfig;

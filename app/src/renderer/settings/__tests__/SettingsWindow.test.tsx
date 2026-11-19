@@ -59,6 +59,7 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     dictionary: [],
     pasteStrategy: { default: 'ctrl-v', overrides: {} },
     recordingSounds: true,
+    warmMicrophone: false,
     setupChecklistDismissed: true,
     onboarding: { status: 'complete' },
     shortcuts: {
@@ -172,6 +173,7 @@ function createMockSettingsIpc(
     setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
     beginShortcutCapture: mock(() => Promise.resolve()),
     endShortcutCapture: mock(() => Promise.resolve()),
+    previewCue: mock(() => Promise.resolve()),
     onShortcutsPausedChanged: mock(() => undefined),
     getDesktopStatus: mock(() => Promise.resolve(options.desktopStatus ?? WINDOWS_STATUS)),
     setWaylandInsertion: mock(() => Promise.resolve(options.desktopStatus ?? WINDOWS_STATUS)),

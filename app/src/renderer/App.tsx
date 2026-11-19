@@ -3,10 +3,12 @@ import {
   acknowledgeRealtimeChunk,
   cancelRecording,
   enumerateDevices,
+  holdPreRollForCue,
   MAX_IN_FLIGHT_PCM_CHUNKS,
   prepareStream,
   recreateStream,
   setSelectedDeviceId,
+  setWarmMicrophone,
   startRecording,
   stopRecording,
 } from './audio-capture';
@@ -107,11 +109,13 @@ export function AudioWindow() {
           },
         } : undefined,
         onFailure: reportProcessorFailure,
+        pressedAt: command.pressedAt,
       })
-        .then(() => {
-          if (captureRef.current !== capturing) return;
+        .then(({ preRollSamples, lateSamples }) => {
+          // Sent even if a Stop beat it, so main's gate still skips the pre-roll.
+          if (!ownsCommand(captureRef.current, command)) return;
           window.electronAPI.send('runtime:audio-ready',
-            command.generation, command.recordingSessionId, command.sequence);
+            command.generation, command.recordingSessionId, command.sequence, preRollSamples, lateSamples);
         })
         .catch((err) => {
           // A stop already in flight owns the failure report.
@@ -180,7 +184,17 @@ export function AudioWindow() {
     };
   }, []);
 
-  useEffect(() => window.electronAPI.subscribe('runtime:cue', playRecordingCue), []);
+  useEffect(() => window.electronAPI.subscribe('runtime:cue', (cue) => {
+    playRecordingCue(cue, holdPreRollForCue());
+  }), []);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.subscribe('audio:set-warm-microphone', setWarmMicrophone);
+    return () => {
+      unsubscribe();
+      setWarmMicrophone(false);
+    };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.subscribe('audio:recreate-stream', (deviceId: string | null) => {

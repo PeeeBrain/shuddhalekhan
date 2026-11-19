@@ -8,8 +8,10 @@ import { hasChosenMicrophone } from '../shared/microphone-selection';
 // holds a worklet credit until main confirms the write, so a stalled renderer
 // or main fails the capture instead of queueing audio without bound. Stop waits
 // for the worklet's ack and every write confirmation, then returns the end
-// boundary main verifies.
-import type { AudioDevice } from '../types/ipc';
+// boundary main verifies. With the warm microphone opted in, a cleanly stopped
+// recording parks its mic instead of closing it; the idle worklet keeps only a
+// PRE_ROLL_MS ring, which the next recording adopts as its head.
+import { PRE_ROLL_MS, type AudioDevice } from '../types/ipc';
 
 const AUDIO_LEVEL_TELEMETRY_INTERVAL_MS = 50;
 const STREAM_SAMPLE_RATE = 16_000;
@@ -24,6 +26,9 @@ const STOP_ACK_TIMEOUT_MS = 500;
 const SPOOL_ACK_TIMEOUT_MS = 2_000;
 // Fail closed if mic permission/open or worklet load never settles; generous for a permission prompt.
 const SETUP_TIMEOUT_MS = 30_000;
+// ponytail: fixed allowance for output latency after a cue's last sample renders
+// (Bluetooth runs ~150–250 ms); measure the device if a cue still leaks into pre-roll.
+const CUE_OUTPUT_LATENCY_MS = 350;
 // A Dictation release often lands while the last word still sounds, so stop
 // keeps this much audio (Hex's base tail), growing while speech continues
 // until this much quiet or main's cap.
@@ -56,6 +61,8 @@ export interface RecordingOptions {
   onSpoolChunk: (chunkSequence: number, pcm: Uint8Array<ArrayBuffer>) => Promise<void>;
   streaming?: StreamingRecordingOptions;
   onFailure?: (error: Error) => void;
+  /** Main's Date.now() at the hotkey: head the recording with the warm mic's pre-roll heard before it (Dictation only). */
+  pressedAt?: number | null;
 }
 
 /** What stop declares was spooled; main rejects the recording unless it matches. */
@@ -128,16 +135,29 @@ function createRealtimeChunker(options: StreamingRecordingOptions) {
   };
 }
 
-/** One recording: owns its mic stream, context and worklet until released. */
-interface Capture {
-  readonly mic: Promise<MediaStream>;
+/** An open microphone: stream, context and worklet. Owned by one recording, or parked as the warm mic. */
+interface Mic {
+  readonly stream: Promise<MediaStream>;
   ready: Promise<void>;
-  context: AudioContext | null;
+  readonly context: AudioContext;
   source: MediaStreamAudioSourceNode | null;
   node: AudioWorkletNode | null;
   /** Read by the recording pill for its frequency bands; never touches the recorded audio. */
   analyser: AnalyserNode | null;
-  convert: ((input: Float32Array) => Uint8Array<ArrayBuffer>) | null;
+  owner: Capture | null;
+  stopWatching: (() => void) | null;
+  /** Setup finished: the context is running and the worklet can start. */
+  running: boolean;
+  closed: boolean;
+  /** A device change landed while it recorded: close it after, never park it. */
+  stale: boolean;
+}
+
+/** One recording on its mic, until released. */
+interface Capture {
+  readonly mic: Mic;
+  ready: Promise<void>;
+  readonly convert: (input: Float32Array) => Uint8Array<ArrayBuffer>;
   readonly realtime: ReturnType<typeof createRealtimeChunker> | null;
   readonly options: RecordingOptions;
   chunkCount: number;
@@ -145,21 +165,42 @@ interface Capture {
   /** Spool writes main has not confirmed yet; each holds one worklet credit. */
   readonly writes: Set<Promise<void>>;
   failure: Error | null;
-  stopWatchingMic: (() => void) | null;
   released: boolean;
-  /** Wakes the step stop is waiting on: the release tail, the worklet's ack, all writes settled, or release. */
+  /**
+   * Wakes the step start or stop is waiting on: the worklet's start or stop ack,
+   * the release tail, all writes settled, or release.
+   */
   onStopped: (() => void) | null;
   /** Loudest batch level before release; the release tail's speech reference. */
   peakLevel: number;
   /** Set while stop keeps a release tail; told whether each batch sounds like speech. */
   onTailBatch: ((speech: boolean) => void) | null;
+  /** Ring frames heard after the press, which the worklet passes on as ordinary audio. */
+  lateFrames: number;
 }
 
-type WorkletMessage = { type: 'audio'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
+/** 16 kHz samples heading a recording's spool when capture is ready: pre-roll, then audio heard since the press. */
+export interface CaptureHead {
+  preRollSamples: number;
+  lateSamples: number;
+}
+
+const NO_HEAD: CaptureHead = { preRollSamples: 0, lateSamples: 0 };
+
+type WorkletMessage =
+  | { type: 'audio'; samples: Float32Array }
+  | { type: 'started'; samples: Float32Array; late: number }
+  | { type: 'stopped' }
+  | { type: 'overflow' };
 
 /** The recording that start/cancel act on. A stopping capture is detached but stays in `live` until drained. */
 let active: Capture | null = null;
 const live = new Set<Capture>();
+/** Opened or parked between recordings while the warm microphone is wanted; owned by no recording. */
+let warm: Mic | null = null;
+let warmWanted = false;
+/** performance.now() before which the ring may hold a speaker cue. */
+let cueHeldUntil = 0;
 let isStreamPrepared = false;
 let latestAudioLevel = 0;
 let levelTelemetryTimer: ReturnType<typeof setInterval> | null = null;
@@ -247,7 +288,7 @@ let spectrum: Float32Array<ArrayBuffer> | null = null;
 
 /** The active capture's bands, read by the pill once per drawn frame. */
 function readActiveBands(out: Float32Array): boolean {
-  const analyser = active?.analyser;
+  const analyser = active?.mic.analyser;
   if (!analyser) return false;
   if (spectrum?.length !== analyser.frequencyBinCount) spectrum = new Float32Array(analyser.frequencyBinCount);
   analyser.getFloatFrequencyData(spectrum);
@@ -273,27 +314,66 @@ function startLevelTelemetry(): void {
   }, AUDIO_LEVEL_TELEMETRY_INTERVAL_MS);
 }
 
-/** Idempotent: stops this capture's tracks, nodes and context and drops its callbacks. */
-function release(capture: Capture): void {
+/** Idempotent: stops the mic's tracks, nodes and context, which drops its ring. */
+function closeMic(mic: Mic): void {
+  if (mic.closed) return;
+  mic.closed = true;
+  if (warm === mic) warm = null;
+  mic.stopWatching?.();
+  mic.stopWatching = null;
+  if (mic.node) {
+    mic.node.onprocessorerror = null;
+    mic.node.port.onmessage = null;
+    mic.node.port.close();
+    mic.node.disconnect();
+  }
+  mic.source?.disconnect();
+  void mic.stream.then((stream) => stream.getTracks().forEach((track) => track.stop()), () => undefined);
+  void Promise.resolve(mic.context.close()).catch(() => undefined);
+}
+
+/** Opens the warm mic when it is wanted and no recording holds a mic; never retries a mic that failed. */
+function ensureWarm(): void {
+  if (!warmWanted || warm || live.size > 0) return;
+  let mic: Mic;
+  try {
+    mic = openMic();
+  } catch (error) {
+    console.error('Failed to open the warm microphone:', error);
+    return;
+  }
+  warm = mic;
+  // A parked setup that never settles must not hold the device; a recording that adopts it has its own deadline.
+  const timer = setTimeout(() => {
+    if (!mic.running && !mic.owner) closeMic(mic);
+  }, SETUP_TIMEOUT_MS);
+  mic.ready.then(() => clearTimeout(timer), (error: unknown) => {
+    clearTimeout(timer);
+    if (mic.owner) return;
+    console.error('Failed to open the warm microphone:', error);
+    closeMic(mic);
+  });
+}
+
+/**
+ * Idempotent: ends this capture and drops its callbacks. `park` (a clean stop)
+ * keeps the mic as the warm mic when that is wanted; otherwise the mic closes.
+ */
+function release(capture: Capture, park = false): void {
   if (capture.released) return;
   capture.released = true;
-  capture.stopWatchingMic?.();
-  capture.stopWatchingMic = null;
   live.delete(capture);
   if (active === capture) {
     active = null;
     stopLevelTelemetry();
   }
   capture.onStopped?.();
-  if (capture.node) {
-    capture.node.onprocessorerror = null;
-    capture.node.port.onmessage = null;
-    capture.node.port.close();
-    capture.node.disconnect();
-  }
-  capture.source?.disconnect();
-  void capture.mic.then((stream) => stream.getTracks().forEach((track) => track.stop()), () => undefined);
-  void Promise.resolve(capture.context?.close()).catch(() => undefined);
+  const { mic } = capture;
+  mic.owner = null;
+  if (park && warmWanted && !warm && !mic.stale && !mic.closed) warm = mic;
+  else closeMic(mic);
+  // A failed mic is not reopened at once: the next recording opens cold and may park.
+  if (!capture.failure) ensureWarm();
 }
 
 /** Ends the capture without a recording: releases the mic and reports once. */
@@ -316,7 +396,7 @@ function spool(capture: Capture, pcm: Uint8Array<ArrayBuffer>): void {
   write.then(() => {
     capture.writes.delete(write);
     if (capture.released) return;
-    capture.node?.port.postMessage({ type: 'credit' });
+    capture.mic.node?.port.postMessage({ type: 'credit' });
   }, (error: unknown) => {
     fail(capture, error instanceof Error ? error : new Error('Main did not accept spooled audio.'));
   });
@@ -334,13 +414,14 @@ function handleWorkletMessage(capture: Capture, message: WorkletMessage): void {
   }
 
   const { samples } = message;
-  const pcm = capture.convert?.(samples);
-  if (pcm && pcm.byteLength > 0) {
+  const pcm = capture.convert(samples);
+  if (pcm.byteLength > 0) {
     capture.realtime?.push(pcm);
     capture.sampleCount += pcm.byteLength / 2;
     spool(capture, pcm);
-  } else {
-    capture.node?.port.postMessage({ type: 'credit' });
+  } else if (samples.length > 0) {
+    // Nothing to write; return the credit at once. An empty pre-roll spent none.
+    capture.mic.node?.port.postMessage({ type: 'credit' });
   }
 
   let sum = 0;
@@ -348,35 +429,70 @@ function handleWorkletMessage(capture: Capture, message: WorkletMessage): void {
   const level = samples.length > 0 ? sum / samples.length : 0;
   if (capture.onTailBatch) {
     capture.onTailBatch(level > Math.max(SPEECH_FLOOR, capture.peakLevel * SPEECH_RELATIVE));
-  } else {
+  } else if (message.type === 'audio') {
+    // Pre-roll may hold a cue or media from before the press; it never sets the speech reference.
     capture.peakLevel = Math.max(capture.peakLevel, level);
   }
   if (capture === active) latestAudioLevel = Math.min(level * 10, 1);
+  if (message.type === 'started') {
+    capture.lateFrames = message.late;
+    capture.onStopped?.();
+  }
 }
 
-async function setupCapture(capture: Capture): Promise<void> {
-  // Build the context and load the worklet while the mic permission/open is pending.
+/** A fault on the mic fails the recording that owns it, or closes it while it is parked. */
+function micFailed(mic: Mic, error: Error): void {
+  if (mic.owner) fail(mic.owner, error);
+  else closeMic(mic);
+}
+
+/** The ring the worklet keeps while idle. */
+function preRollFrames(context: BaseAudioContext): number {
+  return Math.round(context.sampleRate * PRE_ROLL_MS / 1000);
+}
+
+/** Opens the selected mic. Its worklet stays idle, keeping only the pre-roll ring, until a recording starts it. */
+function openMic(): Mic {
+  // Built first, so a context that cannot be built never opens the mic. The
+  // worklet then loads while the mic permission/open is pending.
   const context = new AudioContext({ sampleRate: STREAM_SAMPLE_RATE });
-  capture.context = context;
-  capture.convert = createPcm16Converter(context.sampleRate);
-  const watchedMic = capture.mic.then(stream => {
-    if (capture.released) return stream;
+  const mic: Mic = {
+    stream: navigator.mediaDevices.getUserMedia(buildConstraints()),
+    ready: Promise.resolve(),
+    context,
+    source: null,
+    node: null,
+    analyser: null,
+    owner: null,
+    stopWatching: null,
+    running: false,
+    closed: false,
+    stale: false,
+  };
+  mic.ready = setupMic(mic);
+  return mic;
+}
+
+async function setupMic(mic: Mic): Promise<void> {
+  const { context } = mic;
+  const watchedMic = mic.stream.then(stream => {
+    if (mic.closed) return stream;
     const tracks = stream.getAudioTracks();
     const disconnected = () => {
       isStreamPrepared = false;
-      fail(capture, new Error('The microphone disconnected or access was revoked. Check the input device and try again.'));
+      micFailed(mic, new Error('The microphone disconnected or access was revoked. Check the input device and try again.'));
     };
-    capture.stopWatchingMic = () => tracks.forEach(track => track.removeEventListener('ended', disconnected));
+    mic.stopWatching = () => tracks.forEach(track => track.removeEventListener('ended', disconnected));
     tracks.forEach(track => track.addEventListener('ended', disconnected));
     if (!tracks.length || tracks.some(track => track.readyState === 'ended')) disconnected();
     return stream;
   });
   const [stream] = await Promise.all([watchedMic, context.audioWorklet.addModule(WORKLET_URL)]);
-  if (capture.released) return;
+  if (mic.closed) return;
   hasAudioPermission = true;
   isStreamPrepared = true;
 
-  capture.source = context.createMediaStreamSource(stream);
+  mic.source = context.createMediaStreamSource(stream);
   // Zero outputs: the worklet is a sink, nothing is played back. The explicit
   // mono input is the single downmix boundary.
   const node = new AudioWorkletNode(context, WORKLET_PROCESSOR, {
@@ -384,69 +500,168 @@ async function setupCapture(capture: Capture): Promise<void> {
     numberOfOutputs: 0,
     channelCount: 1,
     channelCountMode: 'explicit',
+    processorOptions: { preRollFrames: preRollFrames(context) },
   });
-  capture.node = node;
-  node.onprocessorerror = () => fail(capture, new Error('The microphone audio processor failed.'));
-  node.port.onmessage = (event: MessageEvent<WorkletMessage>) => handleWorkletMessage(capture, event.data);
-  capture.source.connect(node);
+  mic.node = node;
+  node.onprocessorerror = () => micFailed(mic, new Error('The microphone audio processor failed.'));
+  node.port.onmessage = (event: MessageEvent<WorkletMessage>) => {
+    if (mic.owner) handleWorkletMessage(mic.owner, event.data);
+  };
+  mic.source.connect(node);
   const analyser = context.createAnalyser();
   analyser.fftSize = ANALYSER_FFT_SIZE;
   // The pill smooths by elapsed time, so the analyser must not smooth per read.
   analyser.smoothingTimeConstant = 0;
-  capture.source.connect(analyser);
-  capture.analyser = analyser;
+  mic.source.connect(analyser);
+  mic.analyser = analyser;
   if (context.state === 'suspended') await context.resume();
-  if (capture.released) return;
-  if (capture === active) startLevelTelemetry();
+  mic.running = true;
 }
 
 /**
- * Opens the selected mic for one recording. The device is fixed at start;
- * later device switches only affect the next recording. Resolves without
- * starting if cancelRecording() lands while permission or worklet setup is pending.
+ * Waits for the mic, then starts its worklet, which hands over ring frames
+ * first. A setup that outlives the deadline finds the capture released;
+ * closing the mic still stops the tracks if it opens late.
  */
-export async function startRecording(options: RecordingOptions): Promise<void> {
-  if (active) return;
+async function admit(capture: Capture, pressFrame: number | null): Promise<void> {
+  const { mic } = capture;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([mic.ready, new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Microphone did not start in time.')), SETUP_TIMEOUT_MS);
+  })]).finally(() => clearTimeout(timer));
+  const { node } = mic;
+  if (capture.released || !node) return;
+  if (capture === active) startLevelTelemetry();
+  // Judged at the handoff, so a cue that started while the mic opened stays out.
+  // A mic not yet running at the press heard nothing before it, so it hands over no ring
+  // (only the few ms it heard while starting): the spool's head is then pre-press audio or nothing.
+  // A warm mic's ring frames after `pressFrame` follow the pre-roll as ordinary audio.
+  const cueFree = pressFrame !== null ? Math.max(0, performance.now() - cueHeldUntil) : 0;
+  const preRoll = Math.round(mic.context.sampleRate * Math.min(PRE_ROLL_MS, cueFree) / 1000);
+  await waitForCapture(capture, STOP_ACK_TIMEOUT_MS, 'Microphone did not start in time.',
+    () => node.port.postMessage({ type: 'start', preRollFrames: preRoll, pressFrame }));
+}
 
+/**
+ * Starts one recording on the warm mic, or opens the selected mic. The device
+ * is fixed at start; later device switches only affect the next recording.
+ * Resolves with the samples heading the spool: those recorded before the press
+ * (warm pre-roll, minus any speaker cue), then those heard since it. Resolves
+ * without starting if cancelRecording() lands while permission or worklet
+ * setup is pending.
+ */
+export async function startRecording(options: RecordingOptions): Promise<CaptureHead> {
+  if (active) return NO_HEAD;
+
+  const adopted = warm;
+  warm = null;
+  const mic = adopted ?? openMic();
   const capture: Capture = {
-    mic: navigator.mediaDevices.getUserMedia(buildConstraints()),
+    mic,
     ready: Promise.resolve(),
-    context: null,
-    source: null,
-    node: null,
-    analyser: null,
-    convert: null,
+    convert: createPcm16Converter(mic.context.sampleRate),
     realtime: options.streaming ? createRealtimeChunker(options.streaming) : null,
     options,
     chunkCount: 0,
     sampleCount: 0,
     writes: new Set(),
     failure: null,
-    stopWatchingMic: null,
     released: false,
     onStopped: null,
     peakLevel: 0,
     onTailBatch: null,
+    lateFrames: 0,
   };
+  mic.owner = capture;
   active = capture;
   live.add(capture);
-  // A setup that outlives the deadline finds the capture released; release()
-  // still stops the tracks if the mic opens late.
-  const setup = setupCapture(capture);
-  setup.catch(() => undefined);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  capture.ready = Promise.race([setup, new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('Microphone did not start in time.')), SETUP_TIMEOUT_MS);
-  })]).finally(() => clearTimeout(timer));
+  // The hotkey on the audio clock: ring frames after it are this recording's audio, not pre-roll.
+  const { pressedAt } = options;
+  const pressFrame = adopted?.running && pressedAt != null
+    ? Math.round((mic.context.currentTime - Math.max(0, Date.now() - pressedAt) / 1000) * mic.context.sampleRate)
+    : null;
+  capture.ready = admit(capture, pressFrame);
 
   try {
     await capture.ready;
   } catch (error) {
-    const cancelled = capture.released;
+    if (capture.released) return NO_HEAD;
+    capture.failure = error instanceof Error ? error : new Error(String(error));
     release(capture);
-    if (!cancelled) throw error;
+    throw error;
   }
+  if (capture.released) return NO_HEAD;
+  return {
+    preRollSamples: capture.sampleCount,
+    lateSamples: Math.round(capture.lateFrames * STREAM_SAMPLE_RATE / mic.context.sampleRate),
+  };
 }
+
+/**
+ * A speaker cue starts now: keep it out of the next recording's pre-roll.
+ * Call the returned function once every cue has stopped sounding. Until then
+ * there is no pre-roll, however late the cue's context starts.
+ */
+export function holdPreRollForCue(): () => void {
+  cueHeldUntil = Infinity;
+  return () => {
+    cueHeldUntil = performance.now() + CUE_OUTPUT_LATENCY_MS;
+  };
+}
+
+/**
+ * Opts the warm microphone in or out. Out closes the parked mic and its ring at
+ * once; a recording in progress keeps its mic and closes it when it ends.
+ */
+export function setWarmMicrophone(enabled: boolean): void {
+  warmWanted = enabled;
+  if (enabled) ensureWarm();
+  else if (warm) closeMic(warm);
+}
+
+/** A recording in progress finishes on its mic and closes after; a parked mic closes now. */
+function retireMic(mic: Mic): void {
+  if (mic.owner) mic.stale = true;
+  else closeMic(mic);
+}
+
+/** The selected device changed: retire every mic and reopen the warm mic on the new device. */
+function retireMics(): void {
+  for (const capture of live) retireMic(capture.mic);
+  if (warm) retireMic(warm);
+  ensureWarm();
+}
+
+/**
+ * The device list changed: retire only mics no longer on the device the next
+ * recording would open. Another device plugged in keeps the mic, so reopening
+ * it cannot loop. Compared by label: Chromium on Windows gives every input the
+ * same groupId, and a track keeps the label it opened with ("Default - …").
+ */
+async function deviceListChanged(): Promise<void> {
+  // A failed check knows nothing about the device, so it keeps the mic and its pre-roll.
+  const devices = await navigator.mediaDevices.enumerateDevices().catch(() => null);
+  if (!devices) return;
+  const inputs = devices.filter((device) => device.kind === 'audioinput');
+  const chosen = getDeviceId();
+  const target = inputs.find((device) => device.deviceId === chosen)
+    ?? inputs.find((device) => device.deviceId === 'default');
+  const parked = warm;
+  const mics = [...live].map((capture) => capture.mic);
+  if (parked) mics.push(parked);
+  let reopen = false;
+  for (const mic of mics) {
+    const stream = await mic.stream.catch(() => null);
+    // A mic that failed or closed meanwhile is its own handler's; it waits for the next recording.
+    if (!stream || mic.closed) continue;
+    if (target && stream.getAudioTracks()[0]?.label === target.label) continue;
+    retireMic(mic);
+    if (mic === parked) reopen = true;
+  }
+  if (reopen) ensureWarm();
+}
+
+navigator.mediaDevices?.addEventListener?.('devicechange', () => void deviceListChanged());
 
 /** Resolves when `onStopped` fires (see Capture), rejects after the deadline. */
 function waitForCapture(capture: Capture, timeoutMs: number, message: string, begin: () => void): Promise<void> {
@@ -503,14 +718,15 @@ export async function stopRecording(tailEndsAt = 0): Promise<CaptureBoundary | n
   if (!capture) return { chunkCount: 0, sampleCount: 0 };
   active = null;
   stopLevelTelemetry();
+  let clean = false;
 
   try {
     await capture.ready;
     if (capture.failure) throw capture.failure;
+    const { node } = capture.mic;
     const maxTailMs = tailEndsAt - Date.now();
-    if (maxTailMs > 0 && capture.node && !capture.released) await keepReleaseTail(capture, maxTailMs);
+    if (maxTailMs > 0 && node && !capture.released) await keepReleaseTail(capture, maxTailMs);
     if (capture.failure) throw capture.failure;
-    const { node } = capture;
     if (node && !capture.released) {
       await waitForCapture(capture, STOP_ACK_TIMEOUT_MS, 'Audio capture did not acknowledge stopping.',
         () => node.port.postMessage({ type: 'stop' }));
@@ -523,23 +739,40 @@ export async function stopRecording(tailEndsAt = 0): Promise<CaptureBoundary | n
     if (capture.failure) throw capture.failure;
     if (capture.released) return null;
     capture.realtime?.finish();
+    // The worklet acknowledged stop, so it is idle again with an empty ring: the mic may park.
+    clean = true;
     return { chunkCount: capture.chunkCount, sampleCount: capture.sampleCount };
+  } catch (error) {
+    // A stop that timed out is an audio failure: its mic is not reopened at once.
+    capture.failure ??= error instanceof Error ? error : new Error(String(error));
+    throw error;
   } finally {
     capture.onStopped = null;
+    release(capture, clean);
+  }
+}
+
+/**
+ * Drops running, starting, and draining audio without emitting a completed
+ * recording. Their mics close, so a dropped utterance never becomes pre-roll.
+ */
+export function cancelRecording(): void {
+  for (const capture of live) {
+    // Main cancels a mic that never finished opening in time: treat it as failed, so it is not reopened at once.
+    if (!capture.mic.running) capture.failure ??= new Error('Cancelled before the microphone opened.');
     release(capture);
   }
 }
 
-/** Drops running, starting, and draining audio without emitting a completed recording. */
-export function cancelRecording(): void {
-  for (const capture of live) release(capture);
-}
-
-/** Device changes re-prepare permission only; a running recording keeps its mic. */
+/** Device changes re-prepare permission and reopen the warm mic; a running recording keeps its mic. */
 export async function recreateStream(deviceId: string | null): Promise<void> {
   setSelectedDeviceId(deviceId);
+  retireMics();
   isStreamPrepared = false;
-  await prepareStream();
+  // Not mid-recording: probing the new mic then could switch a Bluetooth headset's profile under the take.
+  if (live.size > 0) return;
+  // A warm mic just opened on the new device already is the probe.
+  await (warm ? warm.ready : prepareStream());
 }
 
 export function acknowledgeRealtimeChunk(recordingSessionId: string, sequence: number): void {

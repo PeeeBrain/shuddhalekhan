@@ -74,7 +74,8 @@ describe('enumerateDevices', () => {
   });
 });
 
-type PortMessage = { type: 'audio'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
+type PortMessage = { type: 'audio'; samples: Float32Array } | { type: 'started'; samples: Float32Array; late: number }
+  | { type: 'stopped' } | { type: 'overflow' };
 
 /**
  * Fake Web Audio graph. The worklet port behaves like the real one: messages
@@ -94,8 +95,15 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     port: { onmessage: ((event: { data: PortMessage }) => void) | null };
   }> = [];
   const queued: Float32Array[] = [];
+  /** Start commands the worklet received. */
+  const starts: Array<{ preRollFrames?: number; pressFrame?: number | null }> = [];
+  /** What the worklet heard while idle; `start` hands out its newest frames. */
+  let ring: Float32Array = new Float32Array(0);
+  /** The physical device behind the system default; new tracks open on it. */
+  let defaultMic = 'mic-a';
   class MicrophoneTrack extends EventTarget {
     readyState = 'live';
+    readonly label = `Default - ${defaultMic}`;
     stop() { this.readyState = 'ended'; stopTrack(); }
     disconnect() { this.readyState = 'ended'; this.dispatchEvent(new Event('ended')); }
   }
@@ -115,7 +123,11 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
   Object.defineProperty(navigator, 'mediaDevices', {
     configurable: true,
     writable: true,
-    value: { getUserMedia, enumerateDevices: vi.fn(async () => []) },
+    value: Object.assign(new EventTarget(), {
+      getUserMedia,
+      // Chromium on Windows reports one groupId for every input, so it can't tell mics apart.
+      enumerateDevices: vi.fn(async () => [{ kind: 'audioinput', deviceId: 'default', groupId: 'all', label: `Default - ${defaultMic}` }]),
+    }),
   });
   Object.defineProperty(globalThis, 'AudioContext', {
     configurable: true,
@@ -123,6 +135,7 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     value: vi.fn(function AudioContext() {
       return {
         sampleRate,
+        currentTime: 2,
         get state() { return contextState; },
         resume,
         audioWorklet: { addModule: vi.fn(() => moduleGate) },
@@ -151,8 +164,15 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
         port: {
           close: closePort,
           onmessage: null as ((event: { data: PortMessage }) => void) | null,
-          postMessage: (message: { type: string }) => {
+          postMessage: (message: { type: string; preRollFrames?: number; pressFrame?: number | null }) => {
             if (message.type === 'credit') credits += 1;
+            if (message.type === 'start') {
+              starts.push(message);
+              const samples = ring.slice(Math.max(0, ring.length - (message.preRollFrames ?? 0)));
+              ring = new Float32Array(0);
+              void Promise.resolve().then(() => deliver({ type: 'started', samples, late: 0 }));
+              return;
+            }
             if (message.type !== 'stop') return;
             if (!acknowledgeStop) return;
             void Promise.resolve().then(() => {
@@ -179,8 +199,16 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     getUserMedia,
     nodes,
     disconnectMic: () => tracks.at(-1)?.disconnect(),
+    /** The OS device list changed, with the system default now on `mic`. */
+    changeDevices: (mic: string) => {
+      defaultMic = mic;
+      navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+    },
     /** Audio the worklet captured but has not delivered yet. */
     queued,
+    starts,
+    hearWhileIdle: (samples: Float32Array) => { ring = samples; },
+    tracks,
     emit: (samples: Float32Array) => deliver({ type: 'audio', samples }),
     overflow: () => deliver({ type: 'overflow' }),
     /** Credits returned to the worklet so far. */
@@ -629,12 +657,13 @@ describe('recording lifecycle', () => {
     audio.emit(new Float32Array([0.25, 0.25]));
 
     await mod.recreateStream('mic-2');
-    // Only the short-lived permission probe for mic-2 is stopped.
-    expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+    // mic-2 is not even probed until the take ends.
+    expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
     expect(audio.close).not.toHaveBeenCalled();
     audio.emit(new Float32Array([0.5]));
 
     expect(await mod.stopRecording()).toEqual({ chunkCount: 2, sampleCount: 3 });
+    await mod.startRecording(recorder().options);
     expect(audio.getUserMedia).toHaveBeenLastCalledWith({
       audio: expect.objectContaining({ advanced: [{ deviceId: { exact: 'mic-2' } }] }) as MediaTrackConstraints,
     });
@@ -668,7 +697,7 @@ describe('recording lifecycle', () => {
     expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
   });
 
-  it('stops microphone tracks when setup fails after acquisition', async () => {
+  it('never opens the microphone when the audio context cannot be built', async () => {
     const audio = installAudio();
     Object.defineProperty(globalThis, 'AudioContext', {
       configurable: true,
@@ -680,8 +709,7 @@ describe('recording lifecycle', () => {
     const mod = await importFresh();
 
     await expect(mod.startRecording(recorder().options)).rejects.toThrow('Audio context failed');
-    await settle();
-    expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+    expect(audio.getUserMedia).not.toHaveBeenCalled();
   });
 });
 
@@ -755,6 +783,280 @@ describe('warm audio stream', () => {
       intervalSpy.mockRestore();
       clearIntervalSpy.mockRestore();
     }
+  });
+
+  describe('opted in', () => {
+    /** 450 ms at 16 kHz: what the ring hands the next recording. */
+    const PRE_ROLL = 7200;
+    const idle = () => Float32Array.from({ length: 16_000 }, (_, index) => (index % 100) / 1000);
+
+    async function parked() {
+      const audio = installAudio();
+      const mod = await importFresh();
+      mod.setWarmMicrophone(true);
+      await settle();
+      return { audio, mod };
+    }
+
+    it('heads the next recording with the last 450 ms before the press, on the mic it kept open', async () => {
+      const { audio, mod } = await parked();
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+      const heard = idle();
+      audio.hearWhileIdle(heard);
+      const rec = recorder({ pressedAt: Date.now() });
+      expect((await mod.startRecording(rec.options)).preRollSamples).toBe(PRE_ROLL);
+      const speech = new Float32Array(320).fill(0.2);
+      audio.emit(speech);
+
+      expect(await mod.stopRecording()).toEqual({ chunkCount: 2, sampleCount: PRE_ROLL + 320 });
+      expect(rec.samples()).toEqual(pcm16(heard.slice(-PRE_ROLL), speech));
+      // Parked again, not reopened.
+      expect(audio.stopTrack).not.toHaveBeenCalled();
+      // Agent Mode takes the warm mic but none of its pre-roll.
+      audio.hearWhileIdle(idle());
+      expect((await mod.startRecording(recorder().options)).preRollSamples).toBe(0);
+      expect(await mod.stopRecording()).toEqual({ chunkCount: 0, sampleCount: 0 });
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+
+      mod.setWarmMicrophone(false);
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.close).toHaveBeenCalledTimes(1);
+    });
+
+    it("places the press at main's hotkey time on the audio clock, not when the command arrived", async () => {
+      const { audio, mod } = await parked();
+      const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+      try {
+        // The renderer acted 100 ms after the hotkey; the context clock reads 2 s.
+        await mod.startRecording(recorder({ pressedAt: 9_900 }).options);
+      } finally {
+        now.mockRestore();
+      }
+      expect(audio.starts.at(-1)?.pressFrame).toBe(30_400);
+      await mod.stopRecording();
+      mod.setWarmMicrophone(false);
+    });
+
+    it('keeps a soft final word after release even when the pre-roll was loud', async () => {
+      const { audio, mod } = await parked();
+      audio.hearWhileIdle(new Float32Array(16_000).fill(0.9)); // media playing before the press
+      await mod.startRecording(recorder({ pressedAt: Date.now() }).options);
+      audio.emit(new Float32Array(320).fill(0.2));
+      let done = false;
+      const ending = mod.stopRecording(Date.now() + 60_000).then((boundary) => { done = true; return boundary; });
+      await settle(); // the release-tail listener is now hearing
+      audio.emit(new Float32Array(250 * 16).fill(0.03)); // 250 ms of a softer syllable
+      await settle();
+      expect(done).toBe(false);
+      audio.emit(new Float32Array(250 * 16).fill(0.001));
+      expect(await ending).toEqual({ chunkCount: 4, sampleCount: PRE_ROLL + 320 + 500 * 16 });
+      mod.setWarmMicrophone(false);
+    });
+
+    it('hands over no ring from a mic still opening at the press', async () => {
+      // Its ring is startup audio from after the press, maybe a cue: neither is pre-roll.
+      const audio = installAudio();
+      const mod = await importFresh();
+      const open = audio.holdMic();
+      mod.setWarmMicrophone(true);
+      const starting = mod.startRecording(recorder({ pressedAt: Date.now() }).options);
+      audio.hearWhileIdle(idle());
+      open();
+      expect((await starting).preRollSamples).toBe(0);
+      expect(await mod.stopRecording()).toEqual({ chunkCount: 0, sampleCount: 0 });
+      mod.setWarmMicrophone(false);
+    });
+
+    it('keeps a recording cue out of the pre-roll until it has sounded, however late', async () => {
+      const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+      try {
+        const { audio, mod } = await parked();
+        audio.hearWhileIdle(idle());
+        const silent = mod.holdPreRollForCue();
+        // Still not sounded five seconds later: its output woke late.
+        now.mockReturnValue(5_000);
+        expect((await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).preRollSamples).toBe(0);
+        audio.emit(new Float32Array([0.2]));
+        expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 1 });
+
+        // 400 ms after it fell silent, only the 50 ms past its output latency is pre-roll.
+        silent();
+        now.mockReturnValue(5_400);
+        audio.hearWhileIdle(idle());
+        expect((await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).preRollSamples).toBe(800);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('does not reopen a mic whose stop timed out', async () => {
+      const audio = installAudio(false);
+      const mod = await importFresh();
+      mod.setWarmMicrophone(true);
+      await settle();
+      await mod.startRecording(recorder().options);
+      await expect(mod.stopRecording()).rejects.toThrow('did not acknowledge stopping');
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not reopen a mic cancelled before it opened', async () => {
+      // Main's startup deadline cancels a recording whose mic never opened.
+      const audio = installAudio();
+      const mod = await importFresh();
+      const open = audio.holdMic();
+      mod.setWarmMicrophone(true);
+      const starting = mod.startRecording(recorder().options);
+      mod.cancelRecording();
+      open();
+      expect((await starting).preRollSamples).toBe(0);
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not reopen a mic cancelled while its audio was still resuming', async () => {
+      const audio = installAudio();
+      const mod = await importFresh();
+      audio.suspendContext();
+      audio.resume.mockImplementationOnce(() => new Promise(() => undefined));
+      mod.setWarmMicrophone(true);
+      void mod.startRecording(recorder().options).catch(() => undefined);
+      await settle();
+      expect(audio.nodes).toHaveLength(1);
+      mod.cancelRecording();
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes a parked mic whose audio never finishes starting', async () => {
+      const audio = installAudio();
+      const mod = await importFresh();
+      audio.suspendContext();
+      audio.resume.mockImplementationOnce(() => new Promise(() => undefined));
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      try {
+        mod.setWarmMicrophone(true);
+        await settle();
+        expect(audio.nodes).toHaveLength(1);
+        expect(audio.stopTrack).not.toHaveBeenCalled();
+        const calls: unknown[][] = timers.mock.calls;
+        const deadline = calls.find(([, ms]) => ms === 30_000)?.[0] as () => void;
+        deadline();
+      } finally {
+        timers.mockRestore();
+      }
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      mod.setWarmMicrophone(false);
+    });
+
+    it('does not reopen a parked mic that closed while a device change was checking it', async () => {
+      const audio = installAudio();
+      const mod = await importFresh();
+      const open = audio.holdMic();
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      try {
+        mod.setWarmMicrophone(true);
+        audio.changeDevices('mic-b');
+        await settle();
+        // The idle setup deadline closes it while the check waits on its stream.
+        const calls: unknown[][] = timers.mock.calls;
+        const deadline = calls.find(([, ms]) => ms === 30_000)?.[0] as () => void;
+        deadline();
+      } finally {
+        timers.mockRestore();
+      }
+      open();
+      await settle();
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+      mod.setWarmMicrophone(false);
+    });
+
+    it('closes the mic on cancel so the dropped utterance never becomes pre-roll', async () => {
+      const { audio, mod } = await parked();
+      await mod.startRecording(recorder().options);
+      audio.emit(new Float32Array(320).fill(0.2));
+      mod.cancelRecording();
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.close).toHaveBeenCalledTimes(1);
+      // A fresh mic, with a fresh ring, is kept ready instead.
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
+    });
+
+    it('reopens on the new device when the system default changes', async () => {
+      const { audio, mod } = await parked();
+      audio.changeDevices('mic-b');
+      await settle();
+      expect(audio.stopTrack).toHaveBeenCalledTimes(1);
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
+      expect(audio.tracks.at(-1)?.label).toBe('Default - mic-b');
+      mod.setWarmMicrophone(false);
+    });
+
+    it('opens a newly chosen mic once while idle, not again to probe it', async () => {
+      const { audio, mod } = await parked();
+      await mod.recreateStream('mic-2');
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
+      expect(audio.tracks.at(-1)?.readyState).toBe('live');
+      mod.setWarmMicrophone(false);
+    });
+
+    it('keeps the parked mic when the device list changes but its device does not', async () => {
+      // Another device plugged in.
+      const { audio, mod } = await parked();
+      audio.changeDevices('mic-a');
+      await settle();
+      expect(audio.stopTrack).not.toHaveBeenCalled();
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+      mod.setWarmMicrophone(false);
+    });
+
+    it('keeps the parked mic when the device list cannot be read', async () => {
+      const { audio, mod } = await parked();
+      (navigator.mediaDevices.enumerateDevices as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('busy'));
+      audio.changeDevices('mic-a');
+      await settle();
+      expect(audio.stopTrack).not.toHaveBeenCalled();
+      mod.setWarmMicrophone(false);
+    });
+
+    it('finishes a recording on the old mic when a new one is chosen, then keeps the new one ready', async () => {
+      const { audio, mod } = await parked();
+      await mod.startRecording(recorder().options);
+      await mod.recreateStream('mic-2');
+      // Nothing opens the new mic while the take is still recording.
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+      expect(audio.tracks[0]?.readyState).toBe('live');
+      await mod.stopRecording();
+      await settle();
+      expect(audio.tracks[0]?.readyState).toBe('ended');
+      expect(audio.getUserMedia).toHaveBeenLastCalledWith({
+        audio: expect.objectContaining({ advanced: [{ deviceId: { exact: 'mic-2' } }] }) as MediaTrackConstraints,
+      });
+      expect(audio.tracks.at(-1)?.readyState).toBe('live');
+      mod.setWarmMicrophone(false);
+    });
+
+    it('releases a parked mic that disconnects and does not reopen it until the next recording', async () => {
+      const { audio, mod } = await parked();
+      audio.disconnectMic();
+      expect(audio.close).toHaveBeenCalledTimes(1);
+      // Nor when the device list then changes, as it does for an unplug.
+      audio.changeDevices('mic-a');
+      await settle();
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+
+      expect((await mod.startRecording(recorder().options)).preRollSamples).toBe(0);
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
+      mod.setWarmMicrophone(false);
+      await mod.stopRecording();
+      expect(audio.close).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('re-prepares microphone permission with the new device on device change', async () => {

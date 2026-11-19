@@ -611,7 +611,7 @@ describe('RecordingSession', () => {
       const ending = phase === 'stopping' ? recording.end() : null;
       await recording.cancel();
       expect(send).toHaveBeenCalledWith('runtime:audio-cancel', {
-        generation: 1, recordingSessionId: 'cancelled-capture', sequence: 1, streaming: false,
+        generation: 1, recordingSessionId: 'cancelled-capture', sequence: 1, streaming: false, pressedAt: expect.any(Number),
       });
       expect(shell.acceptsAudioEvent(1, 'cancelled-capture', 1)).toBe(false);
       expect(recording.isBusy()).toBe(false);
@@ -735,7 +735,7 @@ describe('RecordingSession', () => {
     expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.objectContaining({
       recordingSessionId: 'runtime-session',
       capabilities: { batch: true, streaming: false },
-    }));
+    }), expect.any(Number));
     expect(runtimeShell.show).toHaveBeenCalledWith(
       'dictation',
       'runtime-session',
@@ -887,12 +887,14 @@ describe('RecordingSession', () => {
   });
 
   it.each([
-    ['unlimited Dictation', 'dictation', null, 5_000, 600],
-    ['Agent Mode', 'agent', null, 5_000, 0],
-    ['Dictation near a 30 s cap', 'dictation', 30, 29_500, 400],
-    ['Dictation at a 30 s cap', 'dictation', 30, 29_950, 0],
+    ['unlimited Dictation', 'dictation', null, 5_000, 600, 0],
+    ['Agent Mode', 'agent', null, 5_000, 0, 0],
+    ['Dictation near a 30 s cap', 'dictation', 30, 29_500, 400, 0],
+    ['Dictation at a 30 s cap', 'dictation', 30, 29_950, 0, 0],
+    ['Dictation whose 450 ms pre-roll counts against a 30 s cap', 'dictation', 30, 29_000, 450, 7_200],
   ] as const)('a user Stop keeps a release tail bounded by intent and provider cap: %s', async (
     _case: string, intent: RecordingIntent, maxDurationSeconds: number | null, elapsedMs: number, tailMs: number,
+    preRollSamples: number,
   ) => {
     session = createSession({
       runtimeShell: audioStream,
@@ -910,7 +912,7 @@ describe('RecordingSession', () => {
     const now = Date.now();
     const clock = spyOn(Date, 'now').mockReturnValue(now);
     try {
-      ready({ sender }, 1, command.recordingSessionId, command.sequence);
+      ready({ sender }, 1, command.recordingSessionId, command.sequence, preRollSamples);
       clock.mockReturnValue(now + elapsedMs);
       hook?.onStop();
     } finally {
@@ -1040,6 +1042,23 @@ describe('RecordingSession', () => {
     expect(audioStream.beginCapture).toHaveBeenCalledTimes(1);
   });
 
+  it('counts warm pre-roll against a duration-limited provider', () => {
+    const delays: number[] = [];
+    session = createSession({
+      runtimeShell: audioStream,
+      transcriber: { ...createTranscriber(async () => 'text'), capabilities: { maxDurationSeconds: 55 } },
+      setTimeoutFn: ((_callback: () => void, delay: number) => { delays.push(delay); return 0; }) as unknown as typeof setTimeout,
+      clearTimeoutFn: (() => undefined) as typeof clearTimeout,
+    });
+    const markReady = captureReadyEmitter();
+    session.begin('dictation', 'warm-limited');
+    delays.length = 0;
+    markReady(7_200);
+    expect(delays.at(0)).toBe(45_000 - 450);
+    expect(delays.at(-1)).toBe(55_000 - 450);
+    void session.cancel();
+  });
+
   it('does not double-invoke onResult when triggered via keyboard hook', async () => {
     const onResult = vi.fn();
     session = createSession({
@@ -1126,6 +1145,8 @@ describe('RecordingSession', () => {
 
     session.start();
     session.begin('dictation', 'live-session');
+    // Live recognition cannot wait for the silence gate, so it takes no warm-mic pre-roll.
+    expect(runtimeShell.beginCapture).toHaveBeenCalledWith(expect.anything(), null);
     publishSnapshot({ sequence: 0, committed: 'Hello ', tentative: 'Hello wor' });
     expect(runtimeShell.showStreamingPreview).toHaveBeenCalledWith(
       'live-session',
@@ -1356,9 +1377,9 @@ describe('RecordingSession', () => {
     audioStream.getWebContents.mockReturnValue(sender);
     session.start();
     const ready = electronMock.ipcMain.on.mock.calls.find((call: unknown[]) => call[0] === 'runtime:audio-ready')?.[1];
-    return () => {
+    return (preRollSamples: unknown = 0, lateSamples: unknown = 0) => {
       const command = audioStream.beginCapture.mock.calls.at(-1)?.[0];
-      ready({ sender }, 1, command.recordingSessionId, command.sequence);
+      ready({ sender }, 1, command.recordingSessionId, command.sequence, preRollSamples, lateSamples);
     };
   }
 
@@ -1386,25 +1407,96 @@ describe('RecordingSession', () => {
   });
 
   it.each([
-    { name: 'discards a Dictation whose only sound is the Start cue', cued: true, recognized: false },
-    { name: 'still recognizes a sound in the head when no Start cue played', cued: false, recognized: true },
-  ])('$name', async ({ cued, recognized }: { cued: boolean; recognized: boolean }) => {
+    { name: 'discards a Dictation whose only sound is the Start cue', cued: true, preRoll: 0, toneAt: 0, recognized: false },
+    { name: 'still recognizes a sound in the head when no Start cue played', cued: false, preRoll: 0, toneAt: 0, recognized: true },
+    { name: 'discards a Dictation whose only sound is in the warm pre-roll', cued: false, preRoll: 7_200, toneAt: 0, recognized: false },
+    { name: 'skips the Start cue after the pre-roll, not over it', cued: true, preRoll: 7_200, toneAt: 12_000, recognized: true },
+    // Capture-ready came 320 ms after the press, so the cue sounds after that much post-press audio.
+    { name: 'skips a Start cue that sounds after audio heard since the press', cued: true, preRoll: 2_080, late: 5_120, toneAt: 7_520, recognized: false },
+    { name: 'never lets a claimed pre-roll hide more than 450 ms', cued: false, preRoll: 1e9, toneAt: 7_200, recognized: true },
+    { name: 'skips a pre-roll whose ready ack lands after Stop', cued: false, preRoll: 7_200, toneAt: 0, recognized: false, stopFirst: true },
+  ])('$name', async ({ cued, preRoll, late = 0, toneAt, recognized, stopFirst = false }: {
+    cued: boolean; preRoll: number; late?: number; toneAt: number; recognized: boolean; stopFirst?: boolean;
+  }) => {
     audioStream.playCue.mockReturnValue(cued);
     const markReady = captureReadyEmitter();
-    // 250 ms of a -23 dBFS tone, as a speaker playing the cue would leave, then a second of faint room noise.
+    // 250 ms of a -23 dBFS tone, as a speaker playing the cue would leave, in faint room noise.
     const pcm = new Int16Array(16_000 * 1.25);
     for (let i = 0; i < pcm.length; i++) {
-      pcm[i] = i < 4_000 ?Math.round(2_300 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2;
+      pcm[i] = i >= toneAt && i < toneAt + 4_000 ? Math.round(2_300 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2;
     }
     const wav = new Uint8Array(44 + pcm.byteLength);
     wav.set(new Uint8Array(pcm.buffer), 44);
 
     session.begin('dictation', 'head');
+    if (!stopFirst) markReady(preRoll, late);
+    const ending = session.end();
+    if (stopFirst) markReady(preRoll, late);
+    await session.complete(wav);
+    await ending;
+    expect(transcribe).toHaveBeenCalledTimes(recognized ? 1 : 0);
+  });
+
+  it.each([
+    ['sends a provider no more samples than its duration cap', 0, [32_000, 32_000, 32_000]],
+    ['judges silence only on samples within the cap', 16_000, []],
+  ] as const)('%s, however late capture stopped', async (_case: string, speechFrom: number, expected: readonly number[]) => {
+    const sent: number[] = [];
+    session = createSession({
+      transcriber: {
+        ...createTranscriber(async ({ audio }) => {
+          const view = new DataView(audio.buffer, audio.byteOffset, audio.byteLength);
+          sent.push(audio.byteLength - 44, view.getUint32(40, true), view.getUint32(4, true) - 36);
+          return 'text';
+        }),
+        capabilities: { maxDurationSeconds: 1 },
+      },
+    });
+    const markReady = captureReadyEmitter();
+    // 1.5 s, where a stalled cap timer let capture run 0.5 s past a 1 s limit; faint room noise before the speech.
+    const pcm = new Int16Array(24_000).map((_, i) => i >= speechFrom ? Math.round(8_000 * Math.sin(i * 0.25)) : ((i * 7919) % 5) - 2);
+    const wav = new Uint8Array(44 + pcm.byteLength);
+    wav.set(new Uint8Array(pcm.buffer), 44);
+
+    session.begin('dictation', 'cap');
     markReady();
     const ending = session.end();
     await session.complete(wav);
     await ending;
-    expect(transcribe).toHaveBeenCalledTimes(recognized ? 1 : 0);
+    expect(sent).toEqual(expected);
+  });
+
+  const tone = (i: number) => Math.round(8_000 * Math.sin(i * 0.25));
+  const room = (i: number) => ((i * 7919) % 5) - 2;
+  it.each([
+    // A TV word ending 10 ms before the press at 450 ms, speech from 500 ms: a 60 ms pause off the
+    // 30 ms grid, so no two grid windows are both quiet. The whole pre-roll goes.
+    ['drops pre-roll a pause across the press separates from speech',
+      (i: number) => i < 7_040 || i >= 8_000 ? tone(i) : room(i), [16_800, 16_800, 16_800]],
+    // Speech from 300 ms, running into the press: kept from 30 ms before it.
+    ['keeps pre-roll speech running into the press', (i: number) => i >= 4_800 ? tone(i) : room(i), [19_680, 19_680, 19_680]],
+    // The dropped TV word still shows the mic works, so the flat rest is not sent as a device problem.
+    ['discards a Dictation whose only sound is pre-roll it drops', (i: number) => i < 2_400 ? tone(i) : 0, []],
+  ] as const)('%s', async (_case: string, sample: (i: number) => number, expected: readonly number[]) => {
+    const sent: number[] = [];
+    session = createSession({
+      transcriber: createTranscriber(async ({ audio }) => {
+        const view = new DataView(audio.buffer, audio.byteOffset, audio.byteLength);
+        sent.push(audio.byteLength - 44, view.getUint32(40, true), view.getUint32(4, true) - 36);
+        return 'text';
+      }),
+    });
+    const markReady = captureReadyEmitter();
+    const pcm = new Int16Array(24_000).map((_, i) => sample(i));
+    const wav = new Uint8Array(44 + pcm.byteLength);
+    wav.set(new Uint8Array(pcm.buffer), 44);
+
+    session.begin('dictation', 'lead');
+    markReady(7_200);
+    const ending = session.end();
+    await session.complete(wav);
+    await ending;
+    expect(sent).toEqual(expected.map(samples => samples * 2));
   });
 
   it('ends a Dictation stopped before the microphone delivered audio quietly, cancelling its stream', async () => {

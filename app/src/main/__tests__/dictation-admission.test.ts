@@ -34,4 +34,12 @@ describe('isNearSilent', () => {
   ] as const)('%s → %p', (_name: string, pcm: Int16Array, silent: boolean) => {
     expect(isNearSilent(pcm)).toBe(silent);
   });
+
+  it('judges only audio after the skipped prefix', () => {
+    const media = noise(-30, ms(450));
+    expect(isNearSilent(clip(media, noise(-72, ms(1000))), ms(450))).toBe(true);
+    // The device worked a moment ago, so zeros after the press are not a device diagnostic.
+    expect(isNearSilent(clip(media, new Array(ms(1000)).fill(0)), ms(450))).toBe(true);
+    expect(isNearSilent(clip(new Array(ms(1450)).fill(0)), ms(450))).toBe(false);
+  });
 });

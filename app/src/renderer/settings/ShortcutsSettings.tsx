@@ -27,7 +27,6 @@ import {
 } from './shortcut-capture';
 import type { DesktopStatus } from '../../shared/desktop-status';
 import { activeTrigger, useDesktopStatus } from './use-desktop-status';
-import { playRecordingCue } from '../recording-cues';
 
 /** Starting and capturing own main's shortcut suspension; confirming has already released it. */
 type CaptureFlow =
@@ -113,6 +112,14 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
             value={hasChosenMicrophone(config.selectedDeviceId) ? config.selectedDeviceId : 'System default'}
           />
           <ToggleRow
+            title="Keep microphone ready"
+            description="Starts recording instantly and keeps the half second before you press the Dictation shortcut, so your first word is not cut off (WhisperLiveKit's live previews start at the press). That half second is held only in memory and is sent only when you dictate. The microphone stays on between recordings: your system shows it in use, and Bluetooth headsets may stay in lower-quality call audio."
+            checked={config.warmMicrophone}
+            errorId="warm-microphone-error"
+            error={persistence.fieldErrors['warm-microphone']}
+            onChange={(value) => void persistence.commit('warmMicrophone', value, 'warm-microphone')}
+          />
+          <ToggleRow
             title="Recording sounds"
             description="A quiet cue when recording starts, when it stops, and when something fails."
             checked={config.recordingSounds}
@@ -124,7 +131,7 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
             <div className="-mt-1 flex items-center gap-1 pb-3">
               <span className="mr-1 text-xs text-muted-foreground">Preview</span>
               {(['start', 'stop', 'error'] as const).map((cue) => (
-                <Button key={cue} type="button" variant="ghost" size="sm" onClick={() => playRecordingCue(cue)}>
+                <Button key={cue} type="button" variant="ghost" size="sm" onClick={() => void settingsIpc.previewCue(cue)}>
                   {cue[0].toUpperCase() + cue.slice(1)}
                 </Button>
               ))}

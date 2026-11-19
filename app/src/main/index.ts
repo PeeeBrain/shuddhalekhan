@@ -459,8 +459,24 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
 // Never leave global shortcut activation suspended after capture ends.
 setSettingsWindowClosedHandler(() => keyboardHook.setCaptureSuspended(false));
 
+let suspended = false;
+let screenLocked = false;
+
+/** Keeps the mic warm only while opted in, the Dictation shortcut can start a recording, and the machine is awake and unlocked. */
+function publishWarmMicrophone(): void {
+  const { warmMicrophone, shortcuts } = getConfig();
+  // Portal and X11 report the trigger the desktop actually assigned, which can refuse the saved chord
+  // or lag a cleared one; until Linux has answered, nothing can start a Dictation.
+  const { backend } = desktopShortcuts;
+  const canDictate = shortcuts.dictation.binding !== null && (backend === 'portal' || backend === 'x11'
+    ? Boolean(desktopShortcuts.triggers.dictation)
+    : backend !== 'initializing' && backend !== 'unavailable');
+  runtimeShell.setWarmMicrophone(warmMicrophone && canDictate && !keyboardHook.isPaused() && !suspended && !screenLocked);
+}
+
 function setShortcutsPaused(paused: boolean): void {
   keyboardHook.setPaused(paused);
+  publishWarmMicrophone();
   updateShortcutPauseState(paused);
   const settingsWin = getSettingsWindow();
   if (settingsWin && !settingsWin.isDestroyed()) {
@@ -665,6 +681,10 @@ handle('shortcuts:end-capture', () => {
   keyboardHook.setCaptureSuspended(false);
 });
 
+handle('cue:preview', (_event, cue) => {
+  if (cue === 'start' || cue === 'stop' || cue === 'error') runtimeShell.playCue(cue);
+});
+
 handle('transcription:check-server', () => checkTranscriptionServer(getConfig()));
 handle('transcription:check-readiness', () => checkTranscriptionReadiness(
   getConfig(), credentialVault,
@@ -699,6 +719,7 @@ async function applyConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K
   }
   cachedAgentEnabled = config.agent.enabled;
   if (key === 'shortcuts' || key === 'agent') keyboardHook.refreshShortcuts();
+  publishWarmMicrophone();
   await releaseUnusedTranscriber(previousConfig, config);
   const sidecarAction = getSidecarConfigAction(previousConfig, config);
   if (sidecarAction === 'stop') {
@@ -812,6 +833,7 @@ if (!gotSingleInstanceLock) {
     keyboardHook.setLinuxShortcutStatusListener(status => {
       desktopShortcuts = status;
       publishDesktopStatus();
+      publishWarmMicrophone();
       if (status.backend === 'unavailable') {
         void dialog.showMessageBox({
           type: 'warning', title: 'Shortcuts unavailable',
@@ -832,16 +854,37 @@ if (!gotSingleInstanceLock) {
     try {
       recordingSession.start();
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      // Nothing can start a Dictation now, so the warm mic stays closed and Settings says why.
+      desktopShortcuts = { backend: 'unavailable', error: detail };
+      publishDesktopStatus();
       void dialog.showMessageBox({
         type: 'warning',
         title: 'Shortcuts unavailable',
         message: 'Shuddhalekhan could not listen for its keyboard shortcuts.',
-        detail: error instanceof Error ? error.message : String(error),
+        detail,
       });
     }
-    const failClosed = () => { void recordingSession.cancel(); };
-    powerMonitor.on('suspend', failClosed);
-    powerMonitor.on('lock-screen', failClosed);
+    // Sleep and lock release the warm mic before cancelling, so the cancel does not reopen it.
+    powerMonitor.on('suspend', () => {
+      suspended = true;
+      publishWarmMicrophone();
+      void recordingSession.cancel();
+    });
+    powerMonitor.on('lock-screen', () => {
+      screenLocked = true;
+      publishWarmMicrophone();
+      void recordingSession.cancel();
+    });
+    powerMonitor.on('resume', () => {
+      suspended = false;
+      publishWarmMicrophone();
+    });
+    powerMonitor.on('unlock-screen', () => {
+      screenLocked = false;
+      publishWarmMicrophone();
+    });
+    publishWarmMicrophone();
 
     createTray({
       onOpenSettings: () => openSettingsWindow(),

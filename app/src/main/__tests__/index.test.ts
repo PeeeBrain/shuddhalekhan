@@ -120,6 +120,7 @@ const runtimeShellDismissAgentCard = vi.fn();
 const runtimeShellGetPendingApproval = vi.fn((): { serverId: string; toolName: string } | null => null);
 const runtimeShellGetPresentedCompletedRunId = vi.fn((): string | null => null);
 const runtimeShellHandleAgentCardSize = vi.fn();
+const runtimeShellSetWarmMicrophone = vi.fn();
 const applyDictationFormatter = vi.fn();
 
 // Mock RecordingSession
@@ -139,6 +140,7 @@ const keyboardIsPaused = vi.fn(() => false);
 const keyboardSetCaptureSuspended = vi.fn();
 const setSettingsWindowClosedHandler = vi.fn();
 const updateShortcutPauseState = vi.fn();
+const keyboardSetLinuxShortcutStatusListener = vi.fn();
 
 mock.module('../native/keyboard', () => ({
   keyboardHook: {
@@ -150,7 +152,7 @@ mock.module('../native/keyboard', () => ({
     waitForKeysReleased: keyboardWaitForRelease,
     waitForShortcutDeactivation: vi.fn(async () => true),
     refreshShortcuts: vi.fn(),
-    setLinuxShortcutStatusListener: vi.fn(),
+    setLinuxShortcutStatusListener: keyboardSetLinuxShortcutStatusListener,
   },
 }));
 const kdeFocus = { windowId: 'kwin-1', epoch: 3, appId: 'org.kde.kate' };
@@ -239,6 +241,7 @@ mock.module('../runtime-shell', () => ({
     getPendingApproval = runtimeShellGetPendingApproval;
     getPresentedCompletedRunId = runtimeShellGetPresentedCompletedRunId;
     handleAgentCardSize = runtimeShellHandleAgentCardSize;
+    setWarmMicrophone = runtimeShellSetWarmMicrophone;
   },
 }));
 mock.module('../dictation-formatter', () => ({ applyDictationFormatter }));
@@ -411,6 +414,7 @@ describe('main process IPC orchestration', () => {
     runtimeShellShowAgentFailed.mockClear();
     runtimeShellDismissAgentCard.mockClear();
     runtimeShellHandleAgentCardSize.mockClear();
+    runtimeShellSetWarmMicrophone.mockClear();
     applyDictationFormatter.mockReset();
     applyDictationFormatter.mockResolvedValue({ kind: 'success', text: 'formatted text' });
     getConfig.mockReturnValue(baseConfig);
@@ -1269,14 +1273,50 @@ describe('main process IPC orchestration', () => {
     );
   });
 
-  it('fails active recording closed on screen lock and suspend', async () => {
+  it('releases the warm microphone and fails active recording closed on screen lock and suspend', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, warmMicrophone: true });
     await import(`../index?test=${Date.now()}-power-events`);
     await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(true);
 
     powerMonitorListeners.get('lock-screen')?.();
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
+    powerMonitorListeners.get('unlock-screen')?.();
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(true);
     powerMonitorListeners.get('suspend')?.();
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
 
     expect(recordingSessionCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the warm microphone closed when the keyboard hook cannot be installed', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, warmMicrophone: true });
+    recordingSessionStart.mockImplementationOnce(() => { throw new Error('Failed to install keyboard hook'); });
+    await import(`../index?test=${Date.now()}-hook-failed`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(runtimeShellSetWarmMicrophone).not.toHaveBeenLastCalledWith(true);
+  });
+
+  it('keeps the warm microphone only while the Linux desktop has assigned a Dictation trigger', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, warmMicrophone: true });
+    await import(`../index?test=${Date.now()}-linux-trigger`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const onStatus = keyboardSetLinuxShortcutStatusListener.mock.calls.at(-1)?.[0];
+
+    // The saved chord stays in config, but X11 refused to register it.
+    onStatus({ backend: 'x11', triggers: { dictation: null, agent: 'Ctrl+Alt+A' } });
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
+    onStatus({ backend: 'portal', triggers: { dictation: 'Ctrl+Alt+D' } });
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(true);
+
+    // Dictation cleared: the portal still reports the old trigger until its rebind finishes.
+    getConfig.mockReturnValue({
+      ...baseConfig,
+      warmMicrophone: true,
+      shortcuts: { ...baseConfig.shortcuts, dictation: { ...baseConfig.shortcuts.dictation, binding: null } },
+    });
+    onStatus({ backend: 'portal', triggers: { dictation: 'Ctrl+Alt+D' } });
+    expect(runtimeShellSetWarmMicrophone).toHaveBeenLastCalledWith(false);
   });
 
   it('starts the agent sidecar on app ready when persisted Agent Mode is enabled', async () => {
