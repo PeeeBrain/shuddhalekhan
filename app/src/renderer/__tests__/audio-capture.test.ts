@@ -100,11 +100,10 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
   /** What the worklet heard while idle; `start` hands out its newest frames. */
   let ring: Float32Array = new Float32Array(0);
   /** The physical device behind the system default; new tracks open on it. */
-  let defaultGroup = 'mic-a';
+  let defaultMic = 'mic-a';
   class MicrophoneTrack extends EventTarget {
     readyState = 'live';
-    readonly groupId = defaultGroup;
-    getSettings() { return { groupId: this.groupId }; }
+    readonly label = `Default - ${defaultMic}`;
     stop() { this.readyState = 'ended'; stopTrack(); }
     disconnect() { this.readyState = 'ended'; this.dispatchEvent(new Event('ended')); }
   }
@@ -126,7 +125,8 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     writable: true,
     value: Object.assign(new EventTarget(), {
       getUserMedia,
-      enumerateDevices: vi.fn(async () => [{ kind: 'audioinput', deviceId: 'default', groupId: defaultGroup }]),
+      // Chromium on Windows reports one groupId for every input, so it can't tell mics apart.
+      enumerateDevices: vi.fn(async () => [{ kind: 'audioinput', deviceId: 'default', groupId: 'all', label: `Default - ${defaultMic}` }]),
     }),
   });
   Object.defineProperty(globalThis, 'AudioContext', {
@@ -199,9 +199,9 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
     getUserMedia,
     nodes,
     disconnectMic: () => tracks.at(-1)?.disconnect(),
-    /** The OS device list changed, with the system default now on `group`. */
-    changeDevices: (group: string) => {
-      defaultGroup = group;
+    /** The OS device list changed, with the system default now on `mic`. */
+    changeDevices: (mic: string) => {
+      defaultMic = mic;
       navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
     },
     /** Audio the worklet captured but has not delivered yet. */
@@ -993,7 +993,7 @@ describe('warm audio stream', () => {
       await settle();
       expect(audio.stopTrack).toHaveBeenCalledTimes(1);
       expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
-      expect(audio.tracks.at(-1)?.groupId).toBe('mic-b');
+      expect(audio.tracks.at(-1)?.label).toBe('Default - mic-b');
       mod.setWarmMicrophone(false);
     });
 
@@ -1006,7 +1006,7 @@ describe('warm audio stream', () => {
     });
 
     it('keeps the parked mic when the device list changes but its device does not', async () => {
-      // A Bluetooth headset switching profiles, or another device plugged in.
+      // Another device plugged in.
       const { audio, mod } = await parked();
       audio.changeDevices('mic-a');
       await settle();

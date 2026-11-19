@@ -634,8 +634,9 @@ function retireMics(): void {
 
 /**
  * The device list changed: retire only mics no longer on the device the next
- * recording would open. A headset switching profiles, or another device
- * plugged in, keeps the mic, so reopening it cannot loop.
+ * recording would open. Another device plugged in keeps the mic, so reopening
+ * it cannot loop. Compared by label: Chromium on Windows gives every input the
+ * same groupId, and a track keeps the label it opened with ("Default - …").
  */
 async function deviceListChanged(): Promise<void> {
   const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
@@ -651,8 +652,7 @@ async function deviceListChanged(): Promise<void> {
     const stream = await mic.stream.catch(() => null);
     // A mic that failed or closed meanwhile is its own handler's; it waits for the next recording.
     if (!stream || mic.closed) continue;
-    const groupId = stream.getAudioTracks()[0]?.getSettings().groupId;
-    if (target && groupId === target.groupId) continue;
+    if (target && stream.getAudioTracks()[0]?.label === target.label) continue;
     retireMic(mic);
     if (mic === parked) reopen = true;
   }
