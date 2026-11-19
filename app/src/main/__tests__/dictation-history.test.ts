@@ -15,8 +15,10 @@ import { openAuditDatabase } from '../../shared/audit-sqlite';
 
 const dirs: string[] = [];
 const dbs: Array<ReturnType<typeof openAuditDatabase>> = [];
-// Windows cannot delete a folder while SQLite holds files in it.
+const statements: Array<{ finalize?(): unknown }> = [];
+// Windows cannot delete a folder while SQLite holds files in it, and bun:sqlite only closes once statements are finalized.
 afterEach(() => {
+  for (const statement of statements.splice(0)) statement.finalize?.();
   for (const db of dbs.splice(0)) db.close();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -26,7 +28,11 @@ function open(days: { value: number }) {
   if (!dirs.length) dirs.push(mkdtempSync(join(tmpdir(), 'dictation-history-')));
   const db = openAuditDatabase(join(dirs[0], 'history.sqlite'));
   dbs.push(db);
-  return new DictationHistory(db as unknown as HistoryDatabase, () => days.value);
+  const tracked = {
+    exec: (sql: string) => db.exec(sql),
+    prepare: (sql: string) => { const statement = db.prepare(sql); statements.push(statement); return statement; },
+  };
+  return new DictationHistory(tracked as unknown as HistoryDatabase, () => days.value);
 }
 
 const entry = (text: string, overrides: Partial<DictationHistoryEntry> = {}) => ({
