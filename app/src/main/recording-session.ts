@@ -93,7 +93,7 @@ interface RecordingRunContext {
   recordingSince: number | null;
   /** Warm pre-roll heading the spool, in 16 kHz samples. */
   preRollSamples: number;
-  /** Head samples the silence gate skips: warm pre-roll, then the Start cue if it played at capture-ready. */
+  /** Head samples the silence gate skips: warm pre-roll, or through the Start cue if it played at capture-ready. */
   gateSkipSamples: number;
   abort: AbortController;
   dictation: DictationDeliveryContext | null;
@@ -664,25 +664,30 @@ export class RecordingSession {
     recordingSessionId: string,
     sequence: number,
     preRollSamples: unknown,
+    lateSamples: unknown,
   ): void => {
     const run = this.activeRun;
     if (!run || run.id !== recordingSessionId || run.sequence !== sequence) return;
     if (!event.sender || event.sender !== this.runtimeShell.getWebContents()) return;
     if (!this.runtimeShell.acceptsAudioEvent(generation, recordingSessionId, sequence)) return;
-    const preRoll = Number.isSafeInteger(preRollSamples) && Number(preRollSamples) > 0
-      ? Math.min(Number(preRollSamples), MAX_PRE_ROLL_SAMPLES)
+    // Both come from the warm ring, so together they never exceed it.
+    const ringSamples = (value: unknown, max: number) => Number.isSafeInteger(value) && Number(value) > 0
+      ? Math.min(Number(value), max)
       : 0;
+    const preRoll = ringSamples(preRollSamples, MAX_PRE_ROLL_SAMPLES);
+    const late = ringSamples(lateSamples, MAX_PRE_ROLL_SAMPLES - preRoll);
     // A Stop that beat this ack still spools the pre-roll: the gate must skip it.
     if (run.state === 'stopping' && run.recordingSince === null) run.gateSkipSamples = run.preRollSamples = preRoll;
     if (run.state !== 'starting') return;
     run.state = 'recording';
     run.preRollSamples = preRoll;
-    markTiming('capture-ready', { preRollSamples: preRoll });
-    const preRollMs = preRoll * 1000 / 16_000;
-    run.recordingSince = Date.now() - preRollMs;
+    markTiming('capture-ready', { preRollSamples: preRoll, lateSamples: late });
+    const heldMs = (preRoll + late) * 1000 / 16_000;
+    run.recordingSince = Date.now() - heldMs;
     this.runtimeShell.markCaptureReady(run.id);
-    run.gateSkipSamples = preRoll + (this.runtimeShell.playCue('start') ? START_CUE_HEAD_SAMPLES : 0);
-    this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds, preRollMs);
+    // The cue sounds after the audio already held, so the gate skips up to its end.
+    run.gateSkipSamples = this.runtimeShell.playCue('start') ? preRoll + late + START_CUE_HEAD_SAMPLES : preRoll;
+    this.scheduleDurationLimit(run.transcriber.capabilities.maxDurationSeconds, heldMs);
   };
 
   private handleRuntimeAudioChunk = async (

@@ -17,7 +17,7 @@ mock.module('../audio-capture', () => ({
   enumerateDevices: () => Promise.resolve([]),
   startRecording: (options: RecordingOptions) => {
     recording = options;
-    return Promise.resolve();
+    return Promise.resolve({ preRollSamples: 0, lateSamples: 0 });
   },
   stopRecording: () => new Promise<CaptureBoundary | null>((resolve, reject) => {
     finishStop = { resolve, reject };

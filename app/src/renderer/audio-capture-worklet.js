@@ -1,8 +1,8 @@
 // AudioWorklet half of audio-capture.ts. Runs on the audio thread. Idle, it
 // posts nothing and keeps only the last `processorOptions.preRollFrames` of
 // input in a ring. {type:'start', preRollFrames, pressFrame} answers
-// {type:'started'} with up to that many of the newest ring frames heard before
-// `pressFrame` (the audio clock at the press); the newer ones open the capture.
+// {type:'started', late} with up to that many of the newest ring frames heard before
+// `pressFrame` (the audio clock at the press); the `late` newer ones open the capture.
 // It clears the ring and starts capturing: mono input is batched (~20 ms per message) and posted to the
 // renderer. Each posted message with samples spends one credit; the renderer returns it
 // ({type:'credit'}) only once main has written that batch to the spool. With no
@@ -43,7 +43,7 @@ class CaptureProcessor extends AudioWorkletProcessor {
         const early = ring.length - late;
         const samples = ring.slice(0, early);
         this.credits = MAX_OUTSTANDING_BATCHES - (early > 0 ? 1 : 0);
-        this.port.postMessage({ type: 'started', samples }, [samples.buffer]);
+        this.port.postMessage({ type: 'started', samples, late }, [samples.buffer]);
         this.capture(ring.subarray(early));
         return;
       }

@@ -192,12 +192,16 @@ export interface RendererToMainSendChannels {
   'audio-stream-ready': () => void;
   'surface-paint-proxy': (surface: string) => void;
   'audio-devices': (devices: AudioDevice[]) => void;
-  /** `preRollSamples` of 16 kHz audio from before the press head the recording's spool. */
+  /**
+   * `preRollSamples` of 16 kHz audio from before the press head the recording's spool,
+   * then `lateSamples` heard between the press and capture-ready.
+   */
   'runtime:audio-ready': (
     generation: number,
     recordingSessionId: string,
     commandSequence: number,
     preRollSamples: number,
+    lateSamples: number,
   ) => void;
   'runtime:audio-chunk': (
     generation: number,

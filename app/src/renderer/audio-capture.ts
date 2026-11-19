@@ -175,10 +175,21 @@ interface Capture {
   peakLevel: number;
   /** Set while stop keeps a release tail; told whether each batch sounds like speech. */
   onTailBatch: ((speech: boolean) => void) | null;
+  /** Ring frames heard after the press, which the worklet passes on as ordinary audio. */
+  lateFrames: number;
 }
 
+/** 16 kHz samples heading a recording's spool when capture is ready: pre-roll, then audio heard since the press. */
+export interface CaptureHead {
+  preRollSamples: number;
+  lateSamples: number;
+}
+
+const NO_HEAD: CaptureHead = { preRollSamples: 0, lateSamples: 0 };
+
 type WorkletMessage =
-  | { type: 'audio' | 'started'; samples: Float32Array }
+  | { type: 'audio'; samples: Float32Array }
+  | { type: 'started'; samples: Float32Array; late: number }
   | { type: 'stopped' }
   | { type: 'overflow' };
 
@@ -423,7 +434,10 @@ function handleWorkletMessage(capture: Capture, message: WorkletMessage): void {
     capture.peakLevel = Math.max(capture.peakLevel, level);
   }
   if (capture === active) latestAudioLevel = Math.min(level * 10, 1);
-  if (message.type === 'started') capture.onStopped?.();
+  if (message.type === 'started') {
+    capture.lateFrames = message.late;
+    capture.onStopped?.();
+  }
 }
 
 /** A fault on the mic fails the recording that owns it, or closes it while it is parked. */
@@ -531,12 +545,13 @@ async function admit(capture: Capture, pressFrame: number | null): Promise<void>
 /**
  * Starts one recording on the warm mic, or opens the selected mic. The device
  * is fixed at start; later device switches only affect the next recording.
- * Resolves with the 16 kHz samples recorded before the press (warm pre-roll,
- * minus any speaker cue), which head the spool. Resolves without starting if
- * cancelRecording() lands while permission or worklet setup is pending.
+ * Resolves with the samples heading the spool: those recorded before the press
+ * (warm pre-roll, minus any speaker cue), then those heard since it. Resolves
+ * without starting if cancelRecording() lands while permission or worklet
+ * setup is pending.
  */
-export async function startRecording(options: RecordingOptions): Promise<number> {
-  if (active) return 0;
+export async function startRecording(options: RecordingOptions): Promise<CaptureHead> {
+  if (active) return NO_HEAD;
 
   const adopted = warm;
   warm = null;
@@ -555,6 +570,7 @@ export async function startRecording(options: RecordingOptions): Promise<number>
     onStopped: null,
     peakLevel: 0,
     onTailBatch: null,
+    lateFrames: 0,
   };
   mic.owner = capture;
   active = capture;
@@ -569,12 +585,16 @@ export async function startRecording(options: RecordingOptions): Promise<number>
   try {
     await capture.ready;
   } catch (error) {
-    if (capture.released) return 0;
+    if (capture.released) return NO_HEAD;
     capture.failure = error instanceof Error ? error : new Error(String(error));
     release(capture);
     throw error;
   }
-  return capture.released ? 0 : capture.sampleCount;
+  if (capture.released) return NO_HEAD;
+  return {
+    preRollSamples: capture.sampleCount,
+    lateSamples: Math.round(capture.lateFrames * STREAM_SAMPLE_RATE / mic.context.sampleRate),
+  };
 }
 
 /**
@@ -748,7 +768,9 @@ export async function recreateStream(deviceId: string | null): Promise<void> {
   retireMics();
   isStreamPrepared = false;
   // Not mid-recording: probing the new mic then could switch a Bluetooth headset's profile under the take.
-  if (live.size === 0) await prepareStream();
+  if (live.size > 0) return;
+  // A warm mic just opened on the new device already is the probe.
+  await (warm ? warm.ready : prepareStream());
 }
 
 export function acknowledgeRealtimeChunk(recordingSessionId: string, sequence: number): void {

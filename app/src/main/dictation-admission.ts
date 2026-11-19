@@ -31,10 +31,14 @@ function windowLevels(pcm: Int16Array): number[] {
     const mean = sum / (end - start);
     let variance = 0;
     for (let i = start; i < end; i++) variance += (pcm[i] - mean) ** 2;
-    const rms = Math.sqrt(variance / (end - start)) / 32_768;
-    levels.push(Math.max(LEVEL_FLOOR_DBFS, 20 * Math.log10(Math.max(rms, 1e-6))));
+    levels.push(dbfs(variance / (end - start)));
   }
   return levels;
+}
+
+/** dBFS of a window's sample variance, floored where digital silence sits. */
+function dbfs(variance: number): number {
+  return Math.max(LEVEL_FLOOR_DBFS, 20 * Math.log10(Math.max(Math.sqrt(variance) / 32_768, 1e-6)));
 }
 
 /** Longest run of windows at or above `threshold`; a single quiet window inside a run is bridged, not counted. */
@@ -87,20 +91,33 @@ function relativeThreshold(levels: number[]): number {
 
 /**
  * How many head samples of a recording to drop: the part of its first
- * `preRoll` samples that a pause (two quiet windows, so one is bridged as in
- * the gate) separates from the speech after it, such as a TV line or a cough
- * before the user spoke. The pause may run across the press; the cut never
- * does. Speech running into the press keeps its start, with one quiet window
- * before it.
+ * `preRoll` samples that a pause (two quiet windows back to back, so one is
+ * bridged as in the gate) separates from the speech after it, such as a TV
+ * line or a cough before the user spoke. The pause may start anywhere up to
+ * the press and run past it; the cut never does. Speech running into the
+ * press keeps its start, with one quiet window before it.
  */
 export function detachedPreRoll(pcm: Int16Array, preRoll: number): number {
   const head = Math.min(preRoll, pcm.length);
-  if (head < 2 * WINDOW_SAMPLES) return 0;
-  const levels = windowLevels(pcm);
-  const quiet = Math.min(LOUD_DBFS, relativeThreshold(levels));
-  // The newest pair checked starts in the press's window.
-  for (let index = Math.min(Math.floor(head / WINDOW_SAMPLES) + 1, levels.length - 1); index > 0; index--) {
-    if (levels[index] < quiet && levels[index - 1] < quiet) return Math.min(index * WINDOW_SAMPLES, head);
+  const pause = 2 * WINDOW_SAMPLES;
+  if (head === 0 || pcm.length < pause) return 0;
+  const quiet = Math.min(LOUD_DBFS, relativeThreshold(windowLevels(pcm)));
+  // Running sums give any window's level, so a pause is found wherever it falls, not just on the 30 ms grid.
+  const end = Math.min(head + pause, pcm.length);
+  const sums = new Float64Array(end + 1);
+  const squares = new Float64Array(end + 1);
+  for (let i = 0; i < end; i++) {
+    sums[i + 1] = sums[i] + pcm[i];
+    squares[i + 1] = squares[i] + pcm[i] ** 2;
+  }
+  const isQuiet = (start: number) => {
+    const sum = sums[start + WINDOW_SAMPLES] - sums[start];
+    const variance = (squares[start + WINDOW_SAMPLES] - squares[start] - sum * sum / WINDOW_SAMPLES) / WINDOW_SAMPLES;
+    return dbfs(Math.max(0, variance)) < quiet;
+  };
+  // The newest pause wins: the cut lands one window before the speech after it.
+  for (let start = Math.min(head, end - pause); start >= 0; start--) {
+    if (isQuiet(start + WINDOW_SAMPLES) && isQuiet(start)) return Math.min(start + WINDOW_SAMPLES, head);
   }
   return 0;
 }

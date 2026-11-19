@@ -111,11 +111,11 @@ export function AudioWindow() {
         onFailure: reportProcessorFailure,
         pressedAt: command.pressedAt,
       })
-        .then((preRollSamples) => {
+        .then(({ preRollSamples, lateSamples }) => {
           // Sent even if a Stop beat it, so main's gate still skips the pre-roll.
           if (!ownsCommand(captureRef.current, command)) return;
           window.electronAPI.send('runtime:audio-ready',
-            command.generation, command.recordingSessionId, command.sequence, preRollSamples);
+            command.generation, command.recordingSessionId, command.sequence, preRollSamples, lateSamples);
         })
         .catch((err) => {
           // A stop already in flight owns the failure report.

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { runInNewContext } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
-type Message = { type: 'audio' | 'started'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
+type Message = { type: 'audio'; samples: Float32Array } | { type: 'started'; samples: Float32Array; late: number }
+  | { type: 'stopped' } | { type: 'overflow' };
 type Command = { type: 'start'; preRollFrames: number; pressFrame?: number } | { type: 'stop' } | { type: 'credit' };
 
 /** Runs the real worklet source against a fake audio-thread global at 16 kHz (320-frame batches). */
@@ -43,7 +44,7 @@ describe('capture audio-thread boundary', () => {
     expect(sent).toHaveLength(0);
 
     command({ type: 'start', preRollFrames: 150 });
-    expect(sent).toEqual([{ type: 'started', samples: ramp(384 - 150, 150) }]);
+    expect(sent).toEqual([{ type: 'started', samples: ramp(384 - 150, 150), late: 0 }]);
     for (let block = 0; block < 3; block++) processor.process([[new Float32Array(128).fill(0.25)]]);
     command({ type: 'stop' });
     expect(sent.map(message => message.type)).toEqual(['started', 'audio', 'audio', 'stopped']);
@@ -55,7 +56,7 @@ describe('capture audio-thread boundary', () => {
     // Idle again: the recording is not in the ring, only what came after it.
     expect(processor.process([[ramp(1000, 128)]])).toBe(true);
     command({ type: 'start', preRollFrames: 200 });
-    expect(sent.at(-1)).toEqual({ type: 'started', samples: ramp(1000, 128) });
+    expect(sent.at(-1)).toEqual({ type: 'started', samples: ramp(1000, 128), late: 0 });
   });
 
   it('hands over only ring frames heard before the press; later ones open the capture', async () => {
@@ -63,9 +64,9 @@ describe('capture audio-thread boundary', () => {
     for (let block = 0; block < 3; block++) processor.process([[ramp(block * 128, 128)]]);
     scope.currentFrame = 384;
 
-    // The start reached the audio thread 100 frames after the press.
+    // The start reached the audio thread 100 frames after the press; main must hear of them to place the cue.
     command({ type: 'start', preRollFrames: 300, pressFrame: 284 });
-    expect(sent).toEqual([{ type: 'started', samples: ramp(84, 200) }]);
+    expect(sent).toEqual([{ type: 'started', samples: ramp(84, 200), late: 100 }]);
     processor.process([[ramp(384, 220)]]);
     expect(sent.at(-1)).toEqual({ type: 'audio', samples: ramp(284, 320) });
   });

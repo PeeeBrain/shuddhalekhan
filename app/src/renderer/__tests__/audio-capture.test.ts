@@ -74,7 +74,8 @@ describe('enumerateDevices', () => {
   });
 });
 
-type PortMessage = { type: 'audio' | 'started'; samples: Float32Array } | { type: 'stopped' } | { type: 'overflow' };
+type PortMessage = { type: 'audio'; samples: Float32Array } | { type: 'started'; samples: Float32Array; late: number }
+  | { type: 'stopped' } | { type: 'overflow' };
 
 /**
  * Fake Web Audio graph. The worklet port behaves like the real one: messages
@@ -169,7 +170,7 @@ function installAudio(acknowledgeStop = true, sampleRate = 16_000) {
               starts.push(message);
               const samples = ring.slice(Math.max(0, ring.length - (message.preRollFrames ?? 0)));
               ring = new Float32Array(0);
-              void Promise.resolve().then(() => deliver({ type: 'started', samples }));
+              void Promise.resolve().then(() => deliver({ type: 'started', samples, late: 0 }));
               return;
             }
             if (message.type !== 'stop') return;
@@ -803,7 +804,7 @@ describe('warm audio stream', () => {
       const heard = idle();
       audio.hearWhileIdle(heard);
       const rec = recorder({ pressedAt: Date.now() });
-      expect(await mod.startRecording(rec.options)).toBe(PRE_ROLL);
+      expect((await mod.startRecording(rec.options)).preRollSamples).toBe(PRE_ROLL);
       const speech = new Float32Array(320).fill(0.2);
       audio.emit(speech);
 
@@ -813,7 +814,7 @@ describe('warm audio stream', () => {
       expect(audio.stopTrack).not.toHaveBeenCalled();
       // Agent Mode takes the warm mic but none of its pre-roll.
       audio.hearWhileIdle(idle());
-      expect(await mod.startRecording(recorder().options)).toBe(0);
+      expect((await mod.startRecording(recorder().options)).preRollSamples).toBe(0);
       expect(await mod.stopRecording()).toEqual({ chunkCount: 0, sampleCount: 0 });
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
 
@@ -861,7 +862,7 @@ describe('warm audio stream', () => {
       const starting = mod.startRecording(recorder({ pressedAt: Date.now() }).options);
       audio.hearWhileIdle(idle());
       open();
-      expect(await starting).toBe(0);
+      expect((await starting).preRollSamples).toBe(0);
       expect(await mod.stopRecording()).toEqual({ chunkCount: 0, sampleCount: 0 });
       mod.setWarmMicrophone(false);
     });
@@ -874,7 +875,7 @@ describe('warm audio stream', () => {
         const silent = mod.holdPreRollForCue();
         // Still not sounded five seconds later: its output woke late.
         now.mockReturnValue(5_000);
-        expect(await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).toBe(0);
+        expect((await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).preRollSamples).toBe(0);
         audio.emit(new Float32Array([0.2]));
         expect(await mod.stopRecording()).toEqual({ chunkCount: 1, sampleCount: 1 });
 
@@ -882,7 +883,7 @@ describe('warm audio stream', () => {
         silent();
         now.mockReturnValue(5_400);
         audio.hearWhileIdle(idle());
-        expect(await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).toBe(800);
+        expect((await mod.startRecording(recorder({ pressedAt: Date.now() }).options)).preRollSamples).toBe(800);
       } finally {
         now.mockRestore();
       }
@@ -909,7 +910,7 @@ describe('warm audio stream', () => {
       const starting = mod.startRecording(recorder().options);
       mod.cancelRecording();
       open();
-      expect(await starting).toBe(0);
+      expect((await starting).preRollSamples).toBe(0);
       await settle();
       expect(audio.stopTrack).toHaveBeenCalledTimes(1);
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
@@ -996,6 +997,14 @@ describe('warm audio stream', () => {
       mod.setWarmMicrophone(false);
     });
 
+    it('opens a newly chosen mic once while idle, not again to probe it', async () => {
+      const { audio, mod } = await parked();
+      await mod.recreateStream('mic-2');
+      expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
+      expect(audio.tracks.at(-1)?.readyState).toBe('live');
+      mod.setWarmMicrophone(false);
+    });
+
     it('keeps the parked mic when the device list changes but its device does not', async () => {
       // A Bluetooth headset switching profiles, or another device plugged in.
       const { audio, mod } = await parked();
@@ -1032,7 +1041,7 @@ describe('warm audio stream', () => {
       await settle();
       expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
 
-      expect(await mod.startRecording(recorder().options)).toBe(0);
+      expect((await mod.startRecording(recorder().options)).preRollSamples).toBe(0);
       expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
       mod.setWarmMicrophone(false);
       await mod.stopRecording();

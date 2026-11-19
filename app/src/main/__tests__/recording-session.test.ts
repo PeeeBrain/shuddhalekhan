@@ -1377,9 +1377,9 @@ describe('RecordingSession', () => {
     audioStream.getWebContents.mockReturnValue(sender);
     session.start();
     const ready = electronMock.ipcMain.on.mock.calls.find((call: unknown[]) => call[0] === 'runtime:audio-ready')?.[1];
-    return (preRollSamples: unknown = 0) => {
+    return (preRollSamples: unknown = 0, lateSamples: unknown = 0) => {
       const command = audioStream.beginCapture.mock.calls.at(-1)?.[0];
-      ready({ sender }, 1, command.recordingSessionId, command.sequence, preRollSamples);
+      ready({ sender }, 1, command.recordingSessionId, command.sequence, preRollSamples, lateSamples);
     };
   }
 
@@ -1411,10 +1411,12 @@ describe('RecordingSession', () => {
     { name: 'still recognizes a sound in the head when no Start cue played', cued: false, preRoll: 0, toneAt: 0, recognized: true },
     { name: 'discards a Dictation whose only sound is in the warm pre-roll', cued: false, preRoll: 7_200, toneAt: 0, recognized: false },
     { name: 'skips the Start cue after the pre-roll, not over it', cued: true, preRoll: 7_200, toneAt: 12_000, recognized: true },
+    // Capture-ready came 320 ms after the press, so the cue sounds after that much post-press audio.
+    { name: 'skips a Start cue that sounds after audio heard since the press', cued: true, preRoll: 2_080, late: 5_120, toneAt: 7_520, recognized: false },
     { name: 'never lets a claimed pre-roll hide more than 450 ms', cued: false, preRoll: 1e9, toneAt: 7_200, recognized: true },
     { name: 'skips a pre-roll whose ready ack lands after Stop', cued: false, preRoll: 7_200, toneAt: 0, recognized: false, stopFirst: true },
-  ])('$name', async ({ cued, preRoll, toneAt, recognized, stopFirst = false }: {
-    cued: boolean; preRoll: number; toneAt: number; recognized: boolean; stopFirst?: boolean;
+  ])('$name', async ({ cued, preRoll, late = 0, toneAt, recognized, stopFirst = false }: {
+    cued: boolean; preRoll: number; late?: number; toneAt: number; recognized: boolean; stopFirst?: boolean;
   }) => {
     audioStream.playCue.mockReturnValue(cued);
     const markReady = captureReadyEmitter();
@@ -1427,9 +1429,9 @@ describe('RecordingSession', () => {
     wav.set(new Uint8Array(pcm.buffer), 44);
 
     session.begin('dictation', 'head');
-    if (!stopFirst) markReady(preRoll);
+    if (!stopFirst) markReady(preRoll, late);
     const ending = session.end();
-    if (stopFirst) markReady(preRoll);
+    if (stopFirst) markReady(preRoll, late);
     await session.complete(wav);
     await ending;
     expect(transcribe).toHaveBeenCalledTimes(recognized ? 1 : 0);
@@ -1467,9 +1469,10 @@ describe('RecordingSession', () => {
   const tone = (i: number) => Math.round(8_000 * Math.sin(i * 0.25));
   const room = (i: number) => ((i * 7919) % 5) - 2;
   it.each([
-    // A TV word ending 15 ms before the press at 450 ms, speech from 650 ms: the whole pre-roll goes.
+    // A TV word ending 10 ms before the press at 450 ms, speech from 500 ms: a 60 ms pause off the
+    // 30 ms grid, so no two grid windows are both quiet. The whole pre-roll goes.
     ['drops pre-roll a pause across the press separates from speech',
-      (i: number) => i < 6_960 || i >= 10_400 ? tone(i) : room(i), [16_800, 16_800, 16_800]],
+      (i: number) => i < 7_040 || i >= 8_000 ? tone(i) : room(i), [16_800, 16_800, 16_800]],
     // Speech from 300 ms, running into the press: kept from 30 ms before it.
     ['keeps pre-roll speech running into the press', (i: number) => i >= 4_800 ? tone(i) : room(i), [19_680, 19_680, 19_680]],
     // The dropped TV word still shows the mic works, so the flat rest is not sent as a device problem.
