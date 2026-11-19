@@ -269,6 +269,8 @@ export interface RendererToMainInvokeChannels {
   'memory:remove': (revision: string, id: string) => Promise<AgentMemorySnapshot>;
   'memory:clear': (revision: string) => Promise<AgentMemorySnapshot>;
   'audio:select-device': (deviceId: string) => void;
+  /** The microphones the tray menu lists; empty until the audio window has enumerated. */
+  'audio:list-devices': () => Promise<AudioDevice[]>;
   'config:get': () => Promise<AppConfig>;
   'config:set': (key: keyof AppConfig, value: AppConfig[keyof AppConfig]) => Promise<void>;
   'config:patch-transcription': (patch: TranscriptionSettingsPatch) => Promise<AppConfig>;

@@ -169,6 +169,10 @@ function createMockSettingsIpc(
       message: 'WhisperLiveKit is ready.',
       checkedAt: null,
     })),
+    listMicrophones: mock(() => Promise.resolve([
+      { deviceId: 'default', label: 'Default - Built-in', kind: 'audioinput' as const },
+      { deviceId: 'usb-1', label: 'USB Mic', kind: 'audioinput' as const },
+    ])),
     getShortcutsPaused: mock(() => Promise.resolve(false)),
     setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
     beginShortcutCapture: mock(() => Promise.resolve()),
@@ -672,6 +676,48 @@ describe('Settings navigation', () => {
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
   });
 
+  it('folds the Agent detail pages while Agent Mode is off and opens them when it is on', async () => {
+    const off = renderSettings();
+    await waitForLoaded();
+    expect(tabByLabel('Agent')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'MCP Servers' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Mode', expanded: false }));
+    expect(tabByLabel('MCP Servers')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Mode', expanded: true }));
+    expect(screen.queryByRole('tab', { name: 'MCP Servers' })).toBeNull();
+    off.unmount();
+
+    renderSettings({ config: baseConfig({ agent: { ...baseConfig().agent, enabled: true } }) });
+    await waitForLoaded();
+    expect(tabByLabel('MCP Servers')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Agent Mode' })).toBeNull();
+  });
+
+  it('opens a folded section reached from the palette and focuses its tab', async () => {
+    renderSettings();
+    await waitForLoaded();
+
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const search = screen.getByRole('combobox', { name: 'Search settings and runs' });
+    fireEvent.change(search, { target: { value: 'skills' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(await screen.findByRole('tab', { name: 'Skills' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'panel-skills');
+  });
+
+  it('changes the microphone from Shortcuts without visiting Agent settings', async () => {
+    const { settingsIpc } = renderSettings();
+    await waitForLoaded();
+
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Microphone' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'USB Mic' }));
+
+    await waitFor(() => expect(settingsIpc.setConfig).toHaveBeenCalledWith('selectedDeviceId', 'usb-1'));
+  });
+
   it('returns focus to the opener when the palette is dismissed', async () => {
     renderSettings();
     await waitForLoaded();
@@ -706,9 +752,9 @@ describe('Settings navigation', () => {
     fireEvent.focus(transcriptionTab);
     fireEvent.keyDown(transcriptionTab, { key: 'ArrowDown' });
 
-    expect(tabByLabel('Shortcuts')).toHaveAttribute('aria-selected', 'true');
+    expect(tabByLabel('Shortcuts & Mic')).toHaveAttribute('aria-selected', 'true');
 
-    fireEvent.keyDown(tabByLabel('Shortcuts'), { key: 'ArrowUp' });
+    fireEvent.keyDown(tabByLabel('Shortcuts & Mic'), { key: 'ArrowUp' });
     expect(tabByLabel('Transcription')).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -716,7 +762,7 @@ describe('Settings navigation', () => {
     renderSettings();
     await waitForLoaded();
 
-    const shortcutsTab = tabByLabel('Shortcuts');
+    const shortcutsTab = tabByLabel('Shortcuts & Mic');
     fireEvent.focus(shortcutsTab);
     fireEvent.keyDown(shortcutsTab, { key: 'End' });
     expect(tabByLabel('About')).toHaveAttribute('aria-selected', 'true');
@@ -867,7 +913,7 @@ describe('Settings section reachability', () => {
     expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['Dictation', 'Corrected Dictation']);
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
     fireEvent.click(screen.getByRole('combobox', { name: 'Dictation activation mode' }));
     expect(await screen.findByRole('option', { name: 'Push to Talk' })).toBeInTheDocument();
     expect(settingsIpc.patchTranscriptionConfig).not.toHaveBeenCalled();
@@ -1132,7 +1178,7 @@ describe('Settings section reachability', () => {
     renderSettings();
     await waitForLoaded();
 
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     expect(screen.queryByRole('combobox', { name: 'Recording activation' })).not.toBeInTheDocument();
     expect(screen.getByText('Microphone')).toBeInTheDocument();
@@ -1142,7 +1188,7 @@ describe('Settings section reachability', () => {
     renderSettings();
     await waitForLoaded();
 
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     const panel = screen.getByRole('tabpanel');
     expect(within(panel).getByText('Dictation')).toBeInTheDocument();
@@ -1160,7 +1206,7 @@ describe('Settings section reachability', () => {
       registerDesktopStatusChanged: (callback) => { push = callback; },
     });
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
     expect(await screen.findAllByText('Checking whether the shortcut is active…')).toHaveLength(2);
 
     act(() => push({
@@ -1177,7 +1223,7 @@ describe('Settings section reachability', () => {
   it('explains that evdev shortcuts still reach the focused app', async () => {
     renderSettings({ desktopStatus: { shortcuts: { backend: 'evdev' }, delivery: WINDOWS_STATUS.delivery } });
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     expect(await screen.findByText(/input group access/)).toBeInTheDocument();
   });
@@ -1229,7 +1275,7 @@ describe('Settings section reachability', () => {
   it('captures and saves a normalized shortcut inline on release', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
@@ -1262,7 +1308,7 @@ describe('Settings section reachability', () => {
   it('requires Use anyway before saving a disruptive bare-key shortcut', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     const capture = await screen.findByRole('group', { name: 'Capture Dictation shortcut' }, { timeout: SLOW_CI_TIMEOUT });
@@ -1288,7 +1334,7 @@ describe('Settings section reachability', () => {
   it('rejects an ambiguous binding and restores normal hook operation on Escape', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     const change = screen.getAllByRole('button', { name: 'Change' })[0];
     fireEvent.click(change);
@@ -1317,7 +1363,7 @@ describe('Settings section reachability', () => {
       () => new Promise<void>((resolve) => { suspended = resolve; }),
     );
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Change' })[0]);
     expect(settingsIpc.beginShortcutCapture).toHaveBeenCalledTimes(1);
@@ -1331,7 +1377,7 @@ describe('Settings section reachability', () => {
   it('clears a binding with idle Backspace and toggles session-only pause', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     const pause = screen.getByRole('switch', { name: 'Pause global shortcuts' });
     fireEvent.click(pause);
@@ -1414,7 +1460,7 @@ describe('Settings section reachability', () => {
   });
 
   it('hydrates MCP connection status from the main-owned snapshot', async () => {
-    const config = baseConfig();
+    const config = baseConfig({ agent: { ...baseConfig().agent, enabled: true } });
     config.agent.mcpServers = [{
       id: 'mail',
       displayName: 'Mail',
@@ -1440,6 +1486,7 @@ describe('Settings section reachability', () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Agent Mode', expanded: false }));
     fireEvent.click(tabByLabel('Skills'));
     expect(await screen.findByText(/No skills yet/)).toBeInTheDocument();
     fireEvent.click(tabByLabel('Memory'));
@@ -1574,7 +1621,7 @@ describe('Settings persistence timing', () => {
   it('commits safe selections immediately', async () => {
     const { settingsIpc } = renderSettings();
     await waitForLoaded();
-    fireEvent.click(tabByLabel('Shortcuts'));
+    fireEvent.click(tabByLabel('Shortcuts & Mic'));
 
     fireEvent.click(screen.getByRole('combobox', {
       name: 'Dictation activation mode',

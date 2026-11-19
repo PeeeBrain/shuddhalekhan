@@ -1,6 +1,7 @@
 import type { ElectronAPI } from '../../preload';
 import type {
   AppConfig,
+  AudioDevice,
   AppInfo,
   McpStatusSnapshot,
   UpdateStatus,
@@ -60,6 +61,7 @@ export interface SettingsIpc {
   uninstallComputerUse: () => Promise<ComputerUseStatus>;
   onComputerUseStatusChanged: (callback: (status: ComputerUseStatus) => void) => Unsubscribe | undefined;
   onOnboardingCompleted: (callback: () => void) => Unsubscribe | undefined;
+  listMicrophones: () => Promise<AudioDevice[]>;
   getShortcutsPaused: () => Promise<boolean>;
   setShortcutsPaused: (paused: boolean) => Promise<boolean>;
   beginShortcutCapture: () => Promise<void>;
@@ -125,6 +127,7 @@ export function createSettingsIpc(electronAPI: ElectronAPI | undefined): Setting
     getMcpStatusSnapshot: () => requireElectronApi(electronAPI).invoke('mcp:get-status-snapshot'),
     checkTranscriptionServer: () => requireElectronApi(electronAPI).invoke('transcription:check-server'),
     checkTranscriptionReadiness: () => requireElectronApi(electronAPI).invoke('transcription:check-readiness'),
+    listMicrophones: () => requireElectronApi(electronAPI).invoke('audio:list-devices'),
     getShortcutsPaused: () => requireElectronApi(electronAPI).invoke('shortcuts:get-paused'),
     setShortcutsPaused: (paused) => requireElectronApi(electronAPI).invoke('shortcuts:set-paused', paused),
     beginShortcutCapture: async () => {

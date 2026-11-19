@@ -8,13 +8,12 @@ import type {
   VersionReleaseNotes,
 } from '../types/ipc';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Search } from 'lucide-react';
+import { ChevronDown, Search } from 'lucide-react';
 import { createSettingsIpc } from './settings/settings-ipc';
 import {
   DEFAULT_SETTINGS_SECTION,
-  SETTINGS_NAV_GROUPS,
-  SETTINGS_NAV_SECTIONS,
-  getNavSectionIndex,
+  isFoldedSection,
+  visibleNavGroups,
   type SettingsNavGroupId,
   type SettingsSectionId,
   type SettingsNavSection,
@@ -25,6 +24,8 @@ import { SaveToast } from './settings/SaveToast';
 import { CommandPalette } from './settings/CommandPalette';
 import type { SettingsIpc } from './settings/settings-ipc';
 import { Onboarding } from './settings/Onboarding';
+
+type TabRefs = Partial<Record<SettingsSectionId, HTMLButtonElement | null>>;
 
 interface SettingsWindowProps {
   settingsIpc?: SettingsIpc;
@@ -48,9 +49,11 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     Record<string, McpServerRuntimeStatus>
   >({});
   const [paletteOpen, setPaletteOpen] = useState(false);
+  /** The user unfolding the Agent group while Agent Mode is off. */
+  const [agentFoldOpen, setAgentFoldOpen] = useState(false);
   /** Run History opens on; null shows the newest. */
   const [historyRunId, setHistoryRunId] = useState<string | null>(null);
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const tabRefs = useRef<TabRefs>({});
   const latestMcpStatusRevision = useRef(-1);
 
   const applyConfig = useCallback((patch: Partial<AppConfig>) => {
@@ -149,10 +152,16 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     );
   }
 
+  // The Agent group is open while Agent Mode is on or its page is showing, so a deep link never lands in a folded section.
+  const agentLocked = config.agent.enabled || isFoldedSection(activeSection);
+  const agentExpanded = agentLocked || agentFoldOpen;
+  const navGroups = visibleNavGroups({ agentExpanded });
+  const navSections = navGroups.flatMap<SettingsNavSection>((group) => group.sections);
+
   const selectSection = (id: SettingsSectionId) => {
     setActiveSection(id);
     setHistoryRunId(null);
-    tabRefs.current[getNavSectionIndex(id)]?.focus();
+    tabRefs.current[id]?.focus();
   };
 
   const openRun = (agentRunId: string) => {
@@ -163,9 +172,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (!isListboxNavKey(event.key)) return;
     event.preventDefault();
-    const currentIndex = getNavSectionIndex(activeSection);
-    const nextIndex = getNextListboxIndex(currentIndex, event.key, SETTINGS_NAV_SECTIONS.length);
-    const next = SETTINGS_NAV_SECTIONS[nextIndex];
+    const currentIndex = navSections.findIndex((section) => section.id === activeSection);
+    const nextIndex = getNextListboxIndex(currentIndex, event.key, navSections.length);
+    const next = navSections[nextIndex];
     if (next) selectSection(next.id);
   };
 
@@ -183,7 +192,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
     onUpdateStatusChange: setUpdateStatus,
   };
 
-  const active = SETTINGS_NAV_SECTIONS.find((section) => section.id === activeSection)!;
+  const active = navSections.find((section) => section.id === activeSection)!;
   const Section = active.component;
 
   return (
@@ -212,12 +221,15 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
           </button>
 
           <nav className="flex flex-1 flex-col gap-5" aria-label="Settings navigation">
-            {SETTINGS_NAV_GROUPS.map((group) => (
+            {navGroups.map((group) => (
               <NavGroup
                 key={group.id}
                 group={group}
                 activeSection={activeSection}
                 tabRefs={tabRefs}
+                fold={group.id === 'agent' && !agentLocked
+                  ? { open: agentExpanded, onToggle: () => setAgentFoldOpen((open) => !open) }
+                  : undefined}
                 onSelect={selectSection}
                 onKeyDown={handleTabKeyDown}
               />
@@ -276,7 +288,9 @@ interface NavGroupProps {
     sections: readonly SettingsNavSection[];
   };
   activeSection: SettingsSectionId;
-  tabRefs: React.MutableRefObject<Array<HTMLButtonElement | null>>;
+  tabRefs: React.MutableRefObject<TabRefs>;
+  /** Present when the group's heading can fold its detail pages away. */
+  fold?: { open: boolean; onToggle: () => void };
   onSelect: (id: SettingsSectionId) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void;
 }
@@ -295,18 +309,37 @@ function NavGroup({
   group,
   activeSection,
   tabRefs,
+  fold,
   onSelect,
   onKeyDown,
 }: NavGroupProps) {
   return (
     <div className={group.id === 'system' ? 'mt-auto' : undefined}>
-      <p
-        id={`settings-group-${group.id}`}
-        className="mb-1 px-2.5 text-[11px] font-medium text-muted-foreground/70"
-      >
-        {group.label}
-      </p>
+      {fold ? (
+        <button
+          type="button"
+          id={`settings-group-${group.id}`}
+          aria-expanded={fold.open}
+          aria-controls={`settings-group-tabs-${group.id}`}
+          onClick={fold.onToggle}
+          className="mb-1 flex w-full items-center justify-between px-2.5 text-[11px] font-medium text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {group.label}
+          <ChevronDown
+            aria-hidden="true"
+            className={`size-3 shrink-0 transition-transform ${fold.open ? 'rotate-180' : ''}`}
+          />
+        </button>
+      ) : (
+        <p
+          id={`settings-group-${group.id}`}
+          className="mb-1 px-2.5 text-[11px] font-medium text-muted-foreground/70"
+        >
+          {group.label}
+        </p>
+      )}
       <div
+        id={`settings-group-tabs-${group.id}`}
         role="tablist"
         aria-orientation="vertical"
         aria-label={group.label}
@@ -314,13 +347,12 @@ function NavGroup({
       >
         {group.sections.map((section) => {
           const isActive = activeSection === section.id;
-          const index = getNavSectionIndex(section.id);
           const Icon = section.icon;
           return (
             <button
               key={section.id}
               ref={(el) => {
-                tabRefs.current[index] = el;
+                tabRefs.current[section.id] = el;
               }}
               type="button"
               role="tab"

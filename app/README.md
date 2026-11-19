@@ -4,7 +4,7 @@ Speech-to-text dictation app with an optional voice-first Agent Mode.
 
 Audio is recorded locally, sent to a Whisper-compatible HTTP endpoint, and then routed by intent:
 
-- Dictation defaults to `Ctrl+Win`; Agent Mode defaults to `Alt+Win`. Each global shortcut and its Push to Talk or Toggle behavior can be configured independently under Settings → Shortcuts.
+- Dictation defaults to `Ctrl+Win`; Agent Mode defaults to `Alt+Win`. Each global shortcut and its Push to Talk or Toggle behavior can be configured independently under Settings → Shortcuts & Mic, where you also choose the microphone.
 - Configured trigger events are consumed while active. Global shortcuts can be paused for the current app session from Settings or the tray.
 
 Agent Mode is opt-in from Settings. When disabled, the agent sidecar and MCP connections stay inactive.

@@ -10,6 +10,7 @@ const unused = () => Promise.reject(new Error('unused'));
 function auditIpc(overrides: Pick<SettingsIpc, 'getAuditRuns' | 'getAuditRunDetail'> & Partial<SettingsIpc>): SettingsIpc {
   return {
     onAuditRunUpdated: mock(() => undefined),
+    listMicrophones: mock(() => Promise.resolve([])),
     getShortcutsPaused: mock(() => Promise.resolve(false)),
     setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),
     beginShortcutCapture: mock(() => Promise.resolve()),

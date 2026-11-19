@@ -22,7 +22,7 @@ Preconditions:
 - Launched on the real config, and `doctor` is ok.
 - Record `bun $S config agent.mcpServers`. There is no server named `verify-stdio`.
 
-- **Open form.** Run `bun $S click settings "MCP Servers"`, then `bun $S click settings "Add server"`. An inline `Add MCP Server` form appears. Read the `Transport` combobox and confirm it shows stdio, which is what this journey needs. If it doesn't, pick stdio first. Then confirm `Command`, `Arguments`, and `Environment variable names` are visible.
+- **Open form.** If `MCP Servers` is not in the sidebar (Agent Mode is off), run `bun $S click settings "Agent Mode"` to unfold the group. Run `bun $S click settings "MCP Servers"`, then `bun $S click settings "Add server"`. An inline `Add MCP Server` form appears. Read the `Transport` combobox and confirm it shows stdio, which is what this journey needs. If it doesn't, pick stdio first. Then confirm `Command`, `Arguments`, and `Environment variable names` are visible.
 - **Fill.** Run `bun $S fill settings Name verify-stdio`, `bun $S fill settings Command bun`, and `bun $S fill settings Arguments --version`.
 - **Save.** Run `bun $S click settings "Save Server"`, then `bun $S wait settings "verify-stdio"`. `bun $S config agent.mcpServers` gains one entry with `displayName: "verify-stdio"` and `transport.args: ["--version"]`. Run `bun $S shot settings mcp-saved`.
 - **Remove.** Run `bun $S click settings Remove`, then `bun $S wait settings 'Remove "verify-stdio"?'`, then `bun $S click settings Remove` again. The second click hits the dialog's button. `config agent.mcpServers` matches the recorded value again, and `stop` prints `real config unchanged`.

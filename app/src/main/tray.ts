@@ -94,6 +94,8 @@ export function updateTrayMenu(): void {
   tray.setContextMenu(contextMenu);
 }
 
+export const getAudioDevices = (): AudioDevice[] => audioDevices;
+
 export function updateAudioDevices(devices: AudioDevice[]): void {
   audioDevices = devices.filter((device) => device.kind === 'audioinput');
   updateTrayMenu();
