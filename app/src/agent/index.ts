@@ -1,3 +1,5 @@
+import { COMPUTER_USE_SOURCE_ID, COMPUTER_USE_TOOLS, computerUseToolPolicy } from '../shared/computer-use';
+import { createComputerUseRun } from './computer-use';
 import { APPROVAL_TIMEOUT_MESSAGE } from '@shuddhalekhan/shared/agent-prompt';
 import { createInterface } from 'readline';
 import { randomUUID } from 'crypto';
@@ -22,10 +24,24 @@ import {
 
 let config: AppConfig | null = null;
 let agentApiKey: string | undefined;
+let computerUseExecutable: string | undefined;
+const computerUseRuns = new Set<ReturnType<typeof createComputerUseRun>>();
+
+async function closeComputerUseRuns(runs = [...computerUseRuns]): Promise<void> {
+  await Promise.all(runs.map(run => run.close().then(() => computerUseRuns.delete(run)))).catch((error: unknown) => {
+    // A helper killed mid-call may leave its command running; only this process group can reap it.
+    // Main sees the exit, shows it, and the next command starts a fresh sidecar.
+    logSidecar('Computer Use did not stop; exiting', error);
+    exitWithGroup();
+  });
+}
 type AgentExecution = {
   agentRunId: string;
   controller: AbortController;
+  audit: ReturnType<AgentAuditStore['forExecution']>;
   phase: 'running' | 'completed' | 'failed' | 'cancelled';
+  /** This execution's helper session; once closed, its calls are refused without asking. */
+  native?: { readonly closed: boolean } | null;
 };
 // The audit run id survives replies; this object identifies just one execution.
 let execution: AgentExecution | null = null;
@@ -47,12 +63,13 @@ const mcpRegistry = new McpRegistry({
 // Long enough to return from another app and read the arguments; the run waits, nothing else is blocked.
 const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 /** The latest completed run, kept in memory only so the next command can reply to it. */
-let lastConversation: { agentRunId: string; provider: string; messages: ModelMessage[] } | null = null;
+let lastConversation: { agentRunId: string; provider: string; messages: ModelMessage[]; usedComputerUse: boolean } | null = null;
 
 
 type PendingApproval = {
   execution: AgentExecution;
   approvalId: string;
+  serverId: string;
   timeout: ReturnType<typeof setTimeout>;
   resolve: (decision: ToolApprovalDecision) => void;
 };
@@ -132,14 +149,38 @@ function handleLine(line: string): void {
     case 'provider:cancel-test':
       if (providerTest?.requestId === message.requestId) providerTest.controller.abort();
       break;
-    case 'config:update':
+    case 'config:update': {
       // A disabled agent keeps nothing.
       if (!message.config.agent.enabled) lastConversation = null;
+      const previousExecutable = computerUseExecutable;
+      const previousComputerUse = config?.agent.computerUse;
       config = message.config;
+      computerUseExecutable = config.agent.enabled && config.agent.computerUse?.enabled
+        ? message.computerUseExecutable : undefined;
+      // An action already running without asking must stop once it would have to ask.
+      const lostAlwaysAllow = COMPUTER_USE_TOOLS.some(({ name }) =>
+        computerUseToolPolicy(previousComputerUse, name) === 'alwaysAllow'
+        && computerUseToolPolicy(message.config.agent.computerUse, name) !== 'alwaysAllow');
+      if (computerUseExecutable !== previousExecutable || lostAlwaysAllow || message.computerUseCloseRequestId) {
+        if (pendingApproval?.serverId === COMPUTER_USE_SOURCE_ID) {
+          rejectPendingApproval(pendingApproval.execution, 'Computer Use is unavailable for this run.');
+        }
+        // A status would close another server's approval toast while the run still waits on it.
+        if (execution?.phase === 'running' && execution.native?.closed === false && !pendingApproval) {
+          const status = 'Computer Use stopped for this command because its settings changed.';
+          execution.audit.record('status', { status });
+          writeJsonLine({ type: 'agent:status', agentRunId: execution.agentRunId, status });
+        }
+        const requestId = message.computerUseCloseRequestId;
+        void closeComputerUseRuns().then(() => {
+          if (requestId) writeJsonLine({ type: 'computer-use:closed', requestId });
+        });
+      }
       agentApiKey = message.agentApiKey;
       logSidecar('received config update');
       configUpdateQueue = configUpdateQueue.then(() => mcpRegistry.updateConfig(message.config));
       break;
+    }
     case 'agent:start':
       {
         const run = handleAgentStart(message.agentRunId, message.transcript, message.context, message.continueFrom);
@@ -172,8 +213,9 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
   // Taken once: a failed or cancelled reply ends the conversation instead of leaving it half-updated.
   // Never sent to another provider, even if the provider changed while the answered run was still going.
   const provider = JSON.stringify(config?.agent.provider);
-  const history = continueFrom && lastConversation?.agentRunId === continueFrom && lastConversation.provider === provider
-    ? lastConversation.messages : [];
+  const previousConversation =
+    continueFrom && lastConversation?.agentRunId === continueFrom && lastConversation.provider === provider
+      ? lastConversation : null;
   lastConversation = null;
   const previous = execution;
   if (previous?.phase === 'running') {
@@ -184,12 +226,16 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
     writeJsonLine({ type: 'agent:cancelled', agentRunId: previous.agentRunId });
   }
 
-  const run: AgentExecution = { agentRunId, controller: new AbortController(), phase: 'running' };
+  const run: AgentExecution = {
+    agentRunId, controller: new AbortController(), phase: 'running',
+    audit: auditStore.forExecution(agentRunId, previousConversation?.usedComputerUse),
+  };
   execution = run;
   const runController = run.controller;
 
   const currentConfig = config;
   const currentAgentApiKey = agentApiKey;
+  const nativeExecutable = computerUseExecutable;
   if (!currentConfig) {
     writeJsonLine({ type: 'agent:failed', agentRunId, error: 'No config available' });
     run.phase = 'failed';
@@ -206,18 +252,42 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
       auditStore.record(agentRunId, 'status', { status });
       writeJsonLine({ type: 'agent:status', agentRunId, status });
     }
+    // A replacement command must not open its native client while the
+    // previous command's cancellation is still stopping a desktop action.
+    if (nativeExecutable && computerUseRuns.size > 0) await closeComputerUseRuns();
+    if (!ownsExecution(run) || runController.signal.aborted) return;
+
+    const reportTool = (serverId: string, name: string) => {
+      if (!ownsExecution(run)) return;
+      const status = `Using tool: ${serverId}.${name}`;
+      run.audit.record('status', { status });
+      writeJsonLine({ type: 'agent:status', agentRunId, status });
+    };
     const toolSnapshot = mcpRegistry.createRunSnapshot(
-      (eventType, payload) => auditStore.record(agentRunId, eventType, payload),
-      (tool) => {
-        if (!ownsExecution(run)) return;
-        const status = `Using tool: ${tool.serverId}.${tool.toolName}`;
-        auditStore.record(agentRunId, 'status', { status });
-        writeJsonLine({ type: 'agent:status', agentRunId, status });
-      }
+      run.audit.record, tool => reportTool(tool.serverId, tool.toolName)
     );
+    const native = nativeExecutable && nativeExecutable === computerUseExecutable ? createComputerUseRun({
+      executable: nativeExecutable,
+      signal: runController.signal,
+      getConfig: () => computerUseExecutable === nativeExecutable ? config?.agent.computerUse : undefined,
+      onToolStarted: name => {
+        run.audit.markComputerUseExecuted();
+        reportTool(COMPUTER_USE_SOURCE_ID, name);
+      },
+      onToolFinished: metadata => {
+        run.audit.record('computer_use_tool_execute', metadata);
+        // A failed call already closed the helper; a close that could not stop it must not wait for the run to end.
+        if (native?.closed) void closeComputerUseRuns([native]);
+      },
+    }) : null;
+    if (native) computerUseRuns.add(native);
+    run.native = native;
 
     try {
-      const messages = await runAgent(agentRunId, transcript, currentConfig, toolSnapshot.tools, runController.signal, {
+      let finalAnswer = '';
+      const messages = await runAgent(agentRunId, transcript, currentConfig, {
+        ...toolSnapshot.tools, ...native?.tools,
+      }, runController.signal, {
         onStatus: (status) => {
           if (!ownsExecution(run)) return;
           auditStore.record(agentRunId, 'status', { status });
@@ -229,6 +299,7 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
         },
         onCompleted: (response, toolSummary, steps) => {
           if (!ownsExecution(run)) return;
+          finalAnswer = response;
           run.phase = 'completed';
           writeJsonLine({ type: 'agent:completed', agentRunId, response, toolSummary, steps });
         },
@@ -245,20 +316,29 @@ async function handleAgentStart(agentRunId: string, transcript: string, context?
         },
         requestToolApproval: (request) => requestToolApproval(run, request),
         onAudit: (eventType, payload) => {
-          if (ownsExecution(run)) auditStore.record(agentRunId, eventType, payload);
+          if (ownsExecution(run)) run.audit.record(eventType, payload);
         },
         commitMemory: (revision, updates) => memoryCommitter.request(agentRunId, revision, updates, runController.signal),
         shouldLearnMemory: () => config?.agent.memoryEnabled === true && ownsExecution(run),
         onMemoryStatus: status => {
           if (ownsExecution(run)) writeJsonLine({ type: 'memory:status', agentRunId, status });
         },
-      }, currentAgentApiKey, context, history);
+      }, currentAgentApiKey, context, previousConversation?.messages);
       // A newer run may have started while this one finished; only the latest answer can be replied to.
       if (messages && execution === run && run.phase === 'completed' && config?.agent.enabled) {
-        lastConversation = { agentRunId, provider: JSON.stringify(currentConfig.agent.provider), messages };
+        const usedComputerUse = run.audit.usedComputerUse || previousConversation?.usedComputerUse === true;
+        lastConversation = {
+          agentRunId, provider, usedComputerUse,
+          messages: usedComputerUse ? [
+            { role: 'user', content: transcript }, { role: 'assistant', content: finalAnswer },
+          ] : messages,
+        };
       }
     } finally {
-      await toolSnapshot.close();
+      await Promise.all([
+        toolSnapshot.close(),
+        native && closeComputerUseRuns([native]),
+      ]);
     }
   } catch (err) {
     if (!ownsExecution(run)) return;
@@ -301,6 +381,11 @@ async function requestToolApproval(run: AgentExecution, request: ToolApprovalReq
     return { approved: false, message: 'Rejected: agent run is no longer active.' };
   }
 
+  if (request.serverId === COMPUTER_USE_SOURCE_ID && (!computerUseExecutable || run.native?.closed !== false)) {
+    releaseQueue();
+    return { approved: false, message: 'Computer Use is unavailable for this run.' };
+  }
+
   return new Promise<ToolApprovalDecision>((resolve) => {
     const approvalId = randomUUID();
     const expiresAt = new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString();
@@ -310,7 +395,7 @@ async function requestToolApproval(run: AgentExecution, request: ToolApprovalReq
         pendingApproval = null;
       }
       releaseQueue();
-      auditStore.record(agentRunId, 'approval_decision', {
+      run.audit.record('approval_decision', {
         approvalId,
         serverId: request.serverId,
         toolName: request.toolName,
@@ -329,11 +414,12 @@ async function requestToolApproval(run: AgentExecution, request: ToolApprovalReq
     pendingApproval = {
       execution: run,
       approvalId,
+      serverId: request.serverId,
       timeout,
       resolve: finish,
     };
 
-    auditStore.record(agentRunId, 'approval_requested', {
+    run.audit.record('approval_requested', {
       approvalId,
       serverId: request.serverId,
       toolName: request.toolName,
@@ -397,7 +483,7 @@ async function shutdown(): Promise<void> {
     new Promise<false>((resolve) => setTimeout(resolve, RUN_SETTLE_TIMEOUT_MS, false).unref()),
   ]);
   if (!settled && runningId) auditStore.record(runningId, 'run_interrupted', { reason: 'sidecar_shutdown' });
-  await mcpRegistry.close();
+  await Promise.all([mcpRegistry.close(), closeComputerUseRuns()]);
   auditStore.close();
 }
 

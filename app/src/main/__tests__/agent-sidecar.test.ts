@@ -195,6 +195,43 @@ describe('AgentSidecarManager', () => {
     expect(events).toEqual([{ type: 'sidecar:ready', protocolVersion: 1 }]);
   });
 
+  it('sends the main-owned executable only when enabled and waits for native cleanup before uninstall can continue', async () => {
+    const { AgentSidecarManager } = await importManager('computer-use-close');
+    const computerUseExecutable = join(process.cwd(), 'agent-desktop');
+    const manager = new AgentSidecarManager(() => undefined, {
+      jobPort: new FakeJobPort(),
+      computerUseExecutable: () => computerUseExecutable,
+    });
+    const enabled = {
+      ...config,
+      agent: { ...config.agent, computerUse: { enabled: true, toolPolicies: {} } },
+    };
+    const disabled = {
+      ...config,
+      agent: { ...config.agent, computerUse: { enabled: false, toolPolicies: {} } },
+    };
+    try {
+      manager.start(enabled);
+      stdoutLines.emit('line', JSON.stringify({ type: 'sidecar:ready', protocolVersion: 1 }));
+      expect(sentMessages().at(-1)).toMatchObject({ type: 'config:update', computerUseExecutable });
+      let closed = false;
+      const completion = manager.closeComputerUse(disabled).then(() => { closed = true; });
+      const update = sentMessages().at(-1);
+      expect(update).toMatchObject({ type: 'config:update', config: disabled });
+      expect(update).not.toHaveProperty('computerUseExecutable');
+      stdoutLines.emit('line', JSON.stringify({ type: 'computer-use:closed', requestId: 'stale' }));
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      stdoutLines.emit('line', JSON.stringify({
+        type: 'computer-use:closed', requestId: update?.computerUseCloseRequestId,
+      }));
+      await completion;
+      expect(closed).toBe(true);
+    } finally {
+      child.emit('exit', 0, null);
+    }
+  });
+
   it('assigns the sidecar to a kill-on-close job before publishing configuration', async () => {
     const jobPort = new FakeJobPort();
     const { AgentSidecarManager } = await importManager('assign-before-config');

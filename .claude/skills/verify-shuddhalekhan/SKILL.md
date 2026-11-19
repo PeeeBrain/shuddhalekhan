@@ -67,7 +67,7 @@ Pages are addressed by route: `settings` (the Settings window) and `runtime` (th
 | `bun $S config agent.enabled` | Prints a value from the config file in use. With no path, it prints the file path. |
 | `bun $S sidecar` | Prints how many Agent Mode sidecar processes are running (`bun …/app/src/agent/index.ts`). |
 
-Sidebar sections are buttons named `Home`, `Transcription`, `Shortcuts`, `Agent`, `MCP Servers`, `Plugins`, `Skills`, `Memory`, `History`, `About`. A fresh config hides them behind onboarding until you `click settings "Configure an advanced provider"`.
+Sidebar sections are buttons named `Home`, `Transcription`, `Shortcuts`, `Agent`, `MCP Servers`, `Computer Use`, `Plugins`, `Skills`, `Memory`, `History`, `About`. A fresh config hides them behind onboarding until you `click settings "Configure an advanced provider"`.
 
 To find handles on a new screen, list the controls:
 

@@ -70,6 +70,11 @@ function auditIpc(overrides: Pick<SettingsIpc, 'getAuditRuns' | 'getAuditRunDeta
     removeMemoryFact: mock(unused),
     clearMemory: mock(unused),
     onMemoryChanged: mock(() => undefined),
+    getComputerUseStatus: mock(unused),
+    installComputerUse: mock(unused),
+    cancelComputerUseInstall: mock(unused),
+    uninstallComputerUse: mock(unused),
+    onComputerUseStatusChanged: mock(() => undefined),
     ...overrides,
   };
 }

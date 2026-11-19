@@ -46,14 +46,15 @@ Goal: Get enough context fast, then act.
 export const AGENT_CUSTOM_INSTRUCTIONS_LIMIT = 4000;
 
 /**
- * Appends the user's custom instructions after the fixed prompt. Everything here must be
- * deterministic: the system message is the prompt-cache prefix for every provider, so it
- * only changes when the user edits the setting. Per-run data belongs in the user message.
+ * Appends tool sections (such as Computer Use) and the user's custom instructions after the fixed
+ * prompt. Everything here must be deterministic: the system message is the prompt-cache prefix for
+ * every provider, so it only changes when settings change. Per-run data belongs in the user message.
  */
-export function buildSystemPrompt(customInstructions = ''): string {
+export function buildSystemPrompt(customInstructions = '', toolSections: string[] = []): string {
+  const base = [SYSTEM_PROMPT, ...toolSections].join('\n\n');
   const userInstructions = customInstructions.trim();
-  if (!userInstructions) return SYSTEM_PROMPT;
-  return `${SYSTEM_PROMPT}
+  if (!userInstructions) return base;
+  return `${base}
 
 <user_instructions>
 The user wrote these standing instructions. Follow them unless they conflict with approval_handling or tool policies.

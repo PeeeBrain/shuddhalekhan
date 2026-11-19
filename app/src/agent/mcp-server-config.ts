@@ -1,3 +1,4 @@
+import { COMPUTER_USE_SOURCE_ID } from '../shared/computer-use';
 import { DEFAULT_TOOL_POLICY, makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import type {
   McpHttpOAuthConfig,
@@ -34,7 +35,7 @@ export function normalizeMcpServer(server: McpServerConfig): McpServerConfig {
 export function normalizeMcpServers(servers: McpServerConfig[] | undefined): McpServerConfig[] {
   if (!Array.isArray(servers)) return [];
 
-  return servers.map(normalizeMcpServer);
+  return servers.filter(server => server.id !== COMPUTER_USE_SOURCE_ID).map(normalizeMcpServer);
 }
 
 function normalizeMcpHttpOAuth(oauth: McpHttpOAuthConfig | undefined): McpHttpOAuthConfig | undefined {

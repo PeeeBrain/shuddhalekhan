@@ -1,3 +1,4 @@
+import { COMPUTER_USE_SOURCE_ID } from '../shared/computer-use';
 import { handle } from './typed-ipc';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -94,6 +95,7 @@ function readJson(directory: string, relativePath: string): unknown {
 
 /** Only remote https servers install as-is; anything needing local programs or secrets is reported back. */
 function toServer(id: string, value: unknown): McpServerConfig | string {
+  if (id === COMPUTER_USE_SOURCE_ID) return 'uses the reserved Computer Use connection name';
   if (!isRecord(value)) return 'is not set up correctly';
   if (typeof value.command === 'string') return 'runs a program on your computer';
   if ((value.type !== undefined && value.type !== 'http' && value.type !== 'streamable-http') || typeof value.url !== 'string') {

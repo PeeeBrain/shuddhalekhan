@@ -17,6 +17,7 @@ const clipboardText = { value: 'original' };
 const send = vi.fn();
 const isDestroyed = vi.fn(() => false);
 const setConfig = vi.fn();
+const disableComputerUse = vi.fn();
 const getLastSeenReleaseNotesVersion = vi.fn(() => null);
 const setLastSeenReleaseNotesVersion = vi.fn();
 const mergeDiscoveredTools = vi.fn();
@@ -93,6 +94,7 @@ const keyboardWaitForRelease = vi.fn(async () => true);
 const agentStartRun = vi.fn();
 const agentStart = vi.fn();
 const agentStop = vi.fn();
+const agentCloseComputerUse = vi.fn(async () => undefined);
 const agentCancelRun = vi.fn();
 const agentSendApprovalDecision = vi.fn();
 const agentTestMcpServer = vi.fn();
@@ -135,6 +137,7 @@ let sessionOptions: any = null;
 
 installElectronMock();
 const actualRuntimeShell = { ...await import('../runtime-shell') };
+const actualComputerUse = { ...await import('../computer-use') };
 const keyboardSetPaused = vi.fn();
 const keyboardIsPaused = vi.fn(() => false);
 const keyboardSetCaptureSuspended = vi.fn();
@@ -193,6 +196,7 @@ mock.module('../tray', () => ({
 }));
 mock.module('../config', () => ({
   getConfig,
+  disableComputerUse,
   getChatGptHostId: () => 'urn:uuid:installation',
   setChatGptHostId: vi.fn(),
   setConfig,
@@ -200,6 +204,14 @@ mock.module('../config', () => ({
   mergeDiscoveredTools,
   getLastSeenReleaseNotesVersion,
   setLastSeenReleaseNotesVersion,
+}));
+// The real installer is Linux-only and would touch the profile's helper.
+mock.module('../computer-use', () => ({
+  createComputerUseInstaller: () => ({
+    executable: () => undefined, status: async () => ({ state: 'absent' }), install: async () => ({ state: 'absent' }),
+    cancelInstall: async () => undefined,
+    uninstall: async (cleanup: () => Promise<void>) => { await cleanup(); return { state: 'absent' }; },
+  }),
 }));
 mock.module('../credential-vault', () => ({ credentialVault }));
 mock.module('../credential-ipc', () => ({ registerCredentialIpcHandlers }));
@@ -216,6 +228,7 @@ mock.module('../agent-sidecar', () => ({
     start = agentStart;
     startRun = agentStartRun;
     stop = agentStop;
+    closeComputerUse = agentCloseComputerUse;
     cancelRun = agentCancelRun;
     sendApprovalDecision = agentSendApprovalDecision;
     testMcpServer = agentTestMcpServer;
@@ -314,6 +327,7 @@ describe('main process IPC orchestration', () => {
   afterAll(() => {
     mock.restore();
     mock.module('../runtime-shell', () => actualRuntimeShell);
+    mock.module('../computer-use', () => actualComputerUse);
     setPlatform(nativePlatform);
     if (originalSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
     else process.env.XDG_SESSION_TYPE = originalSessionType;
@@ -363,6 +377,7 @@ describe('main process IPC orchestration', () => {
     isDestroyed.mockReturnValue(false);
     recordingSessionCancel.mockClear();
     setConfig.mockClear();
+    disableComputerUse.mockReset();
     getLastSeenReleaseNotesVersion.mockClear();
     setLastSeenReleaseNotesVersion.mockClear();
     getConfig.mockClear();
@@ -392,6 +407,8 @@ describe('main process IPC orchestration', () => {
     agentStartRun.mockClear();
     agentStart.mockClear();
     agentStop.mockClear();
+    agentCloseComputerUse.mockReset();
+    agentCloseComputerUse.mockResolvedValue(undefined);
     agentCancelRun.mockClear();
     agentSendApprovalDecision.mockClear();
     agentTestMcpServer.mockClear();
@@ -482,6 +499,50 @@ describe('main process IPC orchestration', () => {
     expect(agentStartRun).toHaveBeenCalledWith(expect.any(String), 'Do the task.', config, 'private-plan-token', expect.any(Object), undefined);
     expect(JSON.stringify(send.mock.calls)).not.toContain('private-');
     expect(simulatePaste).not.toHaveBeenCalled();
+  });
+
+  it('starts a run with Computer Use off when it was turned off during a pending token refresh', async () => {
+    const provider = { ...baseConfig.agent.provider, kind: 'chatgpt', model: 'gpt-plan' };
+    const agent = { ...baseConfig.agent, enabled: true, provider };
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...agent, computerUse: { enabled: true, toolPolicies: {} } } });
+    credentialVault.read.mockReturnValue(JSON.stringify({
+      clientId: 'issued-client', issuer: 'https://auth.openai.com', subject: 'account', email: 'user@example.com',
+      tokens: { accessToken: 'old-token', refreshToken: 'old-refresh', idToken: 'identity', expiresAt: 0, scopes: ['chatgpt.tokens.use.direct'] },
+    }));
+    await import(`../index?test=${Date.now()}-computer-use-refresh`);
+    let finishRefresh!: (response: Response) => void;
+    let refreshed!: () => void;
+    const started = new Promise<void>(resolve => { refreshed = resolve; });
+    globalThis.fetch = vi.fn(() => new Promise<Response>(resolve => { finishRefresh = resolve; refreshed(); }));
+    const dispatched = new Promise<void>(resolve => { agentStartRun.mockImplementationOnce(() => resolve()); });
+    void sessionOptions.onResult({ text: 'Use my desktop.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
+    await started;
+    getConfig.mockReturnValue({ ...baseConfig, agent: { ...agent, computerUse: { enabled: false, toolPolicies: {} } } });
+    finishRefresh(Response.json({ access_token: 'new-token', refresh_token: 'new-refresh', expires_in: 3600, scope: 'chatgpt.tokens.use.direct' }));
+    await dispatched;
+    expect(agentStartRun.mock.calls[0]?.[2]).toMatchObject({ agent: { computerUse: { enabled: false } } });
+  });
+
+  it('restarts the sidecar and still removes Computer Use when the helper does not confirm it stopped', async () => {
+    const toolPolicies = { desktop_click: 'alwaysAllow' } as const;
+    let config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true, computerUse: { enabled: true, toolPolicies } } };
+    getConfig.mockImplementation(() => config);
+    disableComputerUse.mockImplementation(() => {
+      config = { ...config, agent: { ...config.agent, computerUse: { ...config.agent.computerUse, enabled: false } } };
+    });
+    await import(`../index?test=${Date.now()}-computer-use-uninstall`);
+    await sessionOptions.onResult({ text: 'Use my desktop.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
+    const agentRunId = agentStartRun.mock.calls[0]?.[0];
+    agentCloseComputerUse.mockRejectedValueOnce(new Error('Computer Use could not be stopped.'));
+    agentStart.mockClear();
+    expect(await ipcHandlers.get('computer-use:uninstall')?.({})).toMatchObject({ state: 'absent' });
+    expect(agentStop).toHaveBeenCalledTimes(1);
+    expect(agentStart).toHaveBeenCalledTimes(1);
+    const disabledConfig = expect.objectContaining({ agent: expect.objectContaining({ computerUse: { enabled: false, toolPolicies } }) });
+    expect(agentCloseComputerUse).toHaveBeenCalledWith(disabledConfig, undefined);
+    expect(agentStart).toHaveBeenCalledWith(disabledConfig, undefined);
+    // The run the restart ended must not stay on screen as if it were still working.
+    expect(runtimeShellShowAgentFailed).toHaveBeenCalledWith(agentRunId, expect.stringContaining('Try the command again'));
   });
 
   it('does not start a cancelled provider probe after a pending token refresh finishes', async () => {

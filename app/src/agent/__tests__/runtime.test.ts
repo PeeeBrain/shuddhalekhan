@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { createComputerUseRun } from '../computer-use';
 import { runAgent } from '../runtime';
 import type { AgentRuntimeCallbacks } from '../runtime';
 
@@ -112,6 +113,33 @@ describe('runAgent', () => {
     expect(first).toEndWith('Reply in French.\n</user_instructions>');
     expect(second).toBe(first);
     expect(streamTextMock.mock.calls[0]?.[0].messages[0].content).not.toContain('Reply in French.');
+  });
+
+  it('loads Computer Use tools up front with their system prompt section', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test';
+    streamTextMock.mockImplementation(() => makeStreamResult({
+      text: 'Done',
+      steps: [{ toolCalls: [], toolResults: [] }],
+      toolCalls: [],
+      toolResults: [],
+    }));
+    const abort = new AbortController();
+    const native = createComputerUseRun({
+      executable: 'never-started', signal: abort.signal, getConfig: () => ({ enabled: true, toolPolicies: {} }),
+      onToolStarted: () => undefined, onToolFinished: () => undefined,
+    });
+
+    try {
+      await runAgent('run-1', 'open notepad', baseConfig as never, native.tools, abort.signal, makeCallbacks());
+    } finally {
+      await native.close();
+    }
+
+    // A deferred desktop tool costs the model a search step each, and the run found them one by one.
+    const request = streamTextMock.mock.calls[0]?.[0];
+    expect(request.instructions.content).toContain('<computer_use>');
+    expect(request.tools['native-computer__desktop_launch']).toBeDefined();
+    expect(request.tools.tool_search).toBeUndefined();
   });
 
   it('injects the current local datetime into each agent run prompt', async () => {

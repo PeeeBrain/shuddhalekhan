@@ -236,6 +236,11 @@ function createMockSettingsIpc(
     removeMemoryFact: mock(() => Promise.reject(new Error('not used'))),
     clearMemory: mock(() => Promise.reject(new Error('not used'))),
     onMemoryChanged: mock(() => undefined),
+    getComputerUseStatus: mock(() => Promise.resolve({ state: 'absent' as const })),
+    installComputerUse: mock(() => Promise.reject(new Error('not used'))),
+    cancelComputerUseInstall: mock(() => Promise.reject(new Error('not used'))),
+    uninstallComputerUse: mock(() => Promise.reject(new Error('not used'))),
+    onComputerUseStatusChanged: mock(() => undefined),
   };
 }
 

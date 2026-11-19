@@ -7,6 +7,8 @@ import { logSidecar } from "./protocol";
 import { createAgentProvider } from "./provider";
 import { providerDiagnostic, redactProviderText } from "./provider-diagnostic";
 import type { AgentMemoryCommitResult, AgentMemoryUpdate, AgentRunContext } from '../shared/agent-context';
+import { COMPUTER_USE_SOURCE_ID } from '../shared/computer-use';
+import { COMPUTER_USE_INSTRUCTIONS } from './computer-use';
 import { createSkillTools } from './skills';
 import { learnAgentMemory } from './memory';
 
@@ -103,7 +105,8 @@ export async function runAgent(
     const toolSummary: string[] = skillNotice ? [skillNotice] : [];
     const loop = await runAgentLoop({
       client,
-      instructions: buildSystemPrompt(config.agent.customInstructions),
+      instructions: buildSystemPrompt(config.agent.customInstructions,
+        Object.keys(runTools).some(name => name.startsWith(`${COMPUTER_USE_SOURCE_ID}__`)) ? [COMPUTER_USE_INSTRUCTIONS] : []),
       messages: [...history, command],
       tools: runTools,
       signal,

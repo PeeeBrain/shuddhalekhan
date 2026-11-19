@@ -27,6 +27,9 @@ const runs: Array<{
 const closed = new Set<number>();
 mock.module('../../audit', () => ({ AgentAuditStore: class {
   record(_runId: string, event: string) { audit.push(event); }
+  forExecution() {
+    return { usedComputerUse: false, markComputerUseExecuted() {}, record: (event: string) => { audit.push(event); } };
+  }
   close() {}
 } }));
 mock.module('../../mcp-registry', () => ({ McpRegistry: class {

@@ -39,6 +39,48 @@ describe('sanitizeAuditPayload', () => {
 });
 
 describe('AgentAuditStore', () => {
+  it('keeps Computer Use arguments, UI text, and model copies out of SQLite', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'agent-audit-'));
+    const dbPath = join(directory, 'agent-audit.sqlite');
+    const marker = 'private-desktop-fixture-19f1';
+    try {
+      const store = new AgentAuditStore(dbPath);
+      const run = store.forExecution('native-run');
+      const toolName = 'native-computer__desktop_set_value';
+      const nativeCall = { toolName, toolCallId: 'call', input: { value: marker } };
+      const ordinaryCall = { toolName: 'mail__search', input: { query: 'keep-mcp-arguments' } };
+      run.record('tool_requests', { toolCalls: [nativeCall, ordinaryCall] });
+      run.record('tool_approval_requests', { approvalRequests: [{ approvalId: 'sdk', toolCall: nativeCall }] });
+      run.record('tool_approval_responses_sent', { approvalResponses: [{ approvalId: 'sdk', reason: marker }] });
+      run.record('approval_requested', { serverId: 'native-computer', arguments: [marker] });
+      run.record('approval_decision', { serverId: 'native-computer', approved: false, message: marker });
+      run.markComputerUseExecuted();
+      run.record('tool_results', { toolResults: [{ ...nativeCall, output: marker }] });
+      run.record('mcp_tool_execute_started', { serverId: 'mail', toolName: 'search', arguments: marker });
+      run.record('skill_resource_read', { name: 'crm', path: `customers/${marker}.md` });
+      run.record('computer_use_tool_execute', { toolName: 'desktop_set_value', ok: true, durationMs: 2, resultBytes: 10 });
+      run.record('run_completed', { response: marker, toolSummary: [] });
+      store.close();
+
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const events = queryAuditRunDetail(db, 'native-run');
+        expect(JSON.stringify(events)).not.toContain(marker);
+        expect(events.find(event => event.eventType === 'run_completed')?.payload).toEqual({ toolSummary: [] });
+        expect(events.find(event => event.eventType === 'tool_requests')?.payload).toEqual({
+          toolCalls: [{ toolName, toolCallId: 'call' }, ordinaryCall],
+        });
+        expect(events.find(event => event.eventType === 'computer_use_tool_execute')?.payload).toMatchObject({
+          toolName: 'desktop_set_value', ok: true, resultBytes: 10,
+        });
+      } finally {
+        db.close(true);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('stores status changes without repeated entries in each run timeline', () => {
     const directory = mkdtempSync(join(tmpdir(), 'agent-audit-'));
     const dbPath = join(directory, 'agent-audit.sqlite');
