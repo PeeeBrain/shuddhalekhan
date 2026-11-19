@@ -14,12 +14,19 @@ import type { DictationHistoryEntry } from '../../types/ipc';
 import { openAuditDatabase } from '../../shared/audit-sqlite';
 
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+const dbs: Array<ReturnType<typeof openAuditDatabase>> = [];
+// Windows cannot delete a folder while SQLite holds files in it.
+afterEach(() => {
+  for (const db of dbs.splice(0)) db.close();
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 /** A file-backed store, so reopening it is a restart. */
 function open(days: { value: number }) {
   if (!dirs.length) dirs.push(mkdtempSync(join(tmpdir(), 'dictation-history-')));
-  return new DictationHistory(openAuditDatabase(join(dirs[0], 'history.sqlite')) as unknown as HistoryDatabase, () => days.value);
+  const db = openAuditDatabase(join(dirs[0], 'history.sqlite'));
+  dbs.push(db);
+  return new DictationHistory(db as unknown as HistoryDatabase, () => days.value);
 }
 
 const entry = (text: string, overrides: Partial<DictationHistoryEntry> = {}) => ({
@@ -82,7 +89,10 @@ describe('Dictation history', () => {
     const history = open({ value: 30 });
     const long = 'x'.repeat(DICTATION_HISTORY_PREVIEW_CHARS + 50);
     const oldest = history.record(entry('oldest'))!;
+    // One transaction: a thousand separate commits are slow on Windows CI disks.
+    dbs[0].exec('BEGIN');
     for (let i = 0; i < DICTATION_HISTORY_MAX_ENTRIES; i++) history.record(entry(i === DICTATION_HISTORY_MAX_ENTRIES - 1 ? long : `entry ${i}`));
+    dbs[0].exec('COMMIT');
 
     const first = history.list('', null);
     expect(first.entries).toHaveLength(DICTATION_HISTORY_PAGE_SIZE);
