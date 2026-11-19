@@ -17,12 +17,16 @@ import type { SettingsSectionProps } from './settings-section-props';
 const FIELD_ID_ENABLED = 'computer-use-enabled';
 const FIELD_ID_POLICIES = 'computer-use-policies';
 
+const WINDOWS = navigator.userAgent.includes('Windows');
 const GROUPS: Array<{ id: ComputerUseToolGroup; title: string; description: string }> = [
   { id: 'observe', title: 'Read', description: 'List apps and windows, and read what a window shows.' },
   { id: 'act', title: 'Act', description: 'Change a window: click, fill fields, choose options.' },
-  { id: 'apps', title: 'Apps', description: 'Start any program on your PATH by name, not only apps, and quit apps. Always allow lets the agent run any of them without asking.' },
-  { id: 'clipboard', title: 'Clipboard', description: 'Off until you turn it on. The clipboard can hold passwords. Wayland needs wl-clipboard.' },
+  { id: 'apps', title: 'Apps', description: `Start any program on your PATH by name, not only apps, and quit apps${WINDOWS ? '' : ' (X11 apps only)'}. Always allow lets the agent run any of them without asking.` },
+  { id: 'clipboard', title: 'Clipboard', description: `Off until you turn it on. The clipboard can hold passwords.${WINDOWS ? '' : ' Wayland needs wl-clipboard.'}` },
 ];
+const HELPER_NOTE = WINDOWS
+  ? 'The helper is unsigned, so Smart App Control blocks it when turned on.'
+  : 'Works with GTK and Qt apps on Ubuntu 24.04 or newer; older accessibility services can refuse actions.';
 
 export function ComputerUseSettings({ config, persistence, settingsIpc }: SettingsSectionProps) {
   const [status, setStatus] = useState<ComputerUseStatus | null>(null);
@@ -159,7 +163,7 @@ function EngineRow({ status, busy, onInstall, onCancel, onRemove }: {
           {status?.state === 'installed' ? <Tag tone="success">Installed</Tag> : null}
         </p>
         <p className="text-xs leading-5 text-muted-foreground">
-          agent-desktop {COMPUTER_USE_VERSION}, open source from Vercel Labs (Apache-2.0). Downloaded from GitHub and verified before it runs. Works with GTK and Qt apps on Ubuntu 24.04 or newer; older accessibility services can refuse actions.
+          agent-desktop {COMPUTER_USE_VERSION}, open source from Vercel Labs (Apache-2.0). Downloaded from GitHub and verified before it runs. {HELPER_NOTE}
         </p>
         {status?.state === 'installing' ? (
           <p className="text-xs" role="status">

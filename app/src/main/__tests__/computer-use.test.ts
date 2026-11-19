@@ -50,7 +50,7 @@ for (const { failure, wrongDigest, extraMember } of cases) {
   });
 }
 
-it.skipIf(process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch))(
+it.skipIf(!['linux', 'win32'].includes(process.platform) || !['x64', 'arm64'].includes(process.arch))(
   'cancels an incomplete download and returns to absent with no staged files',
   async () => {
     const temp = mkdtempSync(join(tmpdir(), 'computer-use-cancel-test-'));

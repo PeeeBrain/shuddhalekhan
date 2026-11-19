@@ -10,18 +10,24 @@ import { z } from 'zod';
 import { COMPUTER_USE_VERSION, type ComputerUseStatus } from '../shared/computer-use';
 import { extractTar, replaceDirectory } from './managed-local-model';
 
-const members = ['agent-desktop', 'agent-desktop-linux-clipboard-owner'];
-const releaseBase = `https://github.com/vercel-labs/agent-desktop/releases/download/v${COMPUTER_USE_VERSION}`;
-const archiveName = (arch: string) => `agent-desktop-v${COMPUTER_USE_VERSION}-${arch}-unknown-linux-gnu.tar.gz`;
-const releases = {
-  x64: { url: `${releaseBase}/${archiveName('x86_64')}`, bytes: 3_537_152, sha256: 'ca77b6b75034eeb12e537dd8c0a4f2a3424119253f38b7e6bd79ba0d2fef1264' },
-  arm64: { url: `${releaseBase}/${archiveName('aarch64')}`, bytes: 3_407_558, sha256: '438990a703fbeb19775596c341c3701435e80adbfa1b2f64b82ff17567d5573b' },
+const windows = process.platform === 'win32';
+// Exactly the files each archive holds; the first is the helper.
+const members = windows ? ['agent-desktop.exe'] : ['agent-desktop', 'agent-desktop-linux-clipboard-owner'];
+const artifact = (target: string, bytes: number, sha256: string) => ({
+  url: `https://github.com/vercel-labs/agent-desktop/releases/download/v${COMPUTER_USE_VERSION}/agent-desktop-v${COMPUTER_USE_VERSION}-${target}.tar.gz`,
+  bytes,
+  sha256,
+});
+const releases: Partial<Record<string, ReturnType<typeof artifact>>> = {
+  'linux-x64': artifact('x86_64-unknown-linux-gnu', 3_537_152, 'ca77b6b75034eeb12e537dd8c0a4f2a3424119253f38b7e6bd79ba0d2fef1264'),
+  'linux-arm64': artifact('aarch64-unknown-linux-gnu', 3_407_558, '438990a703fbeb19775596c341c3701435e80adbfa1b2f64b82ff17567d5573b'),
+  'win32-x64': artifact('x86_64-pc-windows-msvc', 1_835_706, '6ee4b1e078f4e78792e79f16e32e4a78b9919464aa3c55629b7e27ed53a08c13'),
+  'win32-arm64': artifact('aarch64-pc-windows-msvc', 1_779_550, '805f1f61890f9983fceaf38cda94a37a049c379435d65607db5cedd22c8ef97b'),
 };
 const origins = new Set([
   'https://github.com', 'https://objects.githubusercontent.com', 'https://release-assets.githubusercontent.com',
 ]);
-const release = process.platform === 'linux' && (process.arch === 'x64' || process.arch === 'arm64')
-  ? releases[process.arch] : null;
+const release = releases[`${process.platform}-${process.arch}`] ?? null;
 const healthSchema = z.object({ ok: z.literal(true), data: z.object({ version: z.literal(COMPUTER_USE_VERSION) }) });
 
 async function download(url: URL, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
@@ -80,7 +86,8 @@ export async function installComputerUseRelease(
     signal.throwIfAborted();
     try {
       const { stdout } = await promisify(execFile)(join(bin, members[0]), ['version'], {
-        cwd: staging, env: { HOME: staging, AGENT_DESKTOP_HOME: staging },
+        // Windows system DLLs need SystemRoot even for a version check.
+        cwd: staging, env: { HOME: staging, AGENT_DESKTOP_HOME: staging, ...(windows ? { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows' } : {}) },
         timeout: 3000, maxBuffer: 4096, killSignal: 'SIGKILL', signal,
       });
       healthSchema.parse(JSON.parse(stdout));
@@ -108,7 +115,8 @@ export function createComputerUseInstaller(dataDirectory: string, onChange: (sta
     try {
       if (!lstatSync(destination).isDirectory() || !members.every(name => {
         const file = lstatSync(join(destination, name));
-        return file.isFile() && (file.mode & 0o100) !== 0;
+        // Windows has no execute bit.
+        return file.isFile() && (windows || (file.mode & 0o100) !== 0);
       })) return undefined;
       return join(destination, members[0]);
     } catch {
@@ -117,7 +125,7 @@ export function createComputerUseInstaller(dataDirectory: string, onChange: (sta
   }
 
   function status(): ComputerUseStatus {
-    if (!release) return { state: 'unsupported', reason: 'Computer Use requires Linux on x64 or ARM64.' };
+    if (!release) return { state: 'unsupported', reason: 'Computer Use requires Linux or Windows on x64 or ARM64.' };
     if (current?.state === 'installing') return current;
     if (executable()) return { state: 'installed' };
     return current?.state === 'failed' ? current : { state: 'absent' };
