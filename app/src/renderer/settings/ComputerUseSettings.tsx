@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import {
+  COMPUTER_USE_HEADED_ON_WINDOWS,
   COMPUTER_USE_TOOLS,
   COMPUTER_USE_VERSION,
   computerUseToolPolicy,
@@ -21,7 +22,9 @@ const WINDOWS = navigator.userAgent.includes('Windows');
 const GROUPS: Array<{ id: ComputerUseToolGroup; title: string; description: string }> = [
   { id: 'observe', title: 'Read', description: 'List apps and windows, and read what a window shows.' },
   { id: 'act', title: 'Act', description: 'Change a window: click, fill fields, choose options.' },
-  { id: 'apps', title: 'Apps', description: `Start any program on your PATH by name, not only apps, and quit apps${WINDOWS ? '' : ' (X11 apps only)'}. Always allow lets the agent run any of them without asking.` },
+  { id: 'apps', title: 'Apps', description: WINDOWS
+    ? 'Start any program by its full path, or by name from the Windows folder, and quit apps. Programs it starts, other than Store apps, close when Agent Mode stops or Shuddhalekhan quits. Always allow lets the agent run any of them without asking.'
+    : 'Start any program on your PATH by name, not only apps, and quit apps (X11 apps only). Always allow lets the agent run any of them without asking.' },
   { id: 'clipboard', title: 'Clipboard', description: `Off until you turn it on. The clipboard can hold passwords.${WINDOWS ? '' : ' Wayland needs wl-clipboard.'}` },
 ];
 const HELPER_NOTE = WINDOWS
@@ -124,7 +127,7 @@ export function ComputerUseSettings({ config, persistence, settingsIpc }: Settin
                 <h4 id={`computer-use-group-${group.id}`} className="text-sm font-medium">{group.title}</h4>
                 <p className="text-xs leading-5 text-muted-foreground">{group.description}</p>
                 <div className="mt-2 divide-y divide-border/40">
-                  {COMPUTER_USE_TOOLS.filter((tool) => tool.group === group.id).map((tool) => (
+                  {COMPUTER_USE_TOOLS.filter((tool) => tool.group === group.id && !(WINDOWS && COMPUTER_USE_HEADED_ON_WINDOWS.has(tool.name))).map((tool) => (
                     <div key={tool.name} className="grid grid-cols-1 items-center gap-2 py-2 sm:grid-cols-[1fr_160px] sm:gap-3">
                       <p className="min-w-0 text-[13px]">
                         {tool.label}

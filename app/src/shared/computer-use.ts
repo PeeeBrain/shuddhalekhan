@@ -41,6 +41,9 @@ export const COMPUTER_USE_TOOLS = [
 
 export type ComputerUseToolName = typeof COMPUTER_USE_TOOLS[number]['name'];
 
+/** Physical input on Windows, which agent-desktop's strict headless mode always refuses. Hidden there. */
+export const COMPUTER_USE_HEADED_ON_WINDOWS: ReadonlySet<ComputerUseToolName> = new Set(['desktop_right_click', 'desktop_type']);
+
 /** Persisted under `agent.computerUse`. Off for every existing profile. */
 export interface ComputerUseConfig {
   enabled: boolean;

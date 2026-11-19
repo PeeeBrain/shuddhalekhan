@@ -1,7 +1,7 @@
 import { expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, watch, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { createComputerUseRun } from '../computer-use';
 import type { ComputerUseConfig, ComputerUseToolName } from '../../shared/computer-use';
@@ -41,7 +41,9 @@ it.skipIf(!linux)('uses latest snapshot refs, applies live policies, and reaps t
       data: z.object({ home: z.string(), pid: z.number(), secretInherited: z.boolean() }),
     }).parse(JSON.parse(result)).data;
     expect(secretInherited).toBe(false);
-    expect(statSync(home).mode & 0o777).toBe(0o700);
+    // agent-desktop secures a home it creates itself; Windows refuses one that already exists.
+    expect(existsSync(home)).toBe(false);
+    expect(statSync(dirname(home)).mode & 0o777).toBe(0o700);
     // A malformed result fails that call only; the session keeps working.
     expect(await run.call('desktop_list_windows')).toMatch(/^INVALID_RESULT:/);
     const target = { app: 'Fixture', window_id: '1' };
@@ -70,7 +72,7 @@ it.skipIf(!linux)('uses latest snapshot refs, applies live policies, and reaps t
       expect(readFileSync(log, 'utf8').trim().split('\n')).toEqual([
         'desktop_list_apps', 'desktop_list_windows', 'desktop_snapshot', 'desktop_snapshot', 'desktop_click', 'desktop_wait', 'cancelled',
       ]);
-      expect(existsSync(home)).toBe(false);
+      expect(existsSync(dirname(home))).toBe(false);
       expect(() => process.kill(pid, 0)).toThrow();
     } finally {
       watching.close();
@@ -80,6 +82,18 @@ it.skipIf(!linux)('uses latest snapshot refs, applies live policies, and reaps t
     else process.env.NATIVE_FIXTURE_KEY = previousKey;
     await run.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(process.platform !== 'win32')('passes a full program path to launch on Windows, and fails fast when the helper cannot start', async () => {
+  // Smart App Control blocking the helper looks the same as a missing file: the process never starts.
+  const run = withAdapter(join(tmpdir(), 'missing-agent-desktop.exe'));
+  try {
+    expect(await run.call('desktop_launch', { app: 'C:\\Program Files/x.exe' })).toMatch(/^INVALID_INPUT:/);
+    expect(await run.call('desktop_launch', { app: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }))
+      .toMatch(/^COMPUTER_USE_FAILED:/);
+  } finally {
+    await run.close().catch(() => undefined);
   }
 });
 
@@ -118,7 +132,7 @@ it.skipIf(!linux)('fails the close but still removes window state when the helpe
     expect(await run.call('desktop_wait', { element: '@snap1:e1' })).toMatch(/^COMPUTER_USE_FAILED:/);
     // Its command may still be running, so the sidecar must fall back to its process group.
     await expect(run.close()).rejects.toThrow('did not stop');
-    expect(existsSync(home)).toBe(false);
+    expect(existsSync(dirname(home))).toBe(false);
   } finally {
     await run.close().catch(() => undefined);
     rmSync(dir, { recursive: true, force: true });

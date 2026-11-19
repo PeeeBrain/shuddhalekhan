@@ -67,6 +67,13 @@ export class ManagedStdioMcpTransport {
 
     child.on('error', (err) => {
       this.onerror?.(err instanceof Error ? err : new Error(String(err)));
+      // A process that never started (missing, or blocked by Smart App Control) emits no exit,
+      // so close here or the MCP handshake waits forever.
+      if (child.pid === undefined && this.child === child) {
+        stdoutLines.close();
+        this.child = null;
+        this.fireOnCloseOnce();
+      }
     });
 
     child.on('exit', () => {
