@@ -32,24 +32,25 @@ function McpPage(props: SettingsPageProps) {
 export const SETTINGS_NAV_GROUPS = [
   {
     id: 'general',
-    label: 'General',
+    label: 'Dictation',
     sections: [
       { id: 'home', label: 'Home', icon: House, component: HomeSettings },
       { id: 'transcription', label: 'Transcription', icon: FileText, component: TranscriptionSettings },
-      { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, component: ShortcutsSettings },
+      { id: 'shortcuts', label: 'Shortcuts & Mic', icon: Keyboard, component: ShortcutsSettings },
     ],
   },
   {
     id: 'agent',
-    label: 'Agent',
+    label: 'Agent Mode',
     sections: [
       { id: 'agent', label: 'Agent', icon: Bot, component: AgentSettings },
-      { id: 'mcp', label: 'MCP Servers', icon: Plug, component: McpPage },
-      { id: 'computer-use', label: 'Computer Use', icon: MousePointerClick, component: ComputerUseSettings },
-      { id: 'plugins', label: 'Plugins', icon: Puzzle, component: PluginsSettings },
-      { id: 'skills', label: 'Skills', icon: BookOpen, component: SkillsSettings },
-      { id: 'memory', label: 'Memory', icon: Brain, component: MemorySettings },
-      { id: 'history', label: 'History', icon: History, component: AuditHistorySettings },
+      // Folded while Agent Mode is off; they stay configurable, and nothing about them is deleted.
+      { id: 'mcp', label: 'MCP Servers', icon: Plug, component: McpPage, folded: true },
+      { id: 'computer-use', label: 'Computer Use', icon: MousePointerClick, component: ComputerUseSettings, folded: true },
+      { id: 'plugins', label: 'Plugins', icon: Puzzle, component: PluginsSettings, folded: true },
+      { id: 'skills', label: 'Skills', icon: BookOpen, component: SkillsSettings, folded: true },
+      { id: 'memory', label: 'Memory', icon: Brain, component: MemorySettings, folded: true },
+      { id: 'history', label: 'History', icon: History, component: AuditHistorySettings, folded: true },
     ],
   },
   {
@@ -60,23 +61,29 @@ export const SETTINGS_NAV_GROUPS = [
 ] as const satisfies ReadonlyArray<{
   id: string;
   label: string;
-  sections: ReadonlyArray<{ id: string; label: string; icon: typeof House; component: ComponentType<SettingsPageProps> }>;
+  sections: ReadonlyArray<{ id: string; label: string; icon: typeof House; component: ComponentType<SettingsPageProps>; folded?: true }>;
 }>;
 
 export type SettingsNavGroupId = typeof SETTINGS_NAV_GROUPS[number]['id'];
 export type SettingsNavSection = typeof SETTINGS_NAV_GROUPS[number]['sections'][number];
 export type SettingsSectionId = SettingsNavSection['id'];
 
+export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'home';
+
 export const SETTINGS_NAV_SECTIONS: readonly SettingsNavSection[] =
   SETTINGS_NAV_GROUPS.flatMap<SettingsNavSection>((group) => group.sections);
 
-export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = 'home';
+/** Whether the section sits folded under the Agent entry until the Agent group is expanded. */
+export function isFoldedSection(id: SettingsSectionId): boolean {
+  return SETTINGS_NAV_SECTIONS.some((section) => section.id === id && 'folded' in section);
+}
 
-export function getNavSectionIndex(id: SettingsSectionId): number {
-  const index = SETTINGS_NAV_SECTIONS.findIndex(
-    (section) => section.id === id,
-  );
-  return index === -1 ? 0 : index;
+/** The groups the sidebar lists; a collapsed Agent group keeps just its Agent entry. */
+export function visibleNavGroups({ agentExpanded }: { agentExpanded: boolean }) {
+  return SETTINGS_NAV_GROUPS.map((group) => ({
+    ...group,
+    sections: group.sections.filter((section) => agentExpanded || !('folded' in section)),
+  }));
 }
 
 /** Command palette entries: settings sections and agent runs. */

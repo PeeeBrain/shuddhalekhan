@@ -119,7 +119,7 @@ export function HomeSettings({ config, mcpStatuses, settingsIpc, onNavigate, onO
         </SettingsCard>
       </SettingsPanel>
 
-      {runs && runs.length > 0 ? (
+      {config.agent.enabled && runs && runs.length > 0 ? (
         <SettingsPanel>
           <SettingsPanelHeader
             title="Recent agent runs"

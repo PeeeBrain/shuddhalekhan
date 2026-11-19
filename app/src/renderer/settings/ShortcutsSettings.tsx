@@ -2,6 +2,7 @@ import { hasChosenMicrophone } from '../../shared/microphone-selection';
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type {
+  AudioDevice,
   RecordingIntent,
   ShortcutBinding,
   ShortcutsConfig,
@@ -16,7 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SectionHeader, SettingsCard, SettingsPanel, SettingsPanelHeader } from './ui/SectionHeader';
-import { Keycaps, ReadOnlyRow, ToggleRow } from './ui/rows';
+import { Keycaps, SelectRow, ToggleRow } from './ui/rows';
 import type { SettingsSectionProps } from './settings-section-props';
 import {
   captureKeyDown,
@@ -42,6 +43,22 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
   const desktopStatus = useDesktopStatus(settingsIpc);
   const [paused, setPaused] = useState(false);
   const [pauseError, setPauseError] = useState<string | undefined>();
+
+  const [microphones, setMicrophones] = useState<AudioDevice[]>([]);
+  useEffect(() => {
+    settingsIpc.listMicrophones().then(setMicrophones).catch(() => setMicrophones([]));
+  }, [settingsIpc]);
+  const selectedMicrophone = hasChosenMicrophone(config.selectedDeviceId) ? config.selectedDeviceId : 'default';
+  const microphoneOptions = [
+    { value: 'default', label: 'System default' },
+    ...microphones
+      .filter((device) => device.deviceId !== 'default')
+      .map((device) => ({ value: device.deviceId, label: device.label || `Device ${device.deviceId.slice(0, 8)}` })),
+  ];
+  // A chosen microphone that is unplugged still shows, so the select never lies about the saved value.
+  if (!microphoneOptions.some((option) => option.value === selectedMicrophone)) {
+    microphoneOptions.push({ value: selectedMicrophone, label: 'Chosen microphone (not connected)' });
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -70,7 +87,7 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
     <div className="space-y-8">
       <SectionHeader
         title="Shortcuts"
-        description="A global key and recording behavior for each mode."
+        description="A global key for each mode, and the microphone they record from."
       />
 
       <SettingsPanel aria-label="Shortcut bindings">
@@ -107,9 +124,13 @@ export function ShortcutsSettings(props: SettingsSectionProps) {
               <strong>Global shortcuts are paused.</strong> New Dictation and Agent Mode sessions will not start.
             </p>
           ) : null}
-          <ReadOnlyRow
+          <SelectRow
             label="Microphone"
-            value={hasChosenMicrophone(config.selectedDeviceId) ? config.selectedDeviceId : 'System default'}
+            value={selectedMicrophone}
+            options={microphoneOptions}
+            errorId="microphone-error"
+            error={persistence.fieldErrors.microphone}
+            onChange={(value) => void persistence.commit('selectedDeviceId', value, 'microphone')}
           />
           <ToggleRow
             title="Keep microphone ready"

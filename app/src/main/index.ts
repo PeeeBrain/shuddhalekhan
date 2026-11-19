@@ -6,7 +6,7 @@ import { join } from 'path';
 import { app, dialog, ipcMain, session, shell, Notification, powerMonitor } from 'electron';
 
 import { getSettingsWindow, openSettingsWindow, setSettingsWindowClosedHandler } from './settings-window';
-import { createTray, updateAudioDevices, updateShortcutPauseState, updateUpdaterStatus } from './tray';
+import { createTray, getAudioDevices, updateAudioDevices, updateTrayMenu, updateShortcutPauseState, updateUpdaterStatus } from './tray';
 import {
   getConfig,
   disableComputerUse,
@@ -659,6 +659,8 @@ handle('agent:test-provider', async (_event, value: unknown) => {
 
 handle('agent:cancel-provider-test', () => { providerTestRevision++; agentSidecar.cancelProviderTest(); });
 
+handle('audio:list-devices', async () => getAudioDevices());
+
 handle('audio:select-device', (_event, deviceId: string) => {
   setConfig('selectedDeviceId', deviceId);
   recordingSession.updateDevice(deviceId);
@@ -751,6 +753,10 @@ async function applyConfig<K extends keyof AppConfig>(key: K, value: AppConfig[K
     publishMcpStatusSnapshot(mcpStatusStore.configure(config.agent.mcpServers));
   }
   cachedAgentEnabled = config.agent.enabled;
+  if (key === 'selectedDeviceId') {
+    recordingSession.updateDevice(config.selectedDeviceId);
+    updateTrayMenu();
+  }
   if (key === 'shortcuts' || key === 'agent') keyboardHook.refreshShortcuts();
   publishWarmMicrophone();
   await releaseUnusedTranscriber(previousConfig, config);

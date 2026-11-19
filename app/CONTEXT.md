@@ -62,6 +62,8 @@ Settings can persist `managedLocalThreads` as a whole-number CPU inference threa
 
 Fresh installs remain in guided onboarding until a real Dictation is successfully inserted. Onboarding recommends the pinned model, shows size and language coverage, performs a live default-microphone check, explains the configured shortcut, and observes completion from the existing insertion result. Advanced provider settings remain reachable without changing the saved onboarding state.
 
+The Settings sidebar is Dictation-first: a Dictation group (Home, Transcription, Shortcuts & Mic, where the trigger, microphone, speech source, language, and vocabulary live) and an Agent group that lists only the Agent page while Agent Mode is off. Its detail pages (MCP, Computer Use, Plugins, Skills, Memory, History) are folded, not removed: they open while Agent Mode is on, when the user unfolds the group, or when a search or deep link targets one, so navigation never lands in a hidden page. Disabling Agent Mode only folds them. The microphone is `selectedDeviceId`; main applies a change from Settings to the recording session and tray the same way a tray pick does.
+
 ### Agent (Jarvis)
 The local AI assistant that receives transcribed prompts, interprets them, and can execute tools. Its global shortcut and activation behavior are configured independently from Dictation; `Alt + Win` is the default binding.
 

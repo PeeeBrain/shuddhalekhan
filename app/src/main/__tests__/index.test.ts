@@ -72,6 +72,7 @@ const getUpdateStatus = vi.fn(() => ({
   checkedAt: null,
 }));
 const updateAudioDevices = vi.fn();
+const updateTrayMenu = vi.fn();
 const updateUpdaterStatus = vi.fn();
 let trayHandlers: {
   onOpenSettings?: () => void;
@@ -191,6 +192,8 @@ mock.module('../tray', () => ({
     trayHandlers = handlers;
   }),
   updateAudioDevices,
+  getAudioDevices: () => [],
+  updateTrayMenu,
   updateUpdaterStatus,
   updateShortcutPauseState,
 }));
@@ -1182,6 +1185,17 @@ describe('main process IPC orchestration', () => {
     expect(recordingSessionUpdateDevice).toHaveBeenCalledWith('mic-1');
     expect(checkForUpdates).toHaveBeenCalled();
     expect(updateAudioDevices).toHaveBeenCalledWith([{ deviceId: 'mic-1', label: 'Mic', kind: 'audioinput' }]);
+  });
+
+  it('applies a microphone chosen in Settings to the recording session and the tray', async () => {
+    recordingSessionUpdateDevice.mockClear();
+    updateTrayMenu.mockClear();
+    getConfig.mockReturnValueOnce(baseConfig).mockReturnValueOnce({ ...baseConfig, selectedDeviceId: 'mic-2' });
+
+    await ipcHandlers.get('config:set')?.({}, 'selectedDeviceId', 'mic-2');
+
+    expect(recordingSessionUpdateDevice).toHaveBeenCalledWith('mic-2');
+    expect(updateTrayMenu).toHaveBeenCalled();
   });
 
   it('updates Agent Mode hotkey enablement without reading config per keypress', async () => {
