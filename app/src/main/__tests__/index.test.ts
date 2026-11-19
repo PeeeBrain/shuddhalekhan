@@ -17,6 +17,7 @@ const clipboardText = { value: 'original' };
 const send = vi.fn();
 const isDestroyed = vi.fn(() => false);
 const setConfig = vi.fn();
+const disableComputerUse = vi.fn();
 const getLastSeenReleaseNotesVersion = vi.fn(() => null);
 const setLastSeenReleaseNotesVersion = vi.fn();
 const mergeDiscoveredTools = vi.fn();
@@ -195,7 +196,7 @@ mock.module('../tray', () => ({
 }));
 mock.module('../config', () => ({
   getConfig,
-  disableComputerUse: vi.fn(),
+  disableComputerUse,
   getChatGptHostId: () => 'urn:uuid:installation',
   setChatGptHostId: vi.fn(),
   setConfig,
@@ -376,6 +377,7 @@ describe('main process IPC orchestration', () => {
     isDestroyed.mockReturnValue(false);
     recordingSessionCancel.mockClear();
     setConfig.mockClear();
+    disableComputerUse.mockReset();
     getLastSeenReleaseNotesVersion.mockClear();
     setLastSeenReleaseNotesVersion.mockClear();
     getConfig.mockClear();
@@ -405,6 +407,8 @@ describe('main process IPC orchestration', () => {
     agentStartRun.mockClear();
     agentStart.mockClear();
     agentStop.mockClear();
+    agentCloseComputerUse.mockReset();
+    agentCloseComputerUse.mockResolvedValue(undefined);
     agentCancelRun.mockClear();
     agentSendApprovalDecision.mockClear();
     agentTestMcpServer.mockClear();
@@ -520,7 +524,12 @@ describe('main process IPC orchestration', () => {
   });
 
   it('restarts the sidecar and still removes Computer Use when the helper does not confirm it stopped', async () => {
-    getConfig.mockReturnValue({ ...baseConfig, agent: { ...baseConfig.agent, enabled: true } });
+    const toolPolicies = { desktop_click: 'alwaysAllow' } as const;
+    let config = { ...baseConfig, agent: { ...baseConfig.agent, enabled: true, computerUse: { enabled: true, toolPolicies } } };
+    getConfig.mockImplementation(() => config);
+    disableComputerUse.mockImplementation(() => {
+      config = { ...config, agent: { ...config.agent, computerUse: { ...config.agent.computerUse, enabled: false } } };
+    });
     await import(`../index?test=${Date.now()}-computer-use-uninstall`);
     await sessionOptions.onResult({ text: 'Use my desktop.', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
     const agentRunId = agentStartRun.mock.calls[0]?.[0];
@@ -529,6 +538,9 @@ describe('main process IPC orchestration', () => {
     expect(await ipcHandlers.get('computer-use:uninstall')?.({})).toMatchObject({ state: 'absent' });
     expect(agentStop).toHaveBeenCalledTimes(1);
     expect(agentStart).toHaveBeenCalledTimes(1);
+    const disabledConfig = expect.objectContaining({ agent: expect.objectContaining({ computerUse: { enabled: false, toolPolicies } }) });
+    expect(agentCloseComputerUse).toHaveBeenCalledWith(disabledConfig, undefined);
+    expect(agentStart).toHaveBeenCalledWith(disabledConfig, undefined);
     // The run the restart ended must not stay on screen as if it were still working.
     expect(runtimeShellShowAgentFailed).toHaveBeenCalledWith(agentRunId, expect.stringContaining('Try the command again'));
   });

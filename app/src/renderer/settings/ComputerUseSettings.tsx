@@ -34,6 +34,7 @@ const TOUR_PLACEMENT = {
 } as const;
 
 const WINDOWS = navigator.userAgent.includes('Windows');
+const AVAILABLE_YOLO_TOOLS = YOLO_TOOLS.filter(tool => !(WINDOWS && COMPUTER_USE_HEADED_ON_WINDOWS.has(tool.name)));
 const GROUPS: Array<{ id: ComputerUseToolGroup; title: string; description: string }> = [
   { id: 'observe', title: 'Read', description: 'List apps and windows, and read what a window shows.' },
   { id: 'act', title: 'Act', description: 'Change a window: click, fill fields, choose options.' },
@@ -96,7 +97,9 @@ export function ComputerUseSettings({ config, persistence, settingsIpc, onNaviga
   const save = (next: ComputerUseConfig, fieldId: string) => {
     void persistence.commit('agent', { ...config.agent, computerUse: next }, fieldId);
   };
-  const yoloEnabled = YOLO_TOOLS.every(tool => computerUseToolPolicy(computerUse, tool.name) === 'alwaysAllow');
+  const allowedYoloTools = AVAILABLE_YOLO_TOOLS.filter(tool => computerUseToolPolicy(computerUse, tool.name) === 'alwaysAllow');
+  const yoloEnabled = allowedYoloTools.length === AVAILABLE_YOLO_TOOLS.length;
+  const yoloCustom = allowedYoloTools.length > 0 && !yoloEnabled;
   const setYolo = (enabled: boolean) => {
     const toolPolicies = { ...computerUse.toolPolicies };
     for (const { name } of YOLO_TOOLS) toolPolicies[name] = enabled ? 'alwaysAllow' : 'alwaysAsk';
@@ -249,26 +252,42 @@ export function ComputerUseSettings({ config, persistence, settingsIpc, onNaviga
             description="Choose what the agent can do and when it should ask you first."
           />
           <AlertDialog.Root open={confirmYolo} onOpenChange={setConfirmYolo}>
-            <SettingsCard>
-              <div className="flex flex-col items-start gap-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+            <SettingsCard className="@container">
+              <div className="flex flex-col items-start gap-4 py-4 @min-[40rem]:flex-row @min-[40rem]:items-center @min-[40rem]:justify-between @min-[40rem]:gap-6">
                 <div className="min-w-0 space-y-1">
                   <h4 className="flex items-center gap-3 text-sm font-medium">
                     YOLO mode
-                    <Tag tone={yoloEnabled ? 'warning' : 'neutral'}>{yoloEnabled ? 'On' : 'Off'}</Tag>
+                    <Tag tone={allowedYoloTools.length > 0 ? 'warning' : 'neutral'}>{yoloEnabled ? 'On' : yoloCustom ? 'Custom' : 'Off'}</Tag>
                   </h4>
                   <p className="max-w-md text-xs leading-5 text-muted-foreground">
-                    {yoloEnabled ? 'Desktop tools can act without asking you first.' : 'Let desktop tools act without asking you first.'}
-                    {' '}Clipboard permissions stay unchanged.
+                    {yoloCustom
+                      ? `${allowedYoloTools.length} desktop tool${allowedYoloTools.length === 1 ? '' : 's'} can act without asking you first.`
+                      : yoloEnabled ? 'Desktop tools can act without asking you first.' : 'Let desktop tools act without asking you first.'}
                   </p>
+                  <p className="text-xs leading-5 text-muted-foreground">Clipboard permissions stay unchanged.</p>
                 </div>
-                {yoloEnabled ? (
-                  <Button ref={yoloAction} variant="secondary" className="yolo-action shrink-0 border border-border" disabled={busy} onClick={() => setYolo(false)}>Turn off YOLO mode</Button>
-                ) : (
-                  <AlertDialog.Trigger asChild>
-                    <Button ref={yoloAction} variant="secondary" className="yolo-action shrink-0 border border-border" disabled={busy}>Enable YOLO mode</Button>
-                  </AlertDialog.Trigger>
-                )}
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {allowedYoloTools.length > 0 ? (
+                    <Button ref={yoloEnabled ? yoloAction : undefined} variant="secondary" className="yolo-action border border-border" disabled={busy} onClick={() => {
+                      setYolo(false);
+                      if (yoloCustom) yoloAction.current?.focus();
+                    }}>{yoloEnabled ? 'Turn off YOLO mode' : 'Restore approvals'}</Button>
+                  ) : null}
+                  {!yoloEnabled ? (
+                    <AlertDialog.Trigger asChild>
+                      <Button ref={yoloAction} variant="secondary" className="yolo-action border border-border" disabled={busy}>Enable YOLO mode</Button>
+                    </AlertDialog.Trigger>
+                  ) : null}
+                </div>
               </div>
+              {yoloCustom ? (
+                <details className="pb-3 text-xs text-muted-foreground">
+                  <summary className="w-fit cursor-pointer rounded py-1 outline-none focus-visible:ring-2 focus-visible:ring-ring">Review tools allowed without approval</summary>
+                  <ul aria-label="Tools allowed without approval" className="mt-2 grid list-inside list-disc gap-1 sm:grid-cols-2">
+                    {allowedYoloTools.map(tool => <li key={tool.name}>{tool.label}</li>)}
+                  </ul>
+                </details>
+              ) : null}
               <p className="flex items-start gap-2 border-t border-border/50 py-3 text-xs leading-5 text-muted-foreground">
                 <TriangleAlertIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
                 <span>Can run programs, change or delete data, and send information without approval.</span>

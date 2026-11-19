@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { ComputerUseSettings } from '../ComputerUseSettings';
 import type { SettingsIpc } from '../settings-ipc';
@@ -179,6 +179,27 @@ describe('ComputerUseSettings', () => {
     expect(commit).toHaveBeenCalledWith('agent', {
       enabled: true, mcpServers: [], computerUse: { enabled: false, toolPolicies: { desktop_snapshot: 'alwaysAllow' } },
     }, 'computer-use-policies');
+  });
+
+  it('shows saved mixed permissions and restores approval prompts without changing clipboard access', async () => {
+    const { savedComputerUse } = await renderPage({ state: 'installed' }, {
+      computerUse: { enabled: false, tourCompleted: true, toolPolicies: {
+        desktop_snapshot: 'alwaysAllow', desktop_click: 'alwaysAllow', desktop_clipboard_get: 'alwaysAllow',
+      } },
+    });
+    expect(screen.queryByText('Custom') !== null).toBe(true);
+    expect(screen.getByText('2 desktop tools can act without asking you first.')).toBeInTheDocument();
+    const allowed = within(screen.getByRole('list', { name: 'Tools allowed without approval', hidden: true }));
+    expect(allowed.getByText('Read a window')).toBeInTheDocument();
+    expect(allowed.getByText('Click')).toBeInTheDocument();
+    expect(button('Enable YOLO mode')).toBeInTheDocument();
+    await click(button('Restore approvals'));
+    expect(screen.queryByText('Off') !== null).toBe(true);
+    expect(document.activeElement === button('Enable YOLO mode')).toBe(true);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(savedComputerUse()).toMatchObject({ enabled: false, toolPolicies: {
+      desktop_snapshot: 'alwaysAsk', desktop_click: 'alwaysAsk', desktop_clipboard_get: 'alwaysAllow',
+    } });
   });
 
   it('requires confirmation before bulk-allowing tools, preserves clipboard access, and turns off immediately', async () => {
