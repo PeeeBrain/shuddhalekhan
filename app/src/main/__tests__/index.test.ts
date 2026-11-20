@@ -76,7 +76,7 @@ const updateTrayMenu = vi.fn();
 const updateUpdaterStatus = vi.fn();
 let trayHandlers: {
   onOpenSettings?: () => void;
-  onPasteLastTranscript?: () => void;
+  onPasteLastTranscript?: () => Promise<void>;
   onCopyLastTranscript?: () => void;
   onSelectDevice?: (deviceId: string) => void;
   isShortcutsPaused?: () => boolean;
