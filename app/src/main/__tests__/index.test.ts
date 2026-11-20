@@ -652,7 +652,7 @@ describe('main process IPC orchestration', () => {
     }));
   });
 
-  it('transcribes completed audio and restores the clipboard after paste', async () => {
+  it('transcribes completed audio and restores the clipboard after paste, before quitting', async () => {
     // Simulate successful result callback
     const result = {
       text: 'transcribed text',
@@ -660,11 +660,15 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
-    await (await import('../inject-text')).restorePendingClipboard();
+    expect(electronMock.clipboard.write).not.toHaveBeenCalled();
+    appListeners.get('before-quit')?.({ preventDefault: vi.fn() });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(simulatePaste).toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
+    // The pasted-over clipboard comes back before the app exits, not after its restore timer.
     expect(electronMock.clipboard.write).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'original' }));
+    expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
   });
 
   it('completes onboarding only after a real Dictation is inserted', async () => {
@@ -1376,7 +1380,6 @@ describe('main process IPC orchestration', () => {
     finishStop();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
-    // The pasted-over clipboard comes back before the app exits, not after its restore timer.
     expect(electronMock.clipboard.write).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'original' }));
   });
 

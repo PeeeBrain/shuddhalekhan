@@ -381,7 +381,8 @@ async function pasteLastTranscript(): Promise<void> {
   if (!transcript) return;
 
   const outcome = await deliverTranscript(transcript.text, null, new AbortController().signal, 'tray');
-  if (!outcome) return;
+  // A paste cut off by quit needs no failure toast while the app exits.
+  if (!outcome || quitting.signal.aborted) return;
   const { result } = outcome;
   if (result.kind !== 'input-dispatched') {
     showRecoveryNotification(result, 'Paste last transcript failed');
@@ -1048,7 +1049,8 @@ if (!gotSingleInstanceLock) {
     agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
-    void Promise.all([agentSidecar.stop(), computerUse.cancelInstall(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable(), restorePendingClipboard()]).finally(() => {
+    // allSettled: one failed cleanup must not quit before the clipboard restore runs.
+    void Promise.allSettled([agentSidecar.stop(), computerUse.cancelInstall(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable(), restorePendingClipboard()]).finally(() => {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;
