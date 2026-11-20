@@ -354,6 +354,23 @@ describe('ClipboardTransactionManager', () => {
     });
   }
 
+  it('does not snapshot the previous transcript as the clipboard when restoring it fails', async () => {
+    mockDelay = mock((ms: number) => ms === 500 ? new Promise<void>(() => undefined) : Promise.resolve());
+    let locked = true;
+    mockClipboardIO.restoreSnapshot = mock(() => {
+      if (locked) throw new Error('The clipboard was locked by another app.');
+    });
+    const manager = createManager();
+
+    expect((await manager.inject('first')).kind).toBe('input-dispatched');
+    expect((await manager.inject('second')).kind).toBe('error');
+    expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
+
+    locked = false;
+    await manager.flushRestore();
+    expect(mockClipboardIO.restoreSnapshot).toHaveBeenLastCalledWith(createClipboardSnapshot());
+  });
+
   it('keeps a remote paste\'s grace when the next Dictation is rejected before staging', async () => {
     const rdp = { ...defaultTarget, executablePath: 'C:\\Windows\\System32\\mstsc.exe' };
     mockForegroundInspector.captureTarget = mock(() => rdp);
@@ -369,6 +386,7 @@ describe('ClipboardTransactionManager', () => {
   it('reports a restore that fails after the paste went out', async () => {
     mockClipboardIO.restoreSnapshot = mock(() => { throw new Error('Clipboard is locked'); });
     const onRestoreFailed = mock(() => undefined);
+    mockDelay = mock((ms: number) => ms === 500 ? new Promise<void>(() => undefined) : Promise.resolve());
     const manager = new ClipboardTransactionManager(
       mockClipboardIO, () => defaultTarget, () => ({ acceptedEvents: 4 }), () => 1, () => 'ctrl-v',
       { delayFn: mockDelay, onRestoreFailed },

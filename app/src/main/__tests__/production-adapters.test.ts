@@ -19,6 +19,7 @@ describe('clipboard preservation', () => {
   beforeEach(() => {
     resetElectronMock();
     electronMock.clipboard.write.mockImplementation(() => { sequence += 1; });
+    electronMock.clipboard.clear.mockImplementation(() => { sequence += 1; });
   });
 
   it('restores rich text and its plain representation in one clipboard replacement', () => {
