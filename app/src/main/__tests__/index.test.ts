@@ -386,6 +386,9 @@ describe('main process IPC orchestration', () => {
     electronMock.clipboard.writeText.mockImplementation((text: string) => {
       clipboardText.value = text;
     });
+    electronMock.clipboard.write.mockImplementation((data: { text?: string }) => {
+      clipboardText.value = data.text ?? '';
+    });
     send.mockClear();
     historyRecord.mockClear();
     isDestroyed.mockReturnValue(false);
@@ -1352,15 +1355,21 @@ describe('main process IPC orchestration', () => {
     const preventDefault = vi.fn();
     await sessionOptions.onResult({ text: 'transcribed text', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
     expect(electronMock.clipboard.write).not.toHaveBeenCalled();
+    // A tray paste still in its settle wait must not dispatch once quit has restored the clipboard.
+    simulatePaste.mockClear();
+    electronMock.clipboard.writeText.mockClear();
+    const inFlightTrayPaste = trayHandlers.onPasteLastTranscript?.();
+    while (electronMock.clipboard.writeText.mock.calls.length === 0) await new Promise((resolve) => setTimeout(resolve, 0));
 
     appListeners.get('before-quit')?.({ preventDefault });
+    await inFlightTrayPaste;
+    expect(simulatePaste).not.toHaveBeenCalled();
 
     expect(recordingSessionStop).toHaveBeenCalledTimes(1);
     expect(agentStop).toHaveBeenCalledTimes(1);
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(electronMock.app.quit).not.toHaveBeenCalled();
-    // A tray paste while shutdown is pending would land after the flush and exit with the transcript on the clipboard.
-    simulatePaste.mockClear();
+    // Nor may a tray paste started while shutdown is pending.
     await trayHandlers.onPasteLastTranscript?.();
     expect(simulatePaste).not.toHaveBeenCalled();
 

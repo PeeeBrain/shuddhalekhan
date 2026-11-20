@@ -373,7 +373,8 @@ function showFormatterDegradedNotice(): void {
   }).show();
 }
 
-let quitCleanupStarted = false;
+// Aborted when quit starts, so no paste can land after quit restores the clipboard.
+const quitting = new AbortController();
 
 async function pasteLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
@@ -398,8 +399,8 @@ async function deliverTranscript(
     result: { kind: 'input-blocked', acceptedEvents: 0, reason } satisfies InjectResult,
     actions: copyOnly,
   });
-  // Quit has already flushed the clipboard restore, so a paste now could exit with the transcript on it.
-  if (quitCleanupStarted) return blocked('Shuddhalekhan is quitting. Nothing was pasted.');
+  if (quitting.signal.aborted) return blocked('Shuddhalekhan is quitting. Nothing was pasted.');
+  signal = AbortSignal.any([signal, quitting.signal]);
   // KDE delivery may have already sent input; replaying the recording could double-insert.
   if (source === 'retry' && target?.kind === 'kde-wayland') return null;
   const policyError = getAutomaticDeliveryError(process.platform, process.env, waylandDelivery?.isReady() ?? false);
@@ -1036,12 +1037,14 @@ if (!gotSingleInstanceLock) {
     // Keep running in tray on Windows
   });
 
+  let quitCleanupStarted = false;
   let quitCleanupComplete = false;
   app.on('before-quit', (event) => {
     if (quitCleanupComplete) return;
     event.preventDefault();
     if (quitCleanupStarted) return;
     quitCleanupStarted = true;
+    quitting.abort();
     agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
