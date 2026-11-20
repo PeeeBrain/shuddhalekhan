@@ -214,7 +214,7 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
               : `Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}${app.keyboardSession.active ? ' and ends the keyboard session' : ''}`}
             accessibilityState={{ disabled: off, busy }}
             style={({ pressed }) => [home.button, shape, recording ? { backgroundColor: tint } : [home.buttonIdle, { borderColor: tint }],
-              pressed && !recording && { backgroundColor: color.raised }, off && !busy && { opacity: 0.4 }]}
+              pressed && (recording ? { opacity: 0.8 } : { backgroundColor: color.raised }), off && !busy && { opacity: 0.4 }]}
           >
             {recording ? <View style={home.stopGlyph} />
               : busy ? <ActivityIndicator color={tint} size="large" />
