@@ -99,6 +99,7 @@ export class ClipboardTransactionManager {
   private onRestoreFailed: () => void;
   /** The clipboard a dispatched paste replaced, restored after the target has had time to read the transcript. */
   private pendingRestore: { snapshot: ClipboardSnapshot; sequence: number } | null = null;
+  private restoreGeneration = 0;
 
   constructor(
     private clipboardIO: ClipboardIO,
@@ -256,15 +257,16 @@ export class ClipboardTransactionManager {
       result = { kind: 'error', message: this.formatError('Clipboard transaction failed', error) };
     } finally {
       if (snapshot !== undefined && sequenceAfterStage !== undefined) {
-        const pending = { snapshot, sequence: sequenceAfterStage };
-        this.pendingRestore = pending;
+        this.pendingRestore = { snapshot, sequence: sequenceAfterStage };
+        // The timer keeps a generation rather than the snapshot, so a superseded timer holds no clipboard data.
+        const generation = ++this.restoreGeneration;
         if (mayHavePasted) {
           // The target may read the clipboard long after SendInput returns, so the restore waits off the
           // delivery path; the next Dictation can start meanwhile. A slow reader may still hold the clipboard
           // when the timer fires, so a failed restore retries once before telling the user.
           const restoreAfter = (ms: number, retry: boolean): void => {
             void this.delay(ms).then(() => this.enqueue(() => {
-              if (this.pendingRestore !== pending || this.restorePending()) return;
+              if (this.restoreGeneration !== generation || this.restorePending()) return;
               if (retry) restoreAfter(RESTORE_RETRY_MS, false);
               else this.onRestoreFailed();
             })).catch((error: unknown) => console.warn('Clipboard restore failed:', error));

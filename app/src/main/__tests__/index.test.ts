@@ -1361,9 +1361,14 @@ describe('main process IPC orchestration', () => {
     expect(electronMock.clipboard.write).not.toHaveBeenCalled();
     // A tray paste still in its settle wait must not dispatch once quit has restored the clipboard.
     simulatePaste.mockClear();
-    electronMock.clipboard.writeText.mockClear();
+    const staged = new Promise<void>((resolve) => {
+      electronMock.clipboard.writeText.mockImplementationOnce((text: string) => {
+        clipboardText.value = text;
+        resolve();
+      });
+    });
     const inFlightTrayPaste = trayHandlers.onPasteLastTranscript?.();
-    while (electronMock.clipboard.writeText.mock.calls.length === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.race([staged, inFlightTrayPaste?.then(() => { throw new Error('The tray paste finished before staging.'); })]);
 
     appListeners.get('before-quit')?.({ preventDefault });
     await inFlightTrayPaste;
