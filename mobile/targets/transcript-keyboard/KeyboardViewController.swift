@@ -508,6 +508,8 @@ final class KeyboardViewController: UIInputViewController {
     let replacingSelection = !(proxy.selectedText?.isEmpty ?? true)
     let insertion = KeyboardInsertion.text(transcript,
       before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
+    // The host may not call textDidChange for our own insert; Return must wake up for "dictate, then send".
+    defer { refreshReturnKey() }
     proxy.insertText(insertion)
     guard !replacingSelection, let before, let after,
           proxy.documentIdentifier == document,
@@ -543,6 +545,7 @@ final class KeyboardViewController: UIInputViewController {
     returnKey.accessibilityLabel = returnKeyLabel(proxy.returnKeyType)
     returnKey.isEnabled = proxy.enablesReturnKeyAutomatically != true || proxy.hasText
     returnKey.alpha = returnKey.isEnabled ? 1 : 0.4
+    returnKey.accessibilityTraits = returnKey.isEnabled ? .button : [.button, .notEnabled]
   }
 
   override func selectionDidChange(_ textInput: UITextInput?) {
