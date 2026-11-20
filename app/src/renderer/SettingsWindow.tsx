@@ -252,7 +252,7 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
             <div className="flex min-h-0 flex-1 flex-col">
               <SectionFrame
                 sectionId="history"
-                title="History"
+                title="Agent History"
                 description="Review past agent runs, tool activity, and responses."
               />
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-10 pb-8">

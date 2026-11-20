@@ -1,5 +1,5 @@
 import { createElement, type ComponentType } from 'react';
-import { BookOpen, Bot, Brain, FileText, History, House, Info, Keyboard, MousePointerClick, Plug, Puzzle } from 'lucide-react';
+import { BookOpen, Bot, Brain, FileText, History, House, Info, Keyboard, MousePointerClick, Plug, Puzzle, ScrollText } from 'lucide-react';
 import { ComputerUseSettings } from './ComputerUseSettings';
 import { HomeSettings } from './HomeSettings';
 import { TranscriptionSettings } from './TranscriptionSettings';
@@ -10,6 +10,7 @@ import { SkillsSettings } from './SkillsSettings';
 import { PluginsSettings } from './PluginsSettings';
 import { MemorySettings } from './MemorySettings';
 import { AuditHistorySettings } from './AuditHistorySettings';
+import { DictationHistorySettings } from './DictationHistorySettings';
 import { AboutSettings } from './AboutSettings';
 import type { SettingsSectionProps } from './settings-section-props';
 
@@ -37,6 +38,7 @@ export const SETTINGS_NAV_GROUPS = [
       { id: 'home', label: 'Home', icon: House, component: HomeSettings },
       { id: 'transcription', label: 'Transcription', icon: FileText, component: TranscriptionSettings },
       { id: 'shortcuts', label: 'Shortcuts & Mic', icon: Keyboard, component: ShortcutsSettings },
+      { id: 'dictation-history', label: 'History', icon: ScrollText, component: DictationHistorySettings },
     ],
   },
   {
@@ -50,7 +52,7 @@ export const SETTINGS_NAV_GROUPS = [
       { id: 'plugins', label: 'Plugins', icon: Puzzle, component: PluginsSettings, folded: true },
       { id: 'skills', label: 'Skills', icon: BookOpen, component: SkillsSettings, folded: true },
       { id: 'memory', label: 'Memory', icon: Brain, component: MemorySettings, folded: true },
-      { id: 'history', label: 'History', icon: History, component: AuditHistorySettings, folded: true },
+      { id: 'history', label: 'Agent History', icon: History, component: AuditHistorySettings, folded: true },
     ],
   },
   {

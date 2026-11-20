@@ -32,7 +32,7 @@ import { Disclosure } from './ui/Disclosure';
 import { SetupChecklist } from './SetupChecklist';
 import { WaylandInsertionPanel } from './WaylandInsertionPanel';
 import { CredentialControl } from './ui/CredentialControl';
-import { WHISPER_LANGUAGES, isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
+import { PROVIDER_GROUPS, PROVIDER_OPTIONS, WHISPER_LANGUAGES, isLocalProviderUrl, looksLikeRawApiKey } from './settings-model';
 import type { SettingsSectionProps } from './settings-section-props';
 import type {
   AppConfig,
@@ -110,41 +110,6 @@ const FIELD_ID_FORMATTER_MODEL = 'formatter-model';
 const FIELD_ID_FORMATTER_CONSENT = 'formatter-consent';
 const FIELD_ID_FORMATTER_KEY_SOURCE = 'formatter-key-source';
 const FIELD_ID_FORMATTER_KEY_ENV = 'formatter-key-env';
-
-interface ProviderOption {
-  value: TranscriptionProviderId;
-  label: string;
-  description: string;
-}
-
-const PROVIDER_GROUPS: Array<{ label: 'Local' | 'Cloud' | 'Custom'; options: ProviderOption[] }> = [
-  {
-    label: 'Local',
-    options: [
-      { value: 'managed-local', label: 'Managed Local', description: 'Private local speech recognition managed by Shuddhalekhan.' },
-      { value: 'local-whisper-cpp', label: 'Local whisper.cpp', description: 'Private whisper.cpp-compatible inference endpoint.' },
-    ],
-  },
-  {
-    label: 'Cloud',
-    options: [
-      { value: 'openai', label: 'OpenAI', description: 'OpenAI batch audio transcription.' },
-      { value: 'sarvam', label: 'Sarvam AI', description: 'Saaras speech-to-text for Indian languages and English.' },
-      { value: 'azure-speech', label: 'Microsoft Azure Speech', description: 'Azure Speech Fast Transcription.' },
-      { value: 'google-cloud-speech-v2', label: 'Google Cloud Speech-to-Text v2', description: 'Google synchronous Speech-to-Text v2.' },
-    ],
-  },
-  {
-    label: 'Custom',
-    options: [
-      { value: 'nvidia-speech-nim', label: 'NVIDIA Speech NIM', description: 'Self-hosted NVIDIA offline transcription.' },
-      { value: 'custom-open-ai-compatible', label: 'Custom OpenAI-compatible', description: 'A compatible private or local audio endpoint.' },
-      { value: 'whisper-live-kit', label: 'WhisperLiveKit', description: 'Self-hosted Dictation with live previews, health and protocol readiness checks.' },
-    ],
-  },
-];
-
-const PROVIDER_OPTIONS = PROVIDER_GROUPS.flatMap((group) => group.options);
 
 function ProviderSelector({
   value,

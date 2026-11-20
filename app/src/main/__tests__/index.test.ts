@@ -139,6 +139,13 @@ let sessionOptions: any = null;
 installElectronMock();
 const actualRuntimeShell = { ...await import('../runtime-shell') };
 const actualComputerUse = { ...await import('../computer-use') };
+const actualDictationHistory = { ...await import('../dictation-history') };
+const historyRecord = vi.fn((_entry: { text: string; delivery: string }) => 1);
+mock.module('../dictation-history', () => ({
+  openDictationHistory: () => ({ record: historyRecord, setDelivery: vi.fn(), prune: vi.fn() }),
+  transcriptionModel: () => null,
+  deliveryOf: actualDictationHistory.deliveryOf,
+}));
 const keyboardSetPaused = vi.fn();
 const keyboardIsPaused = vi.fn(() => false);
 const keyboardSetCaptureSuspended = vi.fn();
@@ -331,6 +338,7 @@ describe('main process IPC orchestration', () => {
     mock.restore();
     mock.module('../runtime-shell', () => actualRuntimeShell);
     mock.module('../computer-use', () => actualComputerUse);
+    mock.module('../dictation-history', () => actualDictationHistory);
     setPlatform(nativePlatform);
     if (originalSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
     else process.env.XDG_SESSION_TYPE = originalSessionType;
@@ -377,6 +385,7 @@ describe('main process IPC orchestration', () => {
       clipboardText.value = text;
     });
     send.mockClear();
+    historyRecord.mockClear();
     isDestroyed.mockReturnValue(false);
     recordingSessionCancel.mockClear();
     setConfig.mockClear();
@@ -662,6 +671,16 @@ describe('main process IPC orchestration', () => {
     expect(setConfig).toHaveBeenCalledWith('onboarding', { status: 'complete' });
     expect(setConfig).toHaveBeenCalledWith('setupChecklistDismissed', true);
     expect(send).toHaveBeenCalledWith('onboarding:completed');
+  });
+
+  it('keeps settled Dictations in History, never cancelled recordings or Agent commands', async () => {
+    await sessionOptions.onResult({ text: 'kept dictation', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await sessionOptions.onResult({ text: 'cancelled dictation', intent: 'dictation', targetSnapshot: defaultTargetSnapshot, signal: cancelled.signal });
+    await sessionOptions.onResult({ text: 'agent command', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
+
+    expect(historyRecord.mock.calls.map(([entry]: [{ text: string; delivery: string }]) => [entry.text, entry.delivery])).toEqual([['kept dictation', 'dispatched']]);
   });
 
   it('routes agent recordings to the sidecar without injecting text', async () => {

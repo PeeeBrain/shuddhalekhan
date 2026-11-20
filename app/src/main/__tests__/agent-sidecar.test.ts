@@ -121,6 +121,7 @@ const config: AppConfig = {
   pasteStrategy: { default: 'ctrl-v', overrides: {} },
   recordingSounds: true,
   warmMicrophone: false,
+  dictationHistoryDays: 30,
   setupChecklistDismissed: false,
   onboarding: { status: 'complete' },
   shortcuts: {

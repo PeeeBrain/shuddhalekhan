@@ -67,7 +67,7 @@ Pages are addressed by route: `settings` (the Settings window) and `runtime` (th
 | `bun $S config agent.enabled` | Prints a value from the config file in use. With no path, it prints the file path. |
 | `bun $S sidecar` | Prints how many Agent Mode sidecar processes are running (`bun …/app/src/agent/index.ts`). |
 
-Sidebar sections are buttons named `Home`, `Transcription`, `Shortcuts & Mic`, `Agent`, `MCP Servers`, `Computer Use`, `Plugins`, `Skills`, `Memory`, `History`, `About`. While Agent Mode is off, everything after `Agent` is folded away: `click settings "Agent Mode"` on the group heading (`aria-expanded`) unfolds it. A fresh config hides them behind onboarding until you `click settings "Configure an advanced provider"`.
+Sidebar sections are buttons named `Home`, `Transcription`, `Shortcuts & Mic`, `History` (Dictation history), `Agent`, `MCP Servers`, `Computer Use`, `Plugins`, `Skills`, `Memory`, `Agent History`, `About`. While Agent Mode is off, everything after `Agent` is folded away: `click settings "Agent Mode"` on the group heading (`aria-expanded`) unfolds it. A fresh config hides them behind onboarding until you `click settings "Configure an advanced provider"`.
 
 To find handles on a new screen, list the controls:
 
@@ -83,7 +83,7 @@ Proof standards:
 
 - Drive the real user path: clicks and fills in the UI, not IPC calls or config-file edits.
 - Capture the action and the resulting state: a screenshot of the dialog or toast, plus the state after it.
-- Check side effects from a second view as well as the screen: `bun $S config …` for persisted settings, `bun $S sidecar` for the sidecar process, History in Settings for audit rows.
+- Check side effects from a second view as well as the screen: `bun $S config …` for persisted settings, `bun $S sidecar` for the sidecar process, Agent History in Settings for audit rows.
 - Mocks only where a production boundary already isolates the external system.
 - A feature file can list several entry points. Proving one does not verify the others; say which you used.
 - Say which platform you ran on. A Linux pass does not verify Windows, and the reverse is also true.
