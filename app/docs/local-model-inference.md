@@ -4,7 +4,7 @@ Managed Local supports Parakeet unified English 600M and Granite Speech 5 TurboC
 
 `managedLocal` stores the selected model and a separate `auto`, `cpu`, or `cuda` preference for each model. Missing settings default to Parakeet/Auto. CPU threads remain a separate setting. Only model/device IDs cross IPC; paths and artifact URLs come from the pinned catalog in main.
 
-Auto requires CPU files. It tries an installed CUDA bundle, verifies startup, and otherwise uses CPU. A failed GPU is not retried every recording until settings or installed assets change. A GPU worker failure during incremental decoding falls back through the existing completed-WAV path. A failure during batch transcription retries that WAV on CPU. Dedicated GPU never substitutes CPU. Other GPU vendors currently use CPU. No model or GPU runtime downloads happen automatically.
+Auto requires CPU files. It tries an installed CUDA bundle, verifies startup, and otherwise uses CPU. A failed GPU is not retried every recording until settings or installed assets change. A failure during batch transcription retries that WAV on CPU. Dedicated GPU never substitutes CPU. Other GPU vendors currently use CPU. No model or GPU runtime downloads happen automatically.
 
 The engine reserves a recording before worker startup, so deleting model files is rejected during startup and active inference. A completed-WAV retry keeps the recording's original model and device preference, including whether CPU fallback is allowed. Each replacement worker is a new process so incompatible ONNX/ggml/CUDA DLL sets cannot mix. Parakeet GPU readiness requires encoder node-placement evidence on CUDA, plus a successful warm-up decode. Granite checks the selected native device and also warms up. Hardware names are informational, not proof of acceleration.
 
@@ -38,6 +38,22 @@ CPU and CUDA variants have separate install/delete state. Download hashes, byte 
 
 Formatting checks on 2026-11-01 exercised the real Granite CPU and CUDA backends against the same public Sherpa sample. Both returned unformatted English, and the shared formatter restored sentence case and punctuation. A direct punctuation check produced `How are you? I am fine. Thank you.` in approximately 6 ms. Parakeet CPU hotword decoding ran against the same sample; its already punctuated output was preserved. These are narrow native smoke checks, not a corpus accuracy/latency qualification or an Electron UI pass. Updated Parakeet CUDA hotwords have not been verified on hardware. Granite vocabulary still requires native contextual-decoder support outside the current prebuilt dependency.
 
+## Streaming
+
+Managed Local does not stream. No pinned model and device combination supports incremental inference, so every recording decodes once after stop. Probed on the RTX 4060 Laptop on 2026-11-20:
+
+- Granite TurboCTC Q4_K_M on transcribe.cpp 0.4.1, CPU or CUDA: the model reports `supportsStreaming: false`, and `Session.stream()` throws `NotImplementedByModel`.
+- Parakeet unified English, INT8 CPU or FP32 CUDA, on Sherpa-ONNX 2.0.1: both are the non-streaming export, which says so in its metadata. Sherpa's `OnlineRecognizer` rejects it (`'window_size' does not exist in the metadata`) and aborts the process.
+
+The smallest change that could stream is a model swap, not an adapter: the Parakeet unified English Q8_0 GGUF (`handy-computer/parakeet-unified-en-0.6b-gguf`, 731 MB), run on the transcribe.cpp CUDA runtime already pinned for Granite. It reports `supportsStreaming: true` on CUDA. On the 200-clip Svarah dev set (17.9 minutes), audio fed in 20 ms chunks at capture speed against one whole-clip `run()` on the same GPU model:
+
+| | Release to final text, median / p95 | WER | Deletions |
+| --- | --- | --- | --- |
+| Whole clip after stop | 315 / 1025 ms | 6.45% | 28 |
+| Streamed, finalized at stop | 389 / 743 ms | 6.77% | 33 |
+
+Streaming kept up with capture (median lag 19 ms), but `finalize()` alone took a median 356 ms because the buffered model still decodes its last chunk and right context after stop. It was faster on 76 of 200 clips, only the long ones, and lost words. That fails the bar for adopting it, which is lower release-to-final latency with no worse accuracy or lost words. The swap would also drop Sherpa's hotword decoding. Revisit when a pinned runtime offers a cache-aware streaming model for a supported GPU.
+
 ## Native verification
 
 `scripts/verify-local-models.ts` is an explicitly invoked Electron integration check, excluded from default Bun tests. Bundle it and `src/main/local-stt.ts` to `out/main/*.cjs`, externalizing Electron, Sherpa, and transcribe.cpp. When bundling with Bun, define `__dirname` as the absolute `out/main` directory because Bun otherwise substitutes each source module's directory. The product's electron-vite bundle uses its output directory normally.
@@ -50,6 +66,6 @@ Run the bundled verifier with Electron and these arguments:
 --out <result-json-path>
 ```
 
-The verifier downloads every pinned upstream part into `--root` through the real integrity-checking installer and reuses parts already there. Use a fresh directory to re-verify downloads. It checks both complete-WAV and incremental transcription through real Electron utility workers for every model/backend. It uses no personal app configuration and sends no keystrokes or clipboard input. CUDA verification requires compatible NVIDIA hardware and drivers. UI component tests cover explicit GPU setup and independent progress; lifecycle tests cover startup fallback, worker crashes, model switching, and persistence validation.
+The verifier downloads every pinned upstream part into `--root` through the real integrity-checking installer and reuses parts already there. Use a fresh directory to re-verify downloads. It checks complete-WAV transcription through real Electron utility workers for every model/backend. It uses no personal app configuration and sends no keystrokes or clipboard input. CUDA verification requires compatible NVIDIA hardware and drivers. UI component tests cover explicit GPU setup and independent progress; lifecycle tests cover startup fallback, worker crashes, model switching, and persistence validation.
 
 Verified on Windows with the RTX 4060 Laptop on 2026-11-01: 219 focused tests passed, app/tooling type checks and targeted lint passed, and both models completed batch and incremental decoding on CPU and CUDA. Native checks covered a short utterance and a longer recording. The longer check also passed through electron-vite output and an ASAR archive with unpacked native dependencies. The ASAR check found and verified the physical FFI library path requirement and Koffi platform-module packaging. Settings was inspected in Electron using isolated app data; before/after images are on PR #233. These are integration checks, not new accuracy or latency benchmarks. A full installer build and another VB-Cable/paste run were not performed for this feature.
