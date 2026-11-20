@@ -42,7 +42,7 @@ import { createSidecarEventRouter } from './sidecar-event-router';
 import { McpStatusStore } from './mcp-status-store';
 import { makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { getSidecarConfigAction } from './sidecar-config-policy';
-import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
+import { injectIntoFocusedApp, copyLastTranscriptToClipboard, restorePendingClipboard } from './inject-text';
 import {
   getLastTranscript,
   markLastTranscriptInjected,
@@ -1042,7 +1042,7 @@ if (!gotSingleInstanceLock) {
     agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
-    void Promise.all([agentSidecar.stop(), computerUse.cancelInstall(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable()]).finally(() => {
+    void Promise.all([agentSidecar.stop(), computerUse.cancelInstall(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable(), restorePendingClipboard()]).finally(() => {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;

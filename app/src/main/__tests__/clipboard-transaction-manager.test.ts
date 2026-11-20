@@ -82,11 +82,68 @@ describe('ClipboardTransactionManager', () => {
     expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
     expect(mockClipboardIO.writeTransientText).toHaveBeenCalledWith('hello', 1);
     expect(mockClipboardIO.writeText).not.toHaveBeenCalled();
-    expect(mockClipboardMonitor.getSequenceNumber).toHaveBeenCalledTimes(5);
     expect(mockDelay).toHaveBeenNthCalledWith(1, 50);
-    expect(mockDelay).toHaveBeenNthCalledWith(2, 100);
+    expect(mockDelay).toHaveBeenNthCalledWith(2, 500);
     expect(mockInputSimulator.simulatePaste).toHaveBeenCalledWith('ctrl-v');
+    await manager.flushRestore();
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives Remote Desktop longer to receive the clipboard before and after the paste', async () => {
+    const rdp = { ...defaultTarget, executablePath: 'C:\\Windows\\System32\\mstsc.exe' };
+    mockForegroundInspector.captureTarget = mock(() => rdp);
+
+    await createManager().inject('hello', { target: rdp });
+
+    expect(mockDelay.mock.calls).toEqual([[400], [3000]]);
+  });
+
+  it('returns before restoring, and a later Dictation never gets an older clipboard restored over it', async () => {
+    let sequence = 1;
+    let clipboard = 'original';
+    const writes: string[] = [];
+    const write = (text = '') => {
+      sequence += 1;
+      clipboard = text;
+      writes.push(text);
+    };
+    mockClipboardMonitor.getSequenceNumber = mock(() => sequence);
+    mockClipboardIO.captureSnapshot = mock(() => createClipboardSnapshot({ text: clipboard }));
+    mockClipboardIO.writeTransientText = mock((text: string): TransientWrite => {
+      write(text);
+      return 'staged';
+    });
+    mockClipboardIO.restoreSnapshot = mock((snapshot: ClipboardSnapshot) => write(snapshot.text));
+    const restoreTimers: (() => void)[] = [];
+    mockDelay = mock((ms: number) => ms === 500 ? new Promise<void>((resolve) => restoreTimers.push(resolve)) : Promise.resolve());
+    const manager = createManager();
+
+    expect((await manager.inject('first')).kind).toBe('input-dispatched');
+    expect(clipboard).toBe('first');
+
+    expect((await manager.inject('second')).kind).toBe('input-dispatched');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    restoreTimers[0]();
+    await settle();
+    // The first restore ran before the second transcript was staged; its late timer restores nothing.
+    expect(writes).toEqual(['first', 'original', 'second']);
+
+    restoreTimers[1]();
+    await settle();
+    expect(writes).toEqual(['first', 'original', 'second', 'original']);
+  });
+
+  it('leaves a copy made after the paste in place', async () => {
+    let sequence = 1;
+    mockClipboardMonitor.getSequenceNumber = mock(() => sequence);
+    mockDelay = mock((ms: number) => ms === 500 ? new Promise<void>(() => undefined) : Promise.resolve());
+    const manager = createManager();
+
+    expect(await manager.inject('hello')).toEqual({ kind: 'input-dispatched', acceptedEvents: 4 });
+    sequence += 1; // the user copies something
+    await manager.flushRestore();
+
+    expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
   });
 
   it('cancels during clipboard staging without dispatching input and restores the original clipboard', async () => {
@@ -225,11 +282,15 @@ describe('ClipboardTransactionManager', () => {
 
   it('serializes concurrent inject and stage operations (FIFO queue)', async () => {
     const executionOrder: string[] = [];
+    let sequence = 1;
+    mockClipboardMonitor.getSequenceNumber = mock(() => sequence);
 
     mockClipboardIO.writeText = mock((text: string) => {
+      sequence += 1;
       executionOrder.push(`write:${text}`);
     });
     mockClipboardIO.writeTransientText = mock((text: string): TransientWrite => {
+      sequence += 1;
       executionOrder.push(`transient:${text}`);
       return 'staged';
     });
@@ -251,37 +312,17 @@ describe('ClipboardTransactionManager', () => {
     const p3 = manager.inject('third');
 
     await Promise.all([p1, p2, p3]);
+    await manager.flushRestore();
 
-    // First injection should stage transiently, paste, and restore.
-    // Then the deliberate copy should write an ordinary entry.
-    // Then third injection should stage transiently, paste, and restore.
+    // The deliberate copy replaced the first transcript, so only the third injection restores.
     expect(executionOrder).toEqual([
       'transient:first',
       'paste',
-      'restore',
       'write:second',
       'transient:third',
       'paste',
       'restore',
     ]);
-  });
-
-  it('detects clipboard conflicts and returns clipboard-conflict result without restoring', async () => {
-    let callCount = 0;
-    mockClipboardMonitor.getSequenceNumber = mock(() => {
-      callCount++;
-      // The user copies after dispatch, before restoration.
-      return callCount < 5 ? 1 : 2;
-    });
-
-    const manager = createManager();
-    const result = await manager.inject('hello');
-
-    expect(result).toEqual({
-      kind: 'clipboard-conflict',
-      reason: 'Clipboard contents changed during dictation',
-    });
-    expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
   });
 
   it('does not paste a newer clipboard owner copied during staging', async () => {
@@ -313,13 +354,31 @@ describe('ClipboardTransactionManager', () => {
       acceptedEvents: 0,
       reason: 'No input events accepted (Win32 error 5)',
     });
+    await manager.flushRestore();
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
   });
 
-  it('does not claim success or offer a safe replay after clipboard restoration fails', async () => {
+  it('reports a restore that fails after the paste went out', async () => {
     mockClipboardIO.restoreSnapshot = mock(() => { throw new Error('Clipboard is locked'); });
-    const result = await createManager().inject('hello');
-    expect(mockInputSimulator.simulatePaste).toHaveBeenCalledTimes(1);
+    const onRestoreFailed = mock(() => undefined);
+    const manager = new ClipboardTransactionManager(
+      mockClipboardIO, () => defaultTarget, () => ({ acceptedEvents: 4 }), () => 1, () => 'ctrl-v',
+      { delayFn: mockDelay, onRestoreFailed },
+    );
+
+    expect((await manager.inject('hello')).kind).toBe('input-dispatched');
+    await manager.flushRestore();
+
+    expect(onRestoreFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not offer a safe replay when restoring fails before any paste went out', async () => {
+    mockClipboardIO.restoreSnapshot = mock(() => { throw new Error('Clipboard is locked'); });
+    mockForegroundInspector.captureTarget = mock(() => mockDelay.mock.calls.length ? null : defaultTarget);
+
+    const result = await createManager().inject('hello', { target: defaultTarget });
+
+    expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
     expect(result).toMatchObject({ kind: 'error', message: expect.stringContaining('clipboard could not be restored safely') });
   });
 
@@ -334,6 +393,7 @@ describe('ClipboardTransactionManager', () => {
       acceptedEvents: 2,
       reason: 'Partial input dispatch',
     });
+    await manager.flushRestore();
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
   });
 
@@ -349,6 +409,7 @@ describe('ClipboardTransactionManager', () => {
       kind: 'error',
       message: 'Paste dispatch failed: SendInput failed',
     });
+    await manager.flushRestore();
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledWith(
       createClipboardSnapshot()
     );

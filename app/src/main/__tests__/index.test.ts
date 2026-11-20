@@ -347,6 +347,8 @@ describe('main process IPC orchestration', () => {
   });
 
   beforeEach(async () => {
+    // A paste's clipboard restore waits on a real timer; settle it before the mocks reset.
+    await (await import('../inject-text')).restorePendingClipboard();
     setPlatform(nativePlatform);
     process.env.XDG_SESSION_TYPE = 'x11';
     delete process.env.WAYLAND_DISPLAY;
@@ -653,6 +655,7 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
+    await (await import('../inject-text')).restorePendingClipboard();
 
     expect(simulatePaste).toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
