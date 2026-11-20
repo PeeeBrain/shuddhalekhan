@@ -258,20 +258,11 @@ export class ClipboardTransactionManager {
     } finally {
       if (snapshot !== undefined && sequenceAfterStage !== undefined) {
         this.pendingRestore = { snapshot, sequence: sequenceAfterStage };
-        // The timer keeps a generation rather than the snapshot, so a superseded timer holds no clipboard data.
         const generation = ++this.restoreGeneration;
         if (mayHavePasted) {
           // The target may read the clipboard long after SendInput returns, so the restore waits off the
-          // delivery path; the next Dictation can start meanwhile. A slow reader may still hold the clipboard
-          // when the timer fires, so a failed restore retries once before telling the user.
-          const restoreAfter = (ms: number, retry: boolean): void => {
-            void this.delay(ms).then(() => this.enqueue(() => {
-              if (this.restoreGeneration !== generation || this.restorePending()) return;
-              if (retry) restoreAfter(RESTORE_RETRY_MS, false);
-              else this.onRestoreFailed();
-            })).catch((error: unknown) => console.warn('Clipboard restore failed:', error));
-          };
-          restoreAfter(timings.restoreMs, true);
+          // delivery path; the next Dictation can start meanwhile.
+          this.scheduleRestore(generation, timings.restoreMs, true);
         } else if (!this.restorePending()) {
           result = { kind: 'error', message: 'The clipboard could not be restored safely. Nothing was pasted; the transcript may still be on the clipboard.' };
         }
@@ -279,6 +270,17 @@ export class ClipboardTransactionManager {
     }
 
     return result ?? { kind: 'error', message: 'Unknown injection state' };
+  }
+
+  // A method, not a closure in runInjection, so a superseded timer captures only numbers and holds no snapshot.
+  // A slow reader may still hold the clipboard when the timer fires, so a failed restore retries once before
+  // telling the user.
+  private scheduleRestore(generation: number, ms: number, retry: boolean): void {
+    void this.delay(ms).then(() => this.enqueue(() => {
+      if (this.restoreGeneration !== generation || this.restorePending()) return;
+      if (retry) this.scheduleRestore(generation, RESTORE_RETRY_MS, false);
+      else this.onRestoreFailed();
+    })).catch((error: unknown) => console.warn('Clipboard restore failed:', error));
   }
 
   private buildDispatchResult(
