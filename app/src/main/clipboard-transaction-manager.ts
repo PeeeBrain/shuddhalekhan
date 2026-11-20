@@ -21,7 +21,7 @@ export interface ClipboardIO {
   /** A deliberate copy: an ordinary clipboard entry the user keeps. */
   writeText(text: string): void;
   /**
-   * Paste staging that is restored right away; kept out of clipboard history where the OS allows.
+   * Paste staging that is restored after the paste; kept out of clipboard history where the OS allows.
    * Where the OS allows, it writes only while the clipboard still has `expectedSequence`.
    * 'changed' means nothing was written; 'cleared' means the write failed after emptying the clipboard.
    * Throws only when the clipboard was left untouched.
@@ -38,6 +38,23 @@ export type PasteStrategyResolver = (executablePath: string | null) => PasteStra
 
 export interface ClipboardTransactionManagerOptions {
   delayFn?: (ms: number) => Promise<void>;
+  /** A restore after the paste went out failed; delivery has already been reported. */
+  onRestoreFailed?: () => void;
+}
+
+const REMOTE_DESKTOP_CLIENTS = new Set(['mstsc.exe', 'msrdc.exe']);
+const RESTORE_RETRY_MS = 100;
+
+/**
+ * How long staging settles before the paste chord, and how long the transcript stays on the clipboard after it.
+ * Windows targets can read the clipboard well after SendInput returns; Remote Desktop forwards the clipboard to
+ * the remote session asynchronously and fetches it only when the remote pastes.
+ * X11 keeps its earlier timing until Linux consumers are measured.
+ */
+function pasteTimings(target: DictationTargetSnapshot | null): { settleMs: number; restoreMs: number } {
+  if (target?.kind !== 'win32') return { settleMs: 50, restoreMs: 100 };
+  const executable = target.executablePath?.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  return REMOTE_DESKTOP_CLIENTS.has(executable) ? { settleMs: 400, restoreMs: 3000 } : { settleMs: 50, restoreMs: 500 };
 }
 
 export function validatePasteTarget(
@@ -79,6 +96,10 @@ export class ClipboardTransactionManager {
   private queue: Promise<unknown> = Promise.resolve();
   private activeCount = 0;
   private delay: (ms: number) => Promise<void>;
+  private onRestoreFailed: () => void;
+  /** The clipboard a dispatched paste replaced, restored after the target has had time to read the transcript. */
+  private pendingRestore: { snapshot: ClipboardSnapshot; sequence: number } | null = null;
+  private restoreGeneration = 0;
 
   constructor(
     private clipboardIO: ClipboardIO,
@@ -89,6 +110,36 @@ export class ClipboardTransactionManager {
     options: ClipboardTransactionManagerOptions = {}
   ) {
     this.delay = options.delayFn ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.onRestoreFailed = options.onRestoreFailed ?? (() => undefined);
+  }
+
+  /** Restores a pending clipboard now, after any transaction in flight; called before quitting. */
+  public flushRestore(): Promise<void> {
+    return this.enqueue(() => {
+      if (!this.restorePending()) this.onRestoreFailed();
+    });
+  }
+
+  private enqueue<T>(fn: () => T | Promise<T>): Promise<T> {
+    const task = this.queue.then(fn);
+    this.queue = task.then(
+      () => undefined,
+      () => undefined
+    );
+    return task;
+  }
+
+  /**
+   * Returns false when the restore failed. The restore then stays pending, so no later snapshot mistakes the
+   * transcript for the user's clipboard and writes it back where clipboard history keeps it.
+   */
+  private restorePending(): boolean {
+    const pending = this.pendingRestore;
+    if (!pending) return true;
+    // 'changed' means a newer transcript or the user's later copy owns the clipboard: leave it.
+    if (this.finalizeClipboard(pending.snapshot, pending.sequence) === 'failed') return false;
+    this.pendingRestore = null;
+    return true;
   }
 
   public async inject(
@@ -113,14 +164,7 @@ export class ClipboardTransactionManager {
       this.clipboardIO.writeText(text);
       return;
     }
-    const task = this.queue.then(() => {
-      this.clipboardIO.writeText(text);
-    });
-    this.queue = task.then(
-      () => undefined,
-      () => undefined
-    );
-    return task;
+    return this.enqueue(() => this.clipboardIO.writeText(text));
   }
 
   private async runInjection(
@@ -144,9 +188,18 @@ export class ClipboardTransactionManager {
 
     const strategy = this.pasteStrategyResolver(
       currentSnapshot && currentSnapshot.kind !== 'kde-wayland' ? currentSnapshot.executablePath : null);
+    const timings = pasteTimings(currentSnapshot);
+    // ponytail: a valid next paste restores a waiting clipboard early, so a remote target still reading the
+    // previous transcript within its 3 s grace gets the original clipboard; carry the snapshot across if
+    // back-to-back RDP needs it.
+    if (!this.restorePending()) {
+      return { kind: 'input-blocked', acceptedEvents: 0,
+        reason: 'The previous clipboard could not be restored, so this transcript was not pasted' };
+    }
 
     let snapshot: ClipboardSnapshot | undefined;
     let sequenceAfterStage: number | undefined;
+    let mayHavePasted = false;
     let result: InjectResult | undefined;
 
     try {
@@ -169,7 +222,7 @@ export class ClipboardTransactionManager {
         if (staging === 'cleared') {
           return { kind: 'error', message: 'Clipboard transaction failed: the transcript could not be staged' };
         }
-        await this.delay(50);
+        await this.delay(timings.settleMs);
         if (signal?.aborted) {
           return { kind: 'input-blocked', acceptedEvents: 0, reason: 'Dictation was cancelled.' };
         }
@@ -186,28 +239,32 @@ export class ClipboardTransactionManager {
           return { kind: 'target-changed', reason: 'target-changed: foreground target inspection failed' };
         }
         let dispatchResult: PasteDispatchResult;
+        const expectedEvents = buildPasteStrategyEvents(strategy).length;
+        mayHavePasted = true;
         try {
           dispatchResult = this.inputSimulator(strategy);
           markTiming('paste-dispatched', { acceptedEvents: dispatchResult.acceptedEvents });
+          // Without the paste key-down (the last key-down) nothing pasted, so don't leave the transcript
+          // on the clipboard for a manual paste.
+          if (dispatchResult.acceptedEvents < expectedEvents / 2) mayHavePasted = false;
         } catch (error) {
           return { kind: 'error', message: this.formatError('Paste dispatch failed', error) };
         }
-        await this.delay(100);
 
-        return this.buildDispatchResult(dispatchResult, strategy);
+        return this.buildDispatchResult(dispatchResult, expectedEvents);
       })();
     } catch (error) {
       result = { kind: 'error', message: this.formatError('Clipboard transaction failed', error) };
     } finally {
       if (snapshot !== undefined && sequenceAfterStage !== undefined) {
-        const restoration = await this.finalizeClipboard(snapshot, sequenceAfterStage);
-        if (restoration === 'failed') {
-          result = { kind: 'error', message: 'The clipboard could not be restored safely. Check the destination; input may already have been sent.' };
-        } else if (restoration === 'changed' && result?.kind === 'input-dispatched') {
-          result = {
-            kind: 'clipboard-conflict',
-            reason: 'Clipboard contents changed during dictation',
-          };
+        this.pendingRestore = { snapshot, sequence: sequenceAfterStage };
+        const generation = ++this.restoreGeneration;
+        if (mayHavePasted) {
+          // The target may read the clipboard long after SendInput returns, so the restore waits off the
+          // delivery path; the next Dictation can start meanwhile.
+          this.scheduleRestore(generation, timings.restoreMs, true);
+        } else if (!this.restorePending()) {
+          result = { kind: 'error', message: 'The clipboard could not be restored safely. Nothing was pasted; the transcript may still be on the clipboard.' };
         }
       }
     }
@@ -215,12 +272,21 @@ export class ClipboardTransactionManager {
     return result ?? { kind: 'error', message: 'Unknown injection state' };
   }
 
+  // A method, not a closure in runInjection, so a superseded timer captures only numbers and holds no snapshot.
+  // A slow reader may still hold the clipboard when the timer fires, so a failed restore retries once before
+  // telling the user.
+  private scheduleRestore(generation: number, ms: number, retry: boolean): void {
+    void this.delay(ms).then(() => this.enqueue(() => {
+      if (this.restoreGeneration !== generation || this.restorePending()) return;
+      if (retry) this.scheduleRestore(generation, RESTORE_RETRY_MS, false);
+      else this.onRestoreFailed();
+    })).catch((error: unknown) => console.warn('Clipboard restore failed:', error));
+  }
+
   private buildDispatchResult(
     dispatchResult: PasteDispatchResult,
-    strategy: PasteStrategy
+    expectedEvents: number
   ): InjectResult {
-    const expectedEvents = buildPasteStrategyEvents(strategy).length;
-
     if (dispatchResult.acceptedEvents === 0) {
       return {
         kind: 'input-blocked',
@@ -244,10 +310,10 @@ export class ClipboardTransactionManager {
     return { kind: 'input-dispatched', acceptedEvents: dispatchResult.acceptedEvents };
   }
 
-  private async finalizeClipboard(
+  private finalizeClipboard(
     snapshot: ClipboardSnapshot,
     sequenceAfterStage: number
-  ): Promise<'restored' | 'changed' | 'failed'> {
+  ): 'restored' | 'changed' | 'failed' {
     let sequenceBeforeRestore: number;
     try {
       sequenceBeforeRestore = this.clipboardMonitor();

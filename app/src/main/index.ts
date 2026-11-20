@@ -42,7 +42,7 @@ import { createSidecarEventRouter } from './sidecar-event-router';
 import { McpStatusStore } from './mcp-status-store';
 import { makeMcpToolPolicyKey } from '@shuddhalekhan/shared/mcp';
 import { getSidecarConfigAction } from './sidecar-config-policy';
-import { injectIntoFocusedApp, copyLastTranscriptToClipboard } from './inject-text';
+import { injectIntoFocusedApp, copyLastTranscriptToClipboard, restorePendingClipboard } from './inject-text';
 import {
   getLastTranscript,
   markLastTranscriptInjected,
@@ -373,12 +373,16 @@ function showFormatterDegradedNotice(): void {
   }).show();
 }
 
+// Aborted when quit starts, so no paste can land after quit restores the clipboard.
+const quitting = new AbortController();
+
 async function pasteLastTranscript(): Promise<void> {
   const transcript = getLastTranscript();
   if (!transcript) return;
 
   const outcome = await deliverTranscript(transcript.text, null, new AbortController().signal, 'tray');
-  if (!outcome) return;
+  // A paste cut off by quit needs no failure toast while the app exits.
+  if (!outcome || quitting.signal.aborted) return;
   const { result } = outcome;
   if (result.kind !== 'input-dispatched') {
     showRecoveryNotification(result, 'Paste last transcript failed');
@@ -396,6 +400,8 @@ async function deliverTranscript(
     result: { kind: 'input-blocked', acceptedEvents: 0, reason } satisfies InjectResult,
     actions: copyOnly,
   });
+  if (quitting.signal.aborted) return blocked('Shuddhalekhan is quitting. Nothing was pasted.');
+  signal = AbortSignal.any([signal, quitting.signal]);
   // KDE delivery may have already sent input; replaying the recording could double-insert.
   if (source === 'retry' && target?.kind === 'kde-wayland') return null;
   const policyError = getAutomaticDeliveryError(process.platform, process.env, waylandDelivery?.isReady() ?? false);
@@ -1039,10 +1045,12 @@ if (!gotSingleInstanceLock) {
     event.preventDefault();
     if (quitCleanupStarted) return;
     quitCleanupStarted = true;
+    quitting.abort();
     agentContext.invalidateMemory();
     void recordingSession.cancel();
     recordingSession.stop();
-    void Promise.all([agentSidecar.stop(), computerUse.cancelInstall(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable()]).finally(() => {
+    // allSettled: one failed cleanup must not quit before the clipboard restore runs.
+    void Promise.allSettled([agentSidecar.stop(), computerUse.cancelInstall(), managedLocalTranscriber.shutdown(), waylandDelivery?.disable(), restorePendingClipboard()]).finally(() => {
       resetMcpStatusSnapshot();
       closeDb();
       quitCleanupComplete = true;

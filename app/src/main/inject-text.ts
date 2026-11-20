@@ -1,3 +1,4 @@
+import { Notification } from 'electron';
 import {
   ClipboardTransactionManager,
 } from './clipboard-transaction-manager';
@@ -19,10 +20,31 @@ export function getClipboardTransactionManager(): ClipboardTransactionManager {
       captureForegroundTarget,
       simulatePaste,
       getClipboardSequenceNumber,
-      resolveConfiguredPasteStrategy
+      resolveConfiguredPasteStrategy,
+      { onRestoreFailed: showRestoreFailure }
     );
   }
   return defaultManager;
+}
+
+function showRestoreFailure(): void {
+  console.warn('Dictation: the previous clipboard could not be restored after the paste attempt.');
+  try {
+    if (!Notification.isSupported()) return;
+    new Notification({
+      title: 'Clipboard Not Restored',
+      body: 'Your previous clipboard could not be restored after the paste attempt. The transcript may still be on the clipboard.',
+      silent: true,
+    }).show();
+  } catch (error) {
+    // Runs from a timer with no caller to catch for it.
+    console.warn('Dictation: could not show the clipboard notification.', error);
+  }
+}
+
+/** Puts back a clipboard still waiting to be restored before quitting; a locked clipboard can still keep the transcript. */
+export async function restorePendingClipboard(): Promise<void> {
+  await defaultManager?.flushRestore();
 }
 
 export async function injectIntoFocusedApp(
