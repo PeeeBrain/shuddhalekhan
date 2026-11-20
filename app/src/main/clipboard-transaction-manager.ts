@@ -21,7 +21,7 @@ export interface ClipboardIO {
   /** A deliberate copy: an ordinary clipboard entry the user keeps. */
   writeText(text: string): void;
   /**
-   * Paste staging that is restored right away; kept out of clipboard history where the OS allows.
+   * Paste staging that is restored after the paste; kept out of clipboard history where the OS allows.
    * Where the OS allows, it writes only while the clipboard still has `expectedSequence`.
    * 'changed' means nothing was written; 'cleared' means the write failed after emptying the clipboard.
    * Throws only when the clipboard was left untouched.
@@ -198,7 +198,7 @@ export class ClipboardTransactionManager {
 
     let snapshot: ClipboardSnapshot | undefined;
     let sequenceAfterStage: number | undefined;
-    let dispatchAttempted = false;
+    let mayHavePasted = false;
     let result: InjectResult | undefined;
 
     try {
@@ -239,13 +239,13 @@ export class ClipboardTransactionManager {
         }
         let dispatchResult: PasteDispatchResult;
         const expectedEvents = buildPasteStrategyEvents(strategy).length;
-        dispatchAttempted = true;
+        mayHavePasted = true;
         try {
           dispatchResult = this.inputSimulator(strategy);
           markTiming('paste-dispatched', { acceptedEvents: dispatchResult.acceptedEvents });
           // Without the paste key-down (the last key-down) nothing pasted, so don't leave the transcript
           // on the clipboard for a manual paste.
-          if (dispatchResult.acceptedEvents < expectedEvents / 2) dispatchAttempted = false;
+          if (dispatchResult.acceptedEvents < expectedEvents / 2) mayHavePasted = false;
         } catch (error) {
           return { kind: 'error', message: this.formatError('Paste dispatch failed', error) };
         }
@@ -258,7 +258,7 @@ export class ClipboardTransactionManager {
       if (snapshot !== undefined && sequenceAfterStage !== undefined) {
         const pending = { snapshot, sequence: sequenceAfterStage };
         this.pendingRestore = pending;
-        if (dispatchAttempted) {
+        if (mayHavePasted) {
           // The target may read the clipboard long after SendInput returns, so the restore waits off the
           // delivery path; the next Dictation can start meanwhile. A slow reader may still hold the clipboard
           // when the timer fires, so a failed restore retries once before telling the user.

@@ -1359,6 +1359,10 @@ describe('main process IPC orchestration', () => {
     expect(agentStop).toHaveBeenCalledTimes(1);
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(electronMock.app.quit).not.toHaveBeenCalled();
+    // A tray paste while shutdown is pending would land after the flush and exit with the transcript on the clipboard.
+    simulatePaste.mockClear();
+    await trayHandlers.onPasteLastTranscript?.();
+    expect(simulatePaste).not.toHaveBeenCalled();
 
     finishStop();
     await new Promise((resolve) => setTimeout(resolve, 0));
