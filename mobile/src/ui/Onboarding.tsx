@@ -70,27 +70,30 @@ export function Onboarding({ app, onDone }: { app: App; onDone: (page?: Settings
             )}
           </Page>
         ) : (
-          <ModelStep app={app} onDownload={() => { void download(); }} onDone={onDone} />
+          <ModelStep app={app} microphoneOff={microphone === 'denied'} onDownload={() => { void download(); }} onDone={onDone} />
         )}
       </Reveal>
     </SafeAreaView>
   );
 }
 
-function ModelStep({ app, onDownload, onDone }: { app: App; onDownload: () => void; onDone: (page?: SettingsPage) => void }) {
+function ModelStep({ app, microphoneOff, onDownload, onDone }: { app: App; microphoneOff: boolean; onDownload: () => void; onDone: (page?: SettingsPage) => void }) {
   const model = app.localModel;
+  const ready = model.kind === 'ready' && !microphoneOff;
   const busy = app.phase !== 'idle';
   const fraction = model.kind === 'downloading' || model.kind === 'installing' ? model.fraction : null;
   const detail = model.kind === 'downloading' ? `Downloading, ${Math.round(model.fraction * 100)}%. Keep Shuddhalekhan open until it finishes; you can continue now.`
     : model.kind === 'installing' ? 'Preparing the model for this iPhone. The first time can take a few minutes.'
-      : model.kind === 'ready' ? 'Parakeet is ready. Dictation now works without a network.'
+      : model.kind === 'ready' ? (microphoneOff
+        ? 'Parakeet is ready. Turn on Microphone for Shuddhalekhan in iOS Settings to start dictating.'
+        : 'Parakeet is ready. Dictation now works without a network.')
         : model.kind === 'error' ? model.message
           : 'Parakeet transcribes on this iPhone, so audio never leaves it. The download is about 0.5 GB; use Wi-Fi.';
 
   return (
     <Page
-      glyph={<View style={s.mic}><View style={[s.micGlyph, { backgroundColor: model.kind === 'ready' ? color.green : color.blue }]} /></View>}
-      title={model.kind === 'ready' ? 'Ready when you are.' : 'Transcribe on this iPhone.'}
+      glyph={<View style={s.mic}><View style={[s.micGlyph, { backgroundColor: ready ? color.green : model.kind === 'ready' ? color.muted : color.blue }]} /></View>}
+      title={ready ? 'Ready when you are.' : model.kind === 'ready' ? 'Microphone is off.' : 'Transcribe on this iPhone.'}
       body={detail}
     >
       {fraction !== null ? (
@@ -98,8 +101,8 @@ function ModelStep({ app, onDownload, onDone }: { app: App; onDownload: () => vo
           <ProgressView value={fraction} modifiers={[tint(color.blue)]} />
         </Host>
       ) : null}
-      {model.kind === 'ready' ? <Button label="Start Dictating" kind="primary" wide onPress={() => onDone()} />
-        : fraction !== null ? <Button label="Continue" kind="secondary" wide onPress={() => onDone()} />
+      {ready ? <Button label="Start Dictating" kind="primary" wide onPress={() => onDone()} />
+        : fraction !== null || model.kind === 'ready' ? <Button label="Continue" kind="secondary" wide onPress={() => onDone()} />
           : (
             <>
               <Button label={model.kind === 'error' ? 'Retry Download' : 'Download Speech Model'} kind="primary" wide disabled={busy} onPress={onDownload} />

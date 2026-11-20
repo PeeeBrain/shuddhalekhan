@@ -163,6 +163,7 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
     opacity: level.interpolate({ inputRange: [0, 1], outputRange: [0.14, 0.26] }),
     transform: [{ scale: level.interpolate({ inputRange: [0, 1], outputRange: [1, 1.26] }) }],
   }));
+  const pressedWhileRecording = useRef<boolean | null>(null);
   const pressTo = (toValue: number) => {
     if (!reduceMotion) Animated.spring(press, { toValue, speed: toValue < 1 ? 50 : 24, bounciness: 0, useNativeDriver: true }).start();
   };
@@ -204,8 +205,14 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
         {recording ? <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, shape, { backgroundColor: tint }, halo]} /> : null}
         <Animated.View style={{ transform: [{ scale }] }}>
           <Pressable
-            onPress={recording ? app.stopRecording : () => { void app.startRecording(intent); }}
-            onPressIn={() => pressTo(0.94)}
+            // A press acts as what it was when the finger landed: holding Stop through an auto-stop must not start a recording.
+            onPress={() => {
+              const landed = pressedWhileRecording.current;
+              pressedWhileRecording.current = null;
+              if (landed !== null && landed !== recording) return;
+              void (recording ? app.stopRecording() : app.startRecording(intent));
+            }}
+            onPressIn={() => { pressedWhileRecording.current = recording; pressTo(0.94); }}
             onPressOut={() => pressTo(1)}
             disabled={off}
             accessibilityRole="button"
