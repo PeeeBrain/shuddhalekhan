@@ -43,6 +43,7 @@ export interface ClipboardTransactionManagerOptions {
 }
 
 const REMOTE_DESKTOP_CLIENTS = new Set(['mstsc.exe', 'msrdc.exe']);
+const RESTORE_RETRY_MS = 100;
 
 /**
  * How long staging settles before the paste chord, and how long the transcript stays on the clipboard after it.
@@ -191,7 +192,8 @@ export class ClipboardTransactionManager {
     // previous transcript within its 3 s grace gets the original clipboard; carry the snapshot across if
     // back-to-back RDP needs it.
     if (!this.restorePending()) {
-      return { kind: 'error', message: 'The previous clipboard could not be restored, so this transcript was not pasted.' };
+      return { kind: 'input-blocked', acceptedEvents: 0,
+        reason: 'The previous clipboard could not be restored, so this transcript was not pasted' };
     }
 
     let snapshot: ClipboardSnapshot | undefined;
@@ -241,7 +243,7 @@ export class ClipboardTransactionManager {
         try {
           dispatchResult = this.inputSimulator(strategy);
           markTiming('paste-dispatched', { acceptedEvents: dispatchResult.acceptedEvents });
-          // Without the paste key-down (the middle event) nothing pasted, so don't leave the transcript
+          // Without the paste key-down (the last key-down) nothing pasted, so don't leave the transcript
           // on the clipboard for a manual paste.
           if (dispatchResult.acceptedEvents < expectedEvents / 2) dispatchAttempted = false;
         } catch (error) {
@@ -258,10 +260,16 @@ export class ClipboardTransactionManager {
         this.pendingRestore = pending;
         if (dispatchAttempted) {
           // The target may read the clipboard long after SendInput returns, so the restore waits off the
-          // delivery path; the next Dictation can start meanwhile.
-          void this.delay(timings.restoreMs).then(() => this.enqueue(() => {
-            if (this.pendingRestore === pending && !this.restorePending()) this.onRestoreFailed();
-          })).catch((error: unknown) => console.warn('Clipboard restore failed:', error));
+          // delivery path; the next Dictation can start meanwhile. A slow reader may still hold the clipboard
+          // when the timer fires, so a failed restore retries once before telling the user.
+          const restoreAfter = (ms: number, retry: boolean): void => {
+            void this.delay(ms).then(() => this.enqueue(() => {
+              if (this.pendingRestore !== pending || this.restorePending()) return;
+              if (retry) restoreAfter(RESTORE_RETRY_MS, false);
+              else this.onRestoreFailed();
+            })).catch((error: unknown) => console.warn('Clipboard restore failed:', error));
+          };
+          restoreAfter(timings.restoreMs, true);
         } else if (!this.restorePending()) {
           result = { kind: 'error', message: 'The clipboard could not be restored safely. Nothing was pasted; the transcript may still be on the clipboard.' };
         }
@@ -275,7 +283,6 @@ export class ClipboardTransactionManager {
     dispatchResult: PasteDispatchResult,
     expectedEvents: number
   ): InjectResult {
-
     if (dispatchResult.acceptedEvents === 0) {
       return {
         kind: 'input-blocked',

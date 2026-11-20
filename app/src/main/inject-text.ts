@@ -42,7 +42,7 @@ function showRestoreFailure(): void {
   }
 }
 
-/** Puts back a clipboard still waiting to be restored, so quitting never leaves the transcript on it. */
+/** Puts back a clipboard still waiting to be restored before quitting; a locked clipboard can still keep the transcript. */
 export async function restorePendingClipboard(): Promise<void> {
   await defaultManager?.flushRestore();
 }

@@ -363,7 +363,8 @@ describe('ClipboardTransactionManager', () => {
     const manager = createManager();
 
     expect((await manager.inject('first')).kind).toBe('input-dispatched');
-    expect((await manager.inject('second')).kind).toBe('error');
+    // Nothing was staged or sent, so the user can safely retry once the lock clears.
+    expect(await manager.inject('second')).toMatchObject({ kind: 'input-blocked', acceptedEvents: 0 });
     expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
 
     locked = false;
@@ -383,19 +384,37 @@ describe('ClipboardTransactionManager', () => {
     expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
   });
 
-  it('reports a restore that fails after the paste went out', async () => {
+  it('reports a timed restore that still fails after its retry', async () => {
     mockClipboardIO.restoreSnapshot = mock(() => { throw new Error('Clipboard is locked'); });
     const onRestoreFailed = mock(() => undefined);
-    mockDelay = mock((ms: number) => ms === 500 ? new Promise<void>(() => undefined) : Promise.resolve());
     const manager = new ClipboardTransactionManager(
       mockClipboardIO, () => defaultTarget, () => ({ acceptedEvents: 4 }), () => 1, () => 'ctrl-v',
       { delayFn: mockDelay, onRestoreFailed },
     );
 
     expect((await manager.inject('hello')).kind).toBe('input-dispatched');
-    await manager.flushRestore();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(2);
     expect(onRestoreFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a restore once before reporting it, since a slow reader can still hold the clipboard', async () => {
+    let attempts = 0;
+    mockClipboardIO.restoreSnapshot = mock(() => {
+      if (++attempts === 1) throw new Error('The clipboard was locked by another app.');
+    });
+    const onRestoreFailed = mock(() => undefined);
+    const manager = new ClipboardTransactionManager(
+      mockClipboardIO, () => defaultTarget, () => ({ acceptedEvents: 4 }), () => 1, () => 'ctrl-v',
+      { delayFn: mockDelay, onRestoreFailed },
+    );
+
+    expect((await manager.inject('hello')).kind).toBe('input-dispatched');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(attempts).toBe(2);
+    expect(onRestoreFailed).not.toHaveBeenCalled();
   });
 
   it('does not offer a safe replay when restoring fails before any paste went out', async () => {
