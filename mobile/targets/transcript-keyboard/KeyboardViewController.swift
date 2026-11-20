@@ -557,6 +557,7 @@ final class KeyboardViewController: UIInputViewController {
     guard let undo, canUndo(undo) else { return clearUndo() }
     clearUndo()
     for _ in undo.inserted { textDocumentProxy.deleteBackward() }
+    refreshReturnKey()
     render(message: "Dictation undone.")
   }
 
@@ -895,6 +896,7 @@ final class KeyboardViewController: UIInputViewController {
     key.accessibilityAction = { [weak self] in
       self?.clearUndo()
       self?.textDocumentProxy.deleteBackward()
+      self?.refreshReturnKey()
     }
   }
 
@@ -912,6 +914,7 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   @objc private func stopDeleting() {
+    refreshReturnKey()
     deleteRepeat?.invalidate()
     deleteRepeat = nil
   }
