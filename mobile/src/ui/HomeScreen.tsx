@@ -40,8 +40,9 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   // iOS ignores accessibilityLiveRegion, so VoiceOver hears changes only when announced. One announcement per
   // change (an error wins), and none for what was already on screen when Home mounted.
   // "Done." stays off screen but is still spoken, so a finished run is never silent. Nothing is spoken while
-  // recording: the microphone would hear it, and the Stop button already says what is happening.
-  const spoken = phase === 'recording' ? '' : error || line || (status === 'Done.' ? status : '');
+  // the microphone is opening or recording: it would hear it, and the button already says what is happening.
+  const micOpen = phase === 'requestingPermission' || phase === 'recording';
+  const spoken = micOpen ? '' : error || line || (status === 'Done.' ? status : '');
   const mounted = useRef(false);
   useEffect(() => {
     if (mounted.current && spoken) AccessibilityInfo.announceForAccessibility(spoken);
