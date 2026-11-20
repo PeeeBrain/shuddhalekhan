@@ -37,9 +37,14 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   const canRetry = idle && settings.agentEnabled && transcript.trim() !== '';
   const setupCard = idle && !configured && !app.keyboardSession.active;
   const line = (status && !restStatus.has(status) ? status : '') || busyLabel[phase] || '';
-  // iOS ignores accessibilityLiveRegion, so VoiceOver hears status and errors only when announced.
-  useEffect(() => { if (line) AccessibilityInfo.announceForAccessibility(line); }, [line]);
-  useEffect(() => { if (error) AccessibilityInfo.announceForAccessibility(error); }, [error]);
+  // iOS ignores accessibilityLiveRegion, so VoiceOver hears changes only when announced. One announcement per
+  // change (an error wins), and none for what was already on screen when Home mounted.
+  const spoken = error || line;
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (mounted.current && spoken) AccessibilityInfo.announceForAccessibility(spoken);
+    mounted.current = true;
+  }, [spoken]);
 
   return (
     <SafeAreaView style={home.screen}>
@@ -151,6 +156,12 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
   const [press] = useState(() => new Animated.Value(1));
   const [settle] = useState(() => new Animated.Value(1));
   const [level] = useState(() => new Animated.Value(0));
+  // Built once: the timer re-renders this every second, and fresh nodes would re-attach the native animation.
+  const [scale] = useState(() => Animated.multiply(press, settle));
+  const [halo] = useState(() => ({
+    opacity: level.interpolate({ inputRange: [0, 1], outputRange: [0.14, 0.26] }),
+    transform: [{ scale: level.interpolate({ inputRange: [0, 1], outputRange: [1, 1.26] }) }],
+  }));
   const pressTo = (toValue: number) => {
     if (!reduceMotion) Animated.spring(press, { toValue, speed: toValue < 1 ? 50 : 24, bounciness: 0, useNativeDriver: true }).start();
   };
@@ -166,19 +177,16 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
   }, [mode, reduceMotion, settle]);
 
   // About 11 readings a second, only while recording; each one eases the halo toward the new level.
+  // Under Reduce Motion the halo holds still at rest, so nothing is polled.
   const readLevel = useEffectEvent(app.inputLevel);
   useEffect(() => {
-    if (!recording) { level.setValue(0); return; }
+    level.setValue(0);
+    if (!recording || reduceMotion) return;
     const timer = setInterval(() => {
       Animated.timing(level, { toValue: readLevel(), duration: 90, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
     }, 90);
     return () => clearInterval(timer);
-  }, [recording, level]);
-
-  const halo = reduceMotion
-    ? { opacity: level.interpolate({ inputRange: [0, 1], outputRange: [0.1, 0.4] }) }
-    : { opacity: level.interpolate({ inputRange: [0, 1], outputRange: [0.14, 0.26] }),
-        transform: [{ scale: level.interpolate({ inputRange: [0, 1], outputRange: [1, 1.26] }) }] };
+  }, [recording, reduceMotion, level]);
 
   // A keyboard session gives up the microphone to a tap here, but not mid-utterance.
   const off = !recording && (phase !== 'idle' || !configured || app.keyboardSession.busy || app.keyboardSession.starting);
@@ -193,7 +201,7 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
     <>
       <View style={home.record}>
         {recording ? <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, shape, { backgroundColor: tint }, halo]} /> : null}
-        <Animated.View style={{ transform: [{ scale: Animated.multiply(press, settle) }] }}>
+        <Animated.View style={{ transform: [{ scale }] }}>
           <Pressable
             onPress={recording ? app.stopRecording : () => { void app.startRecording(intent); }}
             onPressIn={() => pressTo(0.94)}

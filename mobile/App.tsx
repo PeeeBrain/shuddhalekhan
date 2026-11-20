@@ -36,7 +36,11 @@ function Main() {
   // First run is derived, not stored: a microphone iOS has never asked about means nobody has set this app up.
   // Undecided (null) for the one native read at launch, so Home never flashes before onboarding.
   const [onboarding, setOnboarding] = useState<boolean | null>(null);
-  useEffect(() => { void getDictationReadiness().then(r => setOnboarding(r.microphone === 'undetermined'), () => setOnboarding(false)); }, []);
+  // A launch from the Live Activity, Control Center, or a keyboard link may already have decided; that wins.
+  useEffect(() => {
+    void getDictationReadiness().then(r => setOnboarding(prev => prev ?? r.microphone === 'undetermined'), () => setOnboarding(prev => prev ?? false));
+  }, []);
+  useEffect(() => { if (app.keyboardSession.active) setOnboarding(false); }, [app.keyboardSession.active]);
   useEffect(() => { if (app.activityOpenCount) { setSettings(null); setOnboarding(false); } }, [app.activityOpenCount]);
   // The Control Center tile dictates on Home, so leave Settings when it opens the app.
   useEffect(() => { if (app.controlDictationOpenCount) { setSettings(null); setOnboarding(false); } }, [app.controlDictationOpenCount]);

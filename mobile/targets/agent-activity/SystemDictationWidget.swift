@@ -8,8 +8,8 @@ struct SystemDictationWidget: Widget {
     ActivityConfiguration(for: SystemDictationAttributes.self) { context in
       HStack {
         Text(context.isStale ? "Dictation status expired" : context.state.phase.title)
-        if let since = recordingSince(context) {
-          Text(timerInterval: since...Date.distantFuture, countsDown: false)
+        if let time = recordingTime(context) {
+          Text(timerInterval: time, countsDown: false)
             .monospacedDigit()
             .foregroundStyle(.secondary)
         }
@@ -25,8 +25,8 @@ struct SystemDictationWidget: Widget {
       } compactLeading: {
         Image(systemName: "mic")
       } compactTrailing: {
-        if let since = recordingSince(context) {
-          Text(timerInterval: since...Date.distantFuture, countsDown: false)
+        if let time = recordingTime(context) {
+          Text(timerInterval: time, countsDown: false)
             .monospacedDigit()
             .frame(maxWidth: 44)
             .accessibilityLabel(context.state.phase.title)
@@ -43,8 +43,10 @@ struct SystemDictationWidget: Widget {
   }
 
   /// The system counts the elapsed time on its own, so recording needs no per-second updates.
-  private func recordingSince(_ context: ActivityViewContext<SystemDictationAttributes>) -> Date? {
-    !context.isStale && context.state.phase == .recording ? context.state.startedAt : nil
+  /// The range ends at SystemDictation's 120 s cap, which also sizes the text for "2:00".
+  private func recordingTime(_ context: ActivityViewContext<SystemDictationAttributes>) -> ClosedRange<Date>? {
+    guard !context.isStale, context.state.phase == .recording, let since = context.state.startedAt else { return nil }
+    return since...since.addingTimeInterval(120)
   }
 
   @ViewBuilder private func actions(_ context: ActivityViewContext<SystemDictationAttributes>) -> some View {

@@ -56,7 +56,7 @@ export function Onboarding({ app, onDone }: { app: App; onDone: () => void }) {
             title={microphone === 'denied' ? 'Microphone is off.' : 'Allow the microphone.'}
             body={microphone === 'denied'
               ? 'Turn on Microphone for Shuddhalekhan in iOS Settings. You can do this later too.'
-              : 'Shuddhalekhan listens only while you record, and the screen always shows when it is.'}
+              : 'Shuddhalekhan listens only while you record, and iOS shows the microphone indicator whenever it does.'}
           >
             {microphone === 'denied' ? (
               <>
@@ -64,10 +64,8 @@ export function Onboarding({ app, onDone }: { app: App; onDone: () => void }) {
                 <Button label="Not Now" kind="ghost" wide onPress={afterMicrophone} />
               </>
             ) : (
-              <>
-                <Button label="Allow Microphone" kind="primary" wide onPress={() => { void requestMicrophone(); }} />
-                <Button label="Not Now" kind="ghost" wide onPress={afterMicrophone} />
-              </>
+              // No skip before iOS asks: an unasked microphone is what brings this screen back.
+              <Button label="Allow Microphone" kind="primary" wide onPress={() => { void requestMicrophone(); }} />
             )}
           </Page>
         ) : (
@@ -82,7 +80,7 @@ function ModelStep({ app, onDownload, onDone }: { app: App; onDownload: () => vo
   const model = app.localModel;
   const busy = app.phase !== 'idle';
   const fraction = model.kind === 'downloading' || model.kind === 'installing' ? model.fraction : null;
-  const detail = model.kind === 'downloading' ? `Downloading, ${Math.round(model.fraction * 100)}%. You can keep going; it finishes in the background while the app is open.`
+  const detail = model.kind === 'downloading' ? `Downloading, ${Math.round(model.fraction * 100)}%. Keep Shuddhalekhan open until it finishes; you can continue now.`
     : model.kind === 'installing' ? 'Preparing the model for this iPhone. The first time can take a few minutes.'
       : model.kind === 'ready' ? 'Parakeet is ready. Dictation now works without a network.'
         : model.kind === 'error' ? model.message
