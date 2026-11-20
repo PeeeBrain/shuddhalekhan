@@ -574,6 +574,7 @@ final class KeyboardViewController: UIInputViewController {
     case .done: "Done"
     case .next: "Next"
     case .join: "Join"
+    case .`continue`: "Continue"
     default: "Return"
     }
   }

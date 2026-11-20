@@ -57,7 +57,7 @@ export function Onboarding({ app, onDone }: { app: App; onDone: (page?: Settings
             title={microphone === 'denied' ? 'Microphone is off.' : 'Allow the microphone.'}
             body={microphone === 'denied'
               ? 'Turn on Microphone for Shuddhalekhan in iOS Settings. You can do this later too.'
-              : 'Shuddhalekhan listens only while you record, and iOS shows the microphone indicator whenever it does.'}
+              : 'Shuddhalekhan listens only while you record or keep a keyboard session open, and iOS shows the microphone indicator whenever it does.'}
           >
             {microphone === 'denied' ? (
               <>

@@ -39,7 +39,8 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   const line = (status && !restStatus.has(status) ? status : '') || busyLabel[phase] || '';
   // iOS ignores accessibilityLiveRegion, so VoiceOver hears changes only when announced. One announcement per
   // change (an error wins), and none for what was already on screen when Home mounted.
-  const spoken = error || line;
+  // "Done." stays off screen but is still spoken, so a finished run is never silent.
+  const spoken = error || line || (status === 'Done.' ? status : '');
   const mounted = useRef(false);
   useEffect(() => {
     if (mounted.current && spoken) AccessibilityInfo.announceForAccessibility(spoken);

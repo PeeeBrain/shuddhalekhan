@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useMobileApp } from './src/useMobileApp';
 import { ApprovalSheet } from './src/ui/ApprovalSheet';
 import { getDictationReadiness } from './src/dictation-preferences';
+import { speech } from './src/native-speech';
 import { HomeScreen } from './src/ui/HomeScreen';
 import { Onboarding } from './src/ui/Onboarding';
 import { SettingsScreen, type SettingsPage } from './src/ui/SettingsScreen';
@@ -37,7 +38,9 @@ function Main() {
   // Undecided (null) for the one native read at launch, so Home never flashes before onboarding.
   const [onboarding, setOnboarding] = useState<boolean | null>(null);
   // A launch from the Live Activity, Control Center, or a keyboard link may already have decided; that wins.
+  // Without the native module (Expo Go) the microphone can't be asked for here, so go straight to Home.
   useEffect(() => {
+    if (!speech?.requestDictationMicrophone) return setOnboarding(prev => prev ?? false);
     void getDictationReadiness().then(r => setOnboarding(prev => prev ?? r.microphone === 'undetermined'), () => setOnboarding(prev => prev ?? false));
   }, []);
   useEffect(() => { if (app.keyboardSession.active) setOnboarding(false); }, [app.keyboardSession.active]);
