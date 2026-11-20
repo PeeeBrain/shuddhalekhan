@@ -17,7 +17,11 @@ struct SystemDictationAttributes: ActivityAttributes {
     }
   }
 
-  struct ContentState: Codable, Hashable, Sendable { let phase: Phase }
+  /// `startedAt` rides along with `.recording` so the widget can count the elapsed time without updates.
+  struct ContentState: Codable, Hashable, Sendable {
+    let phase: Phase
+    var startedAt: Date? = nil
+  }
 
   let requestID: String
 }

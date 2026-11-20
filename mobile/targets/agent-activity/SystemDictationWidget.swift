@@ -8,6 +8,11 @@ struct SystemDictationWidget: Widget {
     ActivityConfiguration(for: SystemDictationAttributes.self) { context in
       HStack {
         Text(context.isStale ? "Dictation status expired" : context.state.phase.title)
+        if let since = recordingSince(context) {
+          Text(timerInterval: since...Date.distantFuture, countsDown: false)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+        }
         Spacer()
         actions(context)
       }
@@ -20,14 +25,26 @@ struct SystemDictationWidget: Widget {
       } compactLeading: {
         Image(systemName: "mic")
       } compactTrailing: {
-        Image(systemName: !context.isStale && context.state.phase == .recording ? "waveform" : "circle")
-          .accessibilityLabel(context.isStale ? "Dictation status expired" : context.state.phase.title)
+        if let since = recordingSince(context) {
+          Text(timerInterval: since...Date.distantFuture, countsDown: false)
+            .monospacedDigit()
+            .frame(maxWidth: 44)
+            .accessibilityLabel(context.state.phase.title)
+        } else {
+          Image(systemName: !context.isStale && context.state.phase == .recording ? "waveform" : "circle")
+            .accessibilityLabel(context.isStale ? "Dictation status expired" : context.state.phase.title)
+        }
       } minimal: {
         Image(systemName: "mic")
           .accessibilityLabel(context.isStale ? "Dictation status expired" : context.state.phase.title)
       }
       .widgetURL(URL(string: "shuddhalekhan://system-dictation"))
     }
+  }
+
+  /// The system counts the elapsed time on its own, so recording needs no per-second updates.
+  private func recordingSince(_ context: ActivityViewContext<SystemDictationAttributes>) -> Date? {
+    !context.isStale && context.state.phase == .recording ? context.state.startedAt : nil
   }
 
   @ViewBuilder private func actions(_ context: ActivityViewContext<SystemDictationAttributes>) -> some View {

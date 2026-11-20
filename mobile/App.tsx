@@ -4,7 +4,9 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useMobileApp } from './src/useMobileApp';
 import { ApprovalSheet } from './src/ui/ApprovalSheet';
+import { getDictationReadiness } from './src/dictation-preferences';
 import { HomeScreen } from './src/ui/HomeScreen';
+import { Onboarding } from './src/ui/Onboarding';
 import { SettingsScreen, type SettingsPage } from './src/ui/SettingsScreen';
 import { ReducedMotionContext } from './src/ui/kit';
 
@@ -31,13 +33,17 @@ function Main() {
   // null = Home; otherwise Settings, opened at an optional page.
   const [settings, setSettings] = useState<{ page?: SettingsPage } | null>(null);
   const [reviewingApproval, setReviewingApproval] = useState<string | null>(null);
-  useEffect(() => { if (app.activityOpenCount) setSettings(null); }, [app.activityOpenCount]);
+  // First run is derived, not stored: a microphone iOS has never asked about means nobody has set this app up.
+  // Undecided (null) for the one native read at launch, so Home never flashes before onboarding.
+  const [onboarding, setOnboarding] = useState<boolean | null>(null);
+  useEffect(() => { void getDictationReadiness().then(r => setOnboarding(r.microphone === 'undetermined'), () => setOnboarding(false)); }, []);
+  useEffect(() => { if (app.activityOpenCount) { setSettings(null); setOnboarding(false); } }, [app.activityOpenCount]);
   // The Control Center tile dictates on Home, so leave Settings when it opens the app.
-  useEffect(() => { if (app.controlDictationOpenCount) setSettings(null); }, [app.controlDictationOpenCount]);
+  useEffect(() => { if (app.controlDictationOpenCount) { setSettings(null); setOnboarding(false); } }, [app.controlDictationOpenCount]);
 
   return (
     <>
-      {settings ? (
+      {onboarding === null ? null : onboarding ? <Onboarding app={app} onDone={() => setOnboarding(false)} /> : settings ? (
         <SettingsScreen app={app} initialPage={settings.page} onClose={() => setSettings(null)} />
       ) : (
         <HomeScreen app={app} onOpenSettings={page => setSettings({ page })} onReviewApproval={() => setReviewingApproval(app.approval?.approvalId ?? null)} />
