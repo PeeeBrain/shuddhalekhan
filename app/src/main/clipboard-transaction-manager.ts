@@ -163,10 +163,6 @@ export class ClipboardTransactionManager {
     targetSnapshot: DictationTargetSnapshot | null = null,
     signal?: AbortSignal,
   ): Promise<InjectResult> {
-    // ponytail: a restore still waiting runs now, even if this transaction is then cancelled, so a remote target
-    // pasting the previous transcript within its 3 s grace can read the original clipboard instead; carry the
-    // snapshot across if back-to-back RDP needs it.
-    this.restorePending();
     if (signal?.aborted) return { kind: 'input-blocked', acceptedEvents: 0, reason: 'Dictation was cancelled.' };
     let currentSnapshot: DictationTargetSnapshot | null;
     try {
@@ -184,6 +180,10 @@ export class ClipboardTransactionManager {
     const strategy = this.pasteStrategyResolver(
       currentSnapshot && currentSnapshot.kind !== 'kde-wayland' ? currentSnapshot.executablePath : null);
     const timings = pasteTimings(currentSnapshot);
+    // ponytail: a valid next paste restores a waiting clipboard early, so a remote target still reading the
+    // previous transcript within its 3 s grace gets the original clipboard; carry the snapshot across if
+    // back-to-back RDP needs it.
+    this.restorePending();
 
     let snapshot: ClipboardSnapshot | undefined;
     let sequenceAfterStage: number | undefined;
@@ -231,8 +231,9 @@ export class ClipboardTransactionManager {
         try {
           dispatchResult = this.inputSimulator(strategy);
           markTiming('paste-dispatched', { acceptedEvents: dispatchResult.acceptedEvents });
-          // Nothing reached the target, so don't leave the transcript on the clipboard for a manual paste.
-          if (dispatchResult.acceptedEvents === 0) dispatchAttempted = false;
+          // Without the paste key-down (the middle event) nothing pasted, so don't leave the transcript
+          // on the clipboard for a manual paste.
+          if (dispatchResult.acceptedEvents < buildPasteStrategyEvents(strategy).length / 2) dispatchAttempted = false;
         } catch (error) {
           return { kind: 'error', message: this.formatError('Paste dispatch failed', error) };
         }
@@ -252,7 +253,7 @@ export class ClipboardTransactionManager {
             if (this.pendingRestore === pending) this.restorePending();
           }));
         } else if (this.finalizeClipboard(snapshot, sequenceAfterStage) === 'failed') {
-          result = { kind: 'error', message: 'The clipboard could not be restored safely. Check the destination; input may already have been sent.' };
+          result = { kind: 'error', message: 'The clipboard could not be restored safely. Nothing was pasted; the transcript may still be on the clipboard.' };
         }
       }
     }

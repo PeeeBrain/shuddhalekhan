@@ -343,18 +343,27 @@ describe('ClipboardTransactionManager', () => {
     expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
   });
 
-  it('restores at once when zero events are accepted, so a manual paste cannot get the transcript', async () => {
-    mockInputSimulator.simulatePaste = mock(() => ({ acceptedEvents: 0, errorCode: 5 }));
+  for (const acceptedEvents of [0, 1]) {
+    it(`restores at once when the paste key never went down (${acceptedEvents} accepted), so a manual paste cannot get the transcript`, async () => {
+      mockInputSimulator.simulatePaste = mock(() => ({ acceptedEvents, errorCode: 5 }));
 
-    const manager = createManager();
-    const result = await manager.inject('hello');
+      const result = await createManager().inject('hello');
 
-    expect(result).toEqual({
-      kind: 'input-blocked',
-      acceptedEvents: 0,
-      reason: 'No input events accepted (Win32 error 5)',
+      expect(result).toMatchObject({ kind: 'input-blocked', acceptedEvents });
+      expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
     });
-    expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
+  }
+
+  it('keeps a remote paste\'s grace when the next Dictation is rejected before staging', async () => {
+    const rdp = { ...defaultTarget, executablePath: 'C:\\Windows\\System32\\mstsc.exe' };
+    mockForegroundInspector.captureTarget = mock(() => rdp);
+    mockDelay = mock((ms: number) => ms === 3000 ? new Promise<void>(() => undefined) : Promise.resolve());
+    const manager = createManager();
+
+    expect((await manager.inject('first', { target: rdp })).kind).toBe('input-dispatched');
+    expect((await manager.inject('second', { target: { ...rdp, processId: 99999 } })).kind).toBe('target-changed');
+
+    expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
   });
 
   it('reports a restore that fails after the paste went out', async () => {

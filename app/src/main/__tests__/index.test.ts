@@ -1350,6 +1350,8 @@ describe('main process IPC orchestration', () => {
       finishStop = resolve;
     }));
     const preventDefault = vi.fn();
+    await sessionOptions.onResult({ text: 'transcribed text', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
+    expect(electronMock.clipboard.write).not.toHaveBeenCalled();
 
     appListeners.get('before-quit')?.({ preventDefault });
 
@@ -1361,6 +1363,8 @@ describe('main process IPC orchestration', () => {
     finishStop();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
+    // The pasted-over clipboard comes back before the app exits, not after its restore timer.
+    expect(electronMock.clipboard.write).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'original' }));
   });
 
   it('shows a persistent failure card when sidecar containment fails', () => {

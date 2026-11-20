@@ -29,12 +29,17 @@ export function getClipboardTransactionManager(): ClipboardTransactionManager {
 
 function showRestoreFailure(): void {
   console.warn('Dictation: the previous clipboard could not be restored after the paste attempt.');
-  if (!Notification.isSupported()) return;
-  new Notification({
-    title: 'Clipboard Not Restored',
-    body: 'Your previous clipboard could not be restored after the paste attempt. The transcript may still be on the clipboard.',
-    silent: true,
-  }).show();
+  try {
+    if (!Notification.isSupported()) return;
+    new Notification({
+      title: 'Clipboard Not Restored',
+      body: 'Your previous clipboard could not be restored after the paste attempt. The transcript may still be on the clipboard.',
+      silent: true,
+    }).show();
+  } catch (error) {
+    // Runs from a timer with no caller to catch for it.
+    console.warn('Dictation: could not show the clipboard notification.', error);
+  }
 }
 
 /** Puts back a clipboard still waiting to be restored, so quitting never leaves the transcript on it. */
