@@ -39,8 +39,9 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   const line = (status && !restStatus.has(status) ? status : '') || busyLabel[phase] || '';
   // iOS ignores accessibilityLiveRegion, so VoiceOver hears changes only when announced. One announcement per
   // change (an error wins), and none for what was already on screen when Home mounted.
-  // "Done." stays off screen but is still spoken, so a finished run is never silent.
-  const spoken = error || line || (status === 'Done.' ? status : '');
+  // "Done." stays off screen but is still spoken, so a finished run is never silent. Nothing is spoken while
+  // recording: the microphone would hear it, and the Stop button already says what is happening.
+  const spoken = phase === 'recording' ? '' : error || line || (status === 'Done.' ? status : '');
   const mounted = useRef(false);
   useEffect(() => {
     if (mounted.current && spoken) AccessibilityInfo.announceForAccessibility(spoken);
@@ -142,7 +143,7 @@ const easeOut = Easing.out(Easing.exp);
 /**
  * One control through idle, recording, and busy, so state changes animate instead of remounting.
  * Motion is transform and opacity only, on the native driver. While recording, a halo in the mode's
- * shape follows the microphone level; under Reduce Motion it brightens instead of growing.
+ * shape follows the microphone level; under Reduce Motion it holds still.
  */
 function RecordControl({ app, intent, configured }: { app: App; intent: Intent; configured: boolean }) {
   const reduceMotion = useContext(ReducedMotionContext);
@@ -212,7 +213,9 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
               if (landed !== null && landed !== recording) return;
               void (recording ? app.stopRecording() : app.startRecording(intent));
             }}
-            onPressIn={() => { pressedWhileRecording.current = recording; pressTo(0.94); }}
+            // Touch start, not press-in: press-in fires again when a held finger slides back over the button.
+            onTouchStart={() => { pressedWhileRecording.current = recording; }}
+            onPressIn={() => pressTo(0.94)}
             onPressOut={() => pressTo(1)}
             disabled={off}
             accessibilityRole="button"
