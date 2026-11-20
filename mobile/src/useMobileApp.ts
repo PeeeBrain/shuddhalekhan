@@ -21,7 +21,7 @@ class RecordingBusyError extends Error {
 const recordingOptions: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
   fileName: 'shuddhalekhan-recording',
-  extension: '.wav', sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, isMeteringEnabled: false,
+  extension: '.wav', sampleRate: 16000, numberOfChannels: 1, bitRate: 256000, isMeteringEnabled: true,
   ios: { extension: '.wav', outputFormat: IOSOutputFormat.LINEARPCM, audioQuality: AudioQuality.HIGH,
     linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
 };
@@ -304,6 +304,11 @@ export function useMobileApp() {
         await controller.handleKeyboardSession({ endsAt: 0, phase: 'idle', agentReady: false });
       }
       await controller.startRecording(intent);
+    },
+    /** Microphone level 0–1 on the keyboard's dB scale, read on demand so it never re-renders the app. */
+    inputLevel: () => {
+      try { return Math.min(1, Math.max(0, ((recorder.getStatus().metering ?? -160) + 50) / 50)); }
+      catch { return 0; }
     },
     stopRecording: controller.stopRecording, cancel: controller.cancel,
     retryAgent: controller.retryAgent, resolveApproval: controller.resolveApproval,

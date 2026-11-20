@@ -51,7 +51,7 @@ final class KeyboardViewController: UIInputViewController {
 
   private var screen = Screen.home
   private var generation = 0
-  private let tapFeedback = UIImpactFeedbackGenerator(style: .light)
+  private let returnKey = PressControl()
   private var deleteRepeat: Timer?
 
   private var session: KeyboardSession.State?
@@ -107,7 +107,8 @@ final class KeyboardViewController: UIInputViewController {
     clock = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
       MainActor.assumeIsolated { self?.tick() }
     }
-    tapFeedback.prepare()
+    PressControl.feedback.prepare()
+    refreshReturnKey()
     refresh()
   }
 
@@ -172,8 +173,11 @@ final class KeyboardViewController: UIInputViewController {
     undoButton.accessibilityLabel = "Undo Dictation"
     undoButton.addTarget(self, action: #selector(undoDictation), for: .touchUpInside)
     undoButton.isHidden = true
-    let keys = UIStackView(arrangedSubviews: [globeKey, spacer, styleButton, undoButton, backspace])
-    keys.spacing = 12
+    // Return lets a dictated message be sent without switching keyboards.
+    styleKey(returnKey, symbol: "return", label: "Return")
+    returnKey.addTarget(self, action: #selector(returnTapped), for: .touchUpInside)
+    let keys = UIStackView(arrangedSubviews: [globeKey, spacer, styleButton, undoButton, backspace, returnKey])
+    keys.spacing = 8
     keys.alignment = .bottom
     keys.setContentHuggingPriority(.defaultLow, for: .vertical)
     home.addArrangedSubview(keys)
@@ -485,7 +489,6 @@ final class KeyboardViewController: UIInputViewController {
     pendingMode = mode
     recordingSince = nil
     guard send(.start, id: id) else { pendingId = nil; return }
-    tapFeedback.impactOccurred()
     render()
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.ackTimeout) { [weak self] in
       guard let self, self.pendingId == id, self.session?.requestId != id else { return }
@@ -505,6 +508,8 @@ final class KeyboardViewController: UIInputViewController {
     let replacingSelection = !(proxy.selectedText?.isEmpty ?? true)
     let insertion = KeyboardInsertion.text(transcript,
       before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
+    // The host may not call textDidChange for our own insert; Return must wake up for "dictate, then send".
+    defer { refreshReturnKey() }
     proxy.insertText(insertion)
     guard !replacingSelection, let before, let after,
           proxy.documentIdentifier == document,
@@ -530,7 +535,17 @@ final class KeyboardViewController: UIInputViewController {
 
   override func textDidChange(_ textInput: UITextInput?) {
     super.textDidChange(textInput)
+    refreshReturnKey()
     if let undo, !canUndo(undo) { clearUndo() }
+  }
+
+  /// Mirrors the system keyboard: named for the field's action, and off while a field that asks for it is empty.
+  private func refreshReturnKey() {
+    let proxy = textDocumentProxy
+    returnKey.accessibilityLabel = returnKeyLabel(proxy.returnKeyType)
+    returnKey.isEnabled = proxy.enablesReturnKeyAutomatically != true || proxy.hasText
+    returnKey.alpha = returnKey.isEnabled ? 1 : 0.4
+    returnKey.accessibilityTraits = returnKey.isEnabled ? .button : [.button, .notEnabled]
   }
 
   override func selectionDidChange(_ textInput: UITextInput?) {
@@ -542,7 +557,27 @@ final class KeyboardViewController: UIInputViewController {
     guard let undo, canUndo(undo) else { return clearUndo() }
     clearUndo()
     for _ in undo.inserted { textDocumentProxy.deleteBackward() }
+    refreshReturnKey()
     render(message: "Dictation undone.")
+  }
+
+  @objc private func returnTapped() {
+    clearUndo()
+    textDocumentProxy.insertText("\n")
+  }
+
+  /// VoiceOver names the key by what the field does with it, as the system keyboard does.
+  private func returnKeyLabel(_ type: UIReturnKeyType?) -> String {
+    switch type {
+    case .send: "Send"
+    case .search, .google, .yahoo: "Search"
+    case .go, .route: "Go"
+    case .done: "Done"
+    case .next: "Next"
+    case .join: "Join"
+    case .`continue`: "Continue"
+    default: "Return"
+    }
   }
 
   private func renderStyle() {
@@ -569,7 +604,6 @@ final class KeyboardViewController: UIInputViewController {
       return render(message: "Sent to the agent. Follow it in the Live Activity.")
     }
     guard let pendingId, activePhase == .recording else { return }
-    tapFeedback.impactOccurred()
     send(.stop, id: pendingId)
   }
 
@@ -862,6 +896,7 @@ final class KeyboardViewController: UIInputViewController {
     key.accessibilityAction = { [weak self] in
       self?.clearUndo()
       self?.textDocumentProxy.deleteBackward()
+      self?.refreshReturnKey()
     }
   }
 
@@ -879,6 +914,7 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   @objc private func stopDeleting() {
+    refreshReturnKey()
     deleteRepeat?.invalidate()
     deleteRepeat = nil
   }
@@ -961,8 +997,10 @@ private enum Glyph {
   }
 }
 
-/// Responds the moment a finger lands: a quick press-in, a softer settle on release.
+/// Responds the moment a finger lands: a light tap, a quick press-in, a softer settle on release.
+/// iOS plays the tap only with Full Access, the same gate every action here already needs.
 private class PressControl: UIControl {
+  static let feedback = UIImpactFeedbackGenerator(style: .light)
   var pressedScale: CGFloat = 0.96
   var restingColor: UIColor? { didSet { backgroundColor = restingColor } }
   var pressedColor: UIColor?
@@ -973,6 +1011,11 @@ private class PressControl: UIControl {
     guard let accessibilityAction else { return super.accessibilityActivate() }
     accessibilityAction()
     return true
+  }
+
+  override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+    Self.feedback.impactOccurred(intensity: 0.7)
+    return super.beginTracking(touch, with: event)
   }
 
   override var isHighlighted: Bool {
