@@ -5,13 +5,13 @@
     "scheme": "shuddhalekhan",
     "version": "1.0.0",
     "icon": "./assets/icon.png",
-    "orientation": "portrait",
+    "orientation": "default",
     "userInterfaceStyle": "dark",
     "platforms": [
       "ios"
     ],
     "ios": {
-      "buildNumber": "21",
+      "buildNumber": "24",
       "bundleIdentifier": "com.shuddhalekhan.mobile",
       "supportsTablet": true,
       "infoPlist": {
@@ -33,7 +33,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow Shuddhalekhan to record audio after you tap Record, or during a keyboard session you start.",
+          "microphonePermission": "Allow Shuddhalekhan to record when you start dictation, an Agent command, or a keyboard session.",
           "enableBackgroundRecording": false,
           "enableBackgroundPlayback": false
         }

@@ -2,5 +2,14 @@
   "cli": {
     "version": ">= 25.3.0",
     "appVersionSource": "local"
+  },
+  "build": {
+    "sideload": {
+      "ios": {
+        "withoutCredentials": true,
+        "config": "unsigned-ios.yml",
+        "image": "macos-tahoe-26.6-xcode-27.2"
+      }
+    }
   }
 }

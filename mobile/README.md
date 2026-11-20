@@ -34,13 +34,29 @@ FluidAudio is pinned to v0.15.5 with INT8 encoders. The encoder uses CPU plus Ap
 
 When on-device transcription is selected and the model is installed, the app starts preparing it on launch without opening the microphone or downloading anything. Home shows a preparation notice while this runs. A session started during preparation awaits the same native load. First use after an update can still require Core ML preparation; moving that work before the session tap does not shorten compilation. Endpoint-only launches do not preload the local model.
 
+## Dictation text
+
+Choose **Polished**, **Casual**, **Notes**, or **Verbatim** in the iOS Transcription settings. Fresh installs use Polished. Existing installs keep their previous transcript behavior until a style is chosen. In a keyboard session, tap the style name between utterances to change it. Dictation snapshots the style and optional vocabulary at the start of each utterance.
+
+**Vocabulary** restores preferred spellings after speech recognition, on the device. It accepts up to 100 distinct terms of 64 characters. The remote endpoint's Dictionary setting still provides recognition hints and may be sent to the configured endpoint. Names and terms from the new Vocabulary list stay on the phone. Agent Mode uses the recognizer's original transcript.
+
+The keyboard adds spacing where it can read the cursor context. After insertion, **Undo** is available briefly when the keyboard can still verify the inserted text and cursor position. An edit or a change of field can dismiss it. Undo is unavailable when the host app withholds cursor context, even at the end of a field.
+
+**Clean Up with Apple Intelligence** is off by default. It uses the on-device model on eligible iOS 26+ devices when the model and language are available. If it times out or proposes a change the app cannot verify, Dictation continues with the text it already has.
+
+## System shortcuts and controls
+
+On iOS 18+, **Dictate**, **Start Keyboard Session**, and **Stop Keyboard Session** are available in Shortcuts. Add the Dictate shortcut to the Action Button or Back Tap through iOS Settings. Dictation started directly from Shortcuts requires a local Parakeet model, microphone permission, and Live Activities. If iOS refuses capture from the current screen, open Shuddhalekhan and use Dictate there. Starting a keyboard session from Shortcuts opens the app for setup and starts a Dictation-only session. Start from Home to use Ask Agent.
+
+Run Dictate again or tap **Stop** in the recording Live Activity to finish. **Cancel** discards it. If the app is active, a successful result copies to the local clipboard. Otherwise open Home and use the result's Copy action. The **Shuddhalekhan Dictation** control in Control Center opens the app and starts local Dictation on Home. Tap **Stop** there and use **Copy** on the result. If a keyboard session is running, end it before tapping the control. Test phone lock, background starts, control registration, and the clipboard flow on the sideloaded build before relying on them.
+
 ## Dictate in another app with the keyboard
 
-iOS does not let keyboards use the microphone. So the app records during a **keyboard session**, and the keyboard tells it when to start and stop. If you tap **Dictate** or **Ask the agent** with no session running, the keyboard opens Shuddhalekhan, which starts the session. Return with the **◀** link at the top left; the keyboard then starts the recording you tapped, if you return within a minute.
+iOS does not let keyboards use the microphone. So the app records during a **keyboard session**, and the keyboard tells it when to start and stop. If the keyboard reports no session, open Shuddhalekhan and start one, then switch back and tap **Dictate** or **Ask the agent**.
 
 1. Install the IPA with its keyboard extension retained.
 2. On the phone, open **Settings → General → Keyboard → Keyboards → Add New Keyboard → Shuddhalekhan**. Tap that keyboard and enable **Allow Full Access**. The keyboard uses it only to exchange start, stop, and the finished text with the app. The keyboard connects only to the app on this iPhone and cannot use the microphone.
-3. Download Parakeet for your language. On Home, tap **Start keyboard session**. The session lasts 10 minutes. Home shows a countdown and a **Stop** button, and iOS shows its recording indicator. Recording on Home ends the session first, since the session holds the microphone.
+3. Download Parakeet for your language. On Home, tap **Start keyboard session**. A session lasts 10 minutes by default. In **Settings → Keyboard** you can choose 5, 10, 15, or 30 minutes for the next session. Home shows a countdown and a **Stop** button, and iOS shows its recording indicator. Recording on Home ends the session first, since the session holds the microphone.
 4. In Notes or another app, switch to the Shuddhalekhan keyboard with the globe key. Tap **Dictate**, speak, then stop. The app transcribes with Parakeet on the phone and inserts the text at the cursor. Or tap **Ask the agent** to speak a one-off command. Agent transcripts never type into the host app. Cancel discards either kind of recording; the dot field reflects the microphone while recording.
 
 What happens to audio and text during a session:
@@ -85,7 +101,7 @@ Verify the installed build number, device model, iOS version, and the artifact r
 1. **Settings retention.** Reopen saved settings, then save, force-close, and reopen. Switching providers clears the previous provider's secret; cancelling unsaved edits keeps saved settings.
 2. **In-app Dictation.** With Agent Mode off, record, stop, and copy a transcript with each configured provider, and with Parakeet in airplane mode. Cancel an utterance; the next one works. Recording outside a keyboard session stops when backgrounded.
 3. **Keyboard Dictation.** Follow the keyboard steps in AGENTS.md: text inserts exactly once while the app stays backgrounded, for a second utterance and in a second host app.
-4. **Session exits.** Cancel, hide and reopen the keyboard mid-utterance, stop and restart the session, let it expire, and interrupt it (Siri or a call). The reason is visible, the microphone releases, and a new session works. With no session, Dictate opens the app and resumes recording on return.
+4. **Session exits.** Cancel, hide and reopen the keyboard mid-utterance, stop and restart the session, let it expire, and interrupt it (Siri or a call). The reason is visible, the microphone releases, and a new session works. With no session, Dictate tells you to open Shuddhalekhan. Start a session from Home, switch back to the keyboard, and confirm that Dictate inserts text at the cursor.
 5. **Agent Mode.** From Home and the background keyboard: prompts never insert into the host app; approve one tool, deny another, cancel while waiting; a stale approval never executes; a second command while busy is refused; Dictation still works after. The Live Activity shows progress, approvals open the right request, and the answer survives a restart.
 6. **Providers.** Exercise each provider you have credentials for and record the others as untested. Sarvam auto-stops around 28 seconds, Google around 55.
 7. **Recording sounds.** With USB logging active, confirm one Start and one Stop for in-app Dictation and for keyboard Dictation in two host apps. Say distinct words immediately at the ready indicator and just before Stop, and confirm both appear with no added words from the tones. Repeat on the speaker, wired headphones and Bluetooth, and check Silent Mode. Connect and disconnect the Bluetooth headset during a live keyboard session. Confirm the app either keeps capturing on a valid input or clearly ends the session and lets you restart. Try a current capture failure, cancel during Starting, interrupt with a call and let a session expire. If it expires during Starting, the keyboard should keep showing the reason after the connection closes. Confirm mute persists across relaunch and silences both entry points. Preview must leave the microphone indicator off and produce no transcript or upload. Repeat the capture checks with Agent Mode and confirm tools and responses remain quiet. Filter on the `RecordingCues` log category alongside `KeyboardBridge` to correlate cues with capture transitions.
@@ -104,12 +120,12 @@ bun run --cwd mobile export:ios
 
 Start Metro with `bun run --cwd mobile start`. A Release IPA does not connect to Metro. Use an SDK 58 compatible Expo Go or development client for live reload.
 
-For a small logic change, run the relevant test file from `mobile/`, for example `bun test src/__tests__/controller.test.ts`. The native Swift checks run as part of the GitHub Mac build. Neither those checks nor a successful JavaScript export verifies background execution on an iPhone.
+For a small logic change, run the relevant test file from `mobile/`, for example `bun test src/__tests__/controller.test.ts`. The native Swift checks run as part of the IPA build on Expo or GitHub Actions. Neither those checks nor a successful JavaScript export verifies background execution on an iPhone.
 
 ### Release build and phone reproduction
 
-1. For Swift, native module, or keyboard changes, [build a new unsigned Release IPA](#build-an-ipa). Record its workflow run URL and iOS build number. Native changes require an IPA; Metro and OTA updates cannot replace the native module or keyboard extension.
-2. After the intended run succeeds, share its run URL with the maintainer (`gh run list --workflow mobile-ios.yml --limit 1`). Check it matches the build being tested rather than an older successful run.
+1. For Swift, native module, or keyboard changes, [build a new unsigned Release IPA](#build-an-ipa). Record its Expo build or GitHub workflow URL and iOS build number. Native changes require an IPA; Metro and OTA updates cannot replace the native module or keyboard extension.
+2. After the intended run succeeds, share its build URL with the maintainer. Check it matches the build being tested rather than an older successful run.
 3. Install the IPA through iLoader using the same Apple ID, preserving the keyboard extension and existing app data. Confirm the installed build number with USB app metadata before debugging; for a release IPA, also check that its version (`CFBundleShortVersionString`) matches the tag, since releases can share a build number. Sideloading can rewrite the bundle identifier with a signing-team suffix.
 4. Start the USB capture below, then ask the maintainer to reproduce on the phone and report when finished and what appeared. Record timestamps and screenshots. Stop the capture by its tracked PID after the attempt.
 5. For keyboard dictation, download Parakeet, enable the keyboard and Full Access, start a session in the foreground app, switch to Notes, Dictate, speak, and Stop and insert. Confirm recording acknowledgement, transcription, and exactly one insertion at the cursor while the app is backgrounded. Try another utterance without restarting the session, then another host app. Report session loss separately from transcription success.
@@ -206,6 +222,14 @@ Installation and updates need no paid Apple Developer Program or paid Expo plan.
 A `vX.Y.Z` release tag ships iOS with the desktop builds: `release.yml` prepares a draft and builds Windows, Linux, and the unsigned IPA in parallel on GitHub-hosted runners. After all three builds and the desktop checks succeed, it publishes the same commit as an OTA update on Linux using the resolved runtime version embedded in the IPA, including its bundled fingerprint, then publishes the GitHub release. That job needs an `EXPO_TOKEN` repository secret (an Expo access token); without it the release stays a draft. Between releases, use the manual workflow and `eas update` below. To recover a failed tag release after fixing CI, run **Release App** from `main` with the existing tag as its `tag` input. It builds the tagged product source with the selected workflow revision's iOS build helper, reuses the draft, and refuses to overwrite a published release. The tag stays unchanged. If all three platform builds passed and publication failed, set `resume-run-id` to that run ID to retry publication without rebuilding; the workflow verifies successful jobs, checkout commits, matching release notes, and asset upload times against that run, then reads the runtime from the attached IPA. Retain the run logs and artifacts for this verification. If OTA publication already succeeded, the retry only finalizes the release metadata.
 
 ## Build an IPA
+
+To build on Expo without Apple credentials, run this from `mobile/` while signed in to the linked EAS project:
+
+```sh
+bunx eas-cli build --platform ios --profile sideload --non-interactive
+```
+
+Download the unsigned IPA from the EAS build page and [sign it with iLoader](#install-with-iloader). The sideload profile runs the same native self-checks and Release archive script as GitHub Actions.
 
 In GitHub Actions, open **Mobile iOS** and select **Run workflow**. The workflow runs the mobile checks, then uses `macos-26` to generate the iOS project, install CocoaPods, run the native Swift self-checks, and build a Release app with code signing disabled. The script requires Xcode 26.4 or newer. Download the `Shuddhalekhan-unsigned-ipa` artifact from that run. The PR and `main` push checks run on GitHub-hosted `ubuntu-24.04` runners. Both runner types are standard GitHub-hosted runners, free for public repositories.
 

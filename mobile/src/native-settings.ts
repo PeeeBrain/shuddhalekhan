@@ -4,6 +4,7 @@ import { createSettingsStore } from './settings-storage';
 import type { MobileSettings } from './settings';
 import { requireOptionalNativeModule } from 'expo';
 import { fetch } from 'expo/fetch';
+import { speech } from './native-speech';
 import { ChatGptAuth, type ChatGptNative } from './chatgpt';
 
 const nativeChatGpt = requireOptionalNativeModule<ChatGptNative>('ShuddhalekhanChatGpt');
@@ -33,10 +34,15 @@ const store = createSettingsStore({
   createId: () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
 });
 
-export function loadSettings(): Promise<MobileSettings> {
-  return store.loadSettings();
+export async function loadSettings(): Promise<MobileSettings> {
+  const settings = await store.loadSettings();
+  await speech?.initializeDictationPreferences?.(await store.hasSavedSettings());
+  await speech?.setDictationModelLanguage?.(settings.language);
+  return settings;
 }
 
-export function saveSettings(settings: MobileSettings): Promise<MobileSettings> {
-  return store.saveSettings(settings);
+export async function saveSettings(settings: MobileSettings): Promise<MobileSettings> {
+  const saved = await store.saveSettings(settings);
+  await speech?.setDictationModelLanguage?.(saved.language);
+  return saved;
 }

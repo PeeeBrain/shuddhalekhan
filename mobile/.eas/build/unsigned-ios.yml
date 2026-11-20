@@ -1,0 +1,15 @@
+build:
+  name: Unsigned iOS Release IPA
+  steps:
+    - eas/checkout
+    - run:
+        name: Install workspace dependencies
+        command: cd .. && bun install --frozen-lockfile --ignore-scripts
+    - run:
+        name: Check native contracts and archive iOS app
+        command: bash scripts/build-ios.sh
+    - eas/upload_artifact:
+        inputs:
+          type: application-archive
+          # The upload step resolves paths from the checkout root.
+          path: mobile/build/ipa/Shuddhalekhan-unsigned.ipa

@@ -6,6 +6,8 @@ import WidgetKit
 struct AgentActivityBundle: WidgetBundle {
   var body: some Widget {
     AgentLiveActivity()
+    SystemDictationWidget()
+    if #available(iOS 18.0, *) { SystemDictationControl() }
   }
 }
 

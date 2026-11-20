@@ -10,6 +10,7 @@ import type { useMobileApp } from '../useMobileApp';
 import type { AgentStep } from '@shuddhalekhan/shared/agent-loop';
 import { Button, Card, color, styles as kit, type } from './kit';
 import { Markdown } from './Markdown';
+import { useDictation } from './useDictation';
 import type { SettingsPage } from './SettingsScreen';
 
 type App = ReturnType<typeof useMobileApp>;
@@ -189,6 +190,7 @@ function RecordControl({ app, intent, configured }: { app: App; intent: Intent; 
 // Native owns the session; this only starts, shows, and stops it. The countdown keeps the open mic obvious.
 function KeyboardSession({ app, onSetUp }: { app: App; onSetUp: () => void }) {
   const session = app.keyboardSession;
+  const minutes = useDictation().preferences?.sessionMinutes ?? 10;
   if (!session.available) return null;
   if (session.active) {
     const m = Math.floor(session.remainingSeconds / 60);
@@ -214,7 +216,7 @@ function KeyboardSession({ app, onSetUp }: { app: App; onSetUp: () => void }) {
   const ready = supported && app.localModel.kind === 'ready';
   const detail = session.endedReason ? `Last session ended: ${session.endedReason}`
     : app.preparingModel ? 'Preparing speech recognition…'
-      : ready ? 'Use the Shuddhalekhan keyboard in any app for 10 minutes.'
+      : ready ? `Use the Shuddhalekhan keyboard in any app for ${minutes} minutes.`
         : supported ? 'Needs the on-device Parakeet model.'
           : `Parakeet doesn't support ${languageLabel(app.settings.language)}.`;
   return (
