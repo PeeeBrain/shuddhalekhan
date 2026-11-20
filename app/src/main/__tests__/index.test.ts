@@ -399,7 +399,9 @@ describe('main process IPC orchestration', () => {
     simulatePaste.mockReset();
     simulatePaste.mockReturnValue({ acceptedEvents: 4 });
     getClipboardSequenceNumber.mockReset();
-    getClipboardSequenceNumber.mockReturnValue(1);
+    // Restoring replaces the clipboard, which moves the sequence like the real one.
+    getClipboardSequenceNumber.mockImplementation(() =>
+      1 + electronMock.clipboard.write.mock.calls.length + electronMock.clipboard.clear.mock.calls.length);
     captureForegroundTarget.mockReset();
     captureForegroundTarget.mockReturnValue(defaultTargetSnapshot);
     checkForUpdates.mockClear();

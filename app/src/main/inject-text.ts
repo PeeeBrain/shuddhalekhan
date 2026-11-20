@@ -28,11 +28,11 @@ export function getClipboardTransactionManager(): ClipboardTransactionManager {
 }
 
 function showRestoreFailure(): void {
-  console.warn('Dictation: the previous clipboard could not be restored after pasting.');
+  console.warn('Dictation: the previous clipboard could not be restored after the paste attempt.');
   if (!Notification.isSupported()) return;
   new Notification({
     title: 'Clipboard Not Restored',
-    body: 'Your previous clipboard could not be restored after pasting. The transcript may still be on the clipboard.',
+    body: 'Your previous clipboard could not be restored after the paste attempt. The transcript may still be on the clipboard.',
     silent: true,
   }).show();
 }

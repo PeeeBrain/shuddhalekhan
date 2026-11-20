@@ -163,8 +163,9 @@ export class ClipboardTransactionManager {
     targetSnapshot: DictationTargetSnapshot | null = null,
     signal?: AbortSignal,
   ): Promise<InjectResult> {
-    // ponytail: a restore still waiting runs now, so a remote target pasting the previous transcript within its
-    // 3 s grace can read the original clipboard instead; carry the snapshot across if back-to-back RDP needs it.
+    // ponytail: a restore still waiting runs now, even if this transaction is then cancelled, so a remote target
+    // pasting the previous transcript within its 3 s grace can read the original clipboard instead; carry the
+    // snapshot across if back-to-back RDP needs it.
     this.restorePending();
     if (signal?.aborted) return { kind: 'input-blocked', acceptedEvents: 0, reason: 'Dictation was cancelled.' };
     let currentSnapshot: DictationTargetSnapshot | null;
@@ -230,6 +231,8 @@ export class ClipboardTransactionManager {
         try {
           dispatchResult = this.inputSimulator(strategy);
           markTiming('paste-dispatched', { acceptedEvents: dispatchResult.acceptedEvents });
+          // Nothing reached the target, so don't leave the transcript on the clipboard for a manual paste.
+          if (dispatchResult.acceptedEvents === 0) dispatchAttempted = false;
         } catch (error) {
           return { kind: 'error', message: this.formatError('Paste dispatch failed', error) };
         }

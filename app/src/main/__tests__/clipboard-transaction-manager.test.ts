@@ -343,7 +343,7 @@ describe('ClipboardTransactionManager', () => {
     expect(mockInputSimulator.simulatePaste).not.toHaveBeenCalled();
   });
 
-  it('returns input-blocked when zero events are accepted', async () => {
+  it('restores at once when zero events are accepted, so a manual paste cannot get the transcript', async () => {
     mockInputSimulator.simulatePaste = mock(() => ({ acceptedEvents: 0, errorCode: 5 }));
 
     const manager = createManager();
@@ -354,7 +354,6 @@ describe('ClipboardTransactionManager', () => {
       acceptedEvents: 0,
       reason: 'No input events accepted (Win32 error 5)',
     });
-    await manager.flushRestore();
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(1);
   });
 
