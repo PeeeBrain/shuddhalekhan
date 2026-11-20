@@ -108,7 +108,7 @@ final class KeyboardViewController: UIInputViewController {
       MainActor.assumeIsolated { self?.tick() }
     }
     PressControl.feedback.prepare()
-    returnKey.accessibilityLabel = returnKeyLabel(textDocumentProxy.returnKeyType)
+    refreshReturnKey()
     refresh()
   }
 
@@ -533,8 +533,16 @@ final class KeyboardViewController: UIInputViewController {
 
   override func textDidChange(_ textInput: UITextInput?) {
     super.textDidChange(textInput)
-    returnKey.accessibilityLabel = returnKeyLabel(textDocumentProxy.returnKeyType)
+    refreshReturnKey()
     if let undo, !canUndo(undo) { clearUndo() }
+  }
+
+  /// Mirrors the system keyboard: named for the field's action, and off while a field that asks for it is empty.
+  private func refreshReturnKey() {
+    let proxy = textDocumentProxy
+    returnKey.accessibilityLabel = returnKeyLabel(proxy.returnKeyType)
+    returnKey.isEnabled = proxy.enablesReturnKeyAutomatically != true || proxy.hasText
+    returnKey.alpha = returnKey.isEnabled ? 1 : 0.4
   }
 
   override func selectionDidChange(_ textInput: UITextInput?) {

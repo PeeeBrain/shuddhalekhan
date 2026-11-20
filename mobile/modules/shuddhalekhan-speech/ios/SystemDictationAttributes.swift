@@ -1,4 +1,5 @@
 import ActivityKit
+import Foundation
 
 struct SystemDictationAttributes: ActivityAttributes {
   enum Phase: String, Codable, Hashable, Sendable {

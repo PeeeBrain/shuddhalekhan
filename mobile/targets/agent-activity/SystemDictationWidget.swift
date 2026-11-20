@@ -30,6 +30,7 @@ struct SystemDictationWidget: Widget {
             .monospacedDigit()
             .frame(maxWidth: 44)
             .accessibilityLabel(context.state.phase.title)
+            .accessibilityValue(Text(timerInterval: time, countsDown: false))
         } else {
           Image(systemName: !context.isStale && context.state.phase == .recording ? "waveform" : "circle")
             .accessibilityLabel(context.isStale ? "Dictation status expired" : context.state.phase.title)

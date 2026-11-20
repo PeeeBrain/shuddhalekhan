@@ -47,7 +47,7 @@ function Main() {
 
   return (
     <>
-      {onboarding === null ? null : onboarding ? <Onboarding app={app} onDone={() => setOnboarding(false)} /> : settings ? (
+      {onboarding === null ? null : onboarding ? <Onboarding app={app} onDone={page => { setOnboarding(false); if (page) setSettings({ page }); }} /> : settings ? (
         <SettingsScreen app={app} initialPage={settings.page} onClose={() => setSettings(null)} />
       ) : (
         <HomeScreen app={app} onOpenSettings={page => setSettings({ page })} onReviewApproval={() => setReviewingApproval(app.approval?.approvalId ?? null)} />

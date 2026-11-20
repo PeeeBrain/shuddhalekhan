@@ -1,5 +1,5 @@
 import { useContext, useEffect, useState, type ReactNode } from 'react';
-import { Alert, Animated, Easing, Linking, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Easing, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Host, ProgressView } from '@expo/ui/swift-ui';
 import { tint } from '@expo/ui/swift-ui/modifiers';
@@ -7,6 +7,7 @@ import { isParakeetLanguage, normalizeLanguage } from '../languages';
 import { transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
 import { Button, ReducedMotionContext, color, type } from './kit';
+import type { SettingsPage } from './SettingsScreen';
 import { useDictation } from './useDictation';
 
 type App = ReturnType<typeof useMobileApp>;
@@ -15,9 +16,9 @@ type Step = 'welcome' | 'microphone' | 'model';
 /**
  * First run, shown once while the microphone has never been asked for: what the app does, the microphone
  * prompt from an explicit tap, and an offer to download Parakeet when nothing can transcribe yet.
- * Every step can be skipped; Home and Settings cover anything left undone.
+ * Every step can be skipped; Home and Settings cover anything left undone. `onDone` may name a Settings page to open.
  */
-export function Onboarding({ app, onDone }: { app: App; onDone: () => void }) {
+export function Onboarding({ app, onDone }: { app: App; onDone: (page?: SettingsPage) => void }) {
   const { readiness, requestMicrophone } = useDictation();
   const [step, setStep] = useState<Step>('welcome');
   const microphone = readiness?.microphone ?? 'undetermined';
@@ -76,7 +77,7 @@ export function Onboarding({ app, onDone }: { app: App; onDone: () => void }) {
   );
 }
 
-function ModelStep({ app, onDownload, onDone }: { app: App; onDownload: () => void; onDone: () => void }) {
+function ModelStep({ app, onDownload, onDone }: { app: App; onDownload: () => void; onDone: (page?: SettingsPage) => void }) {
   const model = app.localModel;
   const busy = app.phase !== 'idle';
   const fraction = model.kind === 'downloading' || model.kind === 'installing' ? model.fraction : null;
@@ -97,12 +98,12 @@ function ModelStep({ app, onDownload, onDone }: { app: App; onDownload: () => vo
           <ProgressView value={fraction} modifiers={[tint(color.blue)]} />
         </Host>
       ) : null}
-      {model.kind === 'ready' ? <Button label="Start Dictating" kind="primary" wide onPress={onDone} />
-        : fraction !== null ? <Button label="Continue" kind="secondary" wide onPress={onDone} />
+      {model.kind === 'ready' ? <Button label="Start Dictating" kind="primary" wide onPress={() => onDone()} />
+        : fraction !== null ? <Button label="Continue" kind="secondary" wide onPress={() => onDone()} />
           : (
             <>
               <Button label={model.kind === 'error' ? 'Retry Download' : 'Download Speech Model'} kind="primary" wide disabled={busy} onPress={onDownload} />
-              <Button label="Use an Endpoint Instead" kind="ghost" wide onPress={onDone} />
+              <Button label="Use an Endpoint Instead" kind="ghost" wide onPress={() => onDone('transcription')} />
             </>
           )}
     </Page>
@@ -110,15 +111,16 @@ function ModelStep({ app, onDownload, onDone }: { app: App; onDownload: () => vo
 }
 
 function Page({ glyph, title, body, children }: { glyph: ReactNode; title: string; body: string; children: ReactNode }) {
+  // Scrolls only when large text sizes outgrow the screen.
   return (
-    <View style={s.page}>
+    <ScrollView contentContainerStyle={s.page} alwaysBounceVertical={false}>
       <View style={s.copy}>
         {glyph}
         <Text style={type.largeTitle} accessibilityRole="header">{title}</Text>
         <Text style={[type.body, { color: color.muted }]}>{body}</Text>
       </View>
       <View style={s.actions}>{children}</View>
-    </View>
+    </ScrollView>
   );
 }
 
@@ -136,7 +138,7 @@ function Reveal({ children }: { children: ReactNode }) {
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.page },
   reveal: { flex: 1 },
-  page: { flex: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 12, justifyContent: 'space-between' },
+  page: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 24, paddingBottom: 12, justifyContent: 'space-between' },
   copy: { flex: 1, justifyContent: 'center', gap: 14 },
   actions: { gap: 10 },
   mic: { width: 72, height: 72, borderRadius: 36, borderWidth: 2, borderColor: color.blue, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
