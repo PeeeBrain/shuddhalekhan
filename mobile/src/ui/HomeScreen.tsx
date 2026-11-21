@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { ActivityIndicator, Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, ActivityIndicator, Alert, Animated, Easing, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Host, Picker, Text as SwiftText } from '@expo/ui/swift-ui';
 import { disabled, pickerStyle, tag } from '@expo/ui/swift-ui/modifiers';
@@ -8,7 +8,7 @@ import { isParakeetLanguage, languageLabel } from '../languages';
 import { recordingLimitSeconds, transcriptionReady } from '../providers';
 import type { useMobileApp } from '../useMobileApp';
 import type { AgentStep } from '@shuddhalekhan/shared/agent-loop';
-import { Button, Card, color, styles as kit, type } from './kit';
+import { Button, Card, ReducedMotionContext, color, styles as kit, type } from './kit';
 import { Markdown } from './Markdown';
 import { useDictation } from './useDictation';
 import type { SettingsPage } from './SettingsScreen';
@@ -37,6 +37,17 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   const canRetry = idle && settings.agentEnabled && transcript.trim() !== '';
   const setupCard = idle && !configured && !app.keyboardSession.active;
   const line = (status && !restStatus.has(status) ? status : '') || busyLabel[phase] || '';
+  // iOS ignores accessibilityLiveRegion, so VoiceOver hears changes only when announced. One announcement per
+  // change (an error wins), and none for what was already on screen when Home mounted.
+  // "Done." stays off screen but is still spoken, so a finished run is never silent. Nothing is spoken while
+  // the microphone is opening or recording: it would hear it, and the button already says what is happening.
+  const micOpen = phase === 'requestingPermission' || phase === 'recording';
+  const spoken = micOpen ? '' : error || line || (status === 'Done.' ? status : '');
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (mounted.current && spoken) AccessibilityInfo.announceForAccessibility(spoken);
+    mounted.current = true;
+  }, [spoken]);
 
   return (
     <SafeAreaView style={home.screen}>
@@ -128,62 +139,108 @@ export function HomeScreen({ app, onOpenSettings, onReviewApproval }: { app: App
   );
 }
 
+const easeOut = Easing.out(Easing.exp);
+
+/**
+ * One control through idle, recording, and busy, so state changes animate instead of remounting.
+ * Motion is transform and opacity only, on the native driver. While recording, a halo in the mode's
+ * shape follows the microphone level; under Reduce Motion it holds still.
+ */
 function RecordControl({ app, intent, configured }: { app: App; intent: Intent; configured: boolean }) {
+  const reduceMotion = useContext(ReducedMotionContext);
   const { phase } = app;
   const agent = intent === 'agent';
   const tint = agent ? color.vermilion : color.blue;
   const shape = { borderRadius: agent ? 16 : 56 };
+  const recording = phase === 'recording';
+  const busy = !recording && phase !== 'idle' && phase !== 'loading';
+  const mode = recording ? 'recording' : busy ? 'busy' : 'idle';
 
-  if (phase === 'recording') {
-    const m = Math.floor(app.elapsedSeconds / 60);
-    const s = String(app.elapsedSeconds % 60).padStart(2, '0');
-    // Ochre marks the approaching time limit, as on the desktop pill; recording stops on its own at zero.
-    const left = recordingLimitSeconds(app.settings) - app.elapsedSeconds;
-    const ending = left <= 10;
-    return (
-      <>
-        <Pressable
-          onPress={app.stopRecording}
-          accessibilityRole="button"
-          accessibilityLabel={agent ? 'Stop and send to agent' : 'Stop and transcribe'}
-          style={({ pressed }) => [home.record, shape, { backgroundColor: tint }, pressed && { opacity: 0.8 }]}
-        >
-          <View style={home.stopGlyph} />
-        </Pressable>
+  const [press] = useState(() => new Animated.Value(1));
+  const [settle] = useState(() => new Animated.Value(1));
+  const [level] = useState(() => new Animated.Value(0));
+  // Built once: the timer re-renders this every second, and fresh nodes would re-attach the native animation.
+  const [scale] = useState(() => Animated.multiply(press, settle));
+  const [halo] = useState(() => ({
+    opacity: level.interpolate({ inputRange: [0, 1], outputRange: [0.14, 0.26] }),
+    transform: [{ scale: level.interpolate({ inputRange: [0, 1], outputRange: [1, 1.26] }) }],
+  }));
+  const pressedWhileRecording = useRef<boolean | null>(null);
+  const pressTo = (toValue: number) => {
+    if (!reduceMotion) Animated.spring(press, { toValue, speed: toValue < 1 ? 50 : 24, bounciness: 0, useNativeDriver: true }).start();
+  };
+
+  // Each state change lands as a short settle from slightly smaller, so the control visibly answers.
+  const shown = useRef(mode);
+  useEffect(() => {
+    if (shown.current === mode) return;
+    shown.current = mode;
+    if (reduceMotion) return;
+    settle.setValue(0.9);
+    Animated.timing(settle, { toValue: 1, duration: 240, easing: easeOut, useNativeDriver: true }).start();
+  }, [mode, reduceMotion, settle]);
+
+  // About 11 readings a second, only while recording; each one eases the halo toward the new level.
+  // Under Reduce Motion the halo holds still at rest, so nothing is polled.
+  const readLevel = useEffectEvent(app.inputLevel);
+  useEffect(() => {
+    level.setValue(0);
+    if (!recording || reduceMotion) return;
+    const timer = setInterval(() => {
+      Animated.timing(level, { toValue: readLevel(), duration: 90, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+    }, 90);
+    return () => clearInterval(timer);
+  }, [recording, reduceMotion, level]);
+
+  // A keyboard session gives up the microphone to a tap here, but not mid-utterance.
+  const off = !recording && (phase !== 'idle' || !configured || app.keyboardSession.busy || app.keyboardSession.starting);
+  const limit = recordingLimitSeconds(app.settings);
+  const m = Math.floor(app.elapsedSeconds / 60);
+  const s = String(app.elapsedSeconds % 60).padStart(2, '0');
+  // Ochre marks the approaching time limit, as on the desktop pill; recording stops on its own at zero.
+  const left = limit - app.elapsedSeconds;
+  const ending = left <= 10;
+
+  return (
+    <>
+      <View style={home.record}>
+        {recording ? <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, shape, { backgroundColor: tint }, halo]} /> : null}
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <Pressable
+            // A press acts as what it was when the finger landed: holding Stop through an auto-stop must not start a recording.
+            onPress={() => {
+              const landed = pressedWhileRecording.current;
+              pressedWhileRecording.current = null;
+              if (landed !== null && landed !== recording) return;
+              void (recording ? app.stopRecording() : app.startRecording(intent));
+            }}
+            // Touch start, not press-in: press-in fires again when a held finger slides back over the button.
+            onTouchStart={() => { pressedWhileRecording.current = recording; }}
+            onPressIn={() => pressTo(0.94)}
+            onPressOut={() => pressTo(1)}
+            disabled={off}
+            accessibilityRole="button"
+            accessibilityLabel={recording ? (agent ? 'Stop and send to agent' : 'Stop and transcribe')
+              : busy ? busyLabel[phase] : agent ? 'Record agent command' : 'Start dictation'}
+            accessibilityHint={recording || busy ? undefined
+              : `Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}${app.keyboardSession.active ? ' and ends the keyboard session' : ''}`}
+            accessibilityState={{ disabled: off, busy }}
+            style={({ pressed }) => [home.button, shape, recording ? { backgroundColor: tint } : [home.buttonIdle, { borderColor: tint }],
+              pressed && (recording ? { opacity: 0.8 } : { backgroundColor: color.raised }), off && !busy && { opacity: 0.4 }]}
+          >
+            {recording ? <View style={home.stopGlyph} />
+              : busy ? <ActivityIndicator color={tint} size="large" />
+                : <View style={[home.micGlyph, { backgroundColor: tint, borderRadius: agent ? 4 : 17 }]} />}
+          </Pressable>
+        </Animated.View>
+      </View>
+      {recording ? (
         <Text style={[type.title, home.timer, { color: ending ? color.ochre : tint }]} accessibilityLabel={`Recording, ${m} minutes ${s} seconds`}>
           {ending ? `Stops in ${Math.max(0, left)} s` : `${m}:${s}`}
         </Text>
-        <Button label="Cancel" kind="ghost" onPress={app.cancel} />
-      </>
-    );
-  }
-
-  if (phase !== 'idle' && phase !== 'loading') {
-    return (
-      <>
-        <View style={[home.record, home.recordIdle, shape, { borderColor: tint }]}>
-          <ActivityIndicator color={tint} size="large" accessibilityLabel={busyLabel[phase]} />
-        </View>
-        <Button label="Cancel" kind="ghost" onPress={app.cancel} />
-      </>
-    );
-  }
-
-  // A keyboard session gives up the microphone to a tap here, but not mid-utterance.
-  const off = phase !== 'idle' || !configured || app.keyboardSession.busy || app.keyboardSession.starting;
-  const limit = recordingLimitSeconds(app.settings);
-  return (
-    <Pressable
-      onPress={() => { void app.startRecording(intent); }}
-      disabled={off}
-      accessibilityRole="button"
-      accessibilityLabel={agent ? 'Record agent command' : 'Start dictation'}
-      accessibilityHint={`Records up to ${limit % 60 === 0 ? `${limit / 60} minutes` : `${limit} seconds`}${app.keyboardSession.active ? ' and ends the keyboard session' : ''}`}
-      accessibilityState={{ disabled: off }}
-      style={({ pressed }) => [home.record, home.recordIdle, shape, { borderColor: tint }, pressed && { backgroundColor: color.raised }, off && { opacity: 0.4 }]}
-    >
-      <View style={[home.micGlyph, { backgroundColor: tint, borderRadius: agent ? 4 : 17 }]} />
-    </Pressable>
+      ) : null}
+      {recording || busy ? <Button label="Cancel" kind="ghost" onPress={app.cancel} /> : null}
+    </>
   );
 }
 
@@ -314,8 +371,9 @@ const home = StyleSheet.create({
   content: { padding: 20, gap: 16, paddingBottom: 48 },
   hero: { alignItems: 'center', gap: 16, paddingVertical: 12 },
   modes: { alignSelf: 'stretch' },
-  record: { width: 112, height: 112, alignItems: 'center', justifyContent: 'center' },
-  recordIdle: { borderWidth: 2, backgroundColor: color.card },
+  record: { width: 112, height: 112 },
+  button: { width: 112, height: 112, alignItems: 'center', justifyContent: 'center' },
+  buttonIdle: { borderWidth: 2, backgroundColor: color.card },
   micGlyph: { width: 34, height: 34 },
   stopGlyph: { width: 32, height: 32, borderRadius: 5, backgroundColor: color.onSignal },
   timer: { fontVariant: ['tabular-nums'] },
@@ -324,6 +382,6 @@ const home = StyleSheet.create({
   clear: { alignItems: 'center' },
   turn: { gap: 8, opacity: 0.75 },
   steps: { gap: 6 },
-  step: { gap: 2, borderLeftWidth: 2, borderLeftColor: color.raised, paddingLeft: 8 },
+  step: { gap: 2, backgroundColor: color.raised, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   bubble: { alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: color.raised, borderRadius: 16, borderBottomRightRadius: 4, paddingHorizontal: 12, paddingVertical: 6 },
 });

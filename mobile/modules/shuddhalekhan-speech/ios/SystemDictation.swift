@@ -139,7 +139,7 @@ final class SystemDictation {
         self.expiry = nil
         _ = await self.finish(id: id)
       }
-      await publish(activityID, phase: .recording)
+      await publish(activityID, phase: .recording, startedAt: Date())
       guard job?.id == id else { return "Dictation stopped." }
       return "Recording dictation. Run the shortcut again or tap Stop."
     } catch {
@@ -248,9 +248,9 @@ final class SystemDictation {
     Activity<SystemDictationAttributes>.activities.first { $0.id == id }
   }
 
-  private func publish(_ activityID: String, phase: SystemDictationAttributes.Phase) async {
+  private func publish(_ activityID: String, phase: SystemDictationAttributes.Phase, startedAt: Date? = nil) async {
     let deadline = Date().addingTimeInterval(phase == .recording ? 125 : 30)
-    await Self.activity(id: activityID)?.update(ActivityContent(state: .init(phase: phase), staleDate: deadline))
+    await Self.activity(id: activityID)?.update(ActivityContent(state: .init(phase: phase, startedAt: startedAt), staleDate: deadline))
   }
 
   private func settle(id: String, phase: SystemDictationAttributes.Phase) async {
