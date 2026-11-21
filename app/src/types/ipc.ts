@@ -304,6 +304,12 @@ export interface RendererToMainInvokeChannels {
   'updater:check': () => Promise<UpdateStatus>;
   'audit:get-runs': () => Promise<AuditRunSummary[]>;
   'audit:get-run-detail': (agentRunId: string) => Promise<AuditEventDetail[]>;
+  /** Newest first; pass the last row's id as `beforeId` for the next page. */
+  'dictation-history:list': (query: string, beforeId: number | null) => Promise<DictationHistoryPage>;
+  'dictation-history:get': (id: number) => Promise<DictationHistoryEntry | null>;
+  'dictation-history:copy': (id: number) => Promise<void>;
+  'dictation-history:delete': (id: number) => Promise<void>;
+  'dictation-history:clear': () => Promise<void>;
   'shortcuts:get-paused': () => Promise<boolean>;
   'desktop:get-status': () => Promise<DesktopStatus>;
   /** Enabling runs KWin focus tracking and the RemoteDesktop consent prompt before it reports ready. */
@@ -342,6 +348,7 @@ export interface MainToRendererChannels {
   'updater:status-changed': (status: UpdateStatus) => void;
   'settings:navigate': (section: 'about') => void;
   'audit:run-updated': (agentRunId: string) => void;
+  'dictation-history:changed': () => void;
   'shortcuts:paused-changed': (paused: boolean) => void;
   'desktop:status-changed': (status: DesktopStatus) => void;
   'runtime:audio-start': (command: RuntimeAudioCommand) => void;
@@ -604,7 +611,33 @@ export interface RecordingPresentationEnvelope {
   outcome?: RecordingTerminalOutcome;
 }
 
-export type TranscriptionSettingsPatch = Partial<Pick<AppConfig,
+export const DICTATION_HISTORY_DAYS = [0, 1, 7, 30, 90] as const;
+export type DictationHistoryDays = typeof DICTATION_HISTORY_DAYS[number];
+
+/** What automatic paste reported. `dispatched` means input was sent, not that the target accepted it. */
+export type DictationDelivery = 'dispatched' | 'failed' | 'uncertain';
+
+export interface DictationHistoryEntry {
+  id: number;
+  createdAt: string;
+  /** The final text that was pasted or offered for copy. */
+  text: string;
+  /** The transcript before Corrected Dictation formatting; null when formatting changed nothing or did not run. */
+  rawText: string | null;
+  provider: TranscriptionProviderId;
+  model: string | null;
+  delivery: DictationDelivery;
+}
+
+/** A list row carries at most DICTATION_HISTORY_PREVIEW_CHARS of text; open the entry for all of it. */
+export type DictationHistoryRow = Omit<DictationHistoryEntry, 'rawText'> & { truncated: boolean };
+
+export interface DictationHistoryPage {
+  entries: DictationHistoryRow[];
+  hasMore: boolean;
+}
+
+export type TranscriptionSettingsPatch =Partial<Pick<AppConfig,
   'transcription' | 'managedLocal' | 'language' | 'task' | 'dictionary' |
   'removeFillerWords' | 'dictation' | 'shortcuts'>>;
 
@@ -627,6 +660,8 @@ export interface AppConfig {
   recordingSounds: boolean;
   /** Keeps the microphone open between recordings with a PRE_ROLL_MS ring. Off unless opted in, including upgrades. */
   warmMicrophone: boolean;
+  /** Days finished Dictations stay in History; 0 keeps none and deletes what was kept. 30 unless changed, including upgrades. */
+  dictationHistoryDays: DictationHistoryDays;
   setupChecklistDismissed: boolean;
   onboarding: { status: 'pending' | 'complete' };
   shortcuts: ShortcutsConfig;

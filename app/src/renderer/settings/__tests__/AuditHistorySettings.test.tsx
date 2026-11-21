@@ -10,6 +10,12 @@ const unused = () => Promise.reject(new Error('unused'));
 function auditIpc(overrides: Pick<SettingsIpc, 'getAuditRuns' | 'getAuditRunDetail'> & Partial<SettingsIpc>): SettingsIpc {
   return {
     onAuditRunUpdated: mock(() => undefined),
+    listDictationHistory: mock(() => Promise.resolve({ entries: [], hasMore: false })),
+    getDictationHistoryEntry: mock(() => Promise.resolve(null)),
+    copyDictationHistoryEntry: mock(() => Promise.resolve()),
+    deleteDictationHistoryEntry: mock(() => Promise.resolve()),
+    clearDictationHistory: mock(() => Promise.resolve()),
+    onDictationHistoryChanged: mock(() => undefined),
     listMicrophones: mock(() => Promise.resolve([])),
     getShortcutsPaused: mock(() => Promise.resolve(false)),
     setShortcutsPaused: mock((paused: boolean) => Promise.resolve(paused)),

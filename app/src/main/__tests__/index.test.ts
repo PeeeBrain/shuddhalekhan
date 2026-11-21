@@ -76,7 +76,7 @@ const updateTrayMenu = vi.fn();
 const updateUpdaterStatus = vi.fn();
 let trayHandlers: {
   onOpenSettings?: () => void;
-  onPasteLastTranscript?: () => void;
+  onPasteLastTranscript?: () => Promise<void>;
   onCopyLastTranscript?: () => void;
   onSelectDevice?: (deviceId: string) => void;
   isShortcutsPaused?: () => boolean;
@@ -139,6 +139,13 @@ let sessionOptions: any = null;
 installElectronMock();
 const actualRuntimeShell = { ...await import('../runtime-shell') };
 const actualComputerUse = { ...await import('../computer-use') };
+const actualDictationHistory = { ...await import('../dictation-history') };
+const historyRecord = vi.fn((_entry: { text: string; delivery: string }) => 1);
+mock.module('../dictation-history', () => ({
+  openDictationHistory: () => ({ record: historyRecord, setDelivery: vi.fn(), prune: vi.fn() }),
+  transcriptionModel: () => null,
+  deliveryOf: actualDictationHistory.deliveryOf,
+}));
 const keyboardSetPaused = vi.fn();
 const keyboardIsPaused = vi.fn(() => false);
 const keyboardSetCaptureSuspended = vi.fn();
@@ -331,6 +338,7 @@ describe('main process IPC orchestration', () => {
     mock.restore();
     mock.module('../runtime-shell', () => actualRuntimeShell);
     mock.module('../computer-use', () => actualComputerUse);
+    mock.module('../dictation-history', () => actualDictationHistory);
     setPlatform(nativePlatform);
     if (originalSessionType === undefined) delete process.env.XDG_SESSION_TYPE;
     else process.env.XDG_SESSION_TYPE = originalSessionType;
@@ -339,6 +347,8 @@ describe('main process IPC orchestration', () => {
   });
 
   beforeEach(async () => {
+    // A paste's clipboard restore waits on a real timer; settle it before the mocks reset.
+    await (await import('../inject-text')).restorePendingClipboard();
     setPlatform(nativePlatform);
     process.env.XDG_SESSION_TYPE = 'x11';
     delete process.env.WAYLAND_DISPLAY;
@@ -376,7 +386,11 @@ describe('main process IPC orchestration', () => {
     electronMock.clipboard.writeText.mockImplementation((text: string) => {
       clipboardText.value = text;
     });
+    electronMock.clipboard.write.mockImplementation((data: { text?: string }) => {
+      clipboardText.value = data.text ?? '';
+    });
     send.mockClear();
+    historyRecord.mockClear();
     isDestroyed.mockReturnValue(false);
     recordingSessionCancel.mockClear();
     setConfig.mockClear();
@@ -388,7 +402,9 @@ describe('main process IPC orchestration', () => {
     simulatePaste.mockReset();
     simulatePaste.mockReturnValue({ acceptedEvents: 4 });
     getClipboardSequenceNumber.mockReset();
-    getClipboardSequenceNumber.mockReturnValue(1);
+    // Restoring replaces the clipboard, which moves the sequence like the real one.
+    getClipboardSequenceNumber.mockImplementation(() =>
+      1 + electronMock.clipboard.write.mock.calls.length + electronMock.clipboard.clear.mock.calls.length);
     captureForegroundTarget.mockReset();
     captureForegroundTarget.mockReturnValue(defaultTargetSnapshot);
     checkForUpdates.mockClear();
@@ -636,7 +652,7 @@ describe('main process IPC orchestration', () => {
     }));
   });
 
-  it('transcribes completed audio and restores the clipboard after paste', async () => {
+  it('transcribes completed audio and restores the clipboard after paste, before quitting', async () => {
     // Simulate successful result callback
     const result = {
       text: 'transcribed text',
@@ -644,10 +660,15 @@ describe('main process IPC orchestration', () => {
       targetSnapshot: defaultTargetSnapshot,
     };
     await sessionOptions.onResult(result);
+    expect(electronMock.clipboard.write).not.toHaveBeenCalled();
+    appListeners.get('before-quit')?.({ preventDefault: vi.fn() });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(simulatePaste).toHaveBeenCalled();
     expect(electronMock.clipboard.writeText).toHaveBeenNthCalledWith(1, 'transcribed text');
+    // The pasted-over clipboard comes back before the app exits, not after its restore timer.
     expect(electronMock.clipboard.write).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'original' }));
+    expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
   });
 
   it('completes onboarding only after a real Dictation is inserted', async () => {
@@ -662,6 +683,16 @@ describe('main process IPC orchestration', () => {
     expect(setConfig).toHaveBeenCalledWith('onboarding', { status: 'complete' });
     expect(setConfig).toHaveBeenCalledWith('setupChecklistDismissed', true);
     expect(send).toHaveBeenCalledWith('onboarding:completed');
+  });
+
+  it('keeps settled Dictations in History, never cancelled recordings or Agent commands', async () => {
+    await sessionOptions.onResult({ text: 'kept dictation', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await sessionOptions.onResult({ text: 'cancelled dictation', intent: 'dictation', targetSnapshot: defaultTargetSnapshot, signal: cancelled.signal });
+    await sessionOptions.onResult({ text: 'agent command', intent: 'agent', targetSnapshot: defaultTargetSnapshot });
+
+    expect(historyRecord.mock.calls.map(([entry]: [{ text: string; delivery: string }]) => [entry.text, entry.delivery])).toEqual([['kept dictation', 'dispatched']]);
   });
 
   it('routes agent recordings to the sidecar without injecting text', async () => {
@@ -1326,17 +1357,35 @@ describe('main process IPC orchestration', () => {
       finishStop = resolve;
     }));
     const preventDefault = vi.fn();
+    await sessionOptions.onResult({ text: 'transcribed text', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
+    expect(electronMock.clipboard.write).not.toHaveBeenCalled();
+    // A tray paste still in its settle wait must not dispatch once quit has restored the clipboard.
+    simulatePaste.mockClear();
+    const staged = new Promise<void>((resolve) => {
+      electronMock.clipboard.writeText.mockImplementationOnce((text: string) => {
+        clipboardText.value = text;
+        resolve();
+      });
+    });
+    const inFlightTrayPaste = trayHandlers.onPasteLastTranscript?.();
+    await Promise.race([staged, inFlightTrayPaste?.then(() => { throw new Error('The tray paste finished before staging.'); })]);
 
     appListeners.get('before-quit')?.({ preventDefault });
+    await inFlightTrayPaste;
+    expect(simulatePaste).not.toHaveBeenCalled();
 
     expect(recordingSessionStop).toHaveBeenCalledTimes(1);
     expect(agentStop).toHaveBeenCalledTimes(1);
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(electronMock.app.quit).not.toHaveBeenCalled();
+    // Nor may a tray paste started while shutdown is pending.
+    await trayHandlers.onPasteLastTranscript?.();
+    expect(simulatePaste).not.toHaveBeenCalled();
 
     finishStop();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
+    expect(electronMock.clipboard.write).toHaveBeenLastCalledWith(expect.objectContaining({ text: 'original' }));
   });
 
   it('shows a persistent failure card when sidecar containment fails', () => {

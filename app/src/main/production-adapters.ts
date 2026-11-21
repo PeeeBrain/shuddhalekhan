@@ -1,7 +1,7 @@
 import { clipboard, nativeImage } from 'electron';
 import { resolvePasteStrategy } from './paste-strategy';
 import { getConfig } from './config';
-import { writeTransientClipboardText } from './native/clipboard';
+import { getClipboardSequenceNumber, writeTransientClipboardText } from './native/clipboard';
 import type {
   ClipboardIO,
   ClipboardSnapshot,
@@ -125,19 +125,23 @@ export class ElectronClipboardAdapter implements ClipboardIO {
   }
 
   public restoreSnapshot(snapshot: ClipboardSnapshot): void {
+    const before = process.platform === 'win32' ? getClipboardSequenceNumber() : undefined;
     if (snapshot.wasEmpty) {
       clipboard.clear();
-      return;
+    } else {
+      // Each write replaces the clipboard; restore all representations together.
+      clipboard.write({
+        text: snapshot.text ?? snapshot.bookmark?.url,
+        html: snapshot.html,
+        rtf: snapshot.rtf,
+        image: snapshot.imagePng === undefined ? undefined : nativeImage.createFromBuffer(snapshot.imagePng),
+        bookmark: snapshot.bookmark?.title,
+      });
     }
-
-    // Each write replaces the clipboard; restore all representations together.
-    clipboard.write({
-      text: snapshot.text ?? snapshot.bookmark?.url,
-      html: snapshot.html,
-      rtf: snapshot.rtf,
-      image: snapshot.imagePng === undefined ? undefined : nativeImage.createFromBuffer(snapshot.imagePng),
-      bookmark: snapshot.bookmark?.title,
-    });
+    // Chromium gives up silently when another process holds the clipboard open.
+    if (before !== undefined && getClipboardSequenceNumber() === before) {
+      throw new Error('The clipboard was locked by another app.');
+    }
   }
 
   public writeText(text: string): void {
