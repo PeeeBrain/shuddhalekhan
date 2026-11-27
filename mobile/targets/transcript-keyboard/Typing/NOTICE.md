@@ -11,7 +11,7 @@ keyboard sessions and Agent Mode are Shuddhalekhan's own and borrow nothing from
 
 Shuddhalekhan renamed the files and types for this codebase, and replaced Hex's dictation routes, settings,
 App Group and branding: the Dictation and Agent keys in the strip drive Shuddhalekhan's keyboard session
-(`../KeyboardViewController.swift`). Every keyboard setting is fixed at Hex's default, the language is always
+(`../KeyboardViewController.swift`). `../ContainingAppOpener.swift`, which opens the app from the keyboard, is Hex's too. Every keyboard setting is fixed at Hex's default, the language is always
 Automatic, and only the English typing model ships.
 
 ## Bundled data

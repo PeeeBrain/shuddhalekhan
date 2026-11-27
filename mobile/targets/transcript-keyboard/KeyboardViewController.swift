@@ -14,6 +14,12 @@ final class KeyboardViewController: UIInputViewController {
   /// iOS shows an empty panel until a keyboard's first frame, and goes back to the previous keyboard when one is slow
   /// to draw (Hex's TestFlight build 56), so the text checker and lexicon wait this long after it appears.
   private static let afterFirstFrame: TimeInterval = 0.3
+  /// A voice key tapped with no session opens the app, which starts one (`shuddhalekhan://keyboard-session`).
+  /// The first live session the keyboard finds within `launchWindow` starts that recording, so coming back
+  /// with ◀ dictates without a second tap. Static: iOS may build a new controller for the return.
+  private static var awaitingSession: (mode: KeyboardSession.Mode, at: Date)?
+  private static let launchWindow: TimeInterval = 60
+  private static let sessionLink = URL(string: "shuddhalekhan://keyboard-session")!
 
   private let model = KeyboardViewModel()
   private var keyboard: FullKeyboardView?
@@ -187,6 +193,10 @@ final class KeyboardViewController: UIInputViewController {
       let wasConnecting = !self.receivedState && self.model.notice == Self.connecting
       self.receivedState = true
       self.receive(state)
+      if let awaiting = Self.awaitingSession, self.session?.isLive(now: KeyboardSession.nowMs()) == true {
+        Self.awaitingSession = nil
+        if Date().timeIntervalSince(awaiting.at) < Self.launchWindow { return self.start(awaiting.mode) }
+      }
       if wasConnecting, self.model.notice == Self.connecting {
         if self.session?.isLive(now: KeyboardSession.nowMs()) == true {
           self.show("Connected. Tap again to start.")
@@ -271,7 +281,14 @@ final class KeyboardViewController: UIInputViewController {
     guard pendingId == nil else { return }
     if channel == nil { refresh() }
     guard let session, session.isLive(now: KeyboardSession.nowMs()) else {
-      return show(channel != nil && !receivedState ? Self.connecting : Self.noSession)
+      if channel != nil && !receivedState { return show(Self.connecting) }
+      guard hasFullAccess else { return show(Self.noSession) }
+      Self.awaitingSession = (mode, Date())
+      if !ContainingAppOpener.open(Self.sessionLink, from: self) {
+        Self.awaitingSession = nil
+        show(Self.noSession)
+      }
+      return
     }
     if mode == .agent, !session.agentReady {
       return show("Set up Agent Mode in Shuddhalekhan to ask the agent from here.")
