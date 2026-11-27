@@ -1156,8 +1156,8 @@ final class FullKeyboardView: UIView {
     /// Whether the cursor is still right after the dictation, with the same text either side.
     private func canUndo(_ undo: DictationUndo) -> Bool {
         let target = engine.target
-        return undo.matches(before: target.documentContextBeforeInput ?? "",
-                            after: target.documentContextAfterInput ?? "", selected: target.selectedText)
+        return undo.matches(document: target.documentIdentifier, before: target.documentContextBeforeInput,
+                            after: target.documentContextAfterInput, selected: target.selectedText)
     }
 
     /// Moved or edited since the dictation: no button that does nothing.

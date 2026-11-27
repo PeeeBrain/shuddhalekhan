@@ -25,7 +25,6 @@ final class KeyboardViewController: UIInputViewController {
   private var pendingId: String?
   private var pendingMode = KeyboardSession.Mode.dictate
   private var pendingDocument: UUID?
-  private var undoDocument: UUID?
   private var insertedIds = Set<String>()
   private var channel: KeyboardSessionChannel?
   private var bridge: KeyboardSession.Bridge?
@@ -136,22 +135,13 @@ final class KeyboardViewController: UIInputViewController {
 
   override func textDidChange(_ textInput: UITextInput?) {
     super.textDidChange(textInput)
-    hideUndoInOtherDocument()
     keyboard?.textDidChange()
   }
 
   override func selectionDidChange(_ textInput: UITextInput?) {
     super.selectionDidChange(textInput)
-    hideUndoInOtherDocument()
     keyboard?.hideUndoIfMoved()
     keyboard?.engine.commitHangulIfHostMoved()
-  }
-
-  /// Undo only takes a Dictation back from the field it went into.
-  private func hideUndoInOtherDocument() {
-    guard let undoDocument, undoDocument != textDocumentProxy.documentIdentifier else { return }
-    self.undoDocument = nil
-    keyboard?.hideUndo()
   }
 
   override func didReceiveMemoryWarning() {
@@ -357,17 +347,18 @@ final class KeyboardViewController: UIInputViewController {
     keyboard.engine.commitHangulComposition()
     keyboard.applyPendingSelectionDictation()
     let proxy = textDocumentProxy
+    // Read the field through the engine: UIKit's non-optional `documentIdentifier` can be nil and trap.
+    let document = keyboard.engine.target.documentIdentifier
     let before = proxy.documentContextBeforeInput
     let after = proxy.documentContextAfterInput
     let replacingSelection = !(proxy.selectedText?.isEmpty ?? true)
     let insertion = KeyboardInsertion.text(transcript,
       before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
     proxy.insertText(insertion)
-    undoDocument = proxy.documentIdentifier
     // Undo only for an insert the host confirms, never over a replaced selection.
     keyboard.didInsertDictation(undo: replacingSelection ? nil : DictationUndo(text: insertion,
-      before: before ?? "", after: after ?? "", resultingBefore: proxy.documentContextBeforeInput ?? "",
-      resultingAfter: proxy.documentContextAfterInput ?? ""))
+      document: document, before: before, after: after, resultingDocument: keyboard.engine.target.documentIdentifier,
+      resultingBefore: proxy.documentContextBeforeInput, resultingAfter: proxy.documentContextAfterInput))
   }
 
   // MARK: Model
