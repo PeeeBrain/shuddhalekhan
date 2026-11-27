@@ -162,7 +162,8 @@ struct KeyboardClipboardTracker {
         fieldIsEmpty: Bool,
         hasFullAccess: Bool,
         canSwitchKeyboard: Bool = true,
-        appleKeyboardRoute: (_ numberPad: Bool) -> KeyboardInputModes.Route? = { KeyboardInputModes.route(numberPad: $0) },
+        // Swift 5 mode evaluates default arguments outside the main actor; the closure carries it.
+        appleKeyboardRoute: @MainActor (_ numberPad: Bool) -> KeyboardInputModes.Route? = { @MainActor in KeyboardInputModes.route(numberPad: $0) },
         pasteboard: UIPasteboard = .general,
         now: Date = Date()
     ) -> KeyboardClipboardOffer? {
