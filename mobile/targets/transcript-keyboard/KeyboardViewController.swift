@@ -240,7 +240,7 @@ final class KeyboardViewController: UIInputViewController {
     if let text = KeyboardSession.insertion(state, pendingId: pendingId, inserted: insertedIds) {
       insertedIds.insert(pendingId)
       self.pendingId = nil
-      guard pendingDocument == textDocumentProxy.documentIdentifier else {
+      guard pendingDocument == keyboard?.engine.target.documentIdentifier else {
         return show("The text field changed. Dictate again to insert here.")
       }
       insertDictation(text)
@@ -279,7 +279,8 @@ final class KeyboardViewController: UIInputViewController {
     let id = UUID().uuidString
     pendingId = id
     pendingMode = mode
-    pendingDocument = textDocumentProxy.documentIdentifier
+    // Read the field through the engine: UIKit's non-optional `documentIdentifier` can be nil and trap.
+    pendingDocument = keyboard?.engine.target.documentIdentifier
     guard send(.start, id: id) else { pendingId = nil; return }
     clearNotice()
     render()
@@ -313,6 +314,7 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   private func setStyle(_ style: DictationStyle) {
+    if channel == nil { refresh() }
     guard let channel, let bridge, let session, session.isLive(now: KeyboardSession.nowMs()) else {
       return show(channel != nil && !receivedState ? Self.connecting : Self.noSession)
     }
@@ -347,7 +349,6 @@ final class KeyboardViewController: UIInputViewController {
     keyboard.engine.commitHangulComposition()
     keyboard.applyPendingSelectionDictation()
     let proxy = textDocumentProxy
-    // Read the field through the engine: UIKit's non-optional `documentIdentifier` can be nil and trap.
     let document = keyboard.engine.target.documentIdentifier
     let before = proxy.documentContextBeforeInput
     let after = proxy.documentContextAfterInput

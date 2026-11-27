@@ -15,12 +15,12 @@ struct DictationUndo: Equatable {
     let before: String
     let after: String
 
-    /// Nil unless the host shows `text` went in at the cursor of the same field: the text before it
+    /// Nil unless the host shows `text` went in at the cursor of the same, named field: the text before it
     /// changed, ends with `text`, and is the end of what was there plus `text` (hosts show a window);
     /// the text after it is unchanged.
     init?(text: String, document: UUID?, before: String?, after: String?,
           resultingDocument: UUID?, resultingBefore: String?, resultingAfter: String?) {
-        guard !text.isEmpty, resultingDocument == document, let before, let after,
+        guard !text.isEmpty, let document, resultingDocument == document, let before, let after,
               let resultingBefore, resultingAfter == after, resultingBefore != before,
               resultingBefore.hasSuffix(text), (before + text).hasSuffix(resultingBefore)
         else { return nil }

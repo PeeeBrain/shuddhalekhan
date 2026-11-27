@@ -30,6 +30,8 @@ struct DictationUndoCheck {
       resultingDocument: field, resultingBefore: "changed world", resultingAfter: "") == nil)
     precondition(DictationUndo(text: " world", document: field, before: "hello", after: "",
       resultingDocument: UUID(), resultingBefore: "hello world", resultingAfter: "") == nil)
+    precondition(DictationUndo(text: " world", document: nil, before: "hello", after: "",
+      resultingDocument: nil, resultingBefore: "hello world", resultingAfter: "") == nil)
     precondition(DictationUndo(text: " world", document: field, before: "hello", after: nil,
       resultingDocument: field, resultingBefore: "hello world", resultingAfter: nil) == nil)
   }
