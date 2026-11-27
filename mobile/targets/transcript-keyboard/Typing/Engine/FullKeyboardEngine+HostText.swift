@@ -133,8 +133,13 @@ extension FullKeyboardEngine {
 
     /// Whether the host's update is the keyboard's own edit (an echo, or a host still behind it) rather
     /// than a change made elsewhere: a swipe's pending space then still belongs to the text.
+    /// Text is selected: a key replaces it, so nothing that deletes back from the cursor
+    /// (autocorrect, a suggestion, a revert, a swipe's take-back) may run, or its first delete
+    /// takes the selection and the rest take text that was never selected.
+    var hasSelection: Bool { !(target.selectedText ?? "").isEmpty }
+
     func hostEchoed(_ swipe: SwipedWord) -> Bool {
-        if let selected = target.selectedText, !selected.isEmpty { return false }
+        if hasSelection { return false }
         return swipe.before == typingContext && swipe.after == target.documentContextAfterInput
     }
 

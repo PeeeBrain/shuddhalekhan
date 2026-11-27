@@ -392,6 +392,8 @@ final class FullKeyboardEngine {
             revertCorrection()
             return
         }
+        // A pick made before text was selected leaves the text alone.
+        if hasSelection { return refreshSuggestions() }
         if suggestion.kind == .emoji { return acceptEmoji(suggestion) }
         // What the suggestion takes the place of: the word being typed, or a text
         // replacement's shortcut, which may hold digits or punctuation ("ad2").
@@ -993,7 +995,7 @@ final class FullKeyboardEngine {
     /// shortcut ends the text.
     private func applyTextReplacement(ending: String) -> Bool {
         let before = textBefore
-        guard field.takesWords, target.autocorrectionType != .no,
+        guard !hasSelection, field.takesWords, target.autocorrectionType != .no,
               let replaced = autocorrect.textReplacement(before: before) else { return false }
         adaptiveLearning?.finish(token: replaced.typed, corrected: replaced.replacement, before: before)
         rememberTypingContext(
@@ -1045,7 +1047,7 @@ final class FullKeyboardEngine {
     /// `ending` back (`offeringRevert`). False, typing nothing, when neither changes.
     private func finishWord(ending: String) -> Bool {
         let before = textBefore ?? ""
-        guard let token = AutocorrectEngine.currentToken(in: before) else { return false }
+        guard !hasSelection, let token = AutocorrectEngine.currentToken(in: before) else { return false }
         if let finished = finishedWord, before == finished.before + token,
            let taps = finished.taps, let space = finished.space, field.takesWords, target.autocorrectionType != .no,
            let merged = autocorrect.merge(
@@ -1129,8 +1131,7 @@ final class FullKeyboardEngine {
     /// the space or mark delete took, as Apple's bubble puts it back; space then keeps it.
     /// Learn how I type and Adaptive touch take it as an undone autocorrection.
     private func revertCorrection() {
-        guard (target.selectedText ?? "").isEmpty,
-              let correction = autocorrect.revertibleCorrection(before: textBefore) else {
+        guard !hasSelection, let correction = autocorrect.revertibleCorrection(before: textBefore) else {
             return refreshSuggestions()
         }
         autocorrect.forgetCorrection()
@@ -1443,9 +1444,9 @@ final class FullKeyboardEngine {
     }
 
     /// The host's text before the cursor while the cursor is still where the swipe left it, else nil.
-    /// A move the host reported as a selection change alone can leave an earlier copy of the word
-    /// before it, so the host's own text must end the way the swipe left it (a host shows a window),
-    /// not just a delayed report of it.
+    /// `hostEchoed` allows for a host still catching up, which a cursor moved back to an earlier copy
+    /// of the word (reported as a selection change alone) can pass; deleting needs the host's own
+    /// text to end the way the swipe left it.
     private func hostTextAtSwipe(_ swiped: SwipedWord) -> String? {
         guard hostEchoed(swiped), let before = textBefore, swiped.before?.hasSuffix(before) == true else { return nil }
         return before
