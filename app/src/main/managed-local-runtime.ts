@@ -5,6 +5,10 @@ import { resolveManagedLocalThreads } from './managed-local-threads';
 import type { LocalRuntime } from './managed-local-engine';
 
 export const RECOGNITION_TIMEOUT_MS = 120_000;
+const GPU_OUT_OF_MEMORY = 'The GPU ran out of memory. Close other apps using it, or choose CPU in Settings.';
+
+/** ONNX Runtime and ggml CUDA allocation failures: memory another process may free, not a broken device. */
+export const isGpuOutOfMemory = (message: string) => /out of memory|failed to allocate memory/i.test(message);
 
 type RuntimeProcess = {
   postMessage(message: unknown): void;
@@ -78,9 +82,10 @@ export function createManagedLocalTranscriber({
     if (message.kind === 'load-error') {
       const error = new TranscriptionFailure(
         'model',
-        runtime?.backend === 'cuda'
-          ? 'GPU speech recognition could not start. Check the NVIDIA driver and GPU setup, or choose CPU in Settings.'
-          : 'Local speech recognition could not load. Delete and reinstall the model in Settings.',
+        runtime?.backend !== 'cuda'
+          ? 'Local speech recognition could not load. Delete and reinstall the model in Settings.'
+          : isGpuOutOfMemory(message.message) ? GPU_OUT_OF_MEMORY
+            : 'GPU speech recognition could not start. Check the NVIDIA driver and GPU setup, or choose CPU in Settings.',
       );
       if (child) reset(child, error, true);
       return;
@@ -94,7 +99,8 @@ export function createManagedLocalTranscriber({
     }
     else request.reject(new TranscriptionFailure(
       'model',
-      'Local transcription failed. Retry Dictation; if it happens again, repair the model in Settings.',
+      runtime?.backend === 'cuda' && isGpuOutOfMemory(message.message) ? GPU_OUT_OF_MEMORY
+        : 'Local transcription failed. Retry Dictation; if it happens again, repair the model in Settings.',
     ));
   };
 

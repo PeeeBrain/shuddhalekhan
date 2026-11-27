@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
 import { EventEmitter } from 'events';
+import { rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { createGpuFailureRecord, type GpuIdentity } from '../managed-local-gpu-failures';
 import { createManagedLocalEngine, type LocalRuntime } from '../managed-local-engine';
 import { createManagedLocalTranscriber } from '../managed-local-runtime';
 import { resolveManagedLocalSelection } from '../../shared/managed-local-selection';
@@ -7,12 +11,12 @@ import { resolveManagedLocalSelection } from '../../shared/managed-local-selecti
 class Process extends EventEmitter {
   killed = false;
   readonly received: unknown[] = [];
-  constructor(readonly runtime: LocalRuntime, readonly numThreads: number, readonly failLoad = false, readonly crashDecode = false) { super(); }
+  constructor(readonly runtime: LocalRuntime, readonly numThreads: number, readonly failLoad: string | false = false, readonly crashDecode = false) { super(); }
   postMessage(message: unknown) {
     this.received.push(structuredClone(message));
     if (!message || typeof message !== 'object' || !('kind' in message)) return;
     if (message.kind === 'load') queueMicrotask(() => this.emit('message', this.failLoad
-      ? { kind: 'load-error', message: 'CUDA initialization failed' } : { kind: 'ready' }));
+      ? { kind: 'load-error', message: this.failLoad } : { kind: 'ready' }));
     if (message.kind === 'transcribe') {
       if (!('requestId' in message)) throw new Error('Missing correlation id');
       this.emit('decode');
@@ -28,9 +32,15 @@ const request = { audio: new Uint8Array([1, 2]), recognition: {
   language: 'auto', task: 'transcribe' as const, dictionary: [], removeFillerWords: false,
 } };
 
-function rig({ failLoad = false, crashDecode = false, startup }: { failLoad?: boolean; crashDecode?: boolean; startup?: Promise<void> } = {}) {
+const failuresPath = join(tmpdir(), `shuddhalekhan-gpu-failures-${process.pid}.json`);
+afterEach(() => rmSync(failuresPath, { force: true }));
+
+function rig({ failLoad = false, crashDecode = false, startup, identity = { device: 'GPU-1', driver: '580.1' } }: {
+  failLoad?: boolean | string; crashDecode?: boolean; startup?: Promise<void>; identity?: GpuIdentity | null;
+} = {}) {
   const settings = { selection: resolveManagedLocalSelection(undefined), numThreads: 1, revision: 0, contextual: false };
   const processes: Process[] = [];
+  const loadError = failLoad === true ? 'CUDA initialization failed' : failLoad;
   const engine = createManagedLocalEngine({
     getSettings: () => settings,
     getCandidates: async selection => {
@@ -42,12 +52,13 @@ function rig({ failLoad = false, crashDecode = false, startup }: { failLoad?: bo
     createWorker(runtime, numThreads) {
       return createManagedLocalTranscriber({ getModelPath: async () => runtime.modelPath,
         numThreads, startProcess() {
-          const child = new Process(runtime, numThreads, runtime.backend === 'cuda' && failLoad, runtime.backend === 'cuda' && crashDecode);
+          const child = new Process(runtime, numThreads, runtime.backend === 'cuda' && loadError, runtime.backend === 'cuda' && crashDecode);
           processes.push(child);
           return child;
-        } });
+        }, runtime });
     },
     onStatus() {},
+    gpuFailures: createGpuFailureRecord({ getPath: () => failuresPath, getIdentity: async () => identity }),
   });
   return { engine, settings, processes };
 }
@@ -94,11 +105,37 @@ describe('Managed Local recording decode', () => {
     } finally { await engine.shutdown(); }
   });
 
+  const backends = async (options: Parameters<typeof rig>[0], device: 'auto' | 'cuda' = 'auto') => {
+    const { engine, settings, processes } = rig(options);
+    settings.selection.devices.parakeet = device;
+    try { await engine.forRecording().transcribe(request); } finally { await engine.shutdown(); }
+    return processes.map(p => p.runtime.backend);
+  };
+
+  it('remembers a GPU failure across restarts until the driver changes or the GPU is selected again', async () => {
+    expect(await backends({ failLoad: true })).toEqual(['cuda', 'cpu']);
+    expect(await backends({})).toEqual(['cpu']);
+    expect(await backends({ identity: { device: 'GPU-1', driver: '590.2' } })).toEqual(['cuda']);
+    expect(await backends({})).toEqual(['cpu']);
+    expect(await backends({}, 'cuda')).toEqual(['cuda']);
+    expect(await backends({})).toEqual(['cuda']);
+  });
+
+  it('does not remember a GPU that only ran out of memory', async () => {
+    expect(await backends({ failLoad: 'CUDA failure 2: out of memory' })).toEqual(['cuda', 'cpu']);
+    expect(await backends({})).toEqual(['cuda']);
+  });
+
+  it('remembers a GPU that failed during a recording', async () => {
+    expect(await backends({ crashDecode: true })).toEqual(['cuda', 'cpu']);
+    expect(await backends({})).toEqual(['cpu']);
+  });
+
   it('reports GPU initialization failure without silently using CPU in dedicated GPU mode', async () => {
     const { engine, settings, processes } = rig({ failLoad: true });
     settings.selection.devices.parakeet = 'cuda';
     try {
-      await expect(engine.forRecording().transcribe(request)).rejects.toThrow('could not load');
+      await expect(engine.forRecording().transcribe(request)).rejects.toThrow('GPU speech recognition could not start');
       expect(processes).toHaveLength(1);
       expect(processes[0].killed).toBe(true);
     } finally { await engine.shutdown(); }
