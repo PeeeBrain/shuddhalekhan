@@ -1,7 +1,8 @@
 import { managedLocalSupportsDictionary } from '../shared/managed-local-selection';
 import type { ManagedLocalModelSnapshot, ManagedLocalSelection, ManagedLocalTarget } from '../types/ipc';
 import { TranscriptionFailure, type Transcriber, type TranscriptionRequest } from './transcription';
-import { createManagedLocalTranscriber } from './managed-local-runtime';
+import { createManagedLocalTranscriber, isGpuOutOfMemory } from './managed-local-runtime';
+import type { GpuFailureRecord } from './managed-local-gpu-failures';
 
 export interface LocalRuntime {
   model: ManagedLocalSelection['model'];
@@ -24,18 +25,19 @@ export function createManagedLocalEngine({
   getCandidates,
   createWorker,
   onStatus,
+  gpuFailures,
 }: {
   getSettings: () => EngineSettings;
   getCandidates: (selection: ManagedLocalSelection) => Promise<LocalRuntime[]>;
   createWorker: (runtime: LocalRuntime, numThreads: number) => Worker;
   onStatus: (status: RuntimeStatus, settings: EngineSettings) => void;
+  gpuFailures: GpuFailureRecord;
 }) {
   let current: { key: string; worker: Worker; runtime: LocalRuntime; settings: EngineSettings; candidates: LocalRuntime[] } | null = null;
   let selecting: Promise<void> | null = null;
   let leases = 0;
   const drained: (() => void)[] = [];
   let generation = 0;
-  let failedGpuKey: string | null = null;
   let loadingWorker: Worker | null = null;
   let transcribing = 0;
 
@@ -63,27 +65,31 @@ export function createManagedLocalEngine({
       onStatus({ status: 'loading', backend: null, message: 'Starting local speech recognition…' }, settings);
       let failure = '';
       try {
+        const { model } = settings.selection;
         const candidates = pinned?.candidates ?? await getCandidates(settings.selection);
+        // Auto skips a GPU that failed before; an explicit GPU choice always tries it.
+        const gpuFailed = settings.selection.devices[model] === 'auto'
+          && candidates.some(candidate => candidate.backend === 'cuda') && await gpuFailures.has(model);
         for (const runtime of candidates) {
           if (token !== generation) throw new Error('Local speech recognition stopped.');
-          if (runtime.backend === 'cuda' && failedGpuKey === desiredKey
-            && settings.selection.devices[settings.selection.model] === 'auto') continue;
+          if (runtime.backend === 'cuda' && gpuFailed) continue;
           const worker = createWorker(settings.contextual ? { ...runtime, contextual: true } : runtime, settings.numThreads);
           loadingWorker = worker;
           try {
             await worker.warmup();
             if (token !== generation) throw new Error('Local speech recognition stopped.');
             current = { key: desiredKey, worker, runtime, settings, candidates };
+            if (runtime.backend === 'cuda') void gpuFailures.forget(model);
             onStatus({ status: 'ready', backend: runtime.backend,
               // Only the GPU fallback needs words; the status tag already names the processor.
-              message: runtime.backend === 'cpu' && (failure || failedGpuKey === desiredKey)
+              message: runtime.backend === 'cpu' && (failure || gpuFailed)
                 ? 'The GPU could not start. Select NVIDIA GPU to retry.' : '' }, settings);
             return;
           } catch (error) {
             await worker.shutdown();
             if (token !== generation) throw error;
             failure = error instanceof Error ? error.message : 'Local speech recognition could not start.';
-            if (runtime.backend === 'cuda') failedGpuKey = desiredKey;
+            if (runtime.backend === 'cuda' && !isGpuOutOfMemory(failure)) await gpuFailures.record(model, failure);
           } finally {
             if (loadingWorker === worker) loadingWorker = null;
           }
@@ -107,8 +113,9 @@ export function createManagedLocalEngine({
     let released = false;
     return { ...selected, release() { if (!released) { released = true; release(); } } };
   };
-  const failed = async (selected: NonNullable<typeof current>) => {
-    if (selected.runtime.backend === 'cuda') failedGpuKey = selected.key;
+  const failed = async (selected: NonNullable<typeof current>, error: unknown) => {
+    const reason = error instanceof Error ? error.message : 'GPU inference failed.';
+    if (selected.runtime.backend === 'cuda' && !isGpuOutOfMemory(reason)) await gpuFailures.record(selected.runtime.model, reason);
     if (current === selected || current?.worker === selected.worker) current = null;
     await selected.worker.shutdown();
     onStatus({ status: 'error', backend: null,
@@ -130,7 +137,7 @@ export function createManagedLocalEngine({
       }
       catch (error) {
         if (stopped()) throw error;
-        await failed(selected);
+        await failed(selected, error);
         selected.release();
         if (selected.runtime.backend !== 'cuda'
           || selected.settings.selection.devices[selected.runtime.model] !== 'auto' || stopped()) throw error;

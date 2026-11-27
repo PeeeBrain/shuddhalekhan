@@ -1,5 +1,7 @@
 import { managedLocalSupportsDictionary } from '../shared/managed-local-selection';
 import { execFile } from 'child_process';
+import { join } from 'path';
+import { createGpuFailureRecord, type GpuIdentity } from './managed-local-gpu-failures';
 import { z } from 'zod';
 import { TranscriptionFailure } from './transcription';
 import { createManagedLocalModelManager, type ManagedLocalModelManifest } from './managed-local-model';
@@ -27,6 +29,7 @@ let revision = 0;
 let publish: (state: ManagedLocalModelState) => void = () => {};
 let runtimeStatus: ManagedLocalModelSnapshot['runtime'] = { status: 'idle', backend: null, message: '' };
 let runtimeSettings = '';
+let gpuFailuresPath: string | null = null;
 const selection = () => resolveManagedLocalSelection(getConfig().managedLocal);
 const selectionKey = (settings = { selection: selection(), numThreads: resolveManagedLocalThreads(getConfig().managedLocalThreads) }) =>
   JSON.stringify({ selection: settings.selection, numThreads: settings.numThreads });
@@ -67,6 +70,10 @@ export const managedLocalTranscriber = createManagedLocalEngine({
     runtimeSettings = selectionKey(settings);
     void getManagedLocalModelManager().getState().then(publish).catch(error => console.warn('Could not publish Managed Local status:', error));
   },
+  gpuFailures: createGpuFailureRecord({
+    getPath: () => gpuFailuresPath,
+    getIdentity: async () => (await probeGpu()).identity,
+  }),
 });
 
 export function configureManagedLocal({
@@ -78,6 +85,7 @@ export function configureManagedLocal({
 }): void {
   if (targets.size) return;
   publish = onStateChanged;
+  gpuFailuresPath = join(root, 'gpu-failures.json');
   // Parts are shared by id, so CUDA libraries download once and Granite GPU reuses the CPU model file.
   const parts = new Map<string, ModelManager>();
   const part = (manifest: ManagedLocalModelManifest, legacy?: ReturnType<typeof legacyLocalModel>) => {
@@ -226,13 +234,22 @@ export async function deleteManagedLocalModel(value?: unknown): Promise<ManagedL
   return managedLocalSnapshot();
 }
 
-let gpu: Promise<ManagedLocalModelSnapshot['gpu']> | null = null;
-function gpuInfo(): Promise<ManagedLocalModelSnapshot['gpu']> {
+type GpuProbe = ManagedLocalModelSnapshot['gpu'] & { identity: GpuIdentity | null };
+let gpu: Promise<GpuProbe> | null = null;
+/** Read once per launch, so a driver installed while the app runs is seen after a restart. */
+function probeGpu(): Promise<GpuProbe> {
   return gpu ??= new Promise(resolve => {
-    if (!CUDA_SUPPORTED) return resolve({ name: null, message: GPU_UNAVAILABLE_MESSAGE });
-    execFile('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true, timeout: 3000 }, (error, stdout) => {
-      const name = !error ? stdout.trim().split(/\r?\n/)[0] : null;
-      resolve({ name, message: name ? '' : 'No NVIDIA GPU detected.' });
+    if (!CUDA_SUPPORTED) return resolve({ name: null, message: GPU_UNAVAILABLE_MESSAGE, identity: null });
+    execFile('nvidia-smi', ['--query-gpu=uuid,driver_version,name', '--format=csv,noheader'], { windowsHide: true, timeout: 3000 }, (error, stdout) => {
+      const rows = error ? [] : stdout.trim().split(/\r?\n/).map(line => line.split(', '));
+      const [first] = rows;
+      const name = first?.slice(2).join(', ') || null;
+      resolve({ name, message: name ? '' : 'No NVIDIA GPU detected.',
+        identity: first?.[1] ? { device: rows.map(([uuid]) => uuid).join(','), driver: first[1] } : null });
     });
   });
 }
+const gpuInfo = async (): Promise<ManagedLocalModelSnapshot['gpu']> => {
+  const { name, message } = await probeGpu();
+  return { name, message };
+};
