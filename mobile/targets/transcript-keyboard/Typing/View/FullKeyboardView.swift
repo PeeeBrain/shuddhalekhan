@@ -61,8 +61,8 @@ final class FullKeyboardView: UIView {
     private var didApplyPalette = false
     private var subscriptions: Set<AnyCancellable> = []
     var showsRecording = false
-    /// The mode a voice key's press started, so only that key's release finishes it.
-    private var heldMode: KeyboardSession.Mode?
+    /// The press (`voiceKeyHeld`'s source) whose start was accepted, so only its release finishes it.
+    private var heldBy: String?
     /// The page and case VoiceOver last read the keys in.
     private var spokenPage: (KeyboardLayer, Bool) = (.letters, false)
     /// A finger on the bar where no word is: holding it dictates as holding the Dictation key does.
@@ -220,9 +220,9 @@ final class FullKeyboardView: UIView {
         globeButton.addTarget(self, action: #selector(globeTapped), for: .touchUpInside)
 
         dictationKey.onHold = { [weak self] in self?.voiceKeyHeld() }
-        dictationKey.onHoldRelease = { [weak self] in self?.voiceKeyReleased() }
+        dictationKey.onHoldRelease = { [weak self] in self?.voiceKeyReleased(from: "dictation_key_release", pressedFrom: "dictation_key") }
         agentKey.onHold = { [weak self] in self?.voiceKeyHeld(from: "agent_key", mode: .agent) }
-        agentKey.onHoldRelease = { [weak self] in self?.voiceKeyReleased(from: "agent_key_release", mode: .agent) }
+        agentKey.onHoldRelease = { [weak self] in self?.voiceKeyReleased(from: "agent_key_release", pressedFrom: "agent_key") }
         dictationKey.onMenuOpen = { [weak self] point in
             guard let self else { return }
             // Styles are for dictation, which needs Full Access.
@@ -1016,21 +1016,21 @@ final class FullKeyboardView: UIView {
         dismissStyleMenu()
         // The session's loopback connection needs Full Access: say so instead of a start that can't.
         guard model.hasFullAccess else {
-            heldMode = nil
+            heldBy = nil
             return showFullAccessHint()
         }
-        // While one key's request runs, the other key neither starts nor owns the release.
+        // While one press's request runs, another neither starts nor owns the release.
         guard model.stagePhase == .idle else { return }
         typingLog?.ui(source, [TypingLogField("mode", .string(mode.rawValue))])
-        heldMode = mode
+        heldBy = source
         model.onStart?(mode)
     }
 
     /// Push to talk: lifting the finger after a hold finishes the dictation the hold started,
     /// as Done does. A hold that opened the keyboard has nothing to finish here.
-    private func voiceKeyReleased(from source: String = "dictation_key_release", mode: KeyboardSession.Mode = .dictate) {
-        guard heldMode == mode else { return }
-        heldMode = nil
+    private func voiceKeyReleased(from source: String, pressedFrom press: String) {
+        guard heldBy == press else { return }
+        heldBy = nil
         typingLog?.ui("dictation_stop", [TypingLogField("from", .string(source))])
         model.onStop?()
     }
@@ -1082,7 +1082,7 @@ final class FullKeyboardView: UIView {
         // A tap does nothing; lifting after the hold finishes the dictation it started.
         let output = barHold.touchUp()
         endBarHold()
-        if output == .release { voiceKeyReleased(from: "bar_release") }
+        if output == .release { voiceKeyReleased(from: "bar_release", pressedFrom: "bar_hold") }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {

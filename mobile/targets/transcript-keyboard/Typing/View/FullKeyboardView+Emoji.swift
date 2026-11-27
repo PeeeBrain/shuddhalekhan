@@ -109,6 +109,8 @@ extension FullKeyboardView {
         agentKey.isHidden = engine.layout.agentKey == nil
         agentKey.alpha = 1
         engine.textDidChange()
+        // Emoji typed into the host meanwhile moved the cursor past the dictation.
+        hideUndoIfMoved()
         refreshReturnKey()
         refreshStrip()
         setNeedsLayout()

@@ -198,7 +198,11 @@ final class KeyboardViewController: UIInputViewController {
       self.receivedState = true
       self.receive(state)
       if wasConnecting, self.model.notice == Self.connecting {
-        if self.session != nil { self.show("Connected. Tap again to start.") } else { self.show(Self.noSession) }
+        if self.session?.isLive(now: KeyboardSession.nowMs()) == true {
+          self.show("Connected. Tap again to start.")
+        } else {
+          self.show(Self.noSession)
+        }
       }
     }
     link.onClose = { [weak self, weak link] in
