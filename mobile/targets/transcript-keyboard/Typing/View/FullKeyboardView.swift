@@ -63,6 +63,8 @@ final class FullKeyboardView: UIView {
     var showsRecording = false
     /// The press (`voiceKeyHeld`'s source) whose start was accepted, so only its release finishes it.
     private var heldBy: String?
+    /// The field the keys were last set up for, once UIKit names it.
+    private var fieldDocument: UUID?
     /// The page and case VoiceOver last read the keys in.
     private var spokenPage: (KeyboardLayer, Bool) = (.letters, false)
     /// A finger on the bar where no word is: holding it dictates as holding the Dictation key does.
@@ -642,7 +644,11 @@ final class FullKeyboardView: UIView {
         // A field change (or the host's own edit) ends a range whose text no longer holds,
         // and clears any Dictate still waiting on its words.
         engine.selectionTextChanged()
-        if routeField != field {
+        // Another field of the same kind starts fresh too: no swipe or autocorrection carries over.
+        let document = engine.target.documentIdentifier
+        let otherField = document != nil && fieldDocument != nil && document != fieldDocument
+        if document != nil { fieldDocument = document }
+        if routeField != field || otherField {
             plane.cancelAllTouches()
             engine.configureForField()
             refreshEmojiKey()
@@ -662,6 +668,7 @@ final class FullKeyboardView: UIView {
         syncSettings()
         plane.cancelAllTouches()
         engine.configureForField()
+        fieldDocument = engine.target.documentIdentifier
         refreshReturnKey()
         applyAppearance()
         refreshStrip()

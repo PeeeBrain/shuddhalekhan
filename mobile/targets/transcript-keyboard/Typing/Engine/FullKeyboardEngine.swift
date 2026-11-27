@@ -1389,7 +1389,9 @@ final class FullKeyboardEngine {
 
     /// Puts another of the swipe's readings in its word's place; the word joins the others.
     private func replaceSwipedWord(with text: String) {
-        guard var swiped = swipedWord, let before = textBefore, before.hasSuffix(swiped.word) else {
+        // Only where the swipe left the cursor: a move the host reported as a selection change alone
+        // can leave an earlier copy of the word before it.
+        guard var swiped = swipedWord, hostEchoed(swiped), let before = textBefore, before.hasSuffix(swiped.word) else {
             swipedWord = nil
             refreshSuggestions()
             return
@@ -1441,9 +1443,9 @@ final class FullKeyboardEngine {
         if shift.state == .off { refreshAutoCapitalization() }
     }
 
-    /// Takes back what a swipe typed when it is still right before the cursor.
+    /// Takes back what a swipe typed when the cursor is still where the swipe left it.
     private func deleteSwipedWord(_ swiped: SwipedWord) -> Bool {
-        guard let before = textBefore, before.hasSuffix(swiped.inserted) else { return false }
+        guard hostEchoed(swiped), let before = textBefore, before.hasSuffix(swiped.inserted) else { return false }
         typingLog?.edit("delete", [
             TypingLogField("deleted", .string(swiped.inserted)),
             TypingLogField("src", .string("swipe")),
