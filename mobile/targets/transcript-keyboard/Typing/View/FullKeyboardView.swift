@@ -649,6 +649,8 @@ final class FullKeyboardView: UIView {
         let otherField = document != nil && fieldDocument != nil && document != fieldDocument
         if document != nil { fieldDocument = document }
         if routeField != field || otherField {
+            // A field UIKit hasn't named yet: the next name it reports is this field's, not another.
+            fieldDocument = document
             plane.cancelAllTouches()
             engine.configureForField()
             refreshEmojiKey()

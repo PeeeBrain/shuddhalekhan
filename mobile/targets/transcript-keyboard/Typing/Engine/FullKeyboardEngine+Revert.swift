@@ -15,8 +15,9 @@ extension FullKeyboardEngine {
     /// `suggestions` with the revert in the left slot, in place of the word as it reads (which
     /// space keeps anyway), while the cursor is right after the latest autocorrection.
     func offeringRevert(_ suggestions: [KeyboardSuggestion]) -> [KeyboardSuggestion] {
-        // A held space (`spacePending`) stands for the one delete takes first.
-        guard !spacePending, let correction = autocorrect.revertibleCorrection(before: textBefore) else {
+        // A held space (`spacePending`) stands for the one delete takes first. A selection would
+        // take the first of the revert's deletes.
+        guard !spacePending, (target.selectedText ?? "").isEmpty, let correction = autocorrect.revertibleCorrection(before: textBefore) else {
             return suggestions
         }
         let revert = KeyboardSuggestion(displayText: correction.original, replacement: correction.original, kind: .revert)

@@ -1129,7 +1129,8 @@ final class FullKeyboardEngine {
     /// the space or mark delete took, as Apple's bubble puts it back; space then keeps it.
     /// Learn how I type and Adaptive touch take it as an undone autocorrection.
     private func revertCorrection() {
-        guard let correction = autocorrect.revertibleCorrection(before: textBefore) else {
+        guard (target.selectedText ?? "").isEmpty,
+              let correction = autocorrect.revertibleCorrection(before: textBefore) else {
             return refreshSuggestions()
         }
         autocorrect.forgetCorrection()
@@ -1389,9 +1390,7 @@ final class FullKeyboardEngine {
 
     /// Puts another of the swipe's readings in its word's place; the word joins the others.
     private func replaceSwipedWord(with text: String) {
-        // Only where the swipe left the cursor: a move the host reported as a selection change alone
-        // can leave an earlier copy of the word before it.
-        guard var swiped = swipedWord, hostEchoed(swiped), let before = textBefore, before.hasSuffix(swiped.word) else {
+        guard var swiped = swipedWord, let before = hostTextAtSwipe(swiped), before.hasSuffix(swiped.word) else {
             swipedWord = nil
             refreshSuggestions()
             return
@@ -1428,7 +1427,7 @@ final class FullKeyboardEngine {
     /// (a field that capitalises every word).
     func spaceAfterSwipedWord(before text: String) {
         guard let swiped = swipedWord, let first = text.first, !Self.swipeJoiners.contains(first),
-              let before = typingContext, before.hasSuffix(swiped.word) else { return }
+              hostEchoed(swiped), let before = typingContext, before.hasSuffix(swiped.word) else { return }
         swipedWord = nil
         learning?.didFinish(word: AutocorrectEngine.currentToken(in: before), language: autocorrect.language.rawValue)
         typingLog?.edit("insert", [
@@ -1443,9 +1442,18 @@ final class FullKeyboardEngine {
         if shift.state == .off { refreshAutoCapitalization() }
     }
 
+    /// The host's text before the cursor while the cursor is still where the swipe left it, else nil.
+    /// A move the host reported as a selection change alone can leave an earlier copy of the word
+    /// before it, so the host's own text must end the way the swipe left it (a host shows a window),
+    /// not just a delayed report of it.
+    private func hostTextAtSwipe(_ swiped: SwipedWord) -> String? {
+        guard hostEchoed(swiped), let before = textBefore, swiped.before?.hasSuffix(before) == true else { return nil }
+        return before
+    }
+
     /// Takes back what a swipe typed when the cursor is still where the swipe left it.
     private func deleteSwipedWord(_ swiped: SwipedWord) -> Bool {
-        guard hostEchoed(swiped), let before = textBefore, before.hasSuffix(swiped.inserted) else { return false }
+        guard let before = hostTextAtSwipe(swiped), before.hasSuffix(swiped.inserted) else { return false }
         typingLog?.edit("delete", [
             TypingLogField("deleted", .string(swiped.inserted)),
             TypingLogField("src", .string("swipe")),
