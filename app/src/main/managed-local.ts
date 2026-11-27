@@ -245,7 +245,8 @@ function probeGpu(): Promise<GpuProbe> {
       const [first] = rows;
       const name = first?.slice(2).join(', ') || null;
       resolve({ name, message: name ? '' : 'No NVIDIA GPU detected.',
-        identity: first?.[1] ? { device: rows.map(([uuid]) => uuid).join(','), driver: first[1] } : null });
+        // Sorted: enumeration order can change across reboots without the hardware changing.
+        identity: first?.[1] ? { device: rows.map(([uuid]) => uuid).sort().join(','), driver: first[1] } : null });
     });
   });
 }
