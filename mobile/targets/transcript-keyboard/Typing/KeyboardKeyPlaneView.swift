@@ -96,7 +96,11 @@ final class KeyboardKeyPlaneView: UIView {
             for (element, key) in zip(keyElements, keys) {
                 element.accessibilityFrameInContainerSpace = key.frame
                 element.accessibilityLabel = spokenName(for: key)
-                element.accessibilityTraits = key.kind == .returnKey && !returnIsEnabled ? [.keyboardKey, .notEnabled] : .keyboardKey
+                element.accessibilityTraits = switch key.kind {
+                case .returnKey where !returnIsEnabled: [.keyboardKey, .notEnabled]
+                case .shift where engine.isUppercase: [.keyboardKey, .selected]
+                default: .keyboardKey
+                }
             }
             return keyElements
         }
@@ -106,13 +110,16 @@ final class KeyboardKeyPlaneView: UIView {
     private func spokenName(for key: KeyboardKey) -> String {
         switch key.kind {
         case .character: engine.displayLabel(for: key)
-        case .shift: String(localized: "Shift")
+        case .shift: engine.shift.state == .locked ? String(localized: "Caps Lock") : String(localized: "Shift")
         case .delete: String(localized: "Delete")
         case .space: String(localized: "Space")
         case .returnKey: returnStyle.accessibilityLabel
         case .emoji: String(localized: "Emoji")
         case .dismiss: String(localized: "Hide keyboard")
-        case .layerSwitch, .voice, .globe: key.label
+        case .layerSwitch(.letters): String(localized: "Letters")
+        case .layerSwitch(.numbers): String(localized: "Numbers")
+        case .layerSwitch(.symbols): String(localized: "Symbols")
+        case .voice, .globe: key.label
         }
     }
 

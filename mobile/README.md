@@ -40,7 +40,7 @@ Choose **Polished**, **Casual**, **Notes**, or **Verbatim** in the iOS Transcrip
 
 **Vocabulary** restores preferred spellings after speech recognition, on the device. It accepts up to 100 distinct terms of 64 characters. The remote endpoint's Dictionary setting still provides recognition hints and may be sent to the configured endpoint. Names and terms from the new Vocabulary list stay on the phone. Agent Mode uses the recognizer's original transcript.
 
-The keyboard adds spacing where it can read the cursor context. After insertion, **Undo** shows in the suggestion strip for up to 12 seconds. The next edit, a change of field, or a cursor the keyboard can no longer place the text from dismisses it.
+The keyboard adds spacing where it can read the cursor context. After an insertion the host confirms, **Undo** shows in the suggestion strip for up to 12 seconds. The next edit, a change of field, or moving the cursor dismisses it.
 
 **Clean Up with Apple Intelligence** is off by default. It uses the on-device model on eligible iOS 26+ devices when the model and language are available. If it times out or proposes a change the app cannot verify, Dictation continues with the text it already has.
 

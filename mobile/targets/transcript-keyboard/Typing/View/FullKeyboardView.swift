@@ -61,8 +61,10 @@ final class FullKeyboardView: UIView {
     private var didApplyPalette = false
     private var subscriptions: Set<AnyCancellable> = []
     var showsRecording = false
-    /// A voice key's last tap or hold asked the session to start, so lifting a hold stops it.
-    private var dictatingFromVoiceKey = false
+    /// The mode a voice key's press started, so only that key's release finishes it.
+    private var heldMode: KeyboardSession.Mode?
+    /// The page and case VoiceOver last read the keys in.
+    private var spokenPage: (KeyboardLayer, Bool) = (.letters, false)
     /// A finger on the bar where no word is: holding it dictates as holding the Dictation key does.
     private var barHold = VoiceKeyGesture()
     private var barHoldTouch: UITouch?
@@ -220,7 +222,7 @@ final class FullKeyboardView: UIView {
         dictationKey.onHold = { [weak self] in self?.voiceKeyHeld() }
         dictationKey.onHoldRelease = { [weak self] in self?.voiceKeyReleased() }
         agentKey.onHold = { [weak self] in self?.voiceKeyHeld(from: "agent_key", mode: .agent) }
-        agentKey.onHoldRelease = { [weak self] in self?.voiceKeyReleased(from: "agent_key_release") }
+        agentKey.onHoldRelease = { [weak self] in self?.voiceKeyReleased(from: "agent_key_release", mode: .agent) }
         dictationKey.onMenuOpen = { [weak self] point in
             guard let self else { return }
             // Styles are for dictation, which needs Full Access.
@@ -647,10 +649,7 @@ final class FullKeyboardView: UIView {
         } else {
             engine.textDidChange()
         }
-        // Moved somewhere it can't take the dictation back from: no button that does nothing.
-        if let undo = lastDictation, undoPlan(undo) == nil {
-            hideUndo()
-        }
+        hideUndoIfMoved()
         refreshReturnKey()
         refreshStrip()
     }
@@ -693,17 +692,19 @@ final class FullKeyboardView: UIView {
         }
     }
 
-    /// The session's dictation went in between `before` and `after`; offer to take it back until the
-    /// next edit, or until it can't be found from the cursor.
-    func didInsertDictation(_ text: String, before: String = "", after: String = "") {
+    /// The session's dictation went in; offer to take it back (`undo`, nil when the host didn't confirm
+    /// it) until the cursor or the text around it changes.
+    func didInsertDictation(undo: DictationUndo?) {
         engine.commitHangulComposition()
-        lastDictation = DictationUndo(text: text, before: before, after: after)
+        lastDictation = undo
         engine.clearPendingSelectionDictation()
         refreshStrip()
         undoHideWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.hideUndo() }
-        undoHideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: work)
+        if undo != nil {
+            let work = DispatchWorkItem { [weak self] in self?.hideUndo() }
+            undoHideWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: work)
+        }
         engine.forgetTextAroundKeys()
         engine.textDidChange()
         refreshReturnKey()
@@ -927,6 +928,12 @@ final class FullKeyboardView: UIView {
         // A new selection replaces any Dictate still waiting on its words.
         if engine.isSelectionActive { engine.clearPendingSelectionDictation() }
         plane.setNeedsDisplay()
+        let page = (engine.layerState.layer, engine.isUppercase)
+        if page != spokenPage {
+            spokenPage = page
+            // VoiceOver re-reads the drawn keys' names after 123, #+= or shift.
+            if UIAccessibility.isVoiceOverRunning { UIAccessibility.post(notification: .layoutChanged, argument: nil) }
+        }
         updateCallout()
         refreshStrip()
         if globeButton.isHidden != (engine.layout.key(.globe) == nil) || dictationKey.frame != engine.layout.key(.voice)?.hitFrame
@@ -1009,19 +1016,21 @@ final class FullKeyboardView: UIView {
         dismissStyleMenu()
         // The session's loopback connection needs Full Access: say so instead of a start that can't.
         guard model.hasFullAccess else {
-            dictatingFromVoiceKey = false
+            heldMode = nil
             return showFullAccessHint()
         }
+        // While one key's request runs, the other key neither starts nor owns the release.
+        guard model.stagePhase == .idle else { return }
         typingLog?.ui(source, [TypingLogField("mode", .string(mode.rawValue))])
-        dictatingFromVoiceKey = true
+        heldMode = mode
         model.onStart?(mode)
     }
 
     /// Push to talk: lifting the finger after a hold finishes the dictation the hold started,
     /// as Done does. A hold that opened the keyboard has nothing to finish here.
-    private func voiceKeyReleased(from source: String = "dictation_key_release") {
-        guard dictatingFromVoiceKey else { return }
-        dictatingFromVoiceKey = false
+    private func voiceKeyReleased(from source: String = "dictation_key_release", mode: KeyboardSession.Mode = .dictate) {
+        guard heldMode == mode else { return }
+        heldMode = nil
         typingLog?.ui("dictation_stop", [TypingLogField("from", .string(source))])
         model.onStop?()
     }
@@ -1144,30 +1153,26 @@ final class FullKeyboardView: UIView {
         styleMenu = nil
     }
 
-    /// Where the dictation is from the cursor, or nil when it can't be told apart from other
-    /// text: right before the cursor (perhaps only its end shown), or found once around it.
-    private func undoPlan(_ undo: DictationUndo) -> DictationUndo.Plan? {
+    /// Whether the cursor is still right after the dictation, with the same text either side.
+    private func canUndo(_ undo: DictationUndo) -> Bool {
         let target = engine.target
-        return undo.plan(before: target.documentContextBeforeInput ?? "",
-                         after: target.documentContextAfterInput ?? "", selected: target.selectedText)
+        return undo.matches(before: target.documentContextBeforeInput ?? "",
+                            after: target.documentContextAfterInput ?? "", selected: target.selectedText)
+    }
+
+    /// Moved or edited since the dictation: no button that does nothing.
+    func hideUndoIfMoved() {
+        if let undo = lastDictation, !canUndo(undo) { hideUndo() }
     }
 
     private func undoDictation() {
         engine.commitHangulComposition()
         guard let undo = lastDictation else { return }
-        let text = undo.text
-        let before = engine.target.documentContextBeforeInput ?? ""
-        if let plan = undoPlan(undo) {
-            // The host may show only the end of it; replay removes what the keys remove.
-            typingLog?.edit("undo_dictation", before.hasSuffix(text) || plan.toEnd != 0
-                ? [TypingLogField("deleted", .string(text))]
-                : [TypingLogField("deletedCount", .int(text.count))])
-            // Moves stay inside the text the host showed, so it doesn't drop them.
-            if plan.toEnd != 0 { engine.target.adjustTextPosition(byCharacterOffset: plan.toEnd) }
-            for _ in 0..<plan.delete {
+        if canUndo(undo) {
+            typingLog?.edit("undo_dictation", [TypingLogField("deleted", .string(undo.text))])
+            for _ in 0..<undo.text.count {
                 engine.target.deleteBackward()
             }
-            if plan.back != 0 { engine.target.adjustTextPosition(byCharacterOffset: plan.back) }
             onUndoDictation?()
         } else {
             typingLog?.ui("undo_dictation", [TypingLogField("applied", .bool(false))])

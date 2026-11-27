@@ -143,6 +143,7 @@ final class KeyboardViewController: UIInputViewController {
   override func selectionDidChange(_ textInput: UITextInput?) {
     super.selectionDidChange(textInput)
     hideUndoInOtherDocument()
+    keyboard?.hideUndoIfMoved()
     keyboard?.engine.commitHangulIfHostMoved()
   }
 
@@ -193,9 +194,12 @@ final class KeyboardViewController: UIInputViewController {
     link.onMessage = { [weak self, weak link] data in
       guard let self, let link, self.channel === link else { return }
       guard let state = KeyboardSession.decodeState(data) else { return link.close() }
-      if !self.receivedState, self.model.notice == Self.connecting { self.show("Connected. Tap again to start.") }
+      let wasConnecting = !self.receivedState && self.model.notice == Self.connecting
       self.receivedState = true
       self.receive(state)
+      if wasConnecting, self.model.notice == Self.connecting {
+        if self.session != nil { self.show("Connected. Tap again to start.") } else { self.show(Self.noSession) }
+      }
     }
     link.onClose = { [weak self, weak link] in
       guard let self, let link, self.channel === link else { return }
@@ -315,10 +319,10 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   private func setStyle(_ style: DictationStyle) {
-    guard let channel, let bridge, session != nil else {
+    guard let channel, let bridge, let session, session.isLive(now: KeyboardSession.nowMs()) else {
       return show(channel != nil && !receivedState ? Self.connecting : Self.noSession)
     }
-    guard pendingId == nil, session?.isBusy == false else { return }
+    guard pendingId == nil, !session.isBusy else { return }
     channel.send(KeyboardSession.Request(token: bridge.token,
       command: .init(id: UUID().uuidString, action: .setStyle, mode: .dictate,
         sentAt: KeyboardSession.nowMs(), style: style)))
@@ -356,7 +360,10 @@ final class KeyboardViewController: UIInputViewController {
       before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
     proxy.insertText(insertion)
     undoDocument = proxy.documentIdentifier
-    keyboard.didInsertDictation(insertion, before: before ?? "", after: after ?? "")
+    // Undo only for an insert the host confirms, never over a replaced selection.
+    keyboard.didInsertDictation(undo: replacingSelection ? nil : DictationUndo(text: insertion,
+      before: before ?? "", after: after ?? "", resultingBefore: proxy.documentContextBeforeInput ?? "",
+      resultingAfter: proxy.documentContextAfterInput ?? ""))
   }
 
   // MARK: Model

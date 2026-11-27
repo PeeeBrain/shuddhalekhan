@@ -3,83 +3,30 @@
 
 import Foundation
 
-/// The dictation Undo dictation can take back, with the field's text either side of it when it
-/// went in, so it can still be found after the cursor moves: within it, before it or after it.
+/// The dictation Undo can take back. Shuddhalekhan keeps its own rule here rather than Hex's search from
+/// wherever the cursor moved: a host shows only a window of the field, so an earlier copy of the same words
+/// can look exactly like the dictation. Undo is offered only when the host confirms the dictation went in
+/// at the cursor, and works only while the cursor is still there with the same text either side.
 struct DictationUndo: Equatable {
     let text: String
-    /// As much of the field before and after the dictation as the host showed when it went in.
+    /// What the host showed before and after the cursor right after the dictation went in.
     let before: String
     let after: String
 
-    /// How to take the dictation back from where the cursor is now.
-    struct Plan: Equatable {
-        /// UTF-16 units from the cursor to the dictation's end.
-        var toEnd: Int
-        /// Characters to delete from there.
-        var delete: Int
-        /// UTF-16 units from where the dictation was back to the cursor's place in the text.
-        var back: Int
-    }
-
-    /// Finds the dictation in what the host shows around the cursor (`before` and `after`).
-    /// Nil while text is selected, when the host doesn't show all of it (bar the space before
-    /// it), when it shows it more than once, or when the text either side no longer matches:
-    /// Undo must never delete anything else.
-    func plan(before current: String, after following: String, selected: String?) -> Plan? {
-        guard selected?.isEmpty ?? true, !text.isEmpty else { return nil }
-        // Right before the cursor (perhaps only its end shown), with the text either side still as it was
-        // when it went in. Shuddhalekhan checks the text before it too, and lets what follows only be cut
-        // short (anything else goes to the full search below), so an earlier copy of the same words is
-        // never taken for it.
-        if after.hasPrefix(following) {
-            if current.hasSuffix(text) {
-                let shownBefore = String(current.dropLast(text.count))
-                if shownBefore.hasSuffix(before) || before.hasSuffix(shownBefore) {
-                    return Plan(toEnd: 0, delete: text.count, back: 0)
-                }
-            } else if !current.isEmpty, current.count < text.count, text.hasSuffix(current) {
-                return Plan(toEnd: 0, delete: text.count, back: 0)
-            }
-        }
-        let window = Array(current) + Array(following)
-        let cursor = current.count
-        let dictation = Array(text)
-        let n = dictation.count
-        var start = 0
-        var end = 0
-        if let found = Self.only(dictation, in: window) {
-            start = found
-            end = found + n
-        } else {
-            // Hosts that show only the cursor's sentence leave out the space before it: the
-            // sentence must start what they show.
-            let core = Array(text.drop(while: \.isWhitespace))
-            guard core.count < n, Self.only(core, in: window) == 0 else { return nil }
-            end = core.count
-        }
-        let shownBefore = String(window[..<start])
-        let shownAfter = String(window[end...])
-        // Either side may be cut short by the host's window, now or when it went in.
-        guard shownBefore.hasSuffix(before) || before.hasSuffix(shownBefore),
-              shownAfter.hasPrefix(after) || after.hasPrefix(shownAfter)
+    /// Nil unless the host shows `text` went in at the cursor: the text before it changed, ends with
+    /// `text`, and is the end of what was there plus `text` (hosts show a window); the text after it
+    /// is unchanged.
+    init?(text: String, before: String, after: String, resultingBefore: String, resultingAfter: String) {
+        guard !text.isEmpty, resultingAfter == after, resultingBefore != before,
+              resultingBefore.hasSuffix(text), (before + text).hasSuffix(resultingBefore)
         else { return nil }
-        let toEnd = end >= cursor
-            ? String(window[cursor..<end]).utf16.count
-            : -String(window[end..<cursor]).utf16.count
-        let back = if cursor < start {
-            -String(window[cursor..<start]).utf16.count
-        } else if cursor > end {
-            String(window[end..<cursor]).utf16.count
-        } else {
-            0
-        }
-        return Plan(toEnd: toEnd, delete: n, back: back)
+        self.text = text
+        self.before = resultingBefore
+        self.after = after
     }
 
-    /// Where `part` starts in `window` when it's there exactly once.
-    private static func only(_ part: [Character], in window: [Character]) -> Int? {
-        guard !part.isEmpty, window.count >= part.count else { return nil }
-        let starts = (0...(window.count - part.count)).filter { window[$0..<($0 + part.count)].elementsEqual(part) }
-        return starts.count == 1 ? starts.first : nil
+    /// Whether deleting `text.count` characters before the cursor takes back exactly the dictation.
+    func matches(before current: String, after following: String, selected: String?) -> Bool {
+        (selected?.isEmpty ?? true) && current == before && following == after
     }
 }
