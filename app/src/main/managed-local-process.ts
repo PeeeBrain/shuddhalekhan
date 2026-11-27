@@ -1,4 +1,4 @@
-import { EventEmitter } from 'events';
+import { EventEmitter, once } from 'events';
 import { join, delimiter } from 'path';
 import type { LocalRuntime } from './managed-local-engine';
 import { isGpuOutOfMemory } from './managed-local-runtime';
@@ -24,11 +24,13 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   let readyReceived = false;
   let verificationTimeout: ReturnType<typeof setTimeout> | undefined;
   let diagnostic = '';
-  const outOfMemory = () => runtime.backend === 'cuda' && isGpuOutOfMemory(diagnostic);
+  // Kept apart from the 1 KiB diagnostic so later output cannot hide it.
+  let outOfMemory = false;
   // ORT may silently substitute CPU. Require encoder node placement on CUDA, not just a provider request.
   child.stderr?.on('data', (chunk: Buffer) => {
     const output = diagnostic + chunk.toString();
     diagnostic = output.slice(-1024);
+    if (runtime.backend === 'cuda' && isGpuOutOfMemory(output)) outOfMemory = true;
     if (gpuVerified) return;
     const placement = /(?:Node\(s\)|All nodes) placed on \[CUDAExecutionProvider\]\. Number of nodes: (\d+)/g;
     for (const match of output.matchAll(placement)) {
@@ -51,7 +53,7 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
       readyReceived = true;
       if (!gpuVerified) {
         verificationTimeout = setTimeout(() => events.emit('message', {
-          kind: 'load-error', message: outOfMemory() ? GPU_OUT_OF_MEMORY_LOG
+          kind: 'load-error', message: outOfMemory ? GPU_OUT_OF_MEMORY_LOG
             : 'The Parakeet encoder did not execute on CUDA. Choose CPU or repair GPU setup.',
         }), 1000);
         return;
@@ -61,10 +63,15 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   });
   child.on('exit', code => {
     clearTimeout(verificationTimeout);
-    if (code !== 0) console.error('Local speech worker exited', { model: runtime.model, backend: runtime.backend, code, diagnostic });
-    // A crash that logged a CUDA allocation failure fails the load or decode as out of memory, not as a broken GPU.
-    if (code !== 0 && outOfMemory()) events.emit('message', { kind: 'load-error', message: GPU_OUT_OF_MEMORY_LOG });
-    events.emit('exit', code);
+    const exited = () => {
+      if (code !== 0) console.error('Local speech worker exited', { model: runtime.model, backend: runtime.backend, code, diagnostic });
+      // A crash that logged a CUDA allocation failure fails the load or decode as out of memory, not as a broken GPU.
+      if (code !== 0 && outOfMemory) events.emit('message', { kind: 'load-error', message: GPU_OUT_OF_MEMORY_LOG });
+      events.emit('exit', code);
+    };
+    // Electron can report exit before the last stderr chunk, so a GPU crash briefly waits for stderr to end.
+    if (code === 0 || runtime.backend !== 'cuda' || !child.stderr) return exited();
+    void Promise.race([once(child.stderr, 'end'), new Promise(resolve => setTimeout(resolve, 250))]).then(exited, exited);
   });
   return {
     postMessage: (message: unknown) => child.postMessage(message),

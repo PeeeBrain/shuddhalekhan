@@ -14,15 +14,28 @@ class Child extends EventEmitter {
 installElectronMock();
 beforeEach(resetElectronMock);
 
+async function crash(stderr: (string | 'exit')[]) {
+  const child = new Child();
+  electronMock.utilityProcess.fork.mockReturnValue(child);
+  const worker = await startLocalRuntimeProcess({ model: 'granite', backend: 'cuda', modelPath: 'model', libraryPaths: [] });
+  const errors: string[] = [];
+  worker.on('message', message => errors.push((message as { message: string }).message));
+  const exited = new Promise(resolve => worker.on('exit', resolve));
+  for (const item of stderr) {
+    if (item === 'exit') child.emit('exit', 134);
+    else child.stderr.emit('data', Buffer.from(item));
+  }
+  child.stderr.emit('end');
+  await exited;
+  return errors.some(isGpuOutOfMemory);
+}
+
 describe('Managed Local worker process', () => {
-  it('reports a GPU worker that crashed after logging a CUDA allocation failure as out of memory', async () => {
-    const child = new Child();
-    electronMock.utilityProcess.fork.mockReturnValue(child);
-    const worker = await startLocalRuntimeProcess({ model: 'granite', backend: 'cuda', modelPath: 'model', libraryPaths: [] });
-    const errors: string[] = [];
-    worker.on('message', message => errors.push((message as { message: string }).message));
-    child.stderr.emit('data', Buffer.from('cudaMalloc failed: out of memory\n'));
-    child.emit('exit', 134);
-    expect(errors.some(isGpuOutOfMemory)).toBe(true);
+  it('reports a GPU worker crash as out of memory when the allocation failure arrives after exit', async () => {
+    expect(await crash(['exit', 'cudaMalloc failed: out of memory\n'])).toBe(true);
+  });
+
+  it('reports a GPU worker crash as out of memory after more than the kept diagnostic', async () => {
+    expect(await crash(['cudaMalloc failed: out of memory\n', 'x'.repeat(2048), 'exit'])).toBe(true);
   });
 });
