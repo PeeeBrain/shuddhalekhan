@@ -83,6 +83,39 @@ final class KeyboardKeyPlaneView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// VoiceOver reads the drawn keys as keyboard keys (Shuddhalekhan's addition); its double tap lands on a
+    /// key's centre like a finger. The Dictation and globe keys are real controls with their own labels.
+    /// Elements are reused so VoiceOver's focus survives shift and page changes.
+    private var keyElements: [UIAccessibilityElement] = []
+    override var accessibilityElements: [Any]? {
+        get {
+            let keys = engine.layout.keys.filter { $0.kind != .voice && $0.kind != .globe }
+            if keyElements.count != keys.count {
+                keyElements = keys.map { _ in UIAccessibilityElement(accessibilityContainer: self) }
+            }
+            for (element, key) in zip(keyElements, keys) {
+                element.accessibilityFrameInContainerSpace = key.frame
+                element.accessibilityLabel = spokenName(for: key)
+                element.accessibilityTraits = key.kind == .returnKey && !returnIsEnabled ? [.keyboardKey, .notEnabled] : .keyboardKey
+            }
+            return keyElements
+        }
+        set {}
+    }
+
+    private func spokenName(for key: KeyboardKey) -> String {
+        switch key.kind {
+        case .character: engine.displayLabel(for: key)
+        case .shift: String(localized: "Shift")
+        case .delete: String(localized: "Delete")
+        case .space: String(localized: "Space")
+        case .returnKey: returnStyle.accessibilityLabel
+        case .emoji: String(localized: "Emoji")
+        case .dismiss: String(localized: "Hide keyboard")
+        case .layerSwitch, .voice, .globe: key.label
+        }
+    }
+
     /// The key area, and while you type the strip's lower half (`takesStripTouch(at:)`):
     /// this view lies over the strip, so it gets those touches before the suggestions.
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {

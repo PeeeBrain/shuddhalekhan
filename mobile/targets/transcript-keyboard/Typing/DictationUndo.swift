@@ -28,9 +28,10 @@ struct DictationUndo: Equatable {
     func plan(before current: String, after following: String, selected: String?) -> Plan? {
         guard selected?.isEmpty ?? true, !text.isEmpty else { return nil }
         // Right before the cursor (perhaps only its end shown), with the text either side still as it was
-        // when it went in. Shuddhalekhan checks the text before it too, so an earlier copy of the same words
-        // is never taken for it.
-        if following.hasPrefix(after) || after.hasPrefix(following) {
+        // when it went in. Shuddhalekhan checks the text before it too, and lets what follows only be cut
+        // short (anything else goes to the full search below), so an earlier copy of the same words is
+        // never taken for it.
+        if after.hasPrefix(following) {
             if current.hasSuffix(text) {
                 let shownBefore = String(current.dropLast(text.count))
                 if shownBefore.hasSuffix(before) || before.hasSuffix(shownBefore) {

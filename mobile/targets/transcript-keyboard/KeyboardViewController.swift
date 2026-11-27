@@ -193,7 +193,7 @@ final class KeyboardViewController: UIInputViewController {
     link.onMessage = { [weak self, weak link] data in
       guard let self, let link, self.channel === link else { return }
       guard let state = KeyboardSession.decodeState(data) else { return link.close() }
-      if !self.receivedState, self.model.notice == Self.connecting { self.clearNotice() }
+      if !self.receivedState, self.model.notice == Self.connecting { self.show("Connected. Tap again to start.") }
       self.receivedState = true
       self.receive(state)
     }
@@ -315,7 +315,10 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   private func setStyle(_ style: DictationStyle) {
-    guard let channel, let bridge, pendingId == nil, session?.isBusy == false else { return }
+    guard let channel, let bridge, session != nil else {
+      return show(channel != nil && !receivedState ? Self.connecting : Self.noSession)
+    }
+    guard pendingId == nil, session?.isBusy == false else { return }
     channel.send(KeyboardSession.Request(token: bridge.token,
       command: .init(id: UUID().uuidString, action: .setStyle, mode: .dictate,
         sentAt: KeyboardSession.nowMs(), style: style)))

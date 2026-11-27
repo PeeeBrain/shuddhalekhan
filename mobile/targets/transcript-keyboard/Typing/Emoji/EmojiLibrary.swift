@@ -127,8 +127,9 @@ nonisolated final class EmojiLibrary: @unchecked Sendable {
 
     // MARK: - Loading
 
-    /// The layouts with an index; any other language reads English's.
-    static let languages = ["en", "nb", "es", "de"]
+    /// The layouts with an index; any other language reads English's. Shuddhalekhan bundles only
+    /// English's (Hex also has nb, es and de).
+    static let languages = ["en"]
 
     /// The newest emoji version every supported iOS draws; newer ones are listed only if
     /// the emoji font draws them.

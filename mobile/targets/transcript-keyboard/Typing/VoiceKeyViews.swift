@@ -83,6 +83,8 @@ final class VoiceKeyControl: UIControl {
     }
 
     override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        // A key without a menu (the Agent key) stays a tap or hold however the thumb drifts.
+        guard onMenuOpen != nil else { return true }
         let point = touch.location(in: self)
         switch gesture.touchMoved(to: point) {
         case .openMenu:
