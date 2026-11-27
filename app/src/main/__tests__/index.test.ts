@@ -685,6 +685,34 @@ describe('main process IPC orchestration', () => {
     expect(send).toHaveBeenCalledWith('onboarding:completed');
   });
 
+  it('completes onboarding when Retry Paste inserts a Dictation whose first paste was refused', async () => {
+    getConfig.mockReturnValue({ ...baseConfig, onboarding: { status: 'pending' } });
+    ipcListeners.clear();
+    captureForegroundTarget.mockReturnValueOnce({ ...defaultTargetSnapshot, processId: defaultTargetSnapshot.processId + 1 });
+    await import(`../index?test=${Date.now()}-onboarding-retry`);
+
+    await sessionOptions.onResult({
+      text: 'practice dictation',
+      intent: 'dictation' as const,
+      targetSnapshot: defaultTargetSnapshot,
+      recordingSessionId: 'session-1',
+    });
+    expect(runtimeShellShowFailure).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalledWith('onboarding:completed');
+
+    let pasted!: () => void;
+    const pasteDone = new Promise<void>((resolve) => { pasted = resolve; });
+    simulatePaste.mockImplementation(() => {
+      pasted();
+      return { acceptedEvents: 4 };
+    });
+    ipcListeners.get('runtime:recovery-action')?.({}, 'retry-paste');
+    await pasteDone;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(send).toHaveBeenCalledWith('onboarding:completed');
+  });
+
   it('keeps settled Dictations in History, never cancelled recordings or Agent commands', async () => {
     await sessionOptions.onResult({ text: 'kept dictation', intent: 'dictation', targetSnapshot: defaultTargetSnapshot });
     const cancelled = new AbortController();
