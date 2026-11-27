@@ -198,13 +198,10 @@ export class ClipboardTransactionManager {
     try {
       result = await (async (): Promise<InjectResult> => {
         const sequenceBeforeCapture = this.clipboardMonitor();
-        // While our previous transcript still holds the clipboard (its restore waiting, or failed), this paste keeps
-        // that paste's original instead of restoring it first. The old clipboard never flashes back between pastes
-        // for a slow or remote target to read, restoring and snapshotting stay off this paste's path, and the
-        // transcript is never mistaken for the user's clipboard.
-        snapshot = this.pendingRestore?.sequence === sequenceBeforeCapture
-          ? this.pendingRestore.snapshot
-          : this.clipboardIO.captureSnapshot();
+        // While our previous transcript still holds the clipboard (restore waiting or failed), keep that paste's
+        // original, so it never flashes back between pastes. Anyone else's copy makes the pending restore moot.
+        if (this.pendingRestore?.sequence !== sequenceBeforeCapture) this.pendingRestore = null;
+        snapshot = this.pendingRestore?.snapshot ?? this.clipboardIO.captureSnapshot();
         if (snapshot.skippedFormats?.length) {
           return { kind: 'input-blocked', acceptedEvents: 0,
             reason: 'The current clipboard cannot be fully preserved. Copy the transcript when ready to replace it.' };
