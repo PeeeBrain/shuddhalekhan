@@ -8,7 +8,7 @@ import type {
   VersionReleaseNotes,
 } from '../types/ipc';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ChevronDown, Search } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Search } from 'lucide-react';
 import { createSettingsIpc } from './settings/settings-ipc';
 import {
   DEFAULT_SETTINGS_SECTION,
@@ -41,6 +41,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   );
   const [config, setConfigState] = useState<AppConfig | null>(null);
   const [showAdvancedDuringOnboarding, setShowAdvancedDuringOnboarding] = useState(false);
+  /** Main confirmed the first inserted Dictation; onboarding stays up to show it until the user continues. */
+  const [onboardingJustCompleted, setOnboardingJustCompleted] = useState(false);
+  const [onboardingMicVerified, setOnboardingMicVerified] = useState(false);
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [bundledReleaseNotes, setBundledReleaseNotes] =
@@ -104,13 +107,9 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
       setActiveSection(section);
     });
     const offOnboarding = settingsIpc.onOnboardingCompleted(() => {
-      const agentBeforeRead = pushedAgent;
-      settingsIpc.getConfig().then((loaded) => {
-        setConfigState((current) => pushedAgent !== agentBeforeRead && pushedAgent
-          ? { ...loaded, agent: current?.agent ?? pushedAgent } : loaded);
-      }).catch((error) => {
-        console.error('Failed to reload completed onboarding config:', error);
-      });
+      setOnboardingJustCompleted(true);
+      // Mirrors main's completeOnboarding writes, so no reload can replace edits made after Open Settings.
+      setConfigState((current) => current && { ...current, onboarding: { status: 'complete' }, setupChecklistDismissed: true });
     });
     const handlePaletteShortcut = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
@@ -141,13 +140,24 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
   }
 
   if (
-    config.onboarding.status === 'pending'
+    (config.onboarding.status === 'pending' || onboardingJustCompleted)
     && config.transcription.activeProvider === 'managed-local'
     && !showAdvancedDuringOnboarding
   ) {
     return (
       <TitleBarFrame>
-        <Onboarding config={config} settingsIpc={settingsIpc} onOpenAdvanced={() => setShowAdvancedDuringOnboarding(true)} />
+        <Onboarding
+          config={config}
+          settingsIpc={settingsIpc}
+          completed={onboardingJustCompleted}
+          micVerified={onboardingMicVerified}
+          onMicVerified={() => setOnboardingMicVerified(true)}
+          onOpenAdvanced={(section) => {
+            if (section) setActiveSection(section);
+            setShowAdvancedDuringOnboarding(true);
+          }}
+          onFinish={() => setOnboardingJustCompleted(false)}
+        />
       </TitleBarFrame>
     );
   }
@@ -219,6 +229,12 @@ export function SettingsWindow({ settingsIpc: provided }: SettingsWindowProps = 
             <span className="flex-1 text-left">Search</span>
             <kbd className="text-[10px] font-normal text-muted-foreground">Ctrl K</kbd>
           </button>
+          {showAdvancedDuringOnboarding && config.onboarding.status === 'pending' && config.transcription.activeProvider === 'managed-local' ? (
+            <button type="button" onClick={() => setShowAdvancedDuringOnboarding(false)} className="settings-nav-item -mt-3 mb-5">
+              <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
+              <span className="flex-1 text-left">Back to setup</span>
+            </button>
+          ) : null}
 
           <nav className="flex flex-1 flex-col gap-5" aria-label="Settings navigation">
             {navGroups.map((group) => (

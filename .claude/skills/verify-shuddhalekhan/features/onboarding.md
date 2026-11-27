@@ -8,6 +8,7 @@ A fresh install opens Settings on a three-step `Set up Dictation` screen: instal
 - `onboarding-model` covers Step 1's `Download model` for the model and size the page names.
 - `onboarding-mic` covers Step 2's `Start microphone check`, which stays disabled until the model is ready.
 - `onboarding-advanced` covers `Configure an advanced provider`, which opens the full Settings with its sidebar.
+- `onboarding-practice` covers Step 3's `Practice Dictation field`: unlocked and focused after the mic check, with fix buttons (`Change shortcut`, `Set up text insertion`) when the trigger or insertion is unavailable, and `Back to setup` in the sidebar returning to it.
 
 ## How to get to it (user POV)
 
@@ -30,3 +31,5 @@ Preconditions:
 - `Download model` fetches the size Step 1 shows into the throwaway config, and `stop` deletes it. Don't click it unless the change is about model install.
 - On a fresh config, `app.log` shows `Managed Local warmup failed: … Install CPU files`. That's expected.
 - Step 3 names the shortcut to press. Read it from the page; it is the fresh config's binding, not the maintainer's. It needs a human. See [dictation](./dictation.md).
+- On KDE Wayland, `busctl --user call org.kde.kglobalaccel /component/shuddhalekhan org.kde.kglobalaccel.Component invokeShortcut s dictation` starts a recording, but it never sends a release, so a toggle recording cannot be stopped that way. Only `stop` ends it.
+- The practice field unlocks only after the mic check. Insertion into it, and the done state, need a human on Wayland: text insertion there needs a portal consent dialog.

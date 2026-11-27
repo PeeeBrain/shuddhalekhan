@@ -604,23 +604,16 @@ describe('Settings navigation', () => {
     expect(screen.getByRole('switch', { name: 'Enable Agent Mode' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it.each(['initial', 'onboarding'])('keeps agent config pushed during the %s read through a later agent edit', async (read: string) => {
-    let complete: () => void = () => undefined;
+  it('keeps agent config pushed during the initial read through a later agent edit', async () => {
     let publish!: (agent: AppConfig['agent']) => void;
     const stale = baseConfig();
     const settingsIpc = createMockSettingsIpc({
       config: stale,
       registerAgentConfigChanged: (callback) => { publish = callback; },
-      registerOnboardingCompleted: (callback) => { complete = callback; },
     });
-    if (read === 'onboarding') {
-      render(<SettingsWindow settingsIpc={settingsIpc} />);
-      await waitForLoaded();
-    }
     let resolveInitial!: (config: AppConfig) => void;
     settingsIpc.getConfig = mock(() => new Promise<AppConfig>((resolve) => { resolveInitial = resolve; }));
-    if (read === 'initial') render(<SettingsWindow settingsIpc={settingsIpc} />);
-    else act(() => complete());
+    render(<SettingsWindow settingsIpc={settingsIpc} />);
     const discovered: AppConfig['agent'] = {
       ...stale.agent,
       mcpServers: [{
@@ -645,9 +638,9 @@ describe('Settings navigation', () => {
     ));
   });
 
-  it('dismisses the setup checklist when onboarding completes', async () => {
+  it('shows the practice Dictation as done until the user opens Settings', async () => {
     let complete!: () => void;
-    renderSettings({
+    const { settingsIpc } = renderSettings({
       config: baseConfig({
         onboarding: { status: 'pending' },
         setupChecklistDismissed: false,
@@ -656,9 +649,15 @@ describe('Settings navigation', () => {
       registerOnboardingCompleted: (callback) => { complete = callback; },
     });
     await screen.findByRole('heading', { name: 'Set up Dictation' });
+    // The config reload after completion is still in flight when the user continues.
+    settingsIpc.getConfig = mock(() => new Promise<AppConfig>(() => {}));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Practice Dictation field' }), { target: { value: 'pasted words' } });
 
-    act(() => complete());
+    await act(async () => complete());
 
+    expect(screen.getByRole('textbox', { name: 'Practice Dictation field' })).toHaveValue('pasted words');
+    expect(screen.getByText('Dictation inserted. Setup is complete.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Settings' }));
     await waitForLoaded();
     expect(screen.queryByRole('region', { name: 'First-run setup' })).toBeNull();
   });

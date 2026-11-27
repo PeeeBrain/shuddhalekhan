@@ -485,6 +485,7 @@ async function handleRuntimeRecoveryAction(action: import('../types/ipc').Dictat
     const { result, actions } = outcome;
     if (result.kind === 'input-dispatched') {
       settleLastTranscript('dispatched');
+      completeOnboarding();
       return;
     }
     settleLastTranscript(deliveryOf(result));
