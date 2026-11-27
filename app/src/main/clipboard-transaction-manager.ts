@@ -130,8 +130,8 @@ export class ClipboardTransactionManager {
   }
 
   /**
-   * Returns false when the restore failed. The restore then stays pending, so no later snapshot mistakes the
-   * transcript for the user's clipboard and writes it back where clipboard history keeps it.
+   * Returns false when the restore failed. The restore then stays pending, so the next Dictation carries it
+   * instead of snapshotting the transcript as the user's clipboard and writing it back where history keeps it.
    */
   private restorePending(): boolean {
     const pending = this.pendingRestore;
@@ -189,13 +189,6 @@ export class ClipboardTransactionManager {
     const strategy = this.pasteStrategyResolver(
       currentSnapshot && currentSnapshot.kind !== 'kde-wayland' ? currentSnapshot.executablePath : null);
     const timings = pasteTimings(currentSnapshot);
-    // ponytail: a valid next paste restores a waiting clipboard early, so a remote target still reading the
-    // previous transcript within its 3 s grace gets the original clipboard; carry the snapshot across if
-    // back-to-back RDP needs it.
-    if (!this.restorePending()) {
-      return { kind: 'input-blocked', acceptedEvents: 0,
-        reason: 'The previous clipboard could not be restored, so this transcript was not pasted' };
-    }
 
     let snapshot: ClipboardSnapshot | undefined;
     let sequenceAfterStage: number | undefined;
@@ -205,7 +198,10 @@ export class ClipboardTransactionManager {
     try {
       result = await (async (): Promise<InjectResult> => {
         const sequenceBeforeCapture = this.clipboardMonitor();
-        snapshot = this.clipboardIO.captureSnapshot();
+        // While our previous transcript still holds the clipboard (restore waiting or failed), keep that paste's
+        // original, so it never flashes back between pastes. Anyone else's copy makes the pending restore moot.
+        if (this.pendingRestore?.sequence !== sequenceBeforeCapture) this.pendingRestore = null;
+        snapshot = this.pendingRestore?.snapshot ?? this.clipboardIO.captureSnapshot();
         if (snapshot.skippedFormats?.length) {
           return { kind: 'input-blocked', acceptedEvents: 0,
             reason: 'The current clipboard cannot be fully preserved. Copy the transcript when ready to replace it.' };
@@ -213,7 +209,15 @@ export class ClipboardTransactionManager {
         if (sequenceBeforeCapture !== this.clipboardMonitor()) {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
-        const staging = this.clipboardIO.writeTransientText(text, sequenceBeforeCapture);
+        let staging: TransientWrite;
+        try {
+          staging = this.clipboardIO.writeTransientText(text, sequenceBeforeCapture);
+        } catch (error) {
+          // A throwing write left the clipboard untouched (usually another app holding it), so nothing pasted
+          // and Retry is safe.
+          return { kind: 'input-blocked', acceptedEvents: 0,
+            reason: this.formatError('Clipboard transaction failed', error) };
+        }
         if (staging === 'changed') {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
