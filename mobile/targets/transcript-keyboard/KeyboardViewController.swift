@@ -2,7 +2,7 @@ import Network
 import OSLog
 import UIKit
 
-/// Hex's full typing keyboard (Hex/, see Hex/NOTICE.md) on Shuddhalekhan's keyboard session. The keyboard never
+/// The typing keyboard in Typing/ (adapted from Hex, see Typing/NOTICE.md) on Shuddhalekhan's keyboard session. The keyboard never
 /// records: the strip's Dictation key (trailing) and Agent key (leading) ask the app's active keyboard session to
 /// record, then insert that request's transcript at the cursor (Dictation) or leave it to the app, which hands it
 /// to Agent Mode. See KeyboardSessionProtocol.swift.
@@ -78,7 +78,7 @@ final class KeyboardViewController: UIInputViewController {
   override func viewDidAppear(_ animated: Bool) {
     super.viewDidAppear(animated)
     // iOS holds back touches near the screen's side edges while it waits for a system gesture; the edge keys
-    // would lag about 80 ms behind the rest (Hex's measurement).
+    // would lag about 80 ms behind the rest (measured upstream in Hex).
     view.window?.gestureRecognizers?.forEach { $0.delaysTouchesBegan = false }
     keyboard?.keyboardDidAppear()
     keyboard?.warmUpTextCheckerAsync()

@@ -1,7 +1,7 @@
 import Combine
 import UIKit
 
-/// What Hex's full keyboard (`FullKeyboardView`) reads and calls, backed by Shuddhalekhan's keyboard
+/// What the typing keyboard (`FullKeyboardView`) reads and calls, backed by Shuddhalekhan's keyboard
 /// session: `KeyboardViewController` sets the state from the session's snapshots and does the work
 /// behind the callbacks. Levels skip this model (`FullKeyboardView.pushLevel`) so 15 readings a
 /// second don't refresh the whole keyboard.
@@ -28,7 +28,7 @@ final class KeyboardViewModel: ObservableObject {
   var onDismissNotice: (() -> Void)?
 }
 
-/// Hex keeps the keyboard's settings, learned words and clipboard state in its App Group's defaults.
+/// Upstream, Hex keeps the keyboard's settings, learned words and clipboard state in an App Group.
 /// Shuddhalekhan has no App Group (free Apple ID signing), so this suite resolves to the keyboard's
 /// own defaults and container-only features (typing journal, typing logs) stay off.
 enum KeyboardBridge {
