@@ -26,12 +26,14 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   let diagnostic = '';
   // Kept apart from the 1 KiB diagnostic so later output cannot hide it.
   let outOfMemory = false;
+  let exitCode: number | null = null;
   // ORT may silently substitute CPU. Require encoder node placement on CUDA, not just a provider request.
   child.stderr?.on('data', (chunk: Buffer) => {
     const output = diagnostic + chunk.toString();
     diagnostic = output.slice(-1024);
     if (runtime.backend === 'cuda' && isGpuOutOfMemory(output)) outOfMemory = true;
-    if (gpuVerified) return;
+    // Output that arrives after exit is diagnostic only; a dead worker never becomes ready.
+    if (gpuVerified || exitCode !== null) return;
     const placement = /(?:Node\(s\)|All nodes) placed on \[CUDAExecutionProvider\]\. Number of nodes: (\d+)/g;
     for (const match of output.matchAll(placement)) {
       if (Number(match[1]) < 100) continue;
@@ -62,6 +64,7 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
     events.emit('message', message);
   });
   child.on('exit', code => {
+    exitCode = code;
     clearTimeout(verificationTimeout);
     const exited = () => {
       if (code !== 0) console.error('Local speech worker exited', { model: runtime.model, backend: runtime.backend, code, diagnostic });
