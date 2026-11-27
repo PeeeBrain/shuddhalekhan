@@ -373,6 +373,8 @@ final class FullKeyboardEngine {
     }
 
     func acceptSuggestion(_ suggestion: KeyboardSuggestion) {
+        // A pick made before text was selected leaves the text alone.
+        if hasSelection { return refreshSuggestions() }
         // `typeHeldSpace` asks `spacePending`, so the record stays until the pick's own insert
         // replaces it; every delete below counts the token in the host's text (`textBefore`).
         typeHeldSpace(before: suggestion)
@@ -392,8 +394,6 @@ final class FullKeyboardEngine {
             revertCorrection()
             return
         }
-        // A pick made before text was selected leaves the text alone.
-        if hasSelection { return refreshSuggestions() }
         if suggestion.kind == .emoji { return acceptEmoji(suggestion) }
         // What the suggestion takes the place of: the word being typed, or a text
         // replacement's shortcut, which may hold digits or punctuation ("ad2").
@@ -1122,7 +1122,8 @@ final class FullKeyboardEngine {
 
     /// Keeps the autocorrection just typed (`corrected` then `ending`) for the strip's revert.
     func recordCorrection(original: String, corrected: String, ending: String, changes: [AutocorrectEngine.AppliedCorrection.Change]) {
-        let before = textBefore ?? ""
+        // The text the edit leaves, even while a lagging host still shows the word as typed.
+        let before = typingContext ?? ""
         let anchor = before.range(of: corrected, options: .backwards).map { String(before[..<$0.upperBound]) } ?? before
         autocorrect.recordAppliedCorrection(original: original, corrected: corrected, anchor: anchor, changes: changes)
     }
@@ -1186,7 +1187,7 @@ final class FullKeyboardEngine {
         if let before = suggestionSpaceBefore {
             suggestionSpaceBefore = spacePending ? before : nil
             // Swallowing types and deletes nothing, so a host that lags is read as the keyboard typed.
-            if before == typingContext, before.last == " " || suggestionSpaceBefore != nil {
+            if !hasSelection, before == typingContext, before.last == " " || suggestionSpaceBefore != nil {
                 // Typed or held (`spacePending`) already; it counts, so a quick second press types ". ".
                 typingLog?.edit("space_swallowed", [TypingLogField("after", .string("suggestion"))])
                 lastSpaceAt = now
@@ -1197,7 +1198,7 @@ final class FullKeyboardEngine {
                 return
             }
         }
-        if DoubleSpacePeriod.shouldReplace(before: textBefore, lastSpaceAt: lastSpaceAt, now: now) {
+        if !hasSelection, DoubleSpacePeriod.shouldReplace(before: textBefore, lastSpaceAt: lastSpaceAt, now: now) {
             typingLog?.edit("double_space_period", [
                 TypingLogField("deleted", .string(" ")),
                 TypingLogField("inserted", .string(". ")),

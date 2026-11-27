@@ -38,13 +38,13 @@ extension FullKeyboardEngine {
     /// Whether the space bar holds its space rather than typing it: right after a word or a
     /// mark, before a space, or right after a word, before a closing mark.
     var holdsTypedSpace: Bool {
-        guard let last = textBefore?.last, !last.isWhitespace, textAfterSeparates else { return false }
+        guard !hasSelection, let last = textBefore?.last, !last.isWhitespace, textAfterSeparates else { return false }
         return target.documentContextAfterInput?.first?.isWhitespace == true || last.isLetter || last.isNumber
     }
 
     /// Whether a held space waits for the next key: nothing has changed since it was held.
     var spacePending: Bool {
-        guard let held = suggestionSpaceBefore, held.last?.isWhitespace == false else { return false }
+        guard !hasSelection, let held = suggestionSpaceBefore, held.last?.isWhitespace == false else { return false }
         return held == typingContext && textAfterSeparates
     }
 

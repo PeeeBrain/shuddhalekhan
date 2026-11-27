@@ -131,13 +131,13 @@ extension FullKeyboardEngine {
         expectedTypingContext = nil
     }
 
-    /// Whether the host's update is the keyboard's own edit (an echo, or a host still behind it) rather
-    /// than a change made elsewhere: a swipe's pending space then still belongs to the text.
     /// Text is selected: a key replaces it, so nothing that deletes back from the cursor
     /// (autocorrect, a suggestion, a revert, a swipe's take-back) may run, or its first delete
     /// takes the selection and the rest take text that was never selected.
     var hasSelection: Bool { !(target.selectedText ?? "").isEmpty }
 
+    /// Whether the host's update is the keyboard's own edit (an echo, or a host still behind it) rather
+    /// than a change made elsewhere: a swipe's pending space then still belongs to the text.
     func hostEchoed(_ swipe: SwipedWord) -> Bool {
         if hasSelection { return false }
         return swipe.before == typingContext && swipe.after == target.documentContextAfterInput
@@ -171,7 +171,7 @@ extension FullKeyboardEngine {
     /// around it. False when the host no longer shows the token, so the key types as usual.
     @discardableResult
     private func replaceWithEmojiShortcode(_ emoji: String, token: String) -> Bool {
-        guard let before = textBefore, before.hasSuffix(token) else { return false }
+        guard !hasSelection, let before = textBefore, before.hasSuffix(token) else { return false }
         typingLog?.edit("delete", [
             TypingLogField("deleted", .string(token)),
             TypingLogField("src", .string("emoji_shortcode")),

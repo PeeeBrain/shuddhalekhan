@@ -96,7 +96,7 @@ extension FullKeyboardEngine {
     /// ´, ˇ or ˚ after a letter it accents: puts the accented letter in its place. False
     /// otherwise, and the mark is typed as itself.
     private func typeCzech(_ text: String) -> Bool {
-        guard let accented = CzechTyping.accenting(text, after: target.documentContextBeforeInput, language: layout.language) else {
+        guard !hasSelection, let accented = CzechTyping.accenting(text, after: target.documentContextBeforeInput, language: layout.language) else {
             return false
         }
         rememberTypingContext(before: textBefore.map { String($0.dropLast(1)) }, inserted: accented)

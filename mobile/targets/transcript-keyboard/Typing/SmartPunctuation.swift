@@ -166,7 +166,7 @@ extension FullKeyboardEngine {
         // A held space (`spacePending`) has nothing to delete, and the word is finished already.
         if spacePending, text.count == 1, let mark = text.first, Self.suggestionJoiners.contains(mark) { return true }
         guard text.count == 1, let mark = text.first, Self.suggestionJoiners.contains(mark),
-              let spaced = suggestionSpaceBefore, spaced.last == " ", spaced == textBefore else { return false }
+              !hasSelection, let spaced = suggestionSpaceBefore, spaced.last == " ", spaced == textBefore else { return false }
         typingLog?.edit("delete", [TypingLogField("deleted", .string(" ")), TypingLogField("src", .string("suggestion_space"))])
         forgetTypingContext()
         target.deleteBackward()
@@ -178,7 +178,7 @@ extension FullKeyboardEngine {
     func typeIntoField(_ text: String, source: String?) {
         guard !text.isEmpty else { return }
         guard source == "key" || source == "slide" || source == nil else { return target.insertText(text) }
-        if text == "-", smartDashes, target.documentContextBeforeInput?.last == "-" {
+        if text == "-", smartDashes, !hasSelection, target.documentContextBeforeInput?.last == "-" {
             typingLog?.edit("smart_dash", [TypingLogField("deleted", .string("-")), TypingLogField("inserted", .string(SmartPunctuation.emDash))])
             rememberTypingContext(before: textBefore.map { String($0.dropLast(1)) }, inserted: SmartPunctuation.emDash)
             target.deleteBackward()
