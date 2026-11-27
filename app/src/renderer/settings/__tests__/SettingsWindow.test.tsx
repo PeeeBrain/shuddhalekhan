@@ -638,6 +638,40 @@ describe('Settings navigation', () => {
     ));
   });
 
+  it('unlocks the practice field after the mic check and keeps it through a trip to Settings', async () => {
+    const mediaDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: () => new Promise(() => {}) },
+    });
+    try {
+      renderSettings({
+        config: baseConfig({
+          onboarding: { status: 'pending' },
+          transcription: { ...baseConfig().transcription, activeProvider: 'managed-local' },
+        }),
+        managedLocalModelReady: true,
+      });
+      const field = () => screen.getByRole('textbox', { name: 'Practice Dictation field' });
+      await waitFor(() => expect(screen.getByRole('button', {
+        name: 'Start microphone check',
+      }).hasAttribute('disabled')).toBe(false));
+      expect(field()).toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Start microphone check' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'My microphone works' }));
+      await waitFor(() => expect(field()).toHaveFocus());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Configure an advanced provider' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Back to setup' }));
+      await waitFor(() => expect(field()).toHaveFocus());
+      expect(field()).toBeEnabled();
+    } finally {
+      if (mediaDevices) Object.defineProperty(navigator, 'mediaDevices', mediaDevices);
+      else Reflect.deleteProperty(navigator, 'mediaDevices');
+    }
+  });
+
   it('shows the practice Dictation as done until the user opens Settings', async () => {
     let complete!: () => void;
     const { settingsIpc } = renderSettings({
@@ -649,7 +683,7 @@ describe('Settings navigation', () => {
       registerOnboardingCompleted: (callback) => { complete = callback; },
     });
     await screen.findByRole('heading', { name: 'Set up Dictation' });
-    // The config reload after completion is still in flight when the user continues.
+    // Any config read would hang, so the done state and Open Settings must not depend on one.
     settingsIpc.getConfig = mock(() => new Promise<AppConfig>(() => {}));
     fireEvent.change(screen.getByRole('textbox', { name: 'Practice Dictation field' }), { target: { value: 'pasted words' } });
 
