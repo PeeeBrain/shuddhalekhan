@@ -5,6 +5,15 @@ import type { KeyboardSessionEvent } from './keyboard-session';
 
 type Progress = { phase: 'downloading' | 'installing'; fraction: number };
 type NativeSpeech = {
+  initializeDictationPreferences?(existingInstall: boolean): Promise<void>;
+  getDictationPreferences?(): Promise<unknown>;
+  updateDictationPreferences?(patch: string): Promise<unknown>;
+  getDictationReadiness?(): Promise<unknown>;
+  requestDictationMicrophone?(): Promise<boolean>;
+  setDictationModelLanguage?(language: string): Promise<void>;
+  formatDictation?(text: string, snapshot: string, language: string): Promise<string>;
+  consumeControlDictation?(): Promise<boolean>;
+  consumeSystemDictation?(): Promise<string | null>;
   getModelState(language: string): Promise<'missing' | 'ready'>;
   prepareModel(language: string): Promise<void>;
   installModel(language: string): Promise<void>;
@@ -12,6 +21,7 @@ type NativeSpeech = {
   signGoogleJwt(privateKey: string, input: string): Promise<string>;
   getRecordingSounds?(): Promise<boolean>;
   setRecordingSounds?(enabled: boolean): Promise<void>;
+  releaseForegroundRecording?(): Promise<void>;
   beginForegroundRecording?(): Promise<boolean>;
   getForegroundRecordingInterrupted?(): Promise<boolean>;
   playForegroundRecordingCue?(cue: RecordingCue): Promise<boolean>;
@@ -21,7 +31,7 @@ type NativeSpeech = {
   startKeyboardSession(minutes: number, language: string, agentReady: boolean): Promise<KeyboardSessionEvent>;
   resolveKeyboardAgentRequest(id: string, error: string | null): Promise<void>;
   stopKeyboardSession(): Promise<void>;
-  addListener(event: 'onForegroundRecordingInterrupted', listener: () => void): { remove(): void };
+  addListener(event: 'onForegroundRecordingInterrupted' | 'onControlDictation', listener: () => void): { remove(): void };
   addListener(event: 'onModelProgress', listener: (progress: Progress) => void): { remove(): void };
   addListener(event: 'onKeyboardSession', listener: (session: KeyboardSessionEvent) => void): { remove(): void };
 };

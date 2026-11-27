@@ -187,5 +187,5 @@ export function createSettingsStore({ metadata, secrets, createId }: SettingsSto
     return parsed.data;
   }
 
-  return { loadSettings, saveSettings };
+  return { loadSettings, saveSettings, hasSavedSettings: async () => (await metadata.getItem(metadataKey)) !== null };
 }

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { keyboardSessionSchema, type KeyboardSessionEvent } from './keyboard-session';
 import { speech, checkedLocalLanguage } from './native-speech';
 
-const keyboardSessionMinutes = 10;
+import { getDictationPreferences } from './dictation-preferences';
 
 /**
  * Native owns the keyboard session (mic, timer, Parakeet) so it keeps working while this JS is in the
@@ -49,8 +49,8 @@ export function useKeyboardSession(onSession: (event: KeyboardSessionEvent) => P
     const selected = checkedLocalLanguage(language);
     setStarting(true);
     try {
-      const ready = await agentReady();
-      setSession(keyboardSessionSchema.parse(await speech.startKeyboardSession(keyboardSessionMinutes, selected, ready)));
+      const [ready, preferences] = await Promise.all([agentReady(), getDictationPreferences()]);
+      setSession(keyboardSessionSchema.parse(await speech.startKeyboardSession(preferences.sessionMinutes, selected, ready)));
     } catch { throw new Error('Could not start the keyboard session. Check microphone access and that Parakeet is downloaded, then try again.'); }
     finally { setStarting(false); }
   };
