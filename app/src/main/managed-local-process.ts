@@ -1,6 +1,9 @@
 import { EventEmitter } from 'events';
 import { join, delimiter } from 'path';
 import type { LocalRuntime } from './managed-local-engine';
+import { isGpuOutOfMemory } from './managed-local-runtime';
+
+const GPU_OUT_OF_MEMORY_LOG = 'The worker logged a CUDA out of memory error.';
 
 export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   const { utilityProcess } = await import('electron');
@@ -21,6 +24,7 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   let readyReceived = false;
   let verificationTimeout: ReturnType<typeof setTimeout> | undefined;
   let diagnostic = '';
+  const outOfMemory = () => runtime.backend === 'cuda' && isGpuOutOfMemory(diagnostic);
   // ORT may silently substitute CPU. Require encoder node placement on CUDA, not just a provider request.
   child.stderr?.on('data', (chunk: Buffer) => {
     const output = diagnostic + chunk.toString();
@@ -47,7 +51,8 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
       readyReceived = true;
       if (!gpuVerified) {
         verificationTimeout = setTimeout(() => events.emit('message', {
-          kind: 'load-error', message: 'The Parakeet encoder did not execute on CUDA. Choose CPU or repair GPU setup.',
+          kind: 'load-error', message: outOfMemory() ? GPU_OUT_OF_MEMORY_LOG
+            : 'The Parakeet encoder did not execute on CUDA. Choose CPU or repair GPU setup.',
         }), 1000);
         return;
       }
@@ -57,6 +62,8 @@ export async function startLocalRuntimeProcess(runtime: LocalRuntime) {
   child.on('exit', code => {
     clearTimeout(verificationTimeout);
     if (code !== 0) console.error('Local speech worker exited', { model: runtime.model, backend: runtime.backend, code, diagnostic });
+    // A crash that logged a CUDA allocation failure fails the load or decode as out of memory, not as a broken GPU.
+    if (code !== 0 && outOfMemory()) events.emit('message', { kind: 'load-error', message: GPU_OUT_OF_MEMORY_LOG });
     events.emit('exit', code);
   });
   return {

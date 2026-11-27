@@ -115,7 +115,7 @@ export function createManagedLocalEngine({
   };
   const failed = async (selected: NonNullable<typeof current>, error: unknown) => {
     const reason = error instanceof Error ? error.message : 'GPU inference failed.';
-    if (selected.runtime.backend === 'cuda' && !isGpuOutOfMemory(reason)) await gpuFailures.record(selected.runtime.model, reason);
+    if (selected.runtime.backend === 'cuda' && !isGpuOutOfMemory(reason)) void gpuFailures.record(selected.runtime.model, reason);
     if (current === selected || current?.worker === selected.worker) current = null;
     await selected.worker.shutdown();
     onStatus({ status: 'error', backend: null,
