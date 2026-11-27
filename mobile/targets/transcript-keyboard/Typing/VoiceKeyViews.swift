@@ -275,6 +275,11 @@ final class VoiceRecordingPanel: UIView {
     func update(phase: KeyboardViewModel.StagePhase, mode: KeyboardSession.Mode) {
         let wasShowingSpinner = showsSpinner
         let firstUpdate = currentPhase == nil
+        // VoiceOver hears when to speak, as with the start sound.
+        if phase == .recording, currentPhase != .recording, UIAccessibility.isVoiceOverRunning {
+            UIAccessibility.post(notification: .announcement,
+                                 argument: mode == .agent ? "Listening for a command" : "Listening")
+        }
         currentPhase = phase
         showsSpinner = phase == .starting || phase == .transcribing
         levels.color = mode == .agent ? VoiceMarks.vermilion : VoiceMarks.blue
@@ -548,6 +553,12 @@ final class DictationStyleMenuView: UIView {
         if let touch = touches.first, !panel.frame.contains(touch.location(in: self)) {
             onDismiss?()
         }
+    }
+
+    /// VoiceOver's escape gesture closes the menu without picking a style.
+    override func accessibilityPerformEscape() -> Bool {
+        onDismiss?()
+        return true
     }
 
     private func rebuild() {

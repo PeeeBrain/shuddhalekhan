@@ -10,7 +10,7 @@ import Foundation
 /// A host that withholds either side (nil) confirms nothing.
 struct DictationUndo: Equatable {
     let text: String
-    let document: UUID?
+    let document: UUID
     /// What the host showed before and after the cursor right after the dictation went in.
     let before: String
     let after: String
