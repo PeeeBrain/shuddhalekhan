@@ -157,7 +157,7 @@ Deeper product/architecture language lives in `app/CONTEXT.md` and `app/docs/adr
 - `app/CONTEXT.md` — durable product/architecture decisions and domain language. Update when behavior or boundaries change meaningfully.
 - `app/docs/adr/` — architecture decision records for larger choices.
 - `web/` — React/Vite marketing/landing site. Keep product behavior changes out of here unless the task is explicitly about the site.
-- `mobile/` — Expo iOS app, local speech module, UIKit dictation keyboard, native protocol checks, the IPA build script, and EAS Update config. See `mobile/README.md` for device verification and USB debugging.
+- `mobile/` — Expo iOS app, local speech module, UIKit typing keyboard with Dictation and Agent keys, native protocol checks, the IPA build script, and EAS Update config. See `mobile/README.md` for device verification and USB debugging.
 - Root `package.json` — Bun workspaces (`app`, `web`, `mobile`, `packages/*`) and monorepo scripts.
 
 ## Taste

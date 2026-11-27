@@ -8,7 +8,12 @@ import UIKit
 /// to Agent Mode. See KeyboardSessionProtocol.swift.
 final class KeyboardViewController: UIInputViewController {
   private static let ackTimeout: TimeInterval = 3
+  private static let connecting = "Connecting to Shuddhalekhan…"
+  private static let noSession = "Open Shuddhalekhan and tap Start keyboard session."
   private static let noticeDuration: TimeInterval = 8
+  /// iOS shows an empty panel until a keyboard's first frame, and goes back to the previous keyboard when one is slow
+  /// to draw (Hex's TestFlight build 56), so the text checker and lexicon wait this long after it appears.
+  private static let afterFirstFrame: TimeInterval = 0.3
 
   private let model = KeyboardViewModel()
   private var keyboard: FullKeyboardView?
@@ -20,6 +25,7 @@ final class KeyboardViewController: UIInputViewController {
   private var pendingId: String?
   private var pendingMode = KeyboardSession.Mode.dictate
   private var pendingDocument: UUID?
+  private var undoDocument: UUID?
   private var insertedIds = Set<String>()
   private var channel: KeyboardSessionChannel?
   private var bridge: KeyboardSession.Bridge?
@@ -81,12 +87,15 @@ final class KeyboardViewController: UIInputViewController {
     // would lag about 80 ms behind the rest (measured upstream in Hex).
     view.window?.gestureRecognizers?.forEach { $0.delaysTouchesBegan = false }
     keyboard?.keyboardDidAppear()
-    keyboard?.warmUpTextCheckerAsync()
-    guard !didRequestLexicon else { return }
-    didRequestLexicon = true
-    // UIKit calls back on its own queue, so the callback is nonisolated and hops to the main actor itself.
-    requestSupplementaryLexicon { @Sendable [weak self] lexicon in
-      Task { @MainActor in self?.keyboard?.loadLexicon(lexicon) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.afterFirstFrame) { [weak self] in
+      guard let self, self.view.window != nil else { return }
+      self.keyboard?.warmUpTextCheckerAsync()
+      guard !self.didRequestLexicon else { return }
+      self.didRequestLexicon = true
+      // UIKit calls back on its own queue, so the callback is nonisolated and hops to the main actor itself.
+      self.requestSupplementaryLexicon { @Sendable [weak self] lexicon in
+        Task { @MainActor in self?.keyboard?.loadLexicon(lexicon) }
+      }
     }
   }
 
@@ -96,6 +105,7 @@ final class KeyboardViewController: UIInputViewController {
     if let pendingId { send(.cancel, id: pendingId) }
     pendingId = nil
     keyboard?.engine.commitHangulComposition()
+    keyboard?.hideUndo()
     disconnect()
     clearNotice()
     render()
@@ -126,12 +136,21 @@ final class KeyboardViewController: UIInputViewController {
 
   override func textDidChange(_ textInput: UITextInput?) {
     super.textDidChange(textInput)
+    hideUndoInOtherDocument()
     keyboard?.textDidChange()
   }
 
   override func selectionDidChange(_ textInput: UITextInput?) {
     super.selectionDidChange(textInput)
+    hideUndoInOtherDocument()
     keyboard?.engine.commitHangulIfHostMoved()
+  }
+
+  /// Undo only takes a Dictation back from the field it went into.
+  private func hideUndoInOtherDocument() {
+    guard let undoDocument, undoDocument != textDocumentProxy.documentIdentifier else { return }
+    self.undoDocument = nil
+    keyboard?.hideUndo()
   }
 
   override func didReceiveMemoryWarning() {
@@ -174,6 +193,7 @@ final class KeyboardViewController: UIInputViewController {
     link.onMessage = { [weak self, weak link] data in
       guard let self, let link, self.channel === link else { return }
       guard let state = KeyboardSession.decodeState(data) else { return link.close() }
+      if !self.receivedState, self.model.notice == Self.connecting { self.clearNotice() }
       self.receivedState = true
       self.receive(state)
     }
@@ -187,6 +207,9 @@ final class KeyboardViewController: UIInputViewController {
       if self.receivedState, !endedNormally {
         self.log.error("KeyboardBridge connection lost")
         self.show("Keyboard connection lost. Open Shuddhalekhan and start a new session.")
+      } else if !self.receivedState, self.model.notice == Self.connecting {
+        // A stale discovery entry: the app's session ended while it was in the background.
+        self.show(Self.noSession)
       }
       self.render()
     }
@@ -233,7 +256,11 @@ final class KeyboardViewController: UIInputViewController {
     case .failed:
       self.pendingId = nil
       show(state.error ?? (pendingMode == .agent ? "Couldn't reach the agent. Try again." : "Dictation failed. Try again."))
-    case .cancelled, .done, .idle:
+    case .cancelled:
+      // The keyboard's own cancel never gets here (it forgets the request first): this is the app ending it.
+      self.pendingId = nil
+      if let error = state.error { show(error) }
+    case .done, .idle:
       self.pendingId = nil
     case .recording:
       keyboard?.pushLevel(CGFloat(state.level ?? 0))
@@ -246,8 +273,7 @@ final class KeyboardViewController: UIInputViewController {
     guard pendingId == nil else { return }
     if channel == nil { refresh() }
     guard let session, session.isLive(now: KeyboardSession.nowMs()) else {
-      return show(channel != nil && !receivedState
-        ? "Connecting to Shuddhalekhan…" : "Open Shuddhalekhan and tap Start keyboard session.")
+      return show(channel != nil && !receivedState ? Self.connecting : Self.noSession)
     }
     if mode == .agent, !session.agentReady {
       return show("Set up Agent Mode in Shuddhalekhan to ask the agent from here.")
@@ -326,6 +352,7 @@ final class KeyboardViewController: UIInputViewController {
     let insertion = KeyboardInsertion.text(transcript,
       before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
     proxy.insertText(insertion)
+    undoDocument = proxy.documentIdentifier
     keyboard.didInsertDictation(insertion, before: before ?? "", after: after ?? "")
   }
 
@@ -347,6 +374,7 @@ final class KeyboardViewController: UIInputViewController {
   /// One line in the strip, over the suggestions, until the next keystroke, ✕, or a few seconds pass.
   private func show(_ notice: String) {
     model.notice = notice
+    UIAccessibility.post(notification: .announcement, argument: notice)
     noticeWork?.cancel()
     let work = DispatchWorkItem { [weak self] in self?.clearNotice() }
     noticeWork = work

@@ -27,6 +27,19 @@ struct DictationUndo: Equatable {
     /// Undo must never delete anything else.
     func plan(before current: String, after following: String, selected: String?) -> Plan? {
         guard selected?.isEmpty ?? true, !text.isEmpty else { return nil }
+        // Right before the cursor (perhaps only its end shown), with the text either side still as it was
+        // when it went in. Shuddhalekhan checks the text before it too, so an earlier copy of the same words
+        // is never taken for it.
+        if following.hasPrefix(after) || after.hasPrefix(following) {
+            if current.hasSuffix(text) {
+                let shownBefore = String(current.dropLast(text.count))
+                if shownBefore.hasSuffix(before) || before.hasSuffix(shownBefore) {
+                    return Plan(toEnd: 0, delete: text.count, back: 0)
+                }
+            } else if !current.isEmpty, current.count < text.count, text.hasSuffix(current) {
+                return Plan(toEnd: 0, delete: text.count, back: 0)
+            }
+        }
         let window = Array(current) + Array(following)
         let cursor = current.count
         let dictation = Array(text)

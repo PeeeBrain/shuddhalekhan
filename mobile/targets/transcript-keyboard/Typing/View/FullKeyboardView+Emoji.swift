@@ -81,7 +81,7 @@ extension FullKeyboardView {
         panel.onSearch = { [weak self] in self?.beginEmojiSearch() }
         insertSubview(panel, belowSubview: callout)
         emojiPanel = panel
-        for view in [plane, stripView, dictationKey, globeButton] as [UIView] { view.isHidden = true }
+        for view in [plane, stripView, dictationKey, agentKey, globeButton] as [UIView] { view.isHidden = true }
         callout.show(nil, label: "")
         accentCallout.isHidden = true
         fillEmojiPanel()
@@ -106,6 +106,8 @@ extension FullKeyboardView {
             view.isHidden = false
             view.alpha = 1
         }
+        agentKey.isHidden = engine.layout.agentKey == nil
+        agentKey.alpha = 1
         engine.textDidChange()
         refreshReturnKey()
         refreshStrip()

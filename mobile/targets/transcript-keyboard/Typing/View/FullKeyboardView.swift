@@ -755,7 +755,7 @@ final class FullKeyboardView: UIView {
             dictationKey.keycapFrame = voice.frame.offsetBy(dx: -voice.hitFrame.minX, dy: -voice.hitFrame.minY)
             dictationKey.markCenterY = layout.metrics.stripTop + layout.metrics.stripTextCenter - voice.hitFrame.minY
         }
-        agentKey.isHidden = layout.agentKey == nil || (showsRecording && !agentKey.isTracking)
+        agentKey.isHidden = layout.agentKey == nil || emojiPanel != nil || (showsRecording && !agentKey.isTracking)
         if let agent = layout.agentKey {
             agentKey.inStrip = true
             agentKey.cornerRadius = layout.metrics.cornerRadius
@@ -1148,17 +1148,8 @@ final class FullKeyboardView: UIView {
     /// text: right before the cursor (perhaps only its end shown), or found once around it.
     private func undoPlan(_ undo: DictationUndo) -> DictationUndo.Plan? {
         let target = engine.target
-        let selected = target.selectedText
-        guard selected?.isEmpty ?? true else { return nil }
-        let text = undo.text
-        let before = target.documentContextBeforeInput ?? ""
-        let after = target.documentContextAfterInput ?? ""
-        // Right before the cursor, with what followed it when it went in still after the cursor.
-        if after.hasPrefix(undo.after) || undo.after.hasPrefix(after),
-           before.hasSuffix(text) || (!before.isEmpty && before.count < text.count && text.hasSuffix(before)) {
-            return DictationUndo.Plan(toEnd: 0, delete: text.count, back: 0)
-        }
-        return undo.plan(before: before, after: after, selected: selected)
+        return undo.plan(before: target.documentContextBeforeInput ?? "",
+                         after: target.documentContextAfterInput ?? "", selected: target.selectedText)
     }
 
     private func undoDictation() {
