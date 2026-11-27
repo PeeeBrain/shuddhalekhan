@@ -395,22 +395,30 @@ describe('ClipboardTransactionManager', () => {
 
   it('does not snapshot the previous transcript as the clipboard when restoring it failed', async () => {
     const fake = fakeClipboard();
-    let locked = true;
+    let locked = false;
     const restore = mockClipboardIO.restoreSnapshot;
     mockClipboardIO.restoreSnapshot = mock((snapshot: ClipboardSnapshot) => {
       if (locked) throw new Error('The clipboard was locked by another app.');
       restore(snapshot);
     });
+    const stageTranscript = mockClipboardIO.writeTransientText;
+    mockClipboardIO.writeTransientText = mock((text: string, sequence: number): TransientWrite => {
+      if (locked) throw new Error('OpenClipboard failed (Win32 error 5)');
+      return stageTranscript(text, sequence);
+    });
     const manager = createManager();
 
     expect((await manager.inject('first')).kind).toBe('input-dispatched');
+    locked = true; // another app takes the clipboard while the first paste's restore waits
     fake.restoreTimers[0]();
     await settle();
     // Both attempts failed, so the first transcript is still on the clipboard.
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(2);
 
-    expect((await manager.inject('second')).kind).toBe('input-dispatched');
+    // The lock outlasts both restores, so the next Dictation is refused with Retry still safe.
+    expect(await manager.inject('second')).toMatchObject({ kind: 'input-blocked', acceptedEvents: 0 });
     locked = false;
+    expect((await manager.inject('second')).kind).toBe('input-dispatched');
     await manager.flushRestore();
     expect(fake.clipboard).toBe('original');
   });
