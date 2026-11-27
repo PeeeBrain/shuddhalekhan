@@ -295,7 +295,7 @@ describe('ClipboardTransactionManager', () => {
     expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledWith(createClipboardSnapshot());
   });
 
-  it('leaves a newer copy alone when staging fails without touching the clipboard', async () => {
+  it('offers Retry and leaves a newer copy alone when staging fails without touching the clipboard', async () => {
     let sequence = 1;
     mockClipboardMonitor.getSequenceNumber = mock(() => sequence);
     // Another app copies while it holds the clipboard, so the native write gives up untouched.
@@ -306,7 +306,8 @@ describe('ClipboardTransactionManager', () => {
 
     const result = await createManager().inject('private transcript');
 
-    expect(result).toEqual({ kind: 'error', message: 'Clipboard transaction failed: OpenClipboard failed (Win32 error 5)' });
+    expect(result).toEqual({ kind: 'input-blocked', acceptedEvents: 0,
+      reason: 'Clipboard transaction failed: OpenClipboard failed (Win32 error 5)' });
     expect(mockClipboardIO.restoreSnapshot).not.toHaveBeenCalled();
   });
 

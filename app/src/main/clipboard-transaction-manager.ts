@@ -209,7 +209,15 @@ export class ClipboardTransactionManager {
         if (sequenceBeforeCapture !== this.clipboardMonitor()) {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
-        const staging = this.clipboardIO.writeTransientText(text, sequenceBeforeCapture);
+        let staging: TransientWrite;
+        try {
+          staging = this.clipboardIO.writeTransientText(text, sequenceBeforeCapture);
+        } catch (error) {
+          // A throwing write left the clipboard untouched (usually another app holding it), so nothing pasted
+          // and Retry is safe.
+          return { kind: 'input-blocked', acceptedEvents: 0,
+            reason: this.formatError('Clipboard transaction failed', error) };
+        }
         if (staging === 'changed') {
           return { kind: 'clipboard-conflict', reason: 'Clipboard contents changed during dictation' };
         }
