@@ -130,8 +130,8 @@ export class ClipboardTransactionManager {
   }
 
   /**
-   * Returns false when the restore failed. The restore then stays pending, so no later snapshot mistakes the
-   * transcript for the user's clipboard and writes it back where clipboard history keeps it.
+   * Returns false when the restore failed. The restore then stays pending, so the next Dictation carries it
+   * instead of snapshotting the transcript as the user's clipboard and writing it back where history keeps it.
    */
   private restorePending(): boolean {
     const pending = this.pendingRestore;
@@ -189,13 +189,6 @@ export class ClipboardTransactionManager {
     const strategy = this.pasteStrategyResolver(
       currentSnapshot && currentSnapshot.kind !== 'kde-wayland' ? currentSnapshot.executablePath : null);
     const timings = pasteTimings(currentSnapshot);
-    // ponytail: a valid next paste restores a waiting clipboard early, so a remote target still reading the
-    // previous transcript within its 3 s grace gets the original clipboard; carry the snapshot across if
-    // back-to-back RDP needs it.
-    if (!this.restorePending()) {
-      return { kind: 'input-blocked', acceptedEvents: 0,
-        reason: 'The previous clipboard could not be restored, so this transcript was not pasted' };
-    }
 
     let snapshot: ClipboardSnapshot | undefined;
     let sequenceAfterStage: number | undefined;
@@ -205,7 +198,13 @@ export class ClipboardTransactionManager {
     try {
       result = await (async (): Promise<InjectResult> => {
         const sequenceBeforeCapture = this.clipboardMonitor();
-        snapshot = this.clipboardIO.captureSnapshot();
+        // While our previous transcript still holds the clipboard (its restore waiting, or failed), this paste keeps
+        // that paste's original instead of restoring it first. The old clipboard never flashes back between pastes
+        // for a slow or remote target to read, restoring and snapshotting stay off this paste's path, and the
+        // transcript is never mistaken for the user's clipboard.
+        snapshot = this.pendingRestore?.sequence === sequenceBeforeCapture
+          ? this.pendingRestore.snapshot
+          : this.clipboardIO.captureSnapshot();
         if (snapshot.skippedFormats?.length) {
           return { kind: 'input-blocked', acceptedEvents: 0,
             reason: 'The current clipboard cannot be fully preserved. Copy the transcript when ready to replace it.' };

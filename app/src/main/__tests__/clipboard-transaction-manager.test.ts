@@ -98,39 +98,77 @@ describe('ClipboardTransactionManager', () => {
     expect(mockDelay.mock.calls).toEqual([[400], [3000]]);
   });
 
-  it('returns before restoring, and a later Dictation never gets an older clipboard restored over it', async () => {
-    let sequence = 1;
-    let clipboard = 'original';
-    const writes: string[] = [];
+  /** A clipboard whose every write bumps the sequence, with restore timers the test fires by hand. */
+  function fakeClipboard() {
+    const state = { sequence: 1, clipboard: 'original', writes: [] as string[], restoreTimers: [] as (() => void)[] };
     const write = (text = '') => {
-      sequence += 1;
-      clipboard = text;
-      writes.push(text);
+      state.sequence += 1;
+      state.clipboard = text;
+      state.writes.push(text);
     };
-    mockClipboardMonitor.getSequenceNumber = mock(() => sequence);
-    mockClipboardIO.captureSnapshot = mock(() => createClipboardSnapshot({ text: clipboard }));
+    mockClipboardMonitor.getSequenceNumber = mock(() => state.sequence);
+    mockClipboardIO.captureSnapshot = mock(() => createClipboardSnapshot({ text: state.clipboard }));
     mockClipboardIO.writeTransientText = mock((text: string): TransientWrite => {
       write(text);
       return 'staged';
     });
+    mockClipboardIO.writeText = mock(write);
     mockClipboardIO.restoreSnapshot = mock((snapshot: ClipboardSnapshot) => write(snapshot.text));
-    const restoreTimers: (() => void)[] = [];
-    mockDelay = mock((ms: number) => ms === 500 ? new Promise<void>((resolve) => restoreTimers.push(resolve)) : Promise.resolve());
+    mockDelay = mock((ms: number) => ms === 500
+      ? new Promise<void>((resolve) => state.restoreTimers.push(resolve))
+      : Promise.resolve());
+    return state;
+  }
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('keeps the original clipboard across rapid Dictations instead of restoring it while a target may still read', async () => {
+    const fake = fakeClipboard();
     const manager = createManager();
 
     expect((await manager.inject('first')).kind).toBe('input-dispatched');
-    expect(clipboard).toBe('first');
-
     expect((await manager.inject('second')).kind).toBe('input-dispatched');
-    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-    restoreTimers[0]();
-    await settle();
-    // The first restore ran before the second transcript was staged; its late timer restores nothing.
-    expect(writes).toEqual(['first', 'original', 'second']);
+    // The second paste took over the waiting restore: the first transcript stayed until the second replaced it.
+    expect(fake.writes).toEqual(['first', 'second']);
+    expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
 
-    restoreTimers[1]();
+    fake.restoreTimers[0]();
     await settle();
-    expect(writes).toEqual(['first', 'original', 'second', 'original']);
+    expect(fake.writes).toEqual(['first', 'second']);
+
+    fake.restoreTimers[1]();
+    await settle();
+    expect(fake.writes).toEqual(['first', 'second', 'original']);
+  });
+
+  it('puts the original clipboard back at once when the next Dictation is cancelled before its paste', async () => {
+    const fake = fakeClipboard();
+    const controller = new AbortController();
+    const delay = mockDelay;
+    let settles = 0;
+    // The user cancels while the second transcript settles on the clipboard.
+    mockDelay = mock((ms: number) => {
+      if (ms === 50 && ++settles === 2) controller.abort();
+      return delay(ms);
+    });
+    const manager = createManager();
+    expect((await manager.inject('first')).kind).toBe('input-dispatched');
+
+    expect(await manager.inject('second', { signal: controller.signal })).toMatchObject({ kind: 'input-blocked' });
+
+    expect(mockInputSimulator.simulatePaste).toHaveBeenCalledTimes(1);
+    expect(fake.clipboard).toBe('original');
+  });
+
+  it('snapshots a copy made between Dictations as the clipboard to restore', async () => {
+    const fake = fakeClipboard();
+    const manager = createManager();
+
+    expect((await manager.inject('first')).kind).toBe('input-dispatched');
+    await manager.stage('the user copy');
+    expect((await manager.inject('second')).kind).toBe('input-dispatched');
+    await manager.flushRestore();
+
+    expect(fake.clipboard).toBe('the user copy');
   });
 
   it('leaves a copy made after the paste in place', async () => {
@@ -354,22 +392,26 @@ describe('ClipboardTransactionManager', () => {
     });
   }
 
-  it('does not snapshot the previous transcript as the clipboard when restoring it fails', async () => {
-    mockDelay = mock((ms: number) => ms === 500 ? new Promise<void>(() => undefined) : Promise.resolve());
+  it('does not snapshot the previous transcript as the clipboard when restoring it failed', async () => {
+    const fake = fakeClipboard();
     let locked = true;
-    mockClipboardIO.restoreSnapshot = mock(() => {
+    const restore = mockClipboardIO.restoreSnapshot;
+    mockClipboardIO.restoreSnapshot = mock((snapshot: ClipboardSnapshot) => {
       if (locked) throw new Error('The clipboard was locked by another app.');
+      restore(snapshot);
     });
     const manager = createManager();
 
     expect((await manager.inject('first')).kind).toBe('input-dispatched');
-    // Nothing was staged or sent, so the user can safely retry once the lock clears.
-    expect(await manager.inject('second')).toMatchObject({ kind: 'input-blocked', acceptedEvents: 0 });
-    expect(mockClipboardIO.captureSnapshot).toHaveBeenCalledTimes(1);
+    fake.restoreTimers[0]();
+    await settle();
+    // Both attempts failed, so the first transcript is still on the clipboard.
+    expect(mockClipboardIO.restoreSnapshot).toHaveBeenCalledTimes(2);
 
+    expect((await manager.inject('second')).kind).toBe('input-dispatched');
     locked = false;
     await manager.flushRestore();
-    expect(mockClipboardIO.restoreSnapshot).toHaveBeenLastCalledWith(createClipboardSnapshot());
+    expect(fake.clipboard).toBe('original');
   });
 
   it('keeps a remote paste\'s grace when the next Dictation is rejected before staging', async () => {
