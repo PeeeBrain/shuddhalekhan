@@ -88,6 +88,8 @@ final class FullKeyboardEngine {
     /// types the key's own); then the cell under the finger is the one.
     private var accentOpenCell: Int?
     private(set) var suggestions: [KeyboardSuggestion] = []
+    /// The text the strip's suggestions were made for (`stripBefore`).
+    private var suggestionsBefore: String?
 
     let target: KeyboardTextTarget
     let autocorrect: AutocorrectEngine
@@ -347,6 +349,7 @@ final class FullKeyboardEngine {
 
     func refreshSuggestions() {
         syncLearning()
+        suggestionsBefore = stripBefore
         let next: [KeyboardSuggestion]
         if let swipeSuggestions {
             next = displayed(swipeSuggestions)
@@ -373,8 +376,12 @@ final class FullKeyboardEngine {
     }
 
     func acceptSuggestion(_ suggestion: KeyboardSuggestion) {
-        // A pick made before text was selected leaves the text alone.
-        if hasSelection { return refreshSuggestions() }
+        // A pick that replaces the word before the cursor counts its deletes in the host's text, so it
+        // leaves the text alone when that isn't the text the strip was made for (the cursor moved,
+        // or a lagging host hasn't shown the last keys yet), and when text is selected.
+        // Swipe readings and Revert check the host's text themselves; a prediction only inserts.
+        let replaces = suggestion.kind != .swiped && suggestion.kind != .revert && suggestion.kind != .nextWord
+        if hasSelection || replaces && (hostIsBehind || stripBefore != suggestionsBefore) { return refreshSuggestions() }
         // `typeHeldSpace` asks `spacePending`, so the record stays until the pick's own insert
         // replaces it; every delete below counts the token in the host's text (`textBefore`).
         typeHeldSpace(before: suggestion)
@@ -995,7 +1002,8 @@ final class FullKeyboardEngine {
     /// shortcut ends the text.
     private func applyTextReplacement(ending: String) -> Bool {
         let before = textBefore
-        guard !hasSelection, field.takesWords, target.autocorrectionType != .no,
+        // A lagging host shows too little of the shortcut to count its deletes: it stays as typed.
+        guard !hasSelection, !hostIsBehind, field.takesWords, target.autocorrectionType != .no,
               let replaced = autocorrect.textReplacement(before: before) else { return false }
         adaptiveLearning?.finish(token: replaced.typed, corrected: replaced.replacement, before: before)
         rememberTypingContext(
@@ -1047,7 +1055,8 @@ final class FullKeyboardEngine {
     /// `ending` back (`offeringRevert`). False, typing nothing, when neither changes.
     private func finishWord(ending: String) -> Bool {
         let before = textBefore ?? ""
-        guard !hasSelection, let token = AutocorrectEngine.currentToken(in: before) else { return false }
+        // A lagging host shows too little of the word to count its deletes: it stays as typed.
+        guard !hasSelection, !hostIsBehind, let token = AutocorrectEngine.currentToken(in: before) else { return false }
         if let finished = finishedWord, before == finished.before + token,
            let taps = finished.taps, let space = finished.space, field.takesWords, target.autocorrectionType != .no,
            let merged = autocorrect.merge(

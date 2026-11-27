@@ -96,7 +96,7 @@ extension FullKeyboardEngine {
     /// has text, nothing selected, and a report that is what the host had before the insert or
     /// a step of the way to what the keyboard typed (a proxy catches up one insert at a time). Anything
     /// else is a change made elsewhere: a cleared field, another field, a cursor move.
-    private var hostIsBehind: Bool {
+    var hostIsBehind: Bool {
         guard let expected = expectedTypingContext, clock() <= expected.until,
               target.hasText, (target.selectedText ?? "").isEmpty,
               target.documentContextAfterInput == expected.after else { return false }
