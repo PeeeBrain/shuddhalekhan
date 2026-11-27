@@ -238,15 +238,15 @@ nonisolated struct KeyboardMetrics: Equatable, Sendable {
     /// iPhone portrait key geometry, as Apple's keyboard draws it beside this keyboard in the same field
     /// (iOS 27.2) on an 844 to 874 pt iPhone (17e, 17, 17 Pro): 43 pt keycaps on a 54 pt row
     /// pitch, row 1 on the same line on screen. Apple's row 4 ends 4 pt below where a
-    /// third-party keyboard's view ends, so those 4 pt come out of all four rows alike (Ryan's
-    /// call after two TestFlight testers found the space bar short, build 126): 42 pt keycaps
-    /// with Apple's 11 pt gaps, row 1's top on Apple's, rows 2 to 4 1, 2 and 3 pt above Apple's,
-    /// and row 4 ending on the view's bottom edge: 4 × 42 pt + 3 × 11 pt = 201 pt of keys under
-    /// the strip. (Row 4 used to keep Apple's top edge and be 4 pt shorter than the others.)
+    /// third-party keyboard's view ends, so row 4 keeps Apple's top edge and is 4 pt shorter:
+    /// every row's keycaps and touch boundaries sit on Apple's, for typists with Apple's muscle
+    /// memory (confirmed against an iOS 27 screenshot pair, 393 pt iPhone). Hex spread those
+    /// 4 pt over all four rows instead (42 pt keycaps), which put rows 2 to 4 1, 2 and 3 pt
+    /// above Apple's and cost edge and space-bar taps. 4 × 43 pt + 3 × 11 pt − 4 pt = 201 pt.
     static let portrait = KeyboardMetrics(
-        side: 6.5, gap: 6, rowGap: 11, keyHeight: 42,
+        side: 6.5, gap: 6, rowGap: 11, keyHeight: 43,
         stripTop: 0, stripHeight: stripBarHeight, stripBottom: stripGap,
-        keysTop: 0, keysBottom: 0, cornerRadius: keyCornerRadius
+        keysTop: 0, keysBottom: 0, cornerRadius: keyCornerRadius, bottomRowTrim: 4
     )
 
     /// Upright on iOS 26 (iPhone 12, 16 and 17 Pro, iOS 26.5, beside this keyboard in the same field): the
