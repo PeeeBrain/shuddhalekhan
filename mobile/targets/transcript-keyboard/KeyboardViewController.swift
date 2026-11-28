@@ -1,352 +1,178 @@
-import UIKit
 import Network
 import OSLog
+import UIKit
 
-/// Voice keyboard with no letter keys. It never records: it asks the Shuddhalekhan app's active keyboard session
-/// to record, then either inserts that request's transcript at the cursor (Dictate) or leaves it to the app, which
-/// hands it to Agent Mode (Ask the agent). See KeyboardSessionProtocol.swift.
-///
-/// Home shows the two actions as the desktop recording pills: Dictate round and blue, Agent square and vermilion.
-/// Tapping one grows that row into an inset shutter (big stop button, cancel, delete, live levels), and the
-/// shutter collapses back into the same row when the request settles.
+/// The typing keyboard in Typing/ (adapted from Hex, see Typing/NOTICE.md) on Shuddhalekhan's keyboard session. The
+/// strip's Dictation key (trailing) and Agent key (leading) ask the app's active keyboard session to record, then
+/// insert that request's transcript at the cursor (Dictation) or leave it to the app, which hands it to Agent Mode.
+/// See KeyboardSessionProtocol.swift. With no session, Dictation records and transcribes in the keyboard itself
+/// (`KeyboardLocalDictation`, iOS 26) once it has its own model; otherwise a voice key opens the app.
 final class KeyboardViewController: UIInputViewController {
   private static let ackTimeout: TimeInterval = 3
-  private static let sentHold: TimeInterval = 1.6
+  private static let connecting = "Connecting to Shuddhalekhan…"
+  private static let noSession = "Open Shuddhalekhan and tap Start keyboard session."
+  private static let noticeDuration: TimeInterval = 8
+  /// iOS shows an empty panel until a keyboard's first frame, and goes back to the previous keyboard when one is slow
+  /// to draw (Hex's TestFlight build 56), so the text checker and lexicon wait this long after it appears.
+  private static let afterFirstFrame: TimeInterval = 0.3
+  /// A voice key tapped with no session opens the app, which starts one (`shuddhalekhan://keyboard-session`).
+  /// The first live session the keyboard finds within `launchWindow` starts that recording, so coming back
+  /// with ◀ dictates without a second tap. Static: iOS may build a new controller for the return.
+  /// The field rides along: coming back to another one doesn't start Dictation there (Agent Mode inserts nothing). Fields UIKit can't name (nil)
+  /// can't be told apart, as before.
+  private static var awaitingSession: (mode: KeyboardSession.Mode, at: Date, document: UUID?)?
+  /// A discovery record whose session is gone (the app ended it in the background, where it can't clear the record):
+  /// skipped, so Dictate reaches the keyboard's own recording or the app. Known by the session's last state, or by a
+  /// refused connection (no listener); a slow or full listener is retried. Opening the app tries it again.
+  private static var deadToken: String?
+  private static let launchWindow: TimeInterval = 60
+  private static let sessionLink = URL(string: "shuddhalekhan://keyboard-session")!
+  /// The last session's Parakeet language and style, for dictating without one.
+  private static let languageKey = "localDictationLanguage"
+  private static let styleKey = "localDictationStyle"
 
-  private enum Screen: Equatable { case home, live(KeyboardSession.Mode) }
-
-  // Home
-  private let home = UIStackView()
-  private let statusLabel = UILabel()
-  private let clockLabel = UILabel()
-  private lazy var statusHeight = statusLabel.heightAnchor.constraint(equalToConstant: 0)
-  private let dictateRow = ActionRow(mode: .dictate)
-  private let agentRow = ActionRow(mode: .agent)
-  private let globeKey = PressControl()
-  private let styleButton = UIButton(type: .system)
-  private let undoButton = UIButton(type: .system)
-  private var menuStyle: DictationStyle?
-  private var undo: KeyboardInsertion.Undo?
-  private var pendingDocument: UUID?
-
-  // Live: the tapped row grows into an inset card; live holds the shutter controls above it.
-  private let surface = UIView()
-  private let live = UIStackView()
-  private let liveTop = UIStackView()
-  private let liveStatus = UILabel()
-  private let liveClock = UILabel()
-  private let stage = UIView()
-  private let levels = LevelDots()
-  private let sentStack = UIStackView()
-  private let sentText = UILabel()
-  private var cancelSide = UIStackView()
-  private var deleteSide = UIStackView()
-  private let shutterHost = UIView()
-  private let shutterRing = UIView()
-  private let shutter = PressControl()
-  private let stopGlyph = UIView()
-  private let spinner = UIActivityIndicatorView(style: .medium)
-  private let checkGlyph = UIImageView(image: UIImage(systemName: "checkmark",
-    withConfiguration: UIImage.SymbolConfiguration(pointSize: 30, weight: .bold)))
-
-  private var screen = Screen.home
-  private var generation = 0
-  private let returnKey = PressControl()
-  private var deleteRepeat: Timer?
+  private let model = KeyboardViewModel()
+  private var keyboard: FullKeyboardView?
+  private var heightConstraint: NSLayoutConstraint?
+  private var didRequestLexicon = false
+  private var noticeWork: DispatchWorkItem?
 
   private var session: KeyboardSession.State?
   private var pendingId: String?
   private var pendingMode = KeyboardSession.Mode.dictate
-  private var recordingSince: Date?
-  /// An agent request that just landed, held on screen briefly as confirmation.
-  private var sent: (id: String, text: String)?
+  private var pendingDocument: UUID?
   private var insertedIds = Set<String>()
-  private var clock: Timer?
   private var channel: KeyboardSessionChannel?
   private var bridge: KeyboardSession.Bridge?
   private var receivedState = false
+  /// Made on the first Dictate the keyboard records itself.
+  private var local: KeyboardLocalDictation?
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
+
+  /// UIKit's own input view, swapped for one that adopts `UIInputViewAudioFeedback` so the keys can click.
+  override func loadView() {
+    super.loadView()
+    let system = inputView
+    let input = ClickingInputView(frame: system?.frame ?? .zero, inputViewStyle: system?.inputViewStyle ?? .keyboard)
+    input.allowsSelfSizing = system?.allowsSelfSizing ?? false
+    input.autoresizingMask = system?.autoresizingMask ?? []
+    input.translatesAutoresizingMaskIntoConstraints = system?.translatesAutoresizingMaskIntoConstraints ?? true
+    inputView = input
+    if viewIfLoaded !== input { view = input }
+  }
 
   override func viewDidLoad() {
     super.viewDidLoad()
-    view.overrideUserInterfaceStyle = .dark
-    view.backgroundColor = .clear
-    view.isOpaque = false
-    view.maximumContentSizeCategory = .extraLarge
-    // Below required so it never fights the system's own keyboard height constraint while appearing.
-    let height = view.heightAnchor.constraint(equalToConstant: 262)
-    height.priority = UILayoutPriority(rawValue: 999)
-    height.isActive = true
+    let keyboard = FullKeyboardView(model: model, target: DocumentProxyTextTarget { [weak self] in self?.textDocumentProxy })
+    keyboard.hostController = self
+    keyboard.allowsHaptics = { [weak self] in self?.hasFullAccess ?? false }
+    keyboard.onPreferredHeightChange = { [weak self] in
+      self?.view.setNeedsLayout()
+      self?.view.layoutIfNeeded()
+    }
+    keyboard.onTextEdit = { [weak self] in
+      if self?.model.notice != Self.downloadNotice { self?.clearNotice() }
+    }
+    keyboard.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(keyboard)
+    NSLayoutConstraint.activate([
+      keyboard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      keyboard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      keyboard.topAnchor.constraint(equalTo: view.topAnchor),
+      keyboard.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+    self.keyboard = keyboard
+    applyHeight(keyboard.preferredHeight)
 
-    surface.isHidden = true
-    surface.layer.cornerCurve = .continuous
-    surface.isUserInteractionEnabled = false
-    view.addSubview(surface)
-    buildHome()
-    buildLive()
-    render()
-  }
-
-  override func viewWillLayoutSubviews() {
-    super.viewWillLayoutSubviews()
-    let twoLines = ceil(statusLabel.font.lineHeight * 2)
-    if statusHeight.constant != twoLines { statusHeight.constant = twoLines }
-  }
-
-  override func viewDidLayoutSubviews() {
-    super.viewDidLayoutSubviews()
-    // Rotation or a height change while live: keep the card inset, unless it is mid-morph.
-    if case .live = screen, surface.layer.animationKeys() == nil { surface.frame = liveFrame }
+    model.onStart = { [weak self] in self?.start($0) }
+    model.onStop = { [weak self] in self?.stop() }
+    model.onCancel = { [weak self] in self?.cancel() }
+    model.onStyleSelected = { [weak self] in self?.setStyle($0) }
+    model.onDismissNotice = { [weak self] in
+      if self?.model.notice == Self.downloadNotice { KeyboardLocalDictation.cancelDownload() }
+      self?.clearNotice()
+    }
   }
 
   override func viewWillAppear(_ animated: Bool) {
     super.viewWillAppear(animated)
     log.notice("SpeechPerf keyboard stage=appear")
-    globeKey.isHidden = !needsInputModeSwitchKey
-    // Updates only the countdown and elapsed text while the keyboard is on screen.
-    clock = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated { self?.tick() }
-    }
-    PressControl.feedback.prepare()
-    refreshReturnKey()
+    model.hasFullAccess = hasFullAccess
+    model.needsGlobeKey = needsInputModeSwitchKey
+    keyboard?.prepareForField()
     refresh()
+  }
+
+  override func viewDidAppear(_ animated: Bool) {
+    super.viewDidAppear(animated)
+    // iOS holds back touches near the screen's side edges while it waits for a system gesture; the edge keys
+    // would lag about 80 ms behind the rest (measured upstream in Hex).
+    view.window?.gestureRecognizers?.forEach { $0.delaysTouchesBegan = false }
+    keyboard?.keyboardDidAppear()
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.afterFirstFrame) { [weak self] in
+      guard let self, self.view.window != nil else { return }
+      self.keyboard?.warmUpTextCheckerAsync()
+      guard !self.didRequestLexicon else { return }
+      self.didRequestLexicon = true
+      // UIKit calls back on its own queue, so the callback is nonisolated and hops to the main actor itself.
+      self.requestSupplementaryLexicon { @Sendable [weak self] lexicon in
+        Task { @MainActor in self?.keyboard?.loadLexicon(lexicon) }
+      }
+    }
   }
 
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
+    local?.cancel()
     // Closing the authenticated connection cancels its utterance on the app side.
     if let pendingId { send(.cancel, id: pendingId) }
     pendingId = nil
-    clearUndo()
-    sent = nil
-    stopDeleting()
-    clock?.invalidate()
-    clock = nil
+    keyboard?.engine.commitHangulComposition()
+    keyboard?.hideUndo()
     disconnect()
-    resetToHome()
+    clearNotice()
+    render()
   }
 
-  // MARK: Layout
+  override func viewWillLayoutSubviews() {
+    super.viewWillLayoutSubviews()
+    if let keyboard { applyHeight(keyboard.preferredHeight) }
+  }
 
-  private func buildHome() {
-    home.axis = .vertical
-    home.spacing = 8
-    home.isLayoutMarginsRelativeArrangement = true
-    home.layoutMargins = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
-    pin(home)
-
-    statusLabel.font = scaledFont(12, .regular, .footnote)
-    statusLabel.adjustsFontForContentSizeCategory = true
-    statusLabel.textColor = Palette.faded
-    statusLabel.numberOfLines = 2
-    // Always reserves two lines (see viewWillLayoutSubviews) so status changes never move the rows.
-    statusHeight.isActive = true
-    styleClock(clockLabel, color: Palette.faded)
-    let statusRow = UIStackView(arrangedSubviews: [statusLabel, clockLabel])
-    statusRow.spacing = 8
-    statusRow.isLayoutMarginsRelativeArrangement = true
-    statusRow.layoutMargins = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 4)
-    home.addArrangedSubview(statusRow)
-
-    for row in [dictateRow, agentRow] {
-      row.heightAnchor.constraint(equalToConstant: 64).isActive = true
-      home.addArrangedSubview(row)
+  /// Below required so it never fights the system's own keyboard height constraint while appearing; never
+  /// animated, since iOS sizes the panel from it while it swaps keyboards.
+  private func applyHeight(_ height: CGFloat) {
+    guard let heightConstraint else {
+      let constraint = view.heightAnchor.constraint(equalToConstant: height)
+      constraint.priority = UILayoutPriority(999)
+      constraint.isActive = true
+      heightConstraint = constraint
+      preferredContentSize.height = height
+      return
     }
-    dictateRow.addTarget(self, action: #selector(dictateTapped), for: .touchUpInside)
-    agentRow.addTarget(self, action: #selector(agentTapped), for: .touchUpInside)
-
-    styleKey(globeKey, symbol: "globe", label: "Next keyboard")
-    globeKey.addTarget(self, action: #selector(handleInputModeList(from:with:)), for: .allTouchEvents)
-    let backspace = PressControl()
-    styleKey(backspace, symbol: "delete.left", label: "Delete")
-    wireDelete(backspace)
-    let spacer = UIView()
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    for button in [styleButton, undoButton] {
-      button.tintColor = Palette.faded
-      button.titleLabel?.font = scaledFont(13, .medium, .footnote)
-      button.titleLabel?.adjustsFontForContentSizeCategory = true
-      button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+    guard heightConstraint.constant != height else { return }
+    UIView.performWithoutAnimation {
+      heightConstraint.constant = height
+      preferredContentSize.height = height
     }
-    styleButton.showsMenuAsPrimaryAction = true
-    undoButton.setTitle("Undo", for: .normal)
-    undoButton.accessibilityLabel = "Undo Dictation"
-    undoButton.addTarget(self, action: #selector(undoDictation), for: .touchUpInside)
-    undoButton.isHidden = true
-    // Return lets a dictated message be sent without switching keyboards.
-    styleKey(returnKey, symbol: "return", label: "Return")
-    returnKey.addTarget(self, action: #selector(returnTapped), for: .touchUpInside)
-    let keys = UIStackView(arrangedSubviews: [globeKey, spacer, styleButton, undoButton, backspace, returnKey])
-    keys.spacing = 8
-    keys.alignment = .bottom
-    keys.setContentHuggingPriority(.defaultLow, for: .vertical)
-    home.addArrangedSubview(keys)
   }
 
-  private func buildLive() {
-    live.axis = .vertical
-    live.isLayoutMarginsRelativeArrangement = true
-    live.layoutMargins = UIEdgeInsets(top: 16, left: 24, bottom: 22, right: 24)
-    live.isHidden = true
-    pin(live)
-
-    liveStatus.font = scaledFont(13, .semibold, .footnote)
-    liveStatus.adjustsFontForContentSizeCategory = true
-    styleClock(liveClock, color: Palette.faded)
-    liveTop.addArrangedSubview(liveStatus)
-    liveTop.addArrangedSubview(liveClock)
-    liveTop.spacing = 8
-    live.addArrangedSubview(liveTop)
-
-    // Levels and the sent confirmation share the stage and cross-fade.
-    stage.setContentHuggingPriority(.defaultLow, for: .vertical)
-    live.addArrangedSubview(stage)
-    levels.translatesAutoresizingMaskIntoConstraints = false
-    stage.addSubview(levels)
-    sentText.font = scaledFont(16, .medium, .body)
-    sentText.adjustsFontForContentSizeCategory = true
-    sentText.textColor = Palette.parchment
-    sentText.numberOfLines = 2
-    sentText.textAlignment = .center
-    let sentHint = UILabel()
-    sentHint.text = "Follow it in the Live Activity."
-    sentHint.font = scaledFont(12, .regular, .footnote)
-    sentHint.adjustsFontForContentSizeCategory = true
-    sentHint.textColor = Palette.faded
-    sentStack.addArrangedSubview(sentText)
-    sentStack.addArrangedSubview(sentHint)
-    sentStack.axis = .vertical
-    sentStack.alignment = .center
-    sentStack.spacing = 6
-    sentStack.alpha = 0
-    sentStack.translatesAutoresizingMaskIntoConstraints = false
-    stage.addSubview(sentStack)
-    NSLayoutConstraint.activate([
-      levels.centerXAnchor.constraint(equalTo: stage.centerXAnchor),
-      levels.centerYAnchor.constraint(equalTo: stage.centerYAnchor),
-      levels.heightAnchor.constraint(equalToConstant: 36),
-      sentStack.centerYAnchor.constraint(equalTo: stage.centerYAnchor),
-      sentStack.leadingAnchor.constraint(equalTo: stage.leadingAnchor, constant: 8),
-      sentStack.trailingAnchor.constraint(equalTo: stage.trailingAnchor, constant: -8),
-    ])
-
-    shutterHost.translatesAutoresizingMaskIntoConstraints = false
-    shutterRing.translatesAutoresizingMaskIntoConstraints = false
-    shutterRing.isUserInteractionEnabled = false
-    shutterRing.layer.cornerCurve = .continuous
-    shutter.translatesAutoresizingMaskIntoConstraints = false
-    shutter.pressedScale = 0.92
-    shutter.layer.cornerCurve = .continuous
-    shutter.isAccessibilityElement = true
-    shutter.accessibilityTraits = .button
-    shutter.addTarget(self, action: #selector(shutterTapped), for: .touchUpInside)
-    shutterHost.addSubview(shutterRing)
-    shutterHost.addSubview(shutter)
-    stopGlyph.backgroundColor = Palette.onSignal
-    stopGlyph.layer.cornerRadius = 6
-    stopGlyph.layer.cornerCurve = .continuous
-    spinner.color = Palette.onSignal
-    spinner.hidesWhenStopped = true
-    checkGlyph.tintColor = Palette.onSignal
-    checkGlyph.isHidden = true
-    for glyph in [stopGlyph, spinner, checkGlyph] {
-      glyph.translatesAutoresizingMaskIntoConstraints = false
-      glyph.isUserInteractionEnabled = false
-      shutter.addSubview(glyph)
-      glyph.centerXAnchor.constraint(equalTo: shutter.centerXAnchor).isActive = true
-      glyph.centerYAnchor.constraint(equalTo: shutter.centerYAnchor).isActive = true
-    }
-    NSLayoutConstraint.activate([
-      shutterHost.widthAnchor.constraint(equalToConstant: 96),
-      shutterHost.heightAnchor.constraint(equalToConstant: 96),
-      shutter.topAnchor.constraint(equalTo: shutterHost.topAnchor),
-      shutter.bottomAnchor.constraint(equalTo: shutterHost.bottomAnchor),
-      shutter.leadingAnchor.constraint(equalTo: shutterHost.leadingAnchor),
-      shutter.trailingAnchor.constraint(equalTo: shutterHost.trailingAnchor),
-      shutterRing.topAnchor.constraint(equalTo: shutterHost.topAnchor, constant: -6),
-      shutterRing.bottomAnchor.constraint(equalTo: shutterHost.bottomAnchor, constant: 6),
-      shutterRing.leadingAnchor.constraint(equalTo: shutterHost.leadingAnchor, constant: -6),
-      shutterRing.trailingAnchor.constraint(equalTo: shutterHost.trailingAnchor, constant: 6),
-      stopGlyph.widthAnchor.constraint(equalToConstant: 28),
-      stopGlyph.heightAnchor.constraint(equalToConstant: 28),
-    ])
-
-    let (cancelSide, cancel) = sideKey("xmark", caption: "Cancel", tint: Palette.faded)
-    cancel.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
-    let (deleteSide, delete) = sideKey("delete.left", caption: "Delete", tint: Palette.parchment)
-    wireDelete(delete)
-    self.cancelSide = cancelSide
-    self.deleteSide = deleteSide
-    let shutterRow = UIStackView(arrangedSubviews: [cancelSide, shutterHost, deleteSide])
-    shutterRow.distribution = .equalSpacing
-    shutterRow.alignment = .center
-    live.addArrangedSubview(shutterRow)
+  override func textDidChange(_ textInput: UITextInput?) {
+    super.textDidChange(textInput)
+    keyboard?.textDidChange()
   }
 
-  private func pin(_ child: UIView) {
-    view.addSubview(child)
-    child.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      child.topAnchor.constraint(equalTo: view.topAnchor),
-      child.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      child.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      child.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-    ])
+  override func selectionDidChange(_ textInput: UITextInput?) {
+    super.selectionDidChange(textInput)
+    keyboard?.hideUndoIfMoved()
+    keyboard?.engine.commitHangulIfHostMoved()
   }
 
-  private func styleClock(_ label: UILabel, color: UIColor) {
-    label.font = scaledFont(13, .semibold, .footnote, monospacedDigits: true)
-    label.adjustsFontForContentSizeCategory = true
-    label.textColor = color
-    label.setContentHuggingPriority(.required, for: .horizontal)
-    label.setContentCompressionResistancePriority(.required, for: .horizontal)
-  }
-
-  private func styleKey(_ key: PressControl, symbol: String, label: String) {
-    key.restingColor = Palette.ash
-    key.pressedColor = Palette.ashPressed
-    key.layer.cornerRadius = 8
-    key.layer.cornerCurve = .continuous
-    key.isAccessibilityElement = true
-    key.accessibilityLabel = label
-    key.accessibilityTraits = .button
-    addCentered(UIImageView(image: UIImage(systemName: symbol,
-      withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .regular))), to: key, tint: Palette.parchment)
-    key.widthAnchor.constraint(equalToConstant: 52).isActive = true
-    key.heightAnchor.constraint(equalToConstant: 42).isActive = true
-  }
-
-  private func sideKey(_ symbol: String, caption: String, tint: UIColor) -> (UIStackView, PressControl) {
-    let key = PressControl()
-    key.restingColor = Palette.ash
-    key.pressedColor = Palette.ashPressed
-    key.layer.cornerRadius = 28
-    key.isAccessibilityElement = true
-    key.accessibilityLabel = caption
-    key.accessibilityTraits = .button
-    addCentered(UIImageView(image: UIImage(systemName: symbol,
-      withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .medium))), to: key, tint: tint)
-    key.widthAnchor.constraint(equalToConstant: 56).isActive = true
-    key.heightAnchor.constraint(equalToConstant: 56).isActive = true
-    let label = UILabel()
-    label.text = caption
-    label.font = scaledFont(11, .medium, .caption2)
-    label.textColor = Palette.faded
-    label.isAccessibilityElement = false
-    let side = UIStackView(arrangedSubviews: [key, label])
-    side.axis = .vertical
-    side.alignment = .center
-    side.spacing = 5
-    side.widthAnchor.constraint(equalToConstant: 64).isActive = true
-    return (side, key)
-  }
-
-  private func addCentered(_ image: UIImageView, to key: UIView, tint: UIColor) {
-    image.tintColor = tint
-    image.translatesAutoresizingMaskIntoConstraints = false
-    key.addSubview(image)
-    image.centerXAnchor.constraint(equalTo: key.centerXAnchor).isActive = true
-    image.centerYAnchor.constraint(equalTo: key.centerYAnchor).isActive = true
+  override func didReceiveMemoryWarning() {
+    super.didReceiveMemoryWarning()
+    keyboard?.handleMemoryWarning()
+    if model.notice == Self.downloadNotice { show("Paused the download: the keyboard is low on memory.") }
+    KeyboardLocalDictation.memoryWarned(local)
   }
 
   // MARK: Session
@@ -359,20 +185,16 @@ final class KeyboardViewController: UIInputViewController {
     previous?.close()
   }
 
+  /// Finds the app's keyboard session and connects. Quiet when there is none: the strip stays the words', and a
+  /// voice key says what to do when tapped.
   private func refresh() {
-    guard hasFullAccess else {
-      disconnect()
-      session = nil
-      render(message: "Turn on Allow Full Access for Shuddhalekhan in Settings > General > Keyboard > Keyboards. It connects only to the app on this iPhone.")
-      return
-    }
+    guard hasFullAccess else { return disconnect() }
     if channel != nil { return }
     guard let data = UIPasteboard(name: UIPasteboard.Name(KeyboardSession.discoveryPasteboard), create: false)?
       .data(forPasteboardType: KeyboardSession.payloadType),
-      let bridge = KeyboardSession.decodeBridge(data, now: KeyboardSession.nowMs()),
+      let bridge = KeyboardSession.decodeBridge(data, now: KeyboardSession.nowMs()), bridge.token != Self.deadToken,
       let port = NWEndpoint.Port(rawValue: bridge.port) else {
       session = nil
-      render(message: "Open Shuddhalekhan and tap Start keyboard session.")
       return
     }
     self.bridge = bridge
@@ -388,24 +210,41 @@ final class KeyboardViewController: UIInputViewController {
     link.onMessage = { [weak self, weak link] data in
       guard let self, let link, self.channel === link else { return }
       guard let state = KeyboardSession.decodeState(data) else { return link.close() }
+      let wasConnecting = !self.receivedState && self.model.notice == Self.connecting
       self.receivedState = true
       self.receive(state)
+      if let awaiting = Self.awaitingSession, self.session?.isLive(now: KeyboardSession.nowMs()) == true {
+        Self.awaitingSession = nil
+        if Date().timeIntervalSince(awaiting.at) < Self.launchWindow,
+           awaiting.mode == .agent || awaiting.document == self.keyboard?.engine.target.documentIdentifier {
+          return self.start(awaiting.mode)
+        }
+      }
+      if wasConnecting, self.model.notice == Self.connecting {
+        if self.session?.isLive(now: KeyboardSession.nowMs()) == true {
+          self.show("Connected. Tap again to start.")
+        } else {
+          self.show(Self.noSession)
+        }
+      }
     }
     link.onClose = { [weak self, weak link] in
       guard let self, let link, self.channel === link else { return }
       let endedNormally = self.receivedState && self.session == nil
+      if link.refused || endedNormally { Self.deadToken = bridge.token }
       self.channel = nil
       self.bridge = nil
       self.pendingId = nil
       self.session = nil
-      if !self.receivedState {
-        self.render(message: "Open Shuddhalekhan and tap Start keyboard session.")
-      } else if !endedNormally {
+      if self.receivedState, !endedNormally {
         self.log.error("KeyboardBridge connection lost")
-        self.render(message: "Keyboard connection lost. Open Shuddhalekhan and start a new session.")
+        self.show("Keyboard connection lost. Open Shuddhalekhan and start a new session.")
+      } else if !self.receivedState, self.model.notice == Self.connecting {
+        // A stale discovery entry: the app's session ended while it was in the background.
+        self.show(Self.noSession)
       }
+      self.render()
     }
-    render(message: "Connecting to Shuddhalekhan…")
     link.start()
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.ackTimeout) { [weak self, weak link] in
       guard let self, let link, self.channel === link, !self.receivedState else { return }
@@ -416,210 +255,214 @@ final class KeyboardViewController: UIInputViewController {
   private func receive(_ state: KeyboardSession.State) {
     let previous = session
     session = state.isLive(now: KeyboardSession.nowMs()) || state.isBusy ? state : nil
-    // Levels arrive up to 15 times a second while recording. They only repaint the dots, never relayout.
+    if let session, let language = session.language,
+       previous?.language != language || previous?.style != session.style {
+      UserDefaults.standard.set(language, forKey: Self.languageKey)
+      UserDefaults.standard.set(session.style?.rawValue, forKey: Self.styleKey)
+    }
+    // Levels arrive up to 15 times a second while recording. They only repaint the dots, never the keyboard.
     if let previous, let session, session.phase == .recording, previous.phase == .recording,
        previous.requestId == session.requestId, previous.sessionEndsAt == session.sessionEndsAt,
        previous.agentReady == session.agentReady {
-      if session.requestId == pendingId { levels.push(CGFloat(session.level ?? 0)) }
+      if session.requestId == pendingId { keyboard?.pushLevel(CGFloat(session.level ?? 0)) }
       return
     }
     log.notice("KeyboardBridge received phase \(state.phase.rawValue, privacy: .public)")
+    defer { render() }
     guard let pendingId, state.requestId == pendingId else {
-      if session == nil { pendingId = nil }
-      render(message: session == nil ? state.error.map { "Session ended. \($0)" } : nil)
-        return
+      if session == nil {
+        self.pendingId = nil
+        if let error = state.error { show("Session ended. \(error)") }
+      }
+      return
     }
     if let text = KeyboardSession.insertion(state, pendingId: pendingId, inserted: insertedIds) {
       insertedIds.insert(pendingId)
       self.pendingId = nil
-      guard pendingDocument == textDocumentProxy.documentIdentifier else {
-        return render(message: "The text field changed. Dictate again to insert here.")
+      guard pendingDocument == keyboard?.engine.target.documentIdentifier else {
+        return show("The text field changed. Dictate again to insert here.")
       }
       insertDictation(text)
       log.notice("SpeechPerf keyboard stage=inserted id=\(pendingId, privacy: .public)")
-      render(message: "Inserted.")
       return
     }
     switch state.phase {
     case .done where state.mode == .agent:
       self.pendingId = nil
-      holdSent(id: pendingId, text: state.text ?? "")
+      show("Sent to the agent. Follow it in the Live Activity.")
     case .failed:
       self.pendingId = nil
-      render(message: state.error ?? (pendingMode == .agent ? "Couldn't reach the agent. Try again." : "Dictation failed. Try again."))
-    case .cancelled, .done, .idle:
+      show(state.error ?? (pendingMode == .agent ? "Couldn't reach the agent. Try again." : "Dictation failed. Try again."))
+    case .cancelled:
+      // The keyboard's own cancel never gets here (it forgets the request first): this is the app ending it.
       self.pendingId = nil
-      render()
+      if let error = state.error { show(error) }
+    case .done, .idle:
+      self.pendingId = nil
     case .recording:
-      if recordingSince == nil { recordingSince = Date() }
-      levels.push(CGFloat(state.level ?? 0))
-      render()
+      keyboard?.pushLevel(CGFloat(state.level ?? 0))
     case .preparing, .transcribing:
-      render()
+      break
     }
   }
-
-  private func holdSent(id: String, text: String) {
-    sent = (id, text)
-    render()
-    DispatchQueue.main.asyncAfter(deadline: .now() + Self.sentHold) { [weak self] in
-      guard let self, self.sent?.id == id else { return }
-      self.sent = nil
-      self.render(message: "Sent to the agent. Follow it in the Live Activity.")
-    }
-  }
-
-  @objc private func dictateTapped() { start(.dictate) }
-  @objc private func agentTapped() { start(.agent) }
 
   private func start(_ mode: KeyboardSession.Mode) {
-    guard hasFullAccess else { return refresh() }
-    guard pendingId == nil, sent == nil else { return }
+    guard pendingId == nil, localPhase == nil else { return }
+    if channel == nil { refresh() }
     guard let session, session.isLive(now: KeyboardSession.nowMs()) else {
-      return render(message: channel != nil && !receivedState
-        ? "Connecting to Shuddhalekhan…" : "Open Shuddhalekhan and tap Start keyboard session.")
+      if channel != nil && !receivedState { return show(Self.connecting) }
+      // An expired session finishing its last utterance still holds the microphone.
+      if self.session?.isBusy == true { return show("Shuddhalekhan is finishing the last dictation. Try again in a moment.") }
+      guard hasFullAccess else { return show(Self.noSession) }
+      if mode == .dictate, startLocally() { return }
+      return openApp(mode)
     }
     if mode == .agent, !session.agentReady {
-      return render(message: "Set up Agent Mode in Shuddhalekhan to ask the agent from here.")
+      return show("Set up Agent Mode in Shuddhalekhan to ask the agent from here.")
     }
     let id = UUID().uuidString
     pendingId = id
-    pendingDocument = textDocumentProxy.documentIdentifier
-    clearUndo()
     pendingMode = mode
-    recordingSince = nil
+    // Read the field through the engine: UIKit's non-optional `documentIdentifier` can be nil and trap.
+    pendingDocument = keyboard?.engine.target.documentIdentifier
     guard send(.start, id: id) else { pendingId = nil; return }
+    clearNotice()
     render()
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.ackTimeout) { [weak self] in
       guard let self, self.pendingId == id, self.session?.requestId != id else { return }
       // A start the app reads late would otherwise record for nobody until the utterance cap.
       self.send(.cancel, id: id)
       self.pendingId = nil
-      self.render(message: "Shuddhalekhan didn't respond. Open the app to check the session.")
+      self.show("Shuddhalekhan didn't respond. Open the app to check the session.")
+      self.render()
     }
   }
 
-  private func insertDictation(_ transcript: String) {
-    clearUndo()
-    let proxy = textDocumentProxy
-    let document = proxy.documentIdentifier
-    let before = proxy.documentContextBeforeInput
-    let after = proxy.documentContextAfterInput
-    let replacingSelection = !(proxy.selectedText?.isEmpty ?? true)
-    let insertion = KeyboardInsertion.text(transcript,
-      before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
-    // The host may not call textDidChange for our own insert; Return must wake up for "dictate, then send".
-    defer { refreshReturnKey() }
-    proxy.insertText(insertion)
-    guard !replacingSelection, let before, let after,
-          proxy.documentIdentifier == document,
-          let resultingBefore = proxy.documentContextBeforeInput,
-          KeyboardInsertion.confirmsInsertion(insertion, before: before, resultingBefore: resultingBefore),
-          proxy.documentContextAfterInput == after else { return }
-    undo = KeyboardInsertion.Undo(document: document, before: resultingBefore, after: after,
-      inserted: insertion, expires: Date().addingTimeInterval(12))
-    undoButton.isHidden = false
-  }
-
-  private func clearUndo() {
-    guard undo != nil else { return }
-    undo = nil
-    undoButton.isHidden = true
-  }
-
-  private func canUndo(_ undo: KeyboardInsertion.Undo) -> Bool {
-    let proxy = textDocumentProxy
-    return undo.matches(document: proxy.documentIdentifier, before: proxy.documentContextBeforeInput,
-      after: proxy.documentContextAfterInput, selected: proxy.selectedText, now: Date())
-  }
-
-  override func textDidChange(_ textInput: UITextInput?) {
-    super.textDidChange(textInput)
-    refreshReturnKey()
-    if let undo, !canUndo(undo) { clearUndo() }
-  }
-
-  /// Mirrors the system keyboard: named for the field's action, and off while a field that asks for it is empty.
-  private func refreshReturnKey() {
-    let proxy = textDocumentProxy
-    returnKey.accessibilityLabel = returnKeyLabel(proxy.returnKeyType)
-    returnKey.isEnabled = proxy.enablesReturnKeyAutomatically != true || proxy.hasText
-    returnKey.alpha = returnKey.isEnabled ? 1 : 0.4
-    returnKey.accessibilityTraits = returnKey.isEnabled ? .button : [.button, .notEnabled]
-  }
-
-  override func selectionDidChange(_ textInput: UITextInput?) {
-    super.selectionDidChange(textInput)
-    if let undo, !canUndo(undo) { clearUndo() }
-  }
-
-  @objc private func undoDictation() {
-    guard let undo, canUndo(undo) else { return clearUndo() }
-    clearUndo()
-    for _ in undo.inserted { textDocumentProxy.deleteBackward() }
-    refreshReturnKey()
-    render(message: "Dictation undone.")
-  }
-
-  @objc private func returnTapped() {
-    clearUndo()
-    textDocumentProxy.insertText("\n")
-  }
-
-  /// VoiceOver names the key by what the field does with it, as the system keyboard does.
-  private func returnKeyLabel(_ type: UIReturnKeyType?) -> String {
-    switch type {
-    case .send: "Send"
-    case .search, .google, .yahoo: "Search"
-    case .go, .route: "Go"
-    case .done: "Done"
-    case .next: "Next"
-    case .join: "Join"
-    case .`continue`: "Continue"
-    default: "Return"
+  private func openApp(_ mode: KeyboardSession.Mode) {
+    Self.awaitingSession = (mode, Date(), keyboard?.engine.target.documentIdentifier)
+    Self.deadToken = nil
+    if !ContainingAppOpener.open(Self.sessionLink, from: self) {
+      Self.awaitingSession = nil
+      if model.notice != Self.downloadNotice { show(Self.noSession) }
     }
   }
 
-  private func renderStyle() {
-    let style = session?.style
-    styleButton.isHidden = style == nil || pendingId != nil || session?.isBusy == true
-    guard let style, menuStyle != style else { return }
-    menuStyle = style
-    styleButton.setTitle(style.title, for: .normal)
-    styleButton.accessibilityLabel = "Dictation style, \(style.title)"
-    styleButton.menu = UIMenu(title: "Dictation style", children: DictationStyle.allCases.filter { $0 != .legacy }.map { item in
-      UIAction(title: item.title, state: item == style ? .on : .off) { [weak self] _ in
-        guard let self, let channel = self.channel, let bridge = self.bridge,
-              self.pendingId == nil, self.session?.isBusy == false else { return }
-        channel.send(KeyboardSession.Request(token: bridge.token,
-          command: .init(id: UUID().uuidString, action: .setStyle, mode: .dictate,
-            sentAt: KeyboardSession.nowMs(), style: item)))
+  /// Dictates in the keyboard (iOS 26): with its own Parakeet where that fits in the keyboard's memory (downloaded on
+  /// the first try), else with Apple's speech recognition, as Hex's keyboard does. False leaves it to the app: before
+  /// iOS 26, or in a field UIKit can't name, which can't be told from the next one.
+  private func startLocally() -> Bool {
+    guard #available(iOS 26.0, *) else { return false }
+    guard let document = keyboard?.engine.target.documentIdentifier else {
+      log.notice("Keyboard dictation: unnamed field, opening the app")
+      return false
+    }
+    // Until a session says the language, Apple's speech recognition in the iPhone's.
+    let language = UserDefaults.standard.string(forKey: Self.languageKey)
+    let parakeet = language.flatMap { try? ParakeetConfiguration(language: $0) }
+    let memory = KeyboardParakeet.memory()
+    let engine: KeyboardLocalDictation.Engine
+    if let parakeet, KeyboardLocalDictation.canStart(parakeet) {
+      engine = .parakeet(parakeet)
+    } else if KeyboardLocalDictation.isDownloading {
+      // Its notice holds the ✕, the only way to stop it.
+      show(Self.downloadNotice)
+      return true
+    } else if let parakeet, !KeyboardParakeet.isInstalled(parakeet), KeyboardLocalDictation.canDownload {
+      KeyboardLocalDictation.download(parakeet) { [weak self] ok in
+        self?.show(ok ? "Ready. Tap Dictate to dictate right here." : "Couldn't download the speech model. Try again.")
       }
-    })
+      // After the download starts, so this notice stays up with it.
+      show(Self.downloadNotice)
+      return true
+    } else {
+      // A Parakeet model held without the room to use it leaves its memory to this dictation.
+      Task { await KeyboardParakeet.shared.release() }
+      engine = .apple(language: language ?? "")
+    }
+    log.notice("Keyboard dictation engine=\(String(describing: engine), privacy: .public) language=\(language ?? "none", privacy: .public) footprint_mb=\(memory.footprint >> 20, privacy: .public) available_mb=\(memory.available >> 20, privacy: .public)")
+    let local = self.local ?? makeLocal()
+    pendingMode = .dictate
+    pendingDocument = document
+    let style = UserDefaults.standard.string(forKey: Self.styleKey).flatMap(DictationStyle.init(rawValue:)) ?? .legacy
+    clearNotice()
+    local.start(in: view, engine: engine, style: style)
+    return true
   }
 
-  @objc private func shutterTapped() {
-    if sent != nil {
-      sent = nil
-      return render(message: "Sent to the agent. Follow it in the Live Activity.")
+  private func makeLocal() -> KeyboardLocalDictation {
+    let local = KeyboardLocalDictation()
+    self.local = local
+    local.onChange = { [weak self] in self?.render() }
+    local.onLevel = { [weak self] in self?.keyboard?.pushLevel($0) }
+    local.onText = { [weak self] text in
+      guard let self else { return }
+      guard self.pendingDocument == self.keyboard?.engine.target.documentIdentifier else {
+        return self.show("The text field changed. Dictate again to insert here.")
+      }
+      self.insertDictation(text)
     }
-    guard let pendingId, activePhase == .recording else { return }
-    send(.stop, id: pendingId)
+    local.onFailure = { [weak self] message, beforeRecording in
+      // The microphone never opened here (permission, or iOS refused it): the app's session still can.
+      // A late one (the model loaded slowly) doesn't follow the user to another field.
+      guard let self else { return }
+      if beforeRecording, self.pendingDocument == self.keyboard?.engine.target.documentIdentifier {
+        self.log.notice("Keyboard dictation failed before recording, opening the app: \(message, privacy: .public)")
+        self.openApp(.dictate)
+      } else {
+        self.show(message)
+      }
+    }
+    return local
+  }
+
+  private var localPhase: KeyboardViewModel.StagePhase? {
+    switch local?.phase {
+    case nil, .idle?: nil
+    case .starting?: .starting
+    case .recording?: .recording
+    case .transcribing?: .transcribing
+    }
+  }
+
+  /// ✓, or lifting a held voice key. The session only stops a recording; before one starts there is nothing to
+  /// keep, and a transcription already under way finishes by itself.
+  private func stop() {
+    if localPhase != nil { return local?.stop() ?? () }
+    guard let pendingId else { return }
+    switch activePhase {
+    case .recording?: send(.stop, id: pendingId)
+    case .transcribing?: break
+    default: cancel()
+    }
   }
 
   /// Leaves at once; the app settles the request as cancelled, which this keyboard no longer waits for.
-  @objc private func cancelTapped() {
+  private func cancel() {
+    if localPhase != nil { return local?.cancel() ?? () }
     guard let pendingId else { return }
     send(.cancel, id: pendingId)
     self.pendingId = nil
     render()
   }
 
+  private func setStyle(_ style: DictationStyle) {
+    if channel == nil { refresh() }
+    guard let channel, let bridge, let session, session.isLive(now: KeyboardSession.nowMs()) else {
+      // The download's notice holds its ✕, the only way to stop it.
+      if model.notice == Self.downloadNotice { return }
+      return show(channel != nil && !receivedState ? Self.connecting : Self.noSession)
+    }
+    guard pendingId == nil, !session.isBusy else { return }
+    channel.send(KeyboardSession.Request(token: bridge.token,
+      command: .init(id: UUID().uuidString, action: .setStyle, mode: .dictate,
+        sentAt: KeyboardSession.nowMs(), style: style)))
+  }
+
   @discardableResult
   private func send(_ action: KeyboardSession.Command.Action, id: String) -> Bool {
     guard let channel, let bridge else {
       session = nil
-      render(message: "Keyboard connection unavailable. Open Shuddhalekhan and start a new session.")
+      show("Keyboard connection unavailable. Open Shuddhalekhan and start a new session.")
       return false
     }
     log.notice("SpeechPerf keyboard stage=\(action.rawValue, privacy: .public) id=\(id, privacy: .public)")
@@ -633,563 +476,66 @@ final class KeyboardViewController: UIInputViewController {
     return session.phase
   }
 
-  // MARK: Render
-
-  private func render(message: String? = nil) {
-    let target: Screen = pendingId != nil || sent != nil ? .live(pendingMode) : .home
-    if target != screen { show(target) }
-
-    renderStyle()
-    let agentReady = session?.agentReady ?? false
-    dictateRow.isAvailable = hasFullAccess
-    agentRow.isAvailable = hasFullAccess && (session == nil || agentReady)
-    agentRow.subtitle = session == nil || agentReady
-      ? "One-off command · follow the Live Activity" : "Set up Agent Mode in the app first"
-    announce(message ?? (session == nil ? "Open Shuddhalekhan and tap Start keyboard session." : "Keyboard session"), in: statusLabel)
-
-    if case .live(let mode) = screen { renderLive(mode) }
-    tick()
+  /// A two-thumb Dictate's words replace the range it picked first, so spacing reads the result; the strip then
+  /// offers to take the dictation back.
+  private func insertDictation(_ transcript: String) {
+    guard let keyboard else { return }
+    keyboard.engine.commitHangulComposition()
+    keyboard.applyPendingSelectionDictation()
+    let proxy = textDocumentProxy
+    let document = keyboard.engine.target.documentIdentifier
+    let before = proxy.documentContextBeforeInput
+    let after = proxy.documentContextAfterInput
+    let replacingSelection = !(proxy.selectedText?.isEmpty ?? true)
+    let insertion = KeyboardInsertion.text(transcript,
+      before: replacingSelection ? nil : before, after: replacingSelection ? nil : after)
+    proxy.insertText(insertion)
+    // Undo only for an insert the host confirms, never over a replaced selection.
+    keyboard.didInsertDictation(undo: replacingSelection ? nil : DictationUndo(text: insertion,
+      document: document, before: before, after: after, resultingDocument: keyboard.engine.target.documentIdentifier,
+      resultingBefore: proxy.documentContextBeforeInput, resultingAfter: proxy.documentContextAfterInput))
   }
 
-  private func renderLive(_ mode: KeyboardSession.Mode) {
-    let phase = activePhase
-    let accent = mode == .agent ? Palette.vermilion : Palette.blue
-    let status: String
-    var statusColor = Palette.faded
-    if sent != nil {
-      status = "Sent to the agent"
-      statusColor = accent
-    } else {
-      switch phase {
-      case .recording?:
-        status = mode == .agent ? "Listening for a command…" : "Listening…"
-        statusColor = accent
-      case .transcribing?: status = "Transcribing on this iPhone…"
-      default: status = "Starting…"
-      }
+  // MARK: Model
+
+  /// Publishes only what changed: every assignment refreshes the whole keyboard.
+  private func render() {
+    let stage: KeyboardViewModel.StagePhase = switch (localPhase, pendingId, activePhase) {
+    case (let local?, _, _): local
+    case (nil, nil, _): .idle
+    case (nil, _, .recording?): .recording
+    case (nil, _, .transcribing?): .transcribing
+    default: .starting
     }
-    liveStatus.textColor = statusColor
-    announce(status, in: liveStatus)
-
-    if phase != .recording { levels.settle() }
-    if let sent { sentText.text = "“\(sent.text)”" }
-    let recording = phase == .recording
-    let transcribing = phase == .transcribing && sent == nil
-    UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
-      self.levels.alpha = self.sent != nil ? 0 : (recording ? 1 : 0.35)
-      self.sentStack.alpha = self.sent != nil ? 1 : 0
-      self.stopGlyph.alpha = self.sent != nil || transcribing ? 0 : (recording ? 1 : 0.5)
-      self.cancelSide.alpha = self.sent != nil ? 0.35 : 1
-    }
-    UIView.transition(with: shutter, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction]) {
-      self.checkGlyph.isHidden = self.sent == nil
-      if transcribing { self.spinner.startAnimating() } else { self.spinner.stopAnimating() }
-    }
-    shutter.isUserInteractionEnabled = recording || sent != nil
-    shutter.accessibilityLabel = sent != nil ? "Done"
-      : transcribing ? "Transcribing"
-      : mode == .agent ? "Stop and send to the agent" : "Stop and insert"
+    if model.stagePhase != stage { model.stagePhase = stage }
+    if model.mode != pendingMode { model.mode = pendingMode }
+    if model.style != session?.style { model.style = session?.style }
   }
 
-  private func announce(_ text: String, in label: UILabel) {
-    guard label.text != text else { return }
-    label.text = text
-    UIAccessibility.post(notification: .announcement, argument: text)
+  /// One line in the strip, over the suggestions, until the next keystroke, ✕, or a few seconds pass.
+  private func show(_ notice: String) {
+    model.notice = notice
+    // A hidden keyboard (a download ending) keeps the notice for its return, but says nothing.
+    if view.window != nil { UIAccessibility.post(notification: .announcement, argument: notice) }
+    noticeWork?.cancel()
+    // A download's notice stays up until it ends.
+    guard notice != Self.downloadNotice else { return }
+    let work = DispatchWorkItem { [weak self] in self?.clearNotice() }
+    noticeWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.noticeDuration, execute: work)
   }
 
-  private func tick() {
-    if let undo, Date() >= undo.expires { clearUndo() }
-    if let session {
-      let remaining = max(0, Int((session.sessionEndsAt - KeyboardSession.nowMs()) / 1_000))
-      setClock(clockLabel, remaining, label: "\(remaining / 60) minutes \(remaining % 60) seconds left in the keyboard session")
-    } else {
-      clockLabel.text = nil
-    }
-    let phase = activePhase
-    if phase == .recording, let recordingSince {
-      let elapsed = Int(Date().timeIntervalSince(recordingSince))
-      setClock(liveClock, elapsed, label: "Recording \(elapsed / 60) minutes \(elapsed % 60) seconds")
-    } else if phase != .transcribing {
-      liveClock.text = nil
-    }
-  }
+  private static let downloadNotice = "Downloading the speech model (several hundred MB). Keep the keyboard open…"
 
-  private func setClock(_ label: UILabel, _ seconds: Int, label accessibility: String) {
-    let text = String(format: "%d:%02d", seconds / 60, seconds % 60)
-    guard label.text != text else { return }
-    label.text = text
-    label.accessibilityLabel = accessibility
-  }
-
-  // MARK: Motion
-
-  private func row(for mode: KeyboardSession.Mode) -> ActionRow { mode == .agent ? agentRow : dictateRow }
-
-  private func styleLive(_ mode: KeyboardSession.Mode) {
-    let agent = mode == .agent
-    let accent = agent ? Palette.vermilion : Palette.blue
-    // Same shape language as home: round for Dictate, squared for Agent.
-    shutter.layer.cornerRadius = agent ? 14 : 48
-    shutterRing.layer.cornerRadius = agent ? 20 : 54
-    shutter.restingColor = accent
-    shutter.pressedColor = accent.mixed(with: .black, 0.18)
-    shutterRing.backgroundColor = accent.withAlphaComponent(0.18)
-    levels.color = accent
-    levels.square = agent
-  }
-
-  private func liveBackground(_ mode: KeyboardSession.Mode) -> UIColor {
-    mode == .agent ? Palette.soot.mixed(with: Palette.vermilion, 0.05) : Palette.soot
-  }
-
-  private var liveFrame: CGRect { view.bounds.insetBy(dx: 10, dy: 8) }
-
-  /// The row's resting frame in tray coordinates, ignoring any press scale still settling on it.
-  private func restingFrame(of row: ActionRow) -> CGRect {
-    CGRect(x: row.center.x - row.bounds.width / 2, y: row.center.y - row.bounds.height / 2,
-           width: row.bounds.width, height: row.bounds.height)
-  }
-
-  /// Puts the shutter exactly over the row's glyph well, so the well appears to become the stop button.
-  private func wellTransform(for row: ActionRow) -> CGAffineTransform {
-    let origin = restingFrame(of: row).origin
-    let well = row.well.convert(row.well.bounds, to: row).offsetBy(dx: origin.x, dy: origin.y)
-    guard let container = shutterHost.superview, shutterHost.bounds.width > 0 else { return .identity }
-    let center = container.convert(shutterHost.center, to: live)
-    let scale = well.width / shutterHost.bounds.width
-    return CGAffineTransform(translationX: well.midX - center.x, y: well.midY - center.y).scaledBy(x: scale, y: scale)
-  }
-
-  private func setChrome(visible: Bool) {
-    liveTop.alpha = visible ? 1 : 0
-    liveTop.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: -6)
-    stage.alpha = visible ? 1 : 0
-    stage.transform = visible ? .identity : CGAffineTransform(scaleX: 0.9, y: 0.9)
-    // The side keys slide out from behind the shutter.
-    deleteSide.alpha = visible ? 1 : 0
-    deleteSide.transform = visible ? .identity : CGAffineTransform(translationX: -40, y: 0).scaledBy(x: 0.8, y: 0.8)
-    cancelSide.transform = visible ? .identity : CGAffineTransform(translationX: 40, y: 0).scaledBy(x: 0.8, y: 0.8)
-    if !visible { cancelSide.alpha = 0 } else if sent == nil { cancelSide.alpha = 1 }
-  }
-
-  /// Critically damped springs throughout, all additive, so a tap mid-flight retargets from wherever things are.
-  private func show(_ target: Screen) {
-    let from = screen
-    screen = target
-    generation += 1
-    let generation = generation
-    view.layoutIfNeeded()
-    let reduceMotion = UIAccessibility.isReduceMotionEnabled
-
-    switch target {
-    case .live(let mode):
-      let row = row(for: mode)
-      styleLive(mode)
-      let fresh = live.isHidden
-      live.isHidden = false
-      live.isUserInteractionEnabled = true
-      surface.isHidden = false
-      // The shutter's resting place is needed before it can start on the row's glyph well.
-      live.layoutIfNeeded()
-      if reduceMotion {
-        if fresh {
-          surface.alpha = 0
-          live.alpha = 0
-        }
-        surface.frame = liveFrame
-        surface.layer.cornerRadius = 14
-        surface.backgroundColor = liveBackground(mode)
-        shutterHost.transform = .identity
-        shutterHost.alpha = 1
-        setChrome(visible: true)
-        fade(0.2) {
-          self.surface.alpha = 1
-          self.live.alpha = 1
-          self.home.alpha = 0
-        }
-        return
-      }
-      if fresh {
-        // Start exactly on the tapped row (under home), so the growth reads as that row expanding.
-        surface.alpha = 1
-        live.alpha = 1
-        surface.frame = restingFrame(of: row)
-        surface.layer.cornerRadius = row.layer.cornerRadius
-        surface.backgroundColor = row.restingColor
-        shutterHost.transform = wellTransform(for: row)
-        // The tinted well fills in as it grows, rather than a solid button popping over it.
-        shutterHost.alpha = 0
-        setChrome(visible: false)
-      }
-      spring(0.42) {
-        self.surface.frame = self.liveFrame
-        self.surface.layer.cornerRadius = 14
-        self.surface.backgroundColor = self.liveBackground(mode)
-      }
-      fade(0.16) { self.home.alpha = 0 }
-      fade(0.18) { self.shutterHost.alpha = 1 }
-      spring(0.5, bounce: 0.12) { self.shutterHost.transform = .identity }
-      spring(0.42, delay: 0.06) { self.setChrome(visible: true) }
-
-    case .home:
-      guard case .live(let mode) = from else { return }
-      let row = row(for: mode)
-      // Home rows take taps the moment the shutter starts folding away.
-      live.isUserInteractionEnabled = false
-      let finish: (Bool) -> Void = { [weak self] _ in
-        guard let self, self.generation == generation else { return }
-        self.surface.isHidden = true
-        self.live.isHidden = true
-        self.shutterHost.transform = .identity
-        self.levels.settle()
-      }
-      if reduceMotion {
-        fade(0.2, {
-          self.surface.alpha = 0
-          self.live.alpha = 0
-          self.home.alpha = 1
-        }, completion: finish)
-        return
-      }
-      spring(0.38, {
-        self.surface.frame = self.restingFrame(of: row)
-        self.surface.layer.cornerRadius = row.layer.cornerRadius
-        self.surface.backgroundColor = row.restingColor
-      }, completion: finish)
-      spring(0.36) { self.shutterHost.transform = self.wellTransform(for: row) }
-      fade(0.2, delay: 0.1) { self.shutterHost.alpha = 0 }
-      spring(0.26) { self.setChrome(visible: false) }
-      fade(0.24, delay: 0.08) { self.home.alpha = 1 }
-    }
-  }
-
-  private func resetToHome() {
-    generation += 1
-    screen = .home
-    for layer in [surface.layer, home.layer, live.layer, shutterHost.layer] { layer.removeAllAnimations() }
-    surface.isHidden = true
-    live.isHidden = true
-    home.alpha = 1
-    shutterHost.transform = .identity
-    levels.settle()
-    render()
-  }
-
-  private func spring(_ duration: TimeInterval, bounce: CGFloat = 0, delay: TimeInterval = 0,
-                      _ animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil) {
-    UIView.animate(springDuration: duration, bounce: bounce, initialSpringVelocity: 0, delay: delay,
-      options: [.allowUserInteraction, .beginFromCurrentState], animations: animations, completion: completion)
-  }
-
-  private func fade(_ duration: TimeInterval, delay: TimeInterval = 0,
-                    _ animations: @escaping () -> Void, completion: ((Bool) -> Void)? = nil) {
-    UIView.animate(withDuration: duration, delay: delay,
-      options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState], animations: animations, completion: completion)
-  }
-
-  // MARK: Delete
-
-  /// Deletes on touch down, then repeats while held, like the system delete key.
-  private func wireDelete(_ key: PressControl) {
-    key.addTarget(self, action: #selector(deleteDown), for: .touchDown)
-    key.addTarget(self, action: #selector(stopDeleting), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
-    key.accessibilityAction = { [weak self] in
-      self?.clearUndo()
-      self?.textDocumentProxy.deleteBackward()
-      self?.refreshReturnKey()
-    }
-  }
-
-  @objc private func deleteDown() {
-    clearUndo()
-    textDocumentProxy.deleteBackward()
-    deleteRepeat?.invalidate()
-    deleteRepeat = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self] _ in
-      MainActor.assumeIsolated {
-        self?.deleteRepeat = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
-          MainActor.assumeIsolated { self?.textDocumentProxy.deleteBackward() }
-        }
-      }
-    }
-  }
-
-  @objc private func stopDeleting() {
-    refreshReturnKey()
-    deleteRepeat?.invalidate()
-    deleteRepeat = nil
+  private func clearNotice() {
+    noticeWork?.cancel()
+    noticeWork = nil
+    if model.notice != nil { model.notice = nil }
   }
 }
 
-// MARK: - Views
-
-/// DESIGN.md tokens. Slate Blue is Dictation only; Vermilion is Agent only.
-@MainActor
-private enum Palette {
-  static let soot = UIColor(rgb: 0x191715)
-  static let ash = UIColor(rgb: 0x262422)
-  static let ashPressed = UIColor(rgb: 0x312E2B)
-  static let hairline = UIColor(rgb: 0x393632)
-  static let parchment = UIColor(rgb: 0xF1EFE9)
-  static let faded = UIColor(rgb: 0x9C958B)
-  static let onSignal = UIColor(rgb: 0x141210)
-  static let blue = UIColor(rgb: 0x719ED6)
-  static let vermilion = UIColor(rgb: 0xE08652)
-}
-
-private extension UIColor {
-  convenience init(rgb: UInt32) {
-    self.init(red: CGFloat((rgb >> 16) & 0xFF) / 255, green: CGFloat((rgb >> 8) & 0xFF) / 255,
-              blue: CGFloat(rgb & 0xFF) / 255, alpha: 1)
-  }
-
-  func mixed(with other: UIColor, _ amount: CGFloat) -> UIColor {
-    var (r1, g1, b1, a1, r2, g2, b2, a2) = (CGFloat(0), CGFloat(0), CGFloat(0), CGFloat(0), CGFloat(0), CGFloat(0), CGFloat(0), CGFloat(0))
-    getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
-    other.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
-    return UIColor(red: r1 + (r2 - r1) * amount, green: g1 + (g2 - g1) * amount,
-                   blue: b1 + (b2 - b1) * amount, alpha: a1 + (a2 - a1) * amount)
-  }
-}
-
-private func scaledFont(_ size: CGFloat, _ weight: UIFont.Weight, _ style: UIFont.TextStyle,
-                        monospacedDigits: Bool = false) -> UIFont {
-  let base: UIFont = monospacedDigits ? .monospacedDigitSystemFont(ofSize: size, weight: weight) : .systemFont(ofSize: size, weight: weight)
-  return UIFontMetrics(forTextStyle: style).scaledFont(for: base)
-}
-
-/// The desktop pill's lucide Mic and Bot glyphs, so both platforms share one mark per mode.
-@MainActor
-private enum Glyph {
-  static let mic = draw { path in
-    path.append(UIBezierPath(roundedRect: CGRect(x: 9, y: 2, width: 6, height: 13), cornerRadius: 3))
-    path.move(to: CGPoint(x: 19, y: 10))
-    path.addLine(to: CGPoint(x: 19, y: 12))
-    path.addArc(withCenter: CGPoint(x: 12, y: 12), radius: 7, startAngle: 0, endAngle: .pi, clockwise: true)
-    path.addLine(to: CGPoint(x: 5, y: 10))
-    path.move(to: CGPoint(x: 12, y: 19))
-    path.addLine(to: CGPoint(x: 12, y: 22))
-  }
-
-  static let bot = draw { path in
-    path.move(to: CGPoint(x: 12, y: 8))
-    path.addLine(to: CGPoint(x: 12, y: 4))
-    path.addLine(to: CGPoint(x: 8, y: 4))
-    path.append(UIBezierPath(roundedRect: CGRect(x: 4, y: 8, width: 16, height: 12), cornerRadius: 2))
-    for (from, to) in [((2, 14), (4, 14)), ((20, 14), (22, 14)), ((15, 13), (15, 15)), ((9, 13), (9, 15))] {
-      path.move(to: CGPoint(x: from.0, y: from.1))
-      path.addLine(to: CGPoint(x: to.0, y: to.1))
-    }
-  }
-
-  /// Strokes a 24-point lucide path at 22 points as a template image.
-  private static func draw(_ build: (UIBezierPath) -> Void) -> UIImage {
-    let size: CGFloat = 22
-    let path = UIBezierPath()
-    build(path)
-    path.apply(CGAffineTransform(scaleX: size / 24, y: size / 24))
-    path.lineWidth = 2 * size / 24
-    path.lineCapStyle = .round
-    path.lineJoinStyle = .round
-    return UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
-      UIColor.black.setStroke()
-      path.stroke()
-    }.withRenderingMode(.alwaysTemplate)
-  }
-}
-
-/// Responds the moment a finger lands: a light tap, a quick press-in, a softer settle on release.
-/// iOS plays the tap only with Full Access, the same gate every action here already needs.
-private class PressControl: UIControl {
-  static let feedback = UIImpactFeedbackGenerator(style: .light)
-  var pressedScale: CGFloat = 0.96
-  var restingColor: UIColor? { didSet { backgroundColor = restingColor } }
-  var pressedColor: UIColor?
-  /// Runs on VoiceOver or Switch Control activation, which may skip touch-down; delete keys act through this.
-  var accessibilityAction: (() -> Void)?
-
-  override func accessibilityActivate() -> Bool {
-    guard let accessibilityAction else { return super.accessibilityActivate() }
-    accessibilityAction()
-    return true
-  }
-
-  override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
-    Self.feedback.impactOccurred(intensity: 0.7)
-    return super.beginTracking(touch, with: event)
-  }
-
-  override var isHighlighted: Bool {
-    didSet {
-      guard isHighlighted != oldValue else { return }
-      let pressed = isHighlighted
-      let scale = UIAccessibility.isReduceMotionEnabled ? 1 : pressedScale
-      UIView.animate(springDuration: pressed ? 0.16 : 0.34, bounce: 0, initialSpringVelocity: 0, delay: 0,
-        options: [.allowUserInteraction, .beginFromCurrentState]) {
-        self.transform = pressed ? CGAffineTransform(scaleX: scale, y: scale) : .identity
-        self.backgroundColor = pressed ? (self.pressedColor ?? self.restingColor) : self.restingColor
-      }
-    }
-  }
-}
-
-/// A home action, styled as its desktop recording pill.
-private final class ActionRow: PressControl {
-  let well = UIView()
-  private let subtitleLabel = UILabel()
-
-  var subtitle: String {
-    get { subtitleLabel.text ?? "" }
-    set {
-      subtitleLabel.text = newValue
-      accessibilityHint = newValue
-    }
-  }
-
-  /// Unavailable rows stay tappable so a tap can say why.
-  var isAvailable = true { didSet { alpha = isAvailable ? 1 : 0.45 } }
-
-  init(mode: KeyboardSession.Mode) {
-    super.init(frame: .zero)
-    let agent = mode == .agent
-    let accent = agent ? Palette.vermilion : Palette.blue
-    pressedScale = 0.97
-    restingColor = agent ? Palette.soot.mixed(with: Palette.vermilion, 0.07) : Palette.ash
-    pressedColor = agent ? Palette.soot.mixed(with: Palette.vermilion, 0.13) : Palette.ashPressed
-    layer.cornerRadius = agent ? 6 : 14
-    layer.cornerCurve = .continuous
-    layer.borderWidth = 1
-    layer.borderColor = (agent ? Palette.vermilion.withAlphaComponent(0.45) : Palette.hairline).cgColor
-
-    well.backgroundColor = accent.withAlphaComponent(agent ? 0.18 : 0.16)
-    well.layer.cornerRadius = agent ? 3 : 10
-    well.layer.cornerCurve = .continuous
-    let glyph = UIImageView(image: agent ? Glyph.bot : Glyph.mic)
-    glyph.tintColor = accent
-    glyph.translatesAutoresizingMaskIntoConstraints = false
-    well.addSubview(glyph)
-
-    let title = UILabel()
-    title.text = agent ? "Ask the agent" : "Dictate"
-    title.font = scaledFont(16, .semibold, .headline)
-    title.textColor = Palette.parchment
-    subtitleLabel.font = scaledFont(12, .regular, .footnote)
-    subtitleLabel.textColor = Palette.faded
-    for label in [title, subtitleLabel] {
-      label.adjustsFontForContentSizeCategory = true
-      label.adjustsFontSizeToFitWidth = true
-      label.minimumScaleFactor = 0.8
-    }
-    let text = UIStackView(arrangedSubviews: [title, subtitleLabel])
-    text.axis = .vertical
-    text.spacing = 1
-    let content = UIStackView(arrangedSubviews: [well, text])
-    content.spacing = 12
-    content.alignment = .center
-    content.isUserInteractionEnabled = false
-    content.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(content)
-    NSLayoutConstraint.activate([
-      well.widthAnchor.constraint(equalToConstant: 40),
-      well.heightAnchor.constraint(equalToConstant: 40),
-      glyph.centerXAnchor.constraint(equalTo: well.centerXAnchor),
-      glyph.centerYAnchor.constraint(equalTo: well.centerYAnchor),
-      content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-      content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
-      content.centerYAnchor.constraint(equalTo: centerYAnchor),
-    ])
-
-    isAccessibilityElement = true
-    accessibilityTraits = .button
-    accessibilityLabel = title.text
-    subtitle = agent ? "One-off command · follow the Live Activity" : "Types at the cursor"
-  }
-
-  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-}
-
-/// Live input level as a dot field, the desktop recording pill's theme: two strands braid through a 25 × 7 grid
-/// and fold onto the resting centre line at silence. Round dots for Dictate, square for Agent. Driven only by real
-/// levels from the app while recording (each push advances the braid); between pushes nothing animates.
-/// The field math mirrors `voiceField` in app/src/renderer/recording-popup-math.ts.
-private final class LevelDots: UIView {
-  private static let columns = 25
-  private static let rows = 7
-  private static let pitch: CGFloat = 5
-  private static let dot: CGFloat = 3
-  private static let baseAlpha: Float = 0.16
-  private static let lineRest: CGFloat = 0.45
-  private var level: CGFloat = 0
-  private var phase: CGFloat = 0
-  private let dots: [CALayer] = (0..<columns * rows).map { _ in CALayer() }
-
-  var color = UIColor.white { didSet { for dot in dots { dot.backgroundColor = color.cgColor } } }
-  var square = false { didSet { for dot in dots { dot.cornerRadius = square ? 0 : Self.dot / 2 } } }
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    for dot in dots {
-      dot.cornerRadius = Self.dot / 2
-      layer.addSublayer(dot)
-    }
-    isAccessibilityElement = false
-    isUserInteractionEnabled = false
-    paint(animated: false)
-  }
-
-  required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-  override var intrinsicContentSize: CGSize {
-    CGSize(width: CGFloat(Self.columns - 1) * Self.pitch + Self.dot, height: CGFloat(Self.rows - 1) * Self.pitch + Self.dot)
-  }
-
-  /// One reading, about every 1/15 s. The level is already dB-scaled 0–1, so unlike desktop it needs no lift.
-  /// Under Reduce Motion the braid holds its shape and only its height follows the voice.
-  func push(_ next: CGFloat) {
-    level = min(max(next, 0), 1)
-    if !UIAccessibility.isReduceMotionEnabled { phase += (2 + 6 * level) / 15 }
-    paint(animated: true)
-  }
-
-  func settle() {
-    guard level > 0 else { return }
-    level = 0
-    paint(animated: true)
-  }
-
-  override func layoutSubviews() {
-    super.layoutSubviews()
-    CATransaction.begin()
-    CATransaction.setDisableActions(true)
-    let size = intrinsicContentSize
-    let origin = CGPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
-    for (index, dot) in dots.enumerated() {
-      let x = origin.x + CGFloat(index % Self.columns) * Self.pitch
-      let y = origin.y + CGFloat(index / Self.columns) * Self.pitch
-      dot.frame = CGRect(x: x, y: y, width: Self.dot, height: Self.dot)
-    }
-    CATransaction.commit()
-  }
-
-  private func paint(animated: Bool) {
-    CATransaction.begin()
-    CATransaction.setDisableActions(!animated || UIAccessibility.isReduceMotionEnabled)
-    // About one level interval, so consecutive readings blend instead of stepping.
-    CATransaction.setAnimationDuration(0.1)
-    CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-    let mid = CGFloat(Self.rows - 1) / 2
-    for column in 0..<Self.columns {
-      let u = 2 * CGFloat(column) / CGFloat(Self.columns - 1) - 1
-      let env = cos(u * .pi / 2)
-      let amplitude = level * mid * env
-      let a = amplitude * sin(phase + 2.4 * u)
-      let b = amplitude * sin(phase * 0.77 - 3.1 * u + 2)
-      let strength = Self.lineRest + (1 - Self.lineRest) * max(env, level)
-      for row in 0..<Self.rows {
-        let y = CGFloat(row) - mid
-        let lit = max(0, 1 - abs(y - a), 1 - abs(y - b)) * strength
-        dots[row * Self.columns + column].opacity = Self.baseAlpha + (1 - Self.baseAlpha) * Float(lit)
-      }
-    }
-    CATransaction.commit()
-  }
+/// `UIDevice.playInputClick()` plays only while the visible input view adopts `UIInputViewAudioFeedback`; a
+/// subview that adopts it plays nothing (UIKit's docs).
+private final class ClickingInputView: UIInputView, UIInputViewAudioFeedback {
+  var enableInputClicksWhenVisible: Bool { true }
 }

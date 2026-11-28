@@ -52,6 +52,11 @@ struct KeyboardSessionCheck {
     precondition(S.insertion(done, pendingId: "b", inserted: []) == nil, "other request")
     precondition(S.insertion(transcribing, pendingId: "a", inserted: []) == nil, "not finished")
     precondition(S.decodeState(S.encode(done)!) == done)
+    var spoken = done
+    spoken.language = "de"
+    precondition(S.decodeState(S.encode(spoken)!)?.language == "de", "the keyboard learns the session's language")
+    spoken.language = String(repeating: "x", count: 17)
+    precondition(S.decodeState(S.encode(spoken)!) == nil, "oversized language")
     let huge = done.with(.done, requestId: "a", text: String(repeating: "x", count: S.maxTextBytes + 1))
     precondition(S.decodeState(S.encode(huge)!) == nil, "oversized text")
 

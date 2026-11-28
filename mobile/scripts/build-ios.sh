@@ -95,6 +95,11 @@ swiftc -swift-version 6 \
   -o "$build_dir/check-dictation"
 "$build_dir/check-dictation"
 swiftc -swift-version 6 \
+  "$mobile_dir/targets/transcript-keyboard/Typing/DictationUndo.swift" \
+  "$mobile_dir/native-checks/DictationUndoCheck.swift" \
+  -o "$build_dir/check-dictation-undo"
+"$build_dir/check-dictation-undo"
+swiftc -swift-version 6 \
   "$mobile_dir/modules/shuddhalekhan-speech/ios/RecordingCue.swift" \
   "$mobile_dir/native-checks/RecordingCueCheck.swift" \
   -o "$build_dir/check-recording-cues"

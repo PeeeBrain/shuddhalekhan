@@ -28,22 +28,4 @@ enum KeyboardInsertion {
     return (spaced(left) || closingPunctuation.contains(left)) &&
       (spaced(right) || openingPunctuation.contains(right))
   }
-
-  static func confirmsInsertion(_ inserted: String, before: String, resultingBefore: String) -> Bool {
-    resultingBefore != before && resultingBefore.hasSuffix(inserted)
-      && (before + inserted).hasSuffix(resultingBefore)
-  }
-
-  struct Undo {
-    let document: UUID
-    let before: String
-    let after: String
-    let inserted: String
-    let expires: Date
-
-    func matches(document: UUID, before: String?, after: String?, selected: String?, now: Date) -> Bool {
-      now < expires && document == self.document && (selected?.isEmpty ?? true)
-        && before == self.before && after == self.after && self.before.hasSuffix(inserted)
-    }
-  }
 }

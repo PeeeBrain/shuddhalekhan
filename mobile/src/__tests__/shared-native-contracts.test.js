@@ -18,6 +18,8 @@ test('prebuild generates extension contracts and replaces stale inputs on repeat
     ['shuddhalekhan-agent-activity', 'agent-activity', 'AgentActivityAttributes.swift'],
     ['shuddhalekhan-speech', 'transcript-keyboard', 'DictationStyle.swift'],
     ['shuddhalekhan-speech', 'transcript-keyboard', 'KeyboardInsertion.swift'],
+    ['shuddhalekhan-speech', 'transcript-keyboard', 'ParakeetConfiguration.swift'],
+    ['shuddhalekhan-speech', 'transcript-keyboard', 'DictationFormatter.swift'],
     ['shuddhalekhan-speech', 'agent-activity', 'SystemDictationAttributes.swift'],
   ];
   try {

@@ -11,6 +11,7 @@ module.exports = config => {
     for (const [module, target, files] of [
       ['shuddhalekhan-speech', 'transcript-keyboard', [
         'DictationStyle.swift', 'KeyboardInsertion.swift', 'KeyboardSessionProtocol.swift', 'KeyboardSessionChannel.swift',
+        'ParakeetConfiguration.swift', 'DictationFormatter.swift',
       ]],
       ['shuddhalekhan-agent-activity', 'agent-activity', ['AgentActivityAttributes.swift']],
       ['shuddhalekhan-speech', 'agent-activity', ['SystemDictationAttributes.swift']],

@@ -122,7 +122,7 @@ final class SystemDictation {
       try Task.checkCancellation()
 
       let session = AVAudioSession.sharedInstance()
-      try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+      try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP])
       try session.setActive(true)
       sessionActive = true
       let recorder = try AVAudioRecorder(url: file, settings: [

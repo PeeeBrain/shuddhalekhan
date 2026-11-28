@@ -101,8 +101,9 @@ final class KeyboardSessionHost {
     guard UIApplication.shared.applicationState == .active else { throw KeyboardSessionError.bridgeUnavailable }
     let session = AVAudioSession.sharedInstance()
     cues.stop()
-    // A2DP adds Bluetooth output while retaining the keyboard's existing input routes.
-    try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+    // Mixing keeps other apps' video and music playing for the whole session instead of stopping them (as Hex's
+    // warm session does); A2DP adds Bluetooth output while retaining the keyboard's existing input routes.
+    try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP])
     mark("category_set")
     try session.setActive(true)
     mark("audio_active")
@@ -410,6 +411,7 @@ final class KeyboardSessionHost {
   private func publish(_ update: KeyboardSession.State) {
     var next = update
     next.style = DictationSettings.preferences.style
+    next.language = configuration?.language
     state = next
     log.notice("KeyboardBridge phase \(next.phase.rawValue, privacy: .public)")
     server.publish(next)
