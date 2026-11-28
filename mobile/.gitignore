@@ -47,4 +47,6 @@ yarn-error.*
 /targets/agent-activity/AgentActivityAttributes.swift
 /targets/transcript-keyboard/DictationStyle.swift
 /targets/transcript-keyboard/KeyboardInsertion.swift
+/targets/transcript-keyboard/ParakeetConfiguration.swift
+/targets/transcript-keyboard/DictationFormatter.swift
 /targets/agent-activity/SystemDictationAttributes.swift

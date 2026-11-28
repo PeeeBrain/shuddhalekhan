@@ -411,6 +411,7 @@ final class KeyboardSessionHost {
   private func publish(_ update: KeyboardSession.State) {
     var next = update
     next.style = DictationSettings.preferences.style
+    next.language = configuration?.language
     state = next
     log.notice("KeyboardBridge phase \(next.phase.rawValue, privacy: .public)")
     server.publish(next)

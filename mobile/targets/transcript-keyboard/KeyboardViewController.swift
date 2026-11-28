@@ -2,10 +2,11 @@ import Network
 import OSLog
 import UIKit
 
-/// The typing keyboard in Typing/ (adapted from Hex, see Typing/NOTICE.md) on Shuddhalekhan's keyboard session. The keyboard never
-/// records: the strip's Dictation key (trailing) and Agent key (leading) ask the app's active keyboard session to
-/// record, then insert that request's transcript at the cursor (Dictation) or leave it to the app, which hands it
-/// to Agent Mode. See KeyboardSessionProtocol.swift.
+/// The typing keyboard in Typing/ (adapted from Hex, see Typing/NOTICE.md) on Shuddhalekhan's keyboard session. The
+/// strip's Dictation key (trailing) and Agent key (leading) ask the app's active keyboard session to record, then
+/// insert that request's transcript at the cursor (Dictation) or leave it to the app, which hands it to Agent Mode.
+/// See KeyboardSessionProtocol.swift. With no session, Dictation records and transcribes in the keyboard itself
+/// (`KeyboardLocalDictation`, iOS 26) once it has its own model; otherwise a voice key opens the app.
 final class KeyboardViewController: UIInputViewController {
   private static let ackTimeout: TimeInterval = 3
   private static let connecting = "Connecting to Shuddhalekhan…"
@@ -17,9 +18,18 @@ final class KeyboardViewController: UIInputViewController {
   /// A voice key tapped with no session opens the app, which starts one (`shuddhalekhan://keyboard-session`).
   /// The first live session the keyboard finds within `launchWindow` starts that recording, so coming back
   /// with ◀ dictates without a second tap. Static: iOS may build a new controller for the return.
-  private static var awaitingSession: (mode: KeyboardSession.Mode, at: Date)?
+  /// The field rides along: coming back to another one doesn't start Dictation there (Agent Mode inserts nothing). Fields UIKit can't name (nil)
+  /// can't be told apart, as before.
+  private static var awaitingSession: (mode: KeyboardSession.Mode, at: Date, document: UUID?)?
+  /// A discovery record whose session is gone (the app ended it in the background, where it can't clear the record):
+  /// skipped, so Dictate reaches the keyboard's own recording or the app. Known by the session's last state, or by a
+  /// refused connection (no listener); a slow or full listener is retried. Opening the app tries it again.
+  private static var deadToken: String?
   private static let launchWindow: TimeInterval = 60
   private static let sessionLink = URL(string: "shuddhalekhan://keyboard-session")!
+  /// The last session's Parakeet language and style, for dictating without one.
+  private static let languageKey = "localDictationLanguage"
+  private static let styleKey = "localDictationStyle"
 
   private let model = KeyboardViewModel()
   private var keyboard: FullKeyboardView?
@@ -35,6 +45,8 @@ final class KeyboardViewController: UIInputViewController {
   private var channel: KeyboardSessionChannel?
   private var bridge: KeyboardSession.Bridge?
   private var receivedState = false
+  /// Made on the first Dictate the keyboard records itself.
+  private var local: KeyboardLocalDictation?
   private let log = Logger(subsystem: "com.shuddhalekhan.mobile", category: "KeyboardBridge")
 
   /// UIKit's own input view, swapped for one that adopts `UIInputViewAudioFeedback` so the keys can click.
@@ -58,7 +70,9 @@ final class KeyboardViewController: UIInputViewController {
       self?.view.setNeedsLayout()
       self?.view.layoutIfNeeded()
     }
-    keyboard.onTextEdit = { [weak self] in self?.clearNotice() }
+    keyboard.onTextEdit = { [weak self] in
+      if self?.model.notice != Self.downloadNotice { self?.clearNotice() }
+    }
     keyboard.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(keyboard)
     NSLayoutConstraint.activate([
@@ -74,7 +88,10 @@ final class KeyboardViewController: UIInputViewController {
     model.onStop = { [weak self] in self?.stop() }
     model.onCancel = { [weak self] in self?.cancel() }
     model.onStyleSelected = { [weak self] in self?.setStyle($0) }
-    model.onDismissNotice = { [weak self] in self?.clearNotice() }
+    model.onDismissNotice = { [weak self] in
+      if self?.model.notice == Self.downloadNotice { KeyboardLocalDictation.cancelDownload() }
+      self?.clearNotice()
+    }
   }
 
   override func viewWillAppear(_ animated: Bool) {
@@ -106,6 +123,7 @@ final class KeyboardViewController: UIInputViewController {
 
   override func viewWillDisappear(_ animated: Bool) {
     super.viewWillDisappear(animated)
+    local?.cancel()
     // Closing the authenticated connection cancels its utterance on the app side.
     if let pendingId { send(.cancel, id: pendingId) }
     pendingId = nil
@@ -153,6 +171,8 @@ final class KeyboardViewController: UIInputViewController {
   override func didReceiveMemoryWarning() {
     super.didReceiveMemoryWarning()
     keyboard?.handleMemoryWarning()
+    if model.notice == Self.downloadNotice { show("Paused the download: the keyboard is low on memory.") }
+    KeyboardLocalDictation.memoryWarned(local)
   }
 
   // MARK: Session
@@ -172,7 +192,7 @@ final class KeyboardViewController: UIInputViewController {
     if channel != nil { return }
     guard let data = UIPasteboard(name: UIPasteboard.Name(KeyboardSession.discoveryPasteboard), create: false)?
       .data(forPasteboardType: KeyboardSession.payloadType),
-      let bridge = KeyboardSession.decodeBridge(data, now: KeyboardSession.nowMs()),
+      let bridge = KeyboardSession.decodeBridge(data, now: KeyboardSession.nowMs()), bridge.token != Self.deadToken,
       let port = NWEndpoint.Port(rawValue: bridge.port) else {
       session = nil
       return
@@ -195,7 +215,10 @@ final class KeyboardViewController: UIInputViewController {
       self.receive(state)
       if let awaiting = Self.awaitingSession, self.session?.isLive(now: KeyboardSession.nowMs()) == true {
         Self.awaitingSession = nil
-        if Date().timeIntervalSince(awaiting.at) < Self.launchWindow { return self.start(awaiting.mode) }
+        if Date().timeIntervalSince(awaiting.at) < Self.launchWindow,
+           awaiting.mode == .agent || awaiting.document == self.keyboard?.engine.target.documentIdentifier {
+          return self.start(awaiting.mode)
+        }
       }
       if wasConnecting, self.model.notice == Self.connecting {
         if self.session?.isLive(now: KeyboardSession.nowMs()) == true {
@@ -208,6 +231,7 @@ final class KeyboardViewController: UIInputViewController {
     link.onClose = { [weak self, weak link] in
       guard let self, let link, self.channel === link else { return }
       let endedNormally = self.receivedState && self.session == nil
+      if link.refused || endedNormally { Self.deadToken = bridge.token }
       self.channel = nil
       self.bridge = nil
       self.pendingId = nil
@@ -231,6 +255,11 @@ final class KeyboardViewController: UIInputViewController {
   private func receive(_ state: KeyboardSession.State) {
     let previous = session
     session = state.isLive(now: KeyboardSession.nowMs()) || state.isBusy ? state : nil
+    if let session, let language = session.language,
+       previous?.language != language || previous?.style != session.style {
+      UserDefaults.standard.set(language, forKey: Self.languageKey)
+      UserDefaults.standard.set(session.style?.rawValue, forKey: Self.styleKey)
+    }
     // Levels arrive up to 15 times a second while recording. They only repaint the dots, never the keyboard.
     if let previous, let session, session.phase == .recording, previous.phase == .recording,
        previous.requestId == session.requestId, previous.sessionEndsAt == session.sessionEndsAt,
@@ -278,17 +307,15 @@ final class KeyboardViewController: UIInputViewController {
   }
 
   private func start(_ mode: KeyboardSession.Mode) {
-    guard pendingId == nil else { return }
+    guard pendingId == nil, localPhase == nil else { return }
     if channel == nil { refresh() }
     guard let session, session.isLive(now: KeyboardSession.nowMs()) else {
       if channel != nil && !receivedState { return show(Self.connecting) }
+      // An expired session finishing its last utterance still holds the microphone.
+      if self.session?.isBusy == true { return show("Shuddhalekhan is finishing the last dictation. Try again in a moment.") }
       guard hasFullAccess else { return show(Self.noSession) }
-      Self.awaitingSession = (mode, Date())
-      if !ContainingAppOpener.open(Self.sessionLink, from: self) {
-        Self.awaitingSession = nil
-        show(Self.noSession)
-      }
-      return
+      if mode == .dictate, startLocally() { return }
+      return openApp(mode)
     }
     if mode == .agent, !session.agentReady {
       return show("Set up Agent Mode in Shuddhalekhan to ask the agent from here.")
@@ -311,9 +338,83 @@ final class KeyboardViewController: UIInputViewController {
     }
   }
 
+  private func openApp(_ mode: KeyboardSession.Mode) {
+    Self.awaitingSession = (mode, Date(), keyboard?.engine.target.documentIdentifier)
+    Self.deadToken = nil
+    if !ContainingAppOpener.open(Self.sessionLink, from: self) {
+      Self.awaitingSession = nil
+      if model.notice != Self.downloadNotice { show(Self.noSession) }
+    }
+  }
+
+  /// Dictates in the keyboard when it can, and downloads its model on the first try. False leaves it to the app:
+  /// before iOS 26, before any session told it the language, or while the model downloads.
+  private func startLocally() -> Bool {
+    // A field UIKit can't name can't be told from the next one, so the app's session takes it, without a download.
+    guard #available(iOS 26.0, *), let language = UserDefaults.standard.string(forKey: Self.languageKey),
+          let configuration = try? ParakeetConfiguration(language: language),
+          let document = keyboard?.engine.target.documentIdentifier else { return false }
+    guard KeyboardLocalDictation.canStart(configuration) else {
+      guard !KeyboardParakeet.isInstalled(configuration), !KeyboardLocalDictation.isDownloading else { return false }
+      guard KeyboardLocalDictation.canDownload else {
+        // The other language's model may hold the room: released, so the next Dictate can download.
+        Task { await KeyboardParakeet.shared.release() }
+        return false
+      }
+      KeyboardLocalDictation.download(configuration) { [weak self] ok in
+        self?.show(ok ? "Ready. Tap Dictate to dictate right here." : "Couldn't download the speech model. Try again.")
+      }
+      // After the download starts, so this notice stays up with it.
+      show(Self.downloadNotice)
+      return true
+    }
+    let local = self.local ?? makeLocal()
+    pendingMode = .dictate
+    pendingDocument = document
+    let style = UserDefaults.standard.string(forKey: Self.styleKey).flatMap(DictationStyle.init(rawValue:)) ?? .legacy
+    clearNotice()
+    local.start(in: view, configuration: configuration, style: style)
+    return true
+  }
+
+  private func makeLocal() -> KeyboardLocalDictation {
+    let local = KeyboardLocalDictation()
+    self.local = local
+    local.onChange = { [weak self] in self?.render() }
+    local.onLevel = { [weak self] in self?.keyboard?.pushLevel($0) }
+    local.onText = { [weak self] text in
+      guard let self else { return }
+      guard self.pendingDocument == self.keyboard?.engine.target.documentIdentifier else {
+        return self.show("The text field changed. Dictate again to insert here.")
+      }
+      self.insertDictation(text)
+    }
+    local.onFailure = { [weak self] message, beforeRecording in
+      // The microphone never opened here (permission, or iOS refused it): the app's session still can.
+      // A late one (the model loaded slowly) doesn't follow the user to another field.
+      guard let self else { return }
+      if beforeRecording, self.pendingDocument == self.keyboard?.engine.target.documentIdentifier {
+        self.openApp(.dictate)
+      } else {
+        self.show(message)
+      }
+    }
+    return local
+  }
+
+  private var localPhase: KeyboardViewModel.StagePhase? {
+    switch local?.phase {
+    case nil, .idle?: nil
+    case .starting?: .starting
+    case .recording?: .recording
+    case .transcribing?: .transcribing
+    }
+  }
+
   /// ✓, or lifting a held voice key. The session only stops a recording; before one starts there is nothing to
   /// keep, and a transcription already under way finishes by itself.
   private func stop() {
+    if localPhase != nil { return local?.stop() ?? () }
     guard let pendingId else { return }
     switch activePhase {
     case .recording?: send(.stop, id: pendingId)
@@ -324,6 +425,7 @@ final class KeyboardViewController: UIInputViewController {
 
   /// Leaves at once; the app settles the request as cancelled, which this keyboard no longer waits for.
   private func cancel() {
+    if localPhase != nil { return local?.cancel() ?? () }
     guard let pendingId else { return }
     send(.cancel, id: pendingId)
     self.pendingId = nil
@@ -333,6 +435,8 @@ final class KeyboardViewController: UIInputViewController {
   private func setStyle(_ style: DictationStyle) {
     if channel == nil { refresh() }
     guard let channel, let bridge, let session, session.isLive(now: KeyboardSession.nowMs()) else {
+      // The download's notice holds its ✕, the only way to stop it.
+      if model.notice == Self.downloadNotice { return }
       return show(channel != nil && !receivedState ? Self.connecting : Self.noSession)
     }
     guard pendingId == nil, !session.isBusy else { return }
@@ -383,10 +487,11 @@ final class KeyboardViewController: UIInputViewController {
 
   /// Publishes only what changed: every assignment refreshes the whole keyboard.
   private func render() {
-    let stage: KeyboardViewModel.StagePhase = switch (pendingId, activePhase) {
-    case (nil, _): .idle
-    case (_, .recording?): .recording
-    case (_, .transcribing?): .transcribing
+    let stage: KeyboardViewModel.StagePhase = switch (localPhase, pendingId, activePhase) {
+    case (let local?, _, _): local
+    case (nil, nil, _): .idle
+    case (nil, _, .recording?): .recording
+    case (nil, _, .transcribing?): .transcribing
     default: .starting
     }
     if model.stagePhase != stage { model.stagePhase = stage }
@@ -397,12 +502,17 @@ final class KeyboardViewController: UIInputViewController {
   /// One line in the strip, over the suggestions, until the next keystroke, ✕, or a few seconds pass.
   private func show(_ notice: String) {
     model.notice = notice
-    UIAccessibility.post(notification: .announcement, argument: notice)
+    // A hidden keyboard (a download ending) keeps the notice for its return, but says nothing.
+    if view.window != nil { UIAccessibility.post(notification: .announcement, argument: notice) }
     noticeWork?.cancel()
+    // A download's notice stays up until it ends.
+    guard notice != Self.downloadNotice else { return }
     let work = DispatchWorkItem { [weak self] in self?.clearNotice() }
     noticeWork = work
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.noticeDuration, execute: work)
   }
+
+  private static let downloadNotice = "Downloading the speech model (several hundred MB). Keep the keyboard open…"
 
   private func clearNotice() {
     noticeWork?.cancel()

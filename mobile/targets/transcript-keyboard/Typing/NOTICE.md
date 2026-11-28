@@ -6,12 +6,12 @@ The typing half of Shuddhalekhan's iOS keyboard extension is adapted from the iP
 `Typing/` folder is Hex's work: the keys, suggestion strip, autocorrect, swipe typing, emoji panel and selection
 tools. Each file starts with a line naming the Hex file it came from.
 
-Only this keyboard comes from Hex. Shuddhalekhan's desktop app, the rest of the iOS app, speech recognition,
+Only this keyboard comes from Hex. Shuddhalekhan's desktop app, the rest of the iOS app, the app's speech recognition,
 keyboard sessions and Agent Mode are Shuddhalekhan's own and borrow nothing from it.
 
 Shuddhalekhan renamed the files and types for this codebase, and replaced Hex's dictation routes, settings,
 App Group and branding: the Dictation and Agent keys in the strip drive Shuddhalekhan's keyboard session
-(`../KeyboardViewController.swift`). `../ContainingAppOpener.swift`, which opens the app from the keyboard, is Hex's too. Every keyboard setting is fixed at Hex's default, the language is always
+(`../KeyboardViewController.swift`). `../ContainingAppOpener.swift`, which opens the app from the keyboard, is Hex's too, as are the keyboard's own recording and transcription with no session (`../KeyboardWebCapture.swift`, `../KeyboardLocalDictation.swift`), trimmed to the default microphone and Parakeet. Every keyboard setting is fixed at Hex's default, the language is always
 Automatic, and only the English typing model ships.
 
 ## Bundled data

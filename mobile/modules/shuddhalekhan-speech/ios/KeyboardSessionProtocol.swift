@@ -60,6 +60,9 @@ enum KeyboardSession {
     let error: String?
     let level: Float?
     var style: DictationStyle? = nil
+    /// The session's Parakeet language (`ParakeetConfiguration.language`), which the keyboard keeps for dictating
+    /// without a session (`KeyboardLocalDictation`).
+    var language: String? = nil
 
     static let ended = State(sessionEndsAt: 0, requestId: nil, mode: nil, agentReady: false,
       phase: .idle, text: nil, error: nil, level: nil)
@@ -69,7 +72,8 @@ enum KeyboardSession {
     func with(_ phase: Phase, requestId: String?, mode: Mode? = nil, text: String? = nil,
               error: String? = nil, level: Float? = nil) -> State {
       State(sessionEndsAt: sessionEndsAt, requestId: requestId, mode: requestId == nil ? nil : mode ?? self.mode,
-        agentReady: agentReady, phase: phase, text: text, error: error, level: phase == .recording ? level : nil, style: style)
+        agentReady: agentReady, phase: phase, text: text, error: error, level: phase == .recording ? level : nil, style: style,
+        language: language)
     }
   }
 
@@ -95,7 +99,8 @@ enum KeyboardSession {
           (state.phase == .idle || state.requestId != nil),
           state.level.map({ state.phase == .recording && $0.isFinite && (0...1).contains($0) }) ?? true,
           (state.text?.utf8.count ?? 0) <= maxTextBytes,
-          (state.error?.utf8.count ?? 0) <= maxErrorBytes else { return nil }
+          (state.error?.utf8.count ?? 0) <= maxErrorBytes,
+          (state.language?.utf8.count ?? 0) <= 16 else { return nil }
     return state
   }
 

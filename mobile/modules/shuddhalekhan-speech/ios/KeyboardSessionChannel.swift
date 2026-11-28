@@ -12,6 +12,8 @@ final class KeyboardSessionChannel {
   var onOpen: () -> Void = {}
   var onMessage: (Data) -> Void = { _ in }
   var onClose: () -> Void = {}
+  /// Closed because nothing listens on the port: the other side's session is gone, not slow.
+  private(set) var refused = false
 
   init(_ connection: NWConnection, maxBytes: Int) {
     self.connection = connection
@@ -28,6 +30,9 @@ final class KeyboardSessionChannel {
         case .ready:
           self.onOpen()
           self.receive()
+        case .waiting(.posix(.ECONNREFUSED)), .failed(.posix(.ECONNREFUSED)):
+          self.refused = true
+          self.close()
         case .failed, .cancelled: self.close()
         default: break
         }
