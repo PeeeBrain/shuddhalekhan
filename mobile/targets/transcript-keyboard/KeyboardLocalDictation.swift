@@ -5,15 +5,30 @@ import AVFAudio
 import Darwin
 import FluidAudio
 import Foundation
+import Speech
 import UIKit
 
 /// Dictate with no keyboard session: the keyboard records itself (`KeyboardWebCapture`, iOS 26) and transcribes with
-/// its own Parakeet copy. Without an App Group it can't read the app's model, so it downloads one into its container
+/// its own Parakeet copy where that fits in its memory, else with Apple's speech recognition (`KeyboardAppleSpeech`),
+/// as Hex's keyboard does. Without an App Group it can't read the app's model, so it downloads one into its container
 /// once. No Live Activity, no app switch; audio that the capture paused resumes after it (Hex's pattern). Before
 /// iOS 26 a keyboard's web view gets no microphone, so the caller only starts it there.
 @MainActor
 final class KeyboardLocalDictation {
   enum Phase { case idle, starting, recording, transcribing }
+
+  enum Engine {
+    case parakeet(ParakeetConfiguration)
+    /// Apple's speech recognition in the session's language, or "" for the iPhone's.
+    case apple(language: String)
+
+    var language: String {
+      switch self {
+      case .parakeet(let configuration): configuration.language
+      case .apple(let language): language
+      }
+    }
+  }
 
   private(set) var phase = Phase.idle {
     didSet {
@@ -57,7 +72,12 @@ final class KeyboardLocalDictation {
 
   private var capture: KeyboardWebCapture?
   private var file: KeyboardPCMFile?
-  private var configuration: ParakeetConfiguration?
+  private var engine: Engine?
+  /// Parakeet holds the whole recording in the keyboard's memory; Apple's model runs in Apple's speech service.
+  private var budgetsMemory: Bool {
+    if case .parakeet? = engine { return true }
+    return false
+  }
   private var style = DictationStyle.legacy
   private var otherAudioAtStart = false
   /// The dictation that last opened a microphone, in any keyboard instance.
@@ -133,23 +153,49 @@ final class KeyboardLocalDictation {
 
   // MARK: Dictation
 
-  func start(in host: UIView, configuration: ParakeetConfiguration, style: DictationStyle) {
+  func start(in host: UIView, engine: Engine, style: DictationStyle) {
     guard phase == .idle else { return }
     generation += 1
     let current = generation
-    self.configuration = configuration
+    self.engine = engine
     self.style = style
     level = 0
     phase = .starting
-    // The model loads before the microphone opens (seconds the first time: it compiles for the Neural Engine), so a
-    // keyboard without the room hands over to the app before anything is said.
+    // The model loads before the microphone opens (seconds the first time: Parakeet compiles for the Neural Engine,
+    // Apple's may download), so a keyboard that can't hands over to the app before anything is said.
     Task { [weak self] in
-      let loaded = await KeyboardParakeet.shared.prepare(configuration)
+      let failure = await Self.prepare(engine)
       guard let self, self.generation == current, self.phase == .starting else { return }
-      guard loaded, Self.cooledDown, KeyboardParakeet.fits(headroom: Self.captureHeadroom) else {
-        return self.fail("Not enough memory to dictate in the keyboard.", beforeRecording: true)
-      }
+      if let failure { return self.fail(failure, beforeRecording: true) }
       self.openMicrophone(in: host, generation: current)
+    }
+  }
+
+  /// Nil once `engine` can take a dictation, else why it can't.
+  private static func prepare(_ engine: Engine) async -> String? {
+    switch engine {
+    case .parakeet(let configuration):
+      let loaded = await KeyboardParakeet.shared.prepare(configuration)
+      return loaded && cooledDown && KeyboardParakeet.fits(headroom: captureHeadroom)
+        ? nil : "Not enough memory to dictate in the keyboard."
+    case .apple(let language):
+      guard #available(iOS 26.0, *) else { return "Dictating in the keyboard needs iOS 26." }
+      do {
+        try await KeyboardAppleSpeech.prepare(language)
+        return nil
+      } catch {
+        return (error as? LocalizedError)?.errorDescription ?? "Apple's speech recognition isn't ready. Try again."
+      }
+    }
+  }
+
+  private static func transcribe(_ url: URL, engine: Engine, seconds: Double) async throws -> String {
+    switch engine {
+    case .parakeet(let configuration):
+      return try await KeyboardParakeet.shared.transcribe(url, configuration: configuration, seconds: seconds)
+    case .apple(let language):
+      guard #available(iOS 26.0, *) else { throw CancellationError() }
+      return try await KeyboardAppleSpeech.transcribe(url, language: language)
     }
   }
 
@@ -273,7 +319,7 @@ final class KeyboardLocalDictation {
       level = level * 0.35 + CGFloat(min(1, max(0, (db + 50) / 50))) * 0.65
       if phase == .starting {
         // Room for a few seconds, so a recording that starts isn't stopped early before it holds a word.
-        guard KeyboardParakeet.canTranscribe(seconds: 5) else {
+        guard !budgetsMemory || KeyboardParakeet.canTranscribe(seconds: 5) else {
           capture?.stop(flush: false)
           return fail("Not enough memory to dictate in the keyboard.", beforeRecording: true)
         }
@@ -287,7 +333,7 @@ final class KeyboardLocalDictation {
       guard phase == .recording else { return }
       onLevel?(level)
       // Stops while its transcription still fits, rather than be discarded at the end for want of memory.
-      if !KeyboardParakeet.canTranscribe(seconds: file.seconds + 1) {
+      if budgetsMemory, !KeyboardParakeet.canTranscribe(seconds: file.seconds + 1) {
         earlyStop = "Stopped early: the keyboard is low on memory."
         stop()
       }
@@ -317,7 +363,7 @@ final class KeyboardLocalDictation {
   }
 
   private func finish() {
-    guard let file, let configuration else { return }
+    guard let file, let engine else { return }
     self.file = nil
     generation += 1
     let current = generation
@@ -340,7 +386,7 @@ final class KeyboardLocalDictation {
     Task { [weak self] in
       let result: Result<String, Error>
       do {
-        result = .success(try await KeyboardParakeet.shared.transcribe(file.url, configuration: configuration, seconds: seconds))
+        result = .success(try await Self.transcribe(file.url, engine: engine, seconds: seconds))
       } catch {
         result = .failure(error)
       }
@@ -355,7 +401,7 @@ final class KeyboardLocalDictation {
           self.onFailure?(notice, false)
         }
         if !text.isEmpty {
-          let styled = DictationFormatter.style(text, as: style, language: configuration.language)
+          let styled = DictationFormatter.style(text, as: style, language: engine.language)
           self.onText?(styled.isEmpty ? text : styled)
         }
         self.phase = .idle
@@ -588,7 +634,7 @@ actor KeyboardParakeet {
     }
   }
 
-  private static func memory() -> (footprint: Int, available: Int) {
+  static func memory() -> (footprint: Int, available: Int) {
     var info = task_vm_info_data_t()
     var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
     let result = withUnsafeMutablePointer(to: &info) {
@@ -597,5 +643,67 @@ actor KeyboardParakeet {
       }
     }
     return (result == KERN_SUCCESS ? Int(info.phys_footprint) : 0, os_proc_available_memory())
+  }
+}
+
+/// Apple's speech recognition, Hex's keyboard engine where Parakeet doesn't fit (`KeyboardSpeech`): its model runs in
+/// Apple's speech service, so it costs the keyboard a few MB. The language's model installs once, on the first Dictate.
+@available(iOS 26.0, *)
+enum KeyboardAppleSpeech {
+  private enum Failure: LocalizedError {
+    case unsupported
+    var errorDescription: String? { "Apple's speech recognition can't dictate this language on this iPhone." }
+  }
+
+  static func prepare(_ language: String) async throws {
+    let speech = try await module(language)
+    if let request = try await AssetInventory.assetInstallationRequest(supporting: [speech.module]) {
+      try await request.downloadAndInstall()
+    }
+  }
+
+  static func transcribe(_ url: URL, language: String) async throws -> String {
+    let speech = try await module(language)
+    let analyzer = SpeechAnalyzer(modules: [speech.module])
+    try await analyzer.start(inputAudioFile: try AVAudioFile(forReading: url), finishAfterFile: true)
+    return try await speech.finalText()
+  }
+
+  /// The session's language in this iPhone's region (en on an Indian iPhone is en-IN), else the iPhone's language.
+  /// `SpeechTranscriber` where it can, else `DictationTranscriber`, which has more languages (Hex).
+  private static func module(_ language: String) async throws -> Module {
+    let current = Locale.current
+    let wanted = language.isEmpty || current.language.languageCode?.identifier == language ? current : Locale(identifier: language)
+    if SpeechTranscriber.isAvailable, let locale = await SpeechTranscriber.supportedLocale(equivalentTo: wanted) {
+      return .speech(SpeechTranscriber(locale: locale, preset: .transcription))
+    }
+    if let locale = await DictationTranscriber.supportedLocale(equivalentTo: wanted) {
+      return .dictation(DictationTranscriber(locale: locale, preset: .longDictation))
+    }
+    throw Failure.unsupported
+  }
+
+  private enum Module {
+    case speech(SpeechTranscriber)
+    case dictation(DictationTranscriber)
+
+    var module: any SpeechModule {
+      switch self {
+      case .speech(let transcriber): transcriber
+      case .dictation(let transcriber): transcriber
+      }
+    }
+
+    /// The final results back to back, once the analyzer has finished the file.
+    func finalText() async throws -> String {
+      var text = ""
+      switch self {
+      case .speech(let transcriber):
+        for try await result in transcriber.results where result.isFinal { text += String(result.text.characters) }
+      case .dictation(let transcriber):
+        for try await result in transcriber.results where result.isFinal { text += String(result.text.characters) }
+      }
+      return text
+    }
   }
 }

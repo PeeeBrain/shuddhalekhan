@@ -347,33 +347,45 @@ final class KeyboardViewController: UIInputViewController {
     }
   }
 
-  /// Dictates in the keyboard when it can, and downloads its model on the first try. False leaves it to the app:
-  /// before iOS 26, before any session told it the language, or while the model downloads.
+  /// Dictates in the keyboard (iOS 26): with its own Parakeet where that fits in the keyboard's memory (downloaded on
+  /// the first try), else with Apple's speech recognition, as Hex's keyboard does. False leaves it to the app: before
+  /// iOS 26, or in a field UIKit can't name, which can't be told from the next one.
   private func startLocally() -> Bool {
-    // A field UIKit can't name can't be told from the next one, so the app's session takes it, without a download.
-    guard #available(iOS 26.0, *), let language = UserDefaults.standard.string(forKey: Self.languageKey),
-          let configuration = try? ParakeetConfiguration(language: language),
-          let document = keyboard?.engine.target.documentIdentifier else { return false }
-    guard KeyboardLocalDictation.canStart(configuration) else {
-      guard !KeyboardParakeet.isInstalled(configuration), !KeyboardLocalDictation.isDownloading else { return false }
-      guard KeyboardLocalDictation.canDownload else {
-        // The other language's model may hold the room: released, so the next Dictate can download.
-        Task { await KeyboardParakeet.shared.release() }
-        return false
-      }
-      KeyboardLocalDictation.download(configuration) { [weak self] ok in
+    guard #available(iOS 26.0, *) else { return false }
+    guard let document = keyboard?.engine.target.documentIdentifier else {
+      log.notice("Keyboard dictation: unnamed field, opening the app")
+      return false
+    }
+    // Until a session says the language, Apple's speech recognition in the iPhone's.
+    let language = UserDefaults.standard.string(forKey: Self.languageKey)
+    let parakeet = language.flatMap { try? ParakeetConfiguration(language: $0) }
+    let memory = KeyboardParakeet.memory()
+    let engine: KeyboardLocalDictation.Engine
+    if let parakeet, KeyboardLocalDictation.canStart(parakeet) {
+      engine = .parakeet(parakeet)
+    } else if KeyboardLocalDictation.isDownloading {
+      // Its notice holds the ✕, the only way to stop it.
+      show(Self.downloadNotice)
+      return true
+    } else if let parakeet, !KeyboardParakeet.isInstalled(parakeet), KeyboardLocalDictation.canDownload {
+      KeyboardLocalDictation.download(parakeet) { [weak self] ok in
         self?.show(ok ? "Ready. Tap Dictate to dictate right here." : "Couldn't download the speech model. Try again.")
       }
       // After the download starts, so this notice stays up with it.
       show(Self.downloadNotice)
       return true
+    } else {
+      // A Parakeet model held without the room to use it leaves its memory to this dictation.
+      Task { await KeyboardParakeet.shared.release() }
+      engine = .apple(language: language ?? "")
     }
+    log.notice("Keyboard dictation engine=\(String(describing: engine), privacy: .public) language=\(language ?? "none", privacy: .public) footprint_mb=\(memory.footprint >> 20, privacy: .public) available_mb=\(memory.available >> 20, privacy: .public)")
     let local = self.local ?? makeLocal()
     pendingMode = .dictate
     pendingDocument = document
     let style = UserDefaults.standard.string(forKey: Self.styleKey).flatMap(DictationStyle.init(rawValue:)) ?? .legacy
     clearNotice()
-    local.start(in: view, configuration: configuration, style: style)
+    local.start(in: view, engine: engine, style: style)
     return true
   }
 
@@ -394,6 +406,7 @@ final class KeyboardViewController: UIInputViewController {
       // A late one (the model loaded slowly) doesn't follow the user to another field.
       guard let self else { return }
       if beforeRecording, self.pendingDocument == self.keyboard?.engine.target.documentIdentifier {
+        self.log.notice("Keyboard dictation failed before recording, opening the app: \(message, privacy: .public)")
         self.openApp(.dictate)
       } else {
         self.show(message)

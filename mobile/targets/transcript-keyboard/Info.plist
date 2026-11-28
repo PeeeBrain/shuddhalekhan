@@ -19,6 +19,8 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Shuddhalekhan turns what you say into text on this iPhone. The recording never leaves it and is deleted once it's transcribed.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Shuddhalekhan uses Apple's on-device speech recognition to turn what you say into text when its own model doesn't fit in the keyboard.</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionAttributes</key>
