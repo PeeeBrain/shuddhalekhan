@@ -157,10 +157,6 @@ final class KeyboardKeyPlaneView: UIView {
             context.setAlpha(keycapAlpha)
             // Keycaps on whole device pixels, as Apple draws them: crisp edges, not half-covered ones.
             let frame = pixelAligned(key.frame)
-            // Row 4's labels sit where they would on Apple's taller row 4 (`bottomRowTrim`).
-            let labelFrame = key.row == 3
-                ? CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: frame.height + layout.metrics.bottomRowTrim)
-                : frame
             if layout.isNumberPad, key.kind != .voice, key.kind != .globe {
                 drawNumberPadKey(key, in: frame, pressed: pressed.contains(key.kind), landscape: layout.orientation == .landscape, context: context, radius: radius, showGlyphs: showGlyphs)
                 continue
@@ -176,13 +172,13 @@ final class KeyboardKeyPlaneView: UIView {
                 if let upper = key.shifted, let lower = key.character, layout.metrics.pad?.isDocked == true {
                     // The docked iPad's two-symbol keys: the shifted one over the one typed, as Apple's.
                     let font = UIFont.systemFont(ofSize: 18, weight: .regular)
-                    let half = labelFrame.height / 2
-                    drawText(upper, in: CGRect(x: labelFrame.minX, y: labelFrame.minY + 0.2 * half, width: labelFrame.width, height: half), font: font, color: palette.keyText)
-                    drawText(lower, in: CGRect(x: labelFrame.minX, y: labelFrame.midY - 0.2 * half, width: labelFrame.width, height: half), font: font, color: palette.keyText)
+                    let half = frame.height / 2
+                    drawText(upper, in: CGRect(x: frame.minX, y: frame.minY + 0.2 * half, width: frame.width, height: half), font: font, color: palette.keyText)
+                    drawText(lower, in: CGRect(x: frame.minX, y: frame.midY - 0.2 * half, width: frame.width, height: half), font: font, color: palette.keyText)
                     continue
                 }
                 if KeyboardFlicks.isEnabled, let flick = key.flick, layout.metrics.pad?.isDocked == true {
-                    drawFlickKey(key, flick: flick, in: labelFrame)
+                    drawFlickKey(key, flick: flick, in: frame)
                     continue
                 }
                 var label = Self.keycapLabel(engine.keycapLabel(for: key))
@@ -197,9 +193,9 @@ final class KeyboardKeyPlaneView: UIView {
                 style = style.scaled(by: labelScale)
                 if let shown = style.shows { label = shown }
                 if !isLandscape, layout.layer == .letters, label.first?.isLetter == true {
-                    drawLetter(label, in: labelFrame, style: style, capital: isUpperLetter)
+                    drawLetter(label, in: frame, style: style, capital: isUpperLetter)
                 } else {
-                    drawText(label, in: labelFrame, font: style.font, color: palette.keyText, yOffset: style.yOffset)
+                    drawText(label, in: frame, font: style.font, color: palette.keyText, yOffset: style.yOffset)
                 }
             case .space:
                 // Apple's space bar unshades as it becomes the trackpad.
@@ -208,7 +204,7 @@ final class KeyboardKeyPlaneView: UIView {
                 guard showGlyphs(), let spaceLabel else { continue }
                 drawText(
                     spaceLabel,
-                    in: labelFrame,
+                    in: frame,
                     font: .systemFont(ofSize: isLandscape ? 13 : 14.5, weight: .regular),
                     color: palette.keyTextMuted
                 )
@@ -234,7 +230,7 @@ final class KeyboardKeyPlaneView: UIView {
                 guard showGlyphs() else { continue }
                 drawSymbol(
                     returnStyle.symbol,
-                    in: labelFrame,
+                    in: frame,
                     color: ink,
                     pointSize: isLandscape ? 18 : 19,
                     weight: activeAction ? .medium : .regular,
@@ -254,12 +250,12 @@ final class KeyboardKeyPlaneView: UIView {
                     case .locked: "capslock.fill"
                     }
                 }
-                drawSymbol(symbol, in: labelFrame, color: palette.keyText, pointSize: isLandscape ? 18 : 19, yOffset: isLandscape ? -0.16 : 0.67)
+                drawSymbol(symbol, in: frame, color: palette.keyText, pointSize: isLandscape ? 18 : 19, yOffset: isLandscape ? -0.16 : 0.67)
             case .delete:
                 let lit = pressed.contains(.delete)
                 context.fillKeycap(frame, fill: lit ? palette.functionHeldFill : palette.keyFill, shadow: palette.keyShadow, radius: radius)
                 guard showGlyphs() else { continue }
-                drawSymbol(lit ? "delete.left.fill" : "delete.left", in: labelFrame, color: palette.keyText, pointSize: isLandscape ? 18.5 : 19, yOffset: isLandscape ? -0.16 : 0.33)
+                drawSymbol(lit ? "delete.left.fill" : "delete.left", in: frame, color: palette.keyText, pointSize: isLandscape ? 18.5 : 19, yOffset: isLandscape ? -0.16 : 0.33)
             case .layerSwitch:
                 let lit = pressed.contains(key.kind)
                 context.fillKeycap(frame, fill: lit ? palette.keyHeldFill : palette.keyFill, shadow: palette.keyShadow, radius: radius)
@@ -273,23 +269,23 @@ final class KeyboardKeyPlaneView: UIView {
                     : key.label == "#+=" ? LabelStyle.symbolsPageKey
                     : LabelStyle(size: 15.5, yOffset: 0)
                 style = style.scaled(by: labelScale)
-                drawText(key.label, in: labelFrame, font: style.font, color: palette.keyText, yOffset: style.yOffset)
+                drawText(key.label, in: frame, font: style.font, color: palette.keyText, yOffset: style.yOffset)
             case .globe:
                 let lit = pressed.contains(.globe)
                 context.fillKeycap(frame, fill: lit ? palette.functionHeldFill : palette.keyFill, shadow: palette.keyShadow, radius: radius)
                 guard showGlyphs() else { continue }
-                drawSymbol("globe", in: labelFrame, color: palette.keyText, pointSize: isLandscape ? 16 : 19, yOffset: isLandscape ? 0 : -1)
+                drawSymbol("globe", in: frame, color: palette.keyText, pointSize: isLandscape ? 16 : 19, yOffset: isLandscape ? 0 : -1)
             case .emoji:
                 let lit = pressed.contains(.emoji)
                 let fill = lit ? palette.functionHeldFill : palette.keyFill
                 context.fillKeycap(frame, fill: fill, shadow: palette.keyShadow, radius: radius)
                 guard showGlyphs() else { continue }
-                drawEmojiFace(in: labelFrame, diameter: isLandscape ? 18 : 19, context: context, keyFill: fill)
+                drawEmojiFace(in: frame, diameter: isLandscape ? 18 : 19, context: context, keyFill: fill)
             case .dismiss:
                 let lit = pressed.contains(.dismiss)
                 context.fillKeycap(frame, fill: lit ? palette.functionHeldFill : palette.keyFill, shadow: palette.keyShadow, radius: radius)
                 guard showGlyphs() else { continue }
-                drawSymbol("keyboard.chevron.compact.down", in: labelFrame, color: palette.keyText, pointSize: 19, yOffset: 0)
+                drawSymbol("keyboard.chevron.compact.down", in: frame, color: palette.keyText, pointSize: 19, yOffset: 0)
             }
         }
     }
@@ -374,8 +370,8 @@ final class KeyboardKeyPlaneView: UIView {
         let labelText = Self.keycapLabel(engine.keycapLabel(for: key))
         let labelFont = UIFont.systemFont(ofSize: 21 * scale, weight: .regular)
         if p < 1 {
-            let labelFrame = frame.offsetBy(dx: 0, dy: (11 + 8 * p) * scale)
-            drawText(labelText, in: labelFrame, font: labelFont, color: palette.keyText.withAlphaComponent(max(0, 1 - 2 * p)))
+            let frame = frame.offsetBy(dx: 0, dy: (11 + 8 * p) * scale)
+            drawText(labelText, in: frame, font: labelFont, color: palette.keyText.withAlphaComponent(max(0, 1 - 2 * p)))
         }
         let size = (13 + 8 * p) * scale
         let centre = frame.minY + (14.5 + (frame.height / scale / 2 - 14.5) * p) * scale

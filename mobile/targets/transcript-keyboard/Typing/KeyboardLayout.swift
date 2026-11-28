@@ -202,9 +202,10 @@ nonisolated struct KeyboardMetrics: Equatable, Sendable {
     let keysTop: CGFloat
     let keysBottom: CGFloat
     let cornerRadius: CGFloat
-    /// How much shorter row 4's keycaps are than the others: where Apple's row 4 reaches
-    /// below the bottom of a third-party keyboard's view, the keyboard's keeps Apple's top edge.
-    var bottomRowTrim: CGFloat = 0
+    /// How far above Apple's row 4 this keyboard's row 4 keycaps start: where Apple's row 4 reaches
+    /// below the bottom of a third-party keyboard's view, row 4 stays a whole keycap tall by
+    /// starting higher. Touch boundaries stay on Apple's.
+    var bottomRowLift: CGFloat = 0
     /// Row 4 on the letter columns, as Apple's is turned and on the Duo folded: the page key,
     /// the globe and emoji on row 1's columns from q (`bottomRowLeadColumn`), space after them,
     /// and return from this many letter pitches in (8, o's column, turned; 8.5, row 2's l
@@ -238,15 +239,16 @@ nonisolated struct KeyboardMetrics: Equatable, Sendable {
     /// iPhone portrait key geometry, as Apple's keyboard draws it beside this keyboard in the same field
     /// (iOS 27.2) on an 844 to 874 pt iPhone (17e, 17, 17 Pro): 43 pt keycaps on a 54 pt row
     /// pitch, row 1 on the same line on screen. Apple's row 4 ends 4 pt below where a
-    /// third-party keyboard's view ends, so row 4 keeps Apple's top edge and is 4 pt shorter:
-    /// every row's keycaps and touch boundaries sit on Apple's, for typists with Apple's muscle
-    /// memory (confirmed against an iOS 27 screenshot pair, 393 pt iPhone). Hex spread those
+    /// third-party keyboard's view ends, where no third-party keyboard gets touches, so row 4's
+    /// keycaps start 4 pt higher and keep Apple's 43 pt (a 39 pt space bar cost space taps): rows
+    /// 1 to 3 and every touch boundary sit on Apple's, for typists with Apple's muscle memory
+    /// (confirmed against an iOS 27 screenshot pair, 393 pt iPhone). Hex spread those
     /// 4 pt over all four rows instead (42 pt keycaps), which put rows 2 to 4 1, 2 and 3 pt
     /// above Apple's and cost edge and space-bar taps. 4 × 43 pt + 3 × 11 pt − 4 pt = 201 pt.
     static let portrait = KeyboardMetrics(
         side: 6.5, gap: 6, rowGap: 11, keyHeight: 43,
         stripTop: 0, stripHeight: stripBarHeight, stripBottom: stripGap,
-        keysTop: 0, keysBottom: 0, cornerRadius: keyCornerRadius, bottomRowTrim: 4
+        keysTop: 0, keysBottom: 0, cornerRadius: keyCornerRadius, bottomRowLift: 4
     )
 
     /// Upright on iOS 26 (iPhone 12, 16 and 17 Pro, iOS 26.5, beside this keyboard in the same field): the
@@ -519,7 +521,7 @@ nonisolated struct KeyboardMetrics: Equatable, Sendable {
             side: side ?? self.side, gap: gap, rowGap: rowGap, keyHeight: keyHeight,
             stripTop: stripTop, stripHeight: stripHeight ?? self.stripHeight, stripBottom: stripBottom ?? self.stripBottom,
             keysTop: keysTop, keysBottom: keysBottom, cornerRadius: cornerRadius,
-            bottomRowTrim: bottomRowTrim, bottomRowReturnColumn: bottomRowReturnColumn,
+            bottomRowLift: bottomRowLift, bottomRowReturnColumn: bottomRowReturnColumn,
             bottomRowLeadColumn: bottomRowLeadColumn,
             modifierLetterRatio: modifierLetterRatio, pad: pad, accentCellWidth: accentCellWidth,
             numberRowHeight: numberRowHeight
@@ -543,12 +545,12 @@ nonisolated struct KeyboardMetrics: Equatable, Sendable {
         }
         let keys = height - stripArea
         guard height < totalHeight - 0.5, keys >= keysArea / 2 else { return self }
-        let scale = (keys - keysTop - keysBottom + bottomRowTrim) / (4 * keyHeight + 3 * rowGap + numberRowPitch)
+        let scale = (keys - keysTop - keysBottom + bottomRowLift) / (4 * keyHeight + 3 * rowGap + numberRowPitch)
         var fitted = KeyboardMetrics(
             side: side, gap: gap, rowGap: rowGap * scale, keyHeight: keyHeight * scale,
             stripTop: stripTop, stripHeight: stripHeight, stripBottom: stripBottom,
             keysTop: keysTop, keysBottom: keysBottom, cornerRadius: cornerRadius,
-            bottomRowTrim: bottomRowTrim, bottomRowReturnColumn: bottomRowReturnColumn,
+            bottomRowLift: bottomRowLift, bottomRowReturnColumn: bottomRowReturnColumn,
             bottomRowLeadColumn: bottomRowLeadColumn,
             modifierLetterRatio: modifierLetterRatio, pad: pad, accentCellWidth: accentCellWidth,
             numberRowHeight: numberRowHeight * scale
@@ -558,9 +560,7 @@ nonisolated struct KeyboardMetrics: Equatable, Sendable {
     }
 
     var stripArea: CGFloat { stripTop + stripHeight + stripBottom }
-    /// Row 4's keycap height.
-    var bottomRowHeight: CGFloat { keyHeight - bottomRowTrim }
-    var keysArea: CGFloat { keysTop + numberRowPitch + 4 * keyHeight + 3 * rowGap + keysBottom - bottomRowTrim }
+    var keysArea: CGFloat { keysTop + numberRowPitch + 4 * keyHeight + 3 * rowGap + keysBottom - bottomRowLift }
     var totalHeight: CGFloat { stripArea + keysArea }
 }
 
@@ -1017,8 +1017,9 @@ nonisolated struct KeyboardLayout: Equatable, Sendable {
         var drawn: [(kind: KeyKind, row: Int, frame: CGRect, label: String, shifted: String?)] = []
 
         func add(_ kind: KeyKind, row: Int, x: CGFloat, w: CGFloat, label: String, shifted: String? = nil) {
-            let h = row == 3 ? m.bottomRowHeight : row == numberRowIndex ? m.numberRowHeight : m.keyHeight
-            drawn.append((kind, row, CGRect(x: x, y: rowY(row), width: w, height: h), label, shifted))
+            let h = row == numberRowIndex ? m.numberRowHeight : m.keyHeight
+            let y = rowY(row) - (row == 3 ? m.bottomRowLift : 0)
+            drawn.append((kind, row, CGRect(x: x, y: y, width: w, height: h), label, shifted))
         }
 
         func addCharacters(_ chars: [String], row: Int, startX: CGFloat, keyWidth: CGFloat) {
@@ -1263,7 +1264,7 @@ nonisolated struct KeyboardLayout: Equatable, Sendable {
                     // Apple's emoji key takes taps only well inside its keycap, 6 pt in from each
                     // side and 7.5 pt below its top, and the margins around it type nothing:
                     // a finger aimed at 123 or space that lands near it doesn't switch keyboards.
-                    hit = CGRect(x: item.frame.minX + 6, y: item.frame.minY + 7.5, width: item.frame.width - 12, height: y1 - item.frame.minY - 7.5)
+                    hit = CGRect(x: item.frame.minX + 6, y: rowY(row) + 7.5, width: item.frame.width - 12, height: y1 - rowY(row) - 7.5)
                 }
                 var key = KeyboardKey(kind: item.kind, row: row, frame: item.frame, hitFrame: hit, label: item.label, shifted: item.shifted)
                 if item.kind == .space, row == 3, let band = spaceBand {
